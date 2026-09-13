@@ -1,0 +1,37 @@
+schema_version: 1
+campaign_id: northline-pass-billboard
+name: Northline Pass Billboard
+product_name: Northline Mobility Pass
+product_category: mobility-service
+message: A fictional mobility pass for travel inside a synthetic city.
+call_to_action: Review the fictional pass
+price:
+  amount: 24.0
+  currency: USD
+category_reference_price: 30.0
+target_interests:
+  - mobility
+  - technology
+start_minute: 0
+end_minute: 4320
+placements:
+  - schema_version: 1
+    channel: highway-billboard
+    route_id: highway-north
+    active_windows:
+      - start_minute_of_day: 420
+        end_minute_of_day: 600
+      - start_minute_of_day: 960
+        end_minute_of_day: 1140
+    frequency_cap: 4
+    visibility: 0.9
+creative_features:
+  schema_version: 1
+  description: A synthetic blue transit pass shown on a roadside panel.
+  visual_style: bold-type
+  dominant_colors:
+    - blue
+    - yellow
+  visible_text:
+    - Northline Pass
+  contains_people: false

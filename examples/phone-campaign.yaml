@@ -1,0 +1,35 @@
+schema_version: 1
+campaign_id: orbit-pocket-phone
+name: Orbit Pocket Mobile
+product_name: Orbit Pocket Device
+product_category: consumer-electronics
+message: A fictional pocket device designed for quieter synthetic routines.
+call_to_action: Explore the fictional device
+price:
+  amount: 850.0
+  currency: USD
+category_reference_price: 1000.0
+target_interests:
+  - technology
+  - productivity
+start_minute: 0
+end_minute: 4320
+placements:
+  - schema_version: 1
+    channel: mobile-feed
+    zone: online
+    active_windows:
+      - start_minute_of_day: 420
+        end_minute_of_day: 1320
+    frequency_cap: 3
+    visibility: 0.8
+creative_features:
+  schema_version: 1
+  description: A synthetic teal device displayed against a white field.
+  visual_style: minimal-product
+  dominant_colors:
+    - teal
+    - white
+  visible_text:
+    - Orbit Pocket
+  contains_people: false

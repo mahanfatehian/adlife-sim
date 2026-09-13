@@ -1,12 +1,14 @@
 import typer
 
 from adlife import __version__
+from adlife.cli.commands.campaign import app as campaign_app
 
 app = typer.Typer(
     name="adlife",
     help="AdLife Lab — synthetic consumer society and campaign simulator.",
     no_args_is_help=True,
 )
+app.add_typer(campaign_app, name="campaign")
 
 
 def version_callback(value: bool) -> None:

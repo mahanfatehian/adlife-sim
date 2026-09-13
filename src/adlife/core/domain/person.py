@@ -23,7 +23,12 @@ _SENSITIVE_PATTERNS = (
 
 
 class DomainModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    model_config = ConfigDict(
+        allow_inf_nan=False,
+        extra="forbid",
+        frozen=True,
+        strict=True,
+    )
 
     def model_copy(
         self,
