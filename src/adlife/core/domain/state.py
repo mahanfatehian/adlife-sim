@@ -1,6 +1,6 @@
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, model_validator
 
 from adlife.core.domain.person import DomainModel
 
@@ -81,6 +81,11 @@ class ConsumerState(DomainModel):
         if len(memory_ids) != len(set(memory_ids)):
             raise ValueError("duplicate memory_id")
         return self
+
+    @field_serializer("aware_campaign_ids", when_used="json")
+    def serialize_aware_campaign_ids(self, value: frozenset[str]) -> list[str]:
+        """Serialize awareness in a stable order so persisted state stays byte-identical."""
+        return sorted(value)
 
     def exposure_count(self, campaign_id: str, channel: str) -> int:
         return next(

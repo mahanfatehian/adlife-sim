@@ -1,6 +1,6 @@
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, model_validator
 
 from adlife.core.domain.person import DomainModel
 
@@ -77,6 +77,11 @@ class Campaign(DomainModel):
     asset_path: str | None = Field(default=None, min_length=1, max_length=500)
     asset_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     creative_features: CreativeFeatures
+
+    @field_serializer("target_interests", when_used="json")
+    def serialize_target_interests(self, value: frozenset[str]) -> list[str]:
+        """Serialize targeting in a stable order so persisted campaigns stay byte-identical."""
+        return sorted(value)
 
     @model_validator(mode="after")
     def validate_campaign(self) -> Self:

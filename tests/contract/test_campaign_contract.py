@@ -199,3 +199,32 @@ def test_creative_features_have_bounded_collections() -> None:
             description="A fictional creative.",
             dominant_colors=tuple(f"color-{index}" for index in range(9)),
         )
+
+
+def test_campaign_target_interests_serialize_in_a_sorted_stable_order(
+    valid_campaign: Campaign,
+) -> None:
+    """A frozenset iterates in hash order, so JSON state would not stay byte-identical."""
+    pool = (
+        "fitness",
+        "technology",
+        "travel",
+        "cooking",
+        "music",
+        "cycling",
+        "reading",
+        "gardening",
+        "photography",
+        "running",
+    )
+    data = campaign_data(valid_campaign)
+
+    for start in range(len(pool)):
+        for size in range(2, 7):
+            interests = frozenset(pool[(start + step) % len(pool)] for step in range(size))
+            campaign = Campaign.model_validate({**data, "target_interests": interests})
+
+            dumped = campaign.model_dump(mode="json")["target_interests"]
+
+            assert dumped == sorted(interests)
+            assert campaign.model_dump_json() == campaign.model_dump_json()

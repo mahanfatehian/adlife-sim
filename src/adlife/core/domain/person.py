@@ -2,7 +2,7 @@ import re
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 ShortText = Annotated[str, Field(min_length=1, max_length=80)]
 Slug = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")]
@@ -70,6 +70,11 @@ class PersonProfile(DomainModel):
     traits: ConsumerTraits
     initial_brand_sentiment: float = Field(ge=-1, le=1)
     routine_template: Slug
+
+    @field_serializer("interests", when_used="json")
+    def serialize_interests(self, value: frozenset[str]) -> list[str]:
+        """Serialize interests in a stable order so persisted profiles stay byte-identical."""
+        return sorted(value)
 
     @model_validator(mode="after")
     def reject_sensitive_persona_text(self) -> Self:

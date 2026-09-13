@@ -165,3 +165,32 @@ def test_relationship_mean_degree_is_between_three_and_five() -> None:
     mean_degree = 2 * len(edges) / len(profiles)
 
     assert 3 <= mean_degree <= 5
+
+
+def test_profile_interests_serialize_in_a_sorted_stable_order(
+    valid_profile: PersonProfile,
+) -> None:
+    """A frozenset iterates in hash order, so JSON state would not stay byte-identical."""
+    pool = (
+        "fitness",
+        "technology",
+        "travel",
+        "cooking",
+        "music",
+        "cycling",
+        "reading",
+        "gardening",
+        "photography",
+        "running",
+    )
+    data = valid_profile.model_dump(mode="python")
+
+    for start in range(len(pool)):
+        for size in range(2, 7):
+            interests = frozenset(pool[(start + step) % len(pool)] for step in range(size))
+            profile = PersonProfile.model_validate({**data, "interests": interests})
+
+            dumped = profile.model_dump(mode="json")["interests"]
+
+            assert dumped == sorted(interests)
+            assert profile.model_dump_json() == profile.model_dump_json()
