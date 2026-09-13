@@ -1,0 +1,137 @@
+schema_version: 1
+templates:
+  student:
+    weekday:
+      - {start: 0, end: 390, activity: sleep, zone_id: home}
+      - {start: 390, end: 420, activity: breakfast, zone_id: home}
+      - {start: 420, end: 450, activity: phone-check, zone_id: online}
+      - {start: 450, end: 510, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 510, end: 720, activity: study, zone_id: work-or-study}
+      - {start: 720, end: 750, activity: phone-check, zone_id: online}
+      - {start: 750, end: 990, activity: study, zone_id: work-or-study}
+      - {start: 990, end: 1050, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1050, end: 1140, activity: shopping, zone_id: retail-center}
+      - {start: 1140, end: 1230, activity: socializing, zone_id: cafe}
+      - {start: 1230, end: 1320, activity: leisure, zone_id: home}
+      - {start: 1320, end: 1350, activity: reflection, zone_id: home}
+      - {start: 1350, end: 1440, activity: sleep, zone_id: home}
+    weekend:
+      - {start: 0, end: 480, activity: sleep, zone_id: home}
+      - {start: 480, end: 510, activity: breakfast, zone_id: home}
+      - {start: 510, end: 540, activity: phone-check, zone_id: online}
+      - {start: 540, end: 600, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 600, end: 750, activity: study, zone_id: work-or-study}
+      - {start: 750, end: 840, activity: shopping, zone_id: retail-center}
+      - {start: 840, end: 930, activity: leisure, zone_id: cafe}
+      - {start: 930, end: 1020, activity: socializing, zone_id: cafe}
+      - {start: 1020, end: 1080, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1080, end: 1110, activity: reflection, zone_id: home}
+      - {start: 1110, end: 1440, activity: sleep, zone_id: home}
+  office-worker:
+    weekday:
+      - {start: 0, end: 390, activity: sleep, zone_id: home}
+      - {start: 390, end: 420, activity: breakfast, zone_id: home}
+      - {start: 420, end: 450, activity: phone-check, zone_id: online}
+      - {start: 450, end: 510, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 510, end: 750, activity: work, zone_id: work-or-study}
+      - {start: 750, end: 780, activity: phone-check, zone_id: online}
+      - {start: 780, end: 1020, activity: work, zone_id: work-or-study}
+      - {start: 1020, end: 1080, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1080, end: 1170, activity: shopping, zone_id: retail-center}
+      - {start: 1170, end: 1260, activity: socializing, zone_id: cafe}
+      - {start: 1260, end: 1350, activity: leisure, zone_id: home}
+      - {start: 1350, end: 1380, activity: reflection, zone_id: home}
+      - {start: 1380, end: 1440, activity: sleep, zone_id: home}
+    weekend:
+      - {start: 0, end: 480, activity: sleep, zone_id: home}
+      - {start: 480, end: 510, activity: breakfast, zone_id: home}
+      - {start: 510, end: 540, activity: phone-check, zone_id: online}
+      - {start: 540, end: 600, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 600, end: 780, activity: work, zone_id: work-or-study}
+      - {start: 780, end: 870, activity: shopping, zone_id: retail-center}
+      - {start: 870, end: 960, activity: leisure, zone_id: cafe}
+      - {start: 960, end: 1050, activity: socializing, zone_id: cafe}
+      - {start: 1050, end: 1110, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1110, end: 1140, activity: reflection, zone_id: home}
+      - {start: 1140, end: 1440, activity: sleep, zone_id: home}
+  retail-worker:
+    weekday:
+      - {start: 0, end: 420, activity: sleep, zone_id: home}
+      - {start: 420, end: 450, activity: breakfast, zone_id: home}
+      - {start: 450, end: 480, activity: phone-check, zone_id: online}
+      - {start: 480, end: 540, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 540, end: 780, activity: work, zone_id: work-or-study}
+      - {start: 780, end: 810, activity: phone-check, zone_id: online}
+      - {start: 810, end: 1080, activity: work, zone_id: work-or-study}
+      - {start: 1080, end: 1140, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1140, end: 1230, activity: shopping, zone_id: retail-center}
+      - {start: 1230, end: 1320, activity: socializing, zone_id: cafe}
+      - {start: 1320, end: 1380, activity: leisure, zone_id: home}
+      - {start: 1380, end: 1410, activity: reflection, zone_id: home}
+      - {start: 1410, end: 1440, activity: sleep, zone_id: home}
+    weekend:
+      - {start: 0, end: 450, activity: sleep, zone_id: home}
+      - {start: 450, end: 480, activity: breakfast, zone_id: home}
+      - {start: 480, end: 510, activity: phone-check, zone_id: online}
+      - {start: 510, end: 570, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 570, end: 810, activity: work, zone_id: work-or-study}
+      - {start: 810, end: 900, activity: shopping, zone_id: retail-center}
+      - {start: 900, end: 990, activity: leisure, zone_id: cafe}
+      - {start: 990, end: 1080, activity: socializing, zone_id: cafe}
+      - {start: 1080, end: 1140, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1140, end: 1170, activity: reflection, zone_id: home}
+      - {start: 1170, end: 1440, activity: sleep, zone_id: home}
+  freelancer:
+    weekday:
+      - {start: 0, end: 450, activity: sleep, zone_id: home}
+      - {start: 450, end: 480, activity: breakfast, zone_id: home}
+      - {start: 480, end: 510, activity: phone-check, zone_id: online}
+      - {start: 510, end: 570, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 570, end: 750, activity: work, zone_id: work-or-study}
+      - {start: 750, end: 780, activity: phone-check, zone_id: online}
+      - {start: 780, end: 990, activity: work, zone_id: work-or-study}
+      - {start: 990, end: 1050, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1050, end: 1140, activity: shopping, zone_id: retail-center}
+      - {start: 1140, end: 1230, activity: leisure, zone_id: home}
+      - {start: 1230, end: 1320, activity: socializing, zone_id: cafe}
+      - {start: 1320, end: 1350, activity: reflection, zone_id: home}
+      - {start: 1350, end: 1440, activity: sleep, zone_id: home}
+    weekend:
+      - {start: 0, end: 510, activity: sleep, zone_id: home}
+      - {start: 510, end: 540, activity: breakfast, zone_id: home}
+      - {start: 540, end: 570, activity: phone-check, zone_id: online}
+      - {start: 570, end: 630, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 630, end: 780, activity: work, zone_id: work-or-study}
+      - {start: 780, end: 870, activity: shopping, zone_id: retail-center}
+      - {start: 870, end: 960, activity: leisure, zone_id: cafe}
+      - {start: 960, end: 1050, activity: socializing, zone_id: cafe}
+      - {start: 1050, end: 1110, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1110, end: 1140, activity: reflection, zone_id: home}
+      - {start: 1140, end: 1440, activity: sleep, zone_id: home}
+  unemployed:
+    weekday:
+      - {start: 0, end: 480, activity: sleep, zone_id: home}
+      - {start: 480, end: 510, activity: breakfast, zone_id: home}
+      - {start: 510, end: 540, activity: phone-check, zone_id: online}
+      - {start: 540, end: 600, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 600, end: 720, activity: shopping, zone_id: retail-center}
+      - {start: 720, end: 810, activity: leisure, zone_id: cafe}
+      - {start: 810, end: 840, activity: phone-check, zone_id: online}
+      - {start: 840, end: 990, activity: socializing, zone_id: cafe}
+      - {start: 990, end: 1050, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1050, end: 1140, activity: study, zone_id: home}
+      - {start: 1140, end: 1230, activity: leisure, zone_id: home}
+      - {start: 1230, end: 1260, activity: reflection, zone_id: home}
+      - {start: 1260, end: 1440, activity: sleep, zone_id: home}
+    weekend:
+      - {start: 0, end: 510, activity: sleep, zone_id: home}
+      - {start: 510, end: 540, activity: breakfast, zone_id: home}
+      - {start: 540, end: 570, activity: phone-check, zone_id: online}
+      - {start: 570, end: 630, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 630, end: 750, activity: shopping, zone_id: retail-center}
+      - {start: 750, end: 870, activity: leisure, zone_id: cafe}
+      - {start: 870, end: 1020, activity: socializing, zone_id: cafe}
+      - {start: 1020, end: 1080, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1080, end: 1170, activity: study, zone_id: home}
+      - {start: 1170, end: 1200, activity: reflection, zone_id: home}
+      - {start: 1200, end: 1440, activity: sleep, zone_id: home}

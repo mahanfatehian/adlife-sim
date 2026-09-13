@@ -1,0 +1,25 @@
+# Locally authored invented names. These are not samples of real people or demographic data.
+schema_version: 1
+locales:
+  fa-IR:
+    - Arnika
+    - Daryun
+    - Kavira
+    - Mehrin
+    - Navira
+    - Parvian
+    - Roshin
+    - Sahmir
+    - Tirava
+    - Zarmin
+  en-US:
+    - Aven
+    - Brenlo
+    - Corin
+    - Dessa
+    - Elvar
+    - Ferren
+    - Grelyn
+    - Hollan
+    - Ivara
+    - Joren

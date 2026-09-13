@@ -1,0 +1,1 @@
+"""Default fictional routine templates."""
