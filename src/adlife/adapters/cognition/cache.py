@@ -1,10 +1,15 @@
 """The content-addressed cognition cache.
 
 One JSON record per key lives beneath the run cache directory. Keys are SHA-256 digests
-of the documented material, so a record can never be addressed by a path fragment. A
-credential cannot reach a key, because no key material carries one; it cannot reach a
-stored record either, because `CognitionRecord` redacts the raw provider body it is
-built from.
+of the documented material, so a record can never be addressed by a path fragment.
+
+A credential cannot reach a KEY, because no key material carries one: there is no
+credential field on `ProviderMetadata` and `normalize_base_url` strips the userinfo,
+query and fragment a URL could smuggle one through. The other channel is the raw provider
+body, and that one is screened rather than structurally closed: `CognitionRecord` runs
+`redact_provider_body` over it, which removes labelled secrets and value-shaped ones and
+then refuses to store any body the repository's own detector still calls a secret. Every
+other field on a record is validated text that is rejected outright if it carries one.
 """
 
 from __future__ import annotations

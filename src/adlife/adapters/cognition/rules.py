@@ -1,17 +1,23 @@
-"""The transparent cognition provider: it restates a rule response, nothing more."""
+"""The transparent cognition provider: it runs the documented rule formula, nothing more."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 
+from adlife.core.domain.campaign import Campaign, Placement
+from adlife.core.domain.person import PersonProfile
+from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import (
+    CognitionAnswer,
     CognitionError,
     CognitionRequest,
     CognitionResult,
     Emotion,
+    ProviderUsage,
 )
-from adlife.core.simulation.decision import RuleResponse
+from adlife.core.simulation.decision import RuleResponse, evaluate_rule_response
 
 RULE_MODEL_ID = "rule-v1"
 
@@ -30,7 +36,7 @@ class UnknownCognitionRequest(CognitionError):
 
 
 class MismatchedRuleResponse(CognitionError):
-    """Raised when a supplied rule response answers a different campaign.
+    """Raised when the rule inputs supplied for a request answer a different question.
 
     This provider is the terminal deterministic fallback, so every refusal it makes stays
     inside the :class:`CognitionError` hierarchy: a service catching that base class in
@@ -122,40 +128,126 @@ def rule_cognition_result(request: CognitionRequest, response: RuleResponse) -> 
     )
 
 
-class RuleCognitionProvider:
-    """Serve cognition from rule responses the caller already computed.
+@dataclass(frozen=True, slots=True)
+class RuleCognitionInputs:
+    """The four domain values :func:`evaluate_rule_response` needs for one request.
 
-    The provider is constructed with the rule responses for the requests it will answer,
-    keyed by ``request_id``. A minimized prompt payload cannot be turned back into a
-    :class:`~adlife.core.domain.person.PersonProfile` and a
-    :class:`~adlife.core.domain.campaign.Campaign`, so re-deriving the rule response
-    inside the adapter is impossible; supplying it keeps the single formula in
-    :mod:`adlife.core.simulation.decision`.
+    A minimized prompt payload cannot be turned back into a
+    :class:`~adlife.core.domain.person.PersonProfile`, a
+    :class:`~adlife.core.domain.state.ConsumerState` and a
+    :class:`~adlife.core.domain.campaign.Campaign` - that is the whole point of
+    minimizing it - so the caller hands the adapter the domain values and the adapter
+    runs the formula. The formula itself stays in
+    :mod:`adlife.core.simulation.decision` and is never duplicated here.
     """
 
-    __slots__ = ("_responses",)
+    profile: PersonProfile
+    state: ConsumerState
+    campaign: Campaign
+    placement: Placement
 
-    def __init__(self, responses: Mapping[str, RuleResponse]) -> None:
-        if not isinstance(responses, Mapping):
-            raise TypeError("responses must map a request_id to a RuleResponse")
-        validated: dict[str, RuleResponse] = {}
-        for request_id, response in responses.items():
+
+class RuleCognitionProvider:
+    """Answer a cognition request by running the documented rule formula.
+
+    The provider is constructed with the rule inputs for the requests it will answer,
+    keyed by ``request_id``, and derives every number from
+    :func:`~adlife.core.simulation.decision.evaluate_rule_response`. Nothing about the
+    answer is supplied by the caller.
+
+    Inputs are checked at construction rather than at answering time, and
+    :meth:`for_requests` builds a provider against a whole tick's requests and refuses
+    there if one of them is unwired. This provider is the last step before a run aborts
+    under specification section 12, so an unwired fallback has to be a construction-time
+    error - before any event is minted - rather than a mid-run refusal.
+    """
+
+    __slots__ = ("_inputs",)
+
+    def __init__(self, inputs: Mapping[str, RuleCognitionInputs]) -> None:
+        if not isinstance(inputs, Mapping):
+            raise TypeError("inputs must map a request_id to a RuleCognitionInputs")
+        validated: dict[str, RuleCognitionInputs] = {}
+        for request_id, entry in inputs.items():
             if not isinstance(request_id, str) or not request_id:
-                raise TypeError("responses must be keyed by a non-empty request_id")
-            if not isinstance(response, RuleResponse):
-                raise TypeError("responses must map a request_id to a RuleResponse")
-            validated[request_id] = response
-        self._responses: Mapping[str, RuleResponse] = MappingProxyType(validated)
+                raise TypeError("inputs must be keyed by a non-empty request_id")
+            if not isinstance(entry, RuleCognitionInputs):
+                raise TypeError("inputs must map a request_id to a RuleCognitionInputs")
+            if entry.profile.agent_id != entry.state.agent_id:
+                raise ValueError(
+                    "rule inputs must describe the same agent: "
+                    f"{entry.profile.agent_id} and {entry.state.agent_id} "
+                    f"for request {request_id}"
+                )
+            if entry.placement not in entry.campaign.placements:
+                raise ValueError(
+                    f"rule inputs for request {request_id} name a placement "
+                    f"that does not belong to campaign {entry.campaign.campaign_id}"
+                )
+            validated[request_id] = entry
+        self._inputs: Mapping[str, RuleCognitionInputs] = MappingProxyType(validated)
 
-    async def evaluate(self, request: CognitionRequest) -> CognitionResult:
+    @classmethod
+    def for_requests(
+        cls,
+        requests: Iterable[CognitionRequest],
+        inputs: Mapping[str, RuleCognitionInputs],
+    ) -> RuleCognitionProvider:
+        """Build the terminal fallback for a tick and prove it covers every request."""
+        provider = cls(inputs)
+        for request in requests:
+            if not isinstance(request, CognitionRequest):
+                raise TypeError("requests must be CognitionRequest values")
+            if request.request_id not in provider._inputs:
+                raise UnknownCognitionRequest(
+                    "the terminal rule fallback has no rule inputs for cognition request "
+                    f"{request.request_id}"
+                )
+        return provider
+
+    def rule_response_for(self, request: CognitionRequest) -> RuleResponse:
+        """Run :func:`evaluate_rule_response` for the request's own wired inputs."""
         if not isinstance(request, CognitionRequest):
             raise TypeError("request must be a CognitionRequest")
-        response = self._responses.get(request.request_id)
-        if response is None:
+        entry = self._inputs.get(request.request_id)
+        if entry is None:
             raise UnknownCognitionRequest(
-                f"no rule response was supplied for cognition request {request.request_id}"
+                f"no rule inputs were supplied for cognition request {request.request_id}"
             )
-        return rule_cognition_result(request, response)
+        if entry.profile.agent_id != request.agent_id:
+            raise MismatchedRuleResponse(
+                "rule inputs answer another agent: "
+                f"{entry.profile.agent_id} rather than {request.agent_id}"
+            )
+        return evaluate_rule_response(
+            entry.profile,
+            entry.state,
+            entry.campaign,
+            entry.placement,
+        )
+
+    async def evaluate(self, request: CognitionRequest) -> CognitionResult:
+        return rule_cognition_result(request, self.rule_response_for(request))
+
+    async def answer(self, request: CognitionRequest) -> CognitionAnswer:
+        """Report the rule answer and the provenance an event must carry with it.
+
+        The counts are zero because they are true: the rule formula spends no tokens, and
+        an offline provider may not read a clock to time itself. A caller that uses this
+        provider as specification section 12's terminal fallback restamps the kind and
+        names the reason it fell back for.
+        """
+        return CognitionAnswer(
+            result=await self.evaluate(request),
+            usage=ProviderUsage(
+                provider_kind="rule",
+                model_id=RULE_MODEL_ID,
+                prompt_tokens=0,
+                completion_tokens=0,
+                latency_ms=0,
+                cache_hit=False,
+            ),
+        )
 
 
 __all__ = [
@@ -165,6 +257,7 @@ __all__ = [
     "RULE_MODEL_ID",
     "SKEPTICAL_CREDIBILITY",
     "MismatchedRuleResponse",
+    "RuleCognitionInputs",
     "RuleCognitionProvider",
     "UnknownCognitionRequest",
     "rule_cognition_result",

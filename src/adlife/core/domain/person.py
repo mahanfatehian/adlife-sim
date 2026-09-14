@@ -10,8 +10,18 @@ Slug = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")]
 _EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _PHONE_PATTERN = re.compile(r"(?<!\w)\+?\d[\d ()-]{7,}\d(?!\w)")
 _NATIONAL_ID_PATTERN = re.compile(r"(?<!\d)\d{10}(?!\d)")
+_SECRET_LABEL_START = r"(?<![A-Za-z0-9])"
+"""A label boundary an underscore does not close.
+
+``\\b`` cannot match between ``_`` and a letter, so a label carried by an environment
+variable name - ``ADLIFE_API_KEY``, the name design specification section 6.4 mandates,
+or ``OPENAI_API_KEY``, ``DB_PASSWORD``, ``X_ACCESS_TOKEN`` - was never recognised as a
+label at all. The underscore is a word character; it is not a letter or a digit.
+"""
+_SECRET_LABEL_END = r"(?![A-Za-z0-9])"
+_SECRET_LABEL = r"(?:api[_ -]?key|access[_ -]?token|secret|password)"
 _SECRET_PATTERN = re.compile(
-    r"\b(?:api[_ -]?key|access[_ -]?token|secret|password)\b\s*[:=]",
+    _SECRET_LABEL_START + _SECRET_LABEL + _SECRET_LABEL_END + r"\s*[:=]",
     re.IGNORECASE,
 )
 _SENSITIVE_PATTERNS = (
@@ -30,19 +40,32 @@ REDACTION_PLACEHOLDER = "[redacted]"
 # A secret label is redacted together with the value it introduces, so the short window
 # between them excludes the structural characters a JSON body uses to end a value. The
 # quote characters are spelled \x22 and \x27 so the pattern stays a plain raw string.
+# The label is anchored on _SECRET_LABEL_START for the reason documented there.
 _BEARER_PATTERN = re.compile(r"\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
+_REDACTION_LABEL = r"(?:api[_ -]?key|access[_ -]?token|authorization|secret|password)"
 _SECRET_VALUE_PATTERN = re.compile(
-    r"\b(?:api[_ -]?key|access[_ -]?token|authorization|secret|password)\b"
-    r"[^\r\n{}\[\],]{0,32}?[:=]\s*[\x22\x27]?[^\s\x22\x27,}]+",
+    _SECRET_LABEL_START
+    + _REDACTION_LABEL
+    + _SECRET_LABEL_END
+    + r"[^\r\n{}\[\],]{0,32}?[:=]\s*[\x22\x27]?[^\s\x22\x27,}]+",
     re.IGNORECASE,
 )
 _VENDOR_KEY_PATTERN = re.compile(
     r"\b(?:sk|pk|rk)[_-](?:live|test|proj)?[_-]?[A-Za-z0-9]{8,}",
     re.IGNORECASE,
 )
+# A JSON web token is recognised by its own shape rather than by the field it sits in.
+# A provider that quotes a credential back does not always name the field it came from,
+# and an unlabelled `{"credential": "eyJ..."}` is exactly as much of a leak as a labelled
+# one. Every JWS header is the base64url of a JSON object, so it begins `eyJ`; the third
+# segment may be empty for an unsecured token.
+_JWT_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9._~+/=-])eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*"
+)
 _REDACTION_PATTERNS = (
     _BEARER_PATTERN,
     _SECRET_VALUE_PATTERN,
+    _JWT_PATTERN,
     _VENDOR_KEY_PATTERN,
     _EMAIL_PATTERN,
 )
@@ -78,9 +101,21 @@ def redact_secret_text(value: str) -> str:
     rather than rejected: the value a secret label introduces is removed with the label,
     not just the label, because the label is never the part worth hiding.
 
-    It deliberately over-redacts rather than under-redacts, and it is idempotent: the
-    placeholder carries no label, no key shape and no address, so redacting twice gives
-    the same text as redacting once.
+    Two kinds of match are made, and the distinction is the guarantee:
+
+    * LABELLED - an authorization header, or a secret label and the value it introduces,
+      including a label spelled as an environment variable name.
+    * VALUE-SHAPED, with no label needed - a vendor key shape (``sk-``/``pk-``/``rk-``), a
+      JSON web token, an email address. A provider that echoes a credential does not
+      always name the field it came from, so these are matched wherever they appear.
+
+    It deliberately over-redacts rather than under-redacts within those shapes, and it is
+    idempotent: the placeholder carries no label, no key shape and no address, so
+    redacting twice gives the same text as redacting once. What it cannot claim is a
+    fully opaque random token under an unlabelled field, which is indistinguishable from
+    ordinary data; :func:`adlife.core.ports.cognition.redact_provider_body` closes the
+    rest of that gap by refusing to store any body this module's detector still calls a
+    secret.
     """
     for pattern in _REDACTION_PATTERNS:
         value = pattern.sub(REDACTION_PLACEHOLDER, value)

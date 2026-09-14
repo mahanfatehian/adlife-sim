@@ -20,7 +20,6 @@ numeric influence a provider has over intention, it is bounded to +/-0.10, and
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterator, Mapping
 from typing import Annotated, Literal, Protocol, Self, runtime_checkable
@@ -129,55 +128,36 @@ hiding a single secret. Every shape that actually names a location is kept.
 """
 
 
-def _prompt_json_sort_key(value: object) -> str:
-    """Order one array element by its canonical JSON text.
-
-    Every element is already JSON-closed, so its canonical text is a total, stable order
-    over mixed types that no process-dependent hash can perturb.
-    """
-    return json.dumps(
-        thaw_json_mapping({"item": value}),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
-def _canonicalize_prompt_arrays(value: object) -> object:
+def _sort_prompt_json_keys(value: object) -> object:
+    """Sort object keys recursively; leave every array element exactly where it is."""
     if isinstance(value, Mapping):
-        return FrozenJsonMapping(
-            {key: _canonicalize_prompt_arrays(item) for key, item in value.items()}
-        )
+        return FrozenJsonMapping({key: _sort_prompt_json_keys(value[key]) for key in sorted(value)})
     if isinstance(value, tuple):
-        return tuple(
-            sorted(
-                (_canonicalize_prompt_arrays(item) for item in value),
-                key=_prompt_json_sort_key,
-            )
-        )
+        return tuple(_sort_prompt_json_keys(item) for item in value)
     return value
 
 
 def _canonical_prompt_json(value: object) -> FrozenJsonMapping:
-    """Freeze one prompt object and put every array inside it into canonical order.
+    """Freeze one prompt object and put every object KEY inside it into sorted order.
 
-    The canonical digest this repository hashes with sorts object KEYS; it sorts array
-    elements only where the source value is a real ``set`` or ``frozenset``. A prompt
-    object is free-form JSON, and :func:`freeze_json_mapping` refuses a ``frozenset``
-    outright, so the only projection a caller can write for
-    :attr:`~adlife.core.domain.person.PersonProfile.interests` or
-    :attr:`~adlife.core.domain.campaign.Campaign.target_interests` is a list - and
-    ``list(frozenset)`` is ordered by the interpreter's per-process string hash seed.
-    Canonicalising array order here is what makes two logically identical prompts one
-    request: one model equality, one cache key, one replay hit and one provider answer,
-    in every process. Array order carries no meaning in a prompt object, so nothing is
-    lost; ``relevant_memories`` is a separate, deliberately ordered field.
+    Sorting keys is what makes a request a function of its content rather than of the
+    order a prompt builder happened to insert in: the cache key already digests a
+    key-sorted canonical JSON, but the persisted record and the text a live provider is
+    shown are ``model_dump_json()``, which walks the mapping. Two ``==``-equal requests
+    therefore have to serialize to the same bytes, or the record stored under one key is
+    not a function of that key.
+
+    Array ELEMENT order is deliberately left alone. It is prompt content: an exposure
+    history, a ranked list, an ordered set of placements. Reordering elements by their
+    canonical JSON text turns ``[2, 10, 3, 1, 21]`` into ``[10, 1, 21, 2, 3]`` in the
+    text the model reads, which is corruption rather than canonicalisation. A caller that
+    projects a domain ``frozenset`` - :attr:`~adlife.core.domain.person.PersonProfile.interests`
+    or :attr:`~adlife.core.domain.campaign.Campaign.target_interests` - must therefore
+    sort that projection itself, because ``list(frozenset)`` is ordered by this process's
+    string hash seed. ``sorted(profile.interests)`` is the whole obligation.
     """
     frozen = freeze_json_mapping(value)
-    return FrozenJsonMapping(
-        {key: _canonicalize_prompt_arrays(item) for key, item in frozen.items()}
-    )
+    return FrozenJsonMapping({key: _sort_prompt_json_keys(frozen[key]) for key in sorted(frozen)})
 
 
 def redact_provider_body(value: str) -> str:
@@ -188,10 +168,19 @@ def redact_provider_body(value: str) -> str:
     turn a provider error into an unstorable record, which is the failure specification
     section 12 forbids; storing it verbatim would put an echoed authorization header on
     disk, which specification section 19 forbids.
+
+    Redaction is pattern matching, so the result is checked against the repository's own
+    secret detector before it is returned. The detector and the redactor do not recognise
+    exactly the same text - a label with no value after it is detected and not removed -
+    and a body the detector still calls a secret is dropped wholesale rather than stored.
+    That is what makes "a stored record cannot carry a credential" a checked property of
+    this function rather than a claim about its patterns.
     """
     redacted = redact_secret_text(value)
     for pattern in _REDACTED_PATH_PATTERNS:
         redacted = pattern.sub(REDACTION_PLACEHOLDER, redacted)
+    if contains_secret_or_email_text(redacted):
+        return REDACTION_PLACEHOLDER
     return redacted
 
 
@@ -288,8 +277,9 @@ class ProviderMetadata(CognitionModel):
     There is no credential field, and :meth:`normalize_base_url` removes the userinfo,
     query and fragment a URL could smuggle one through, so neither this metadata nor a
     cache key derived from it can carry an API key. The other way a credential could
-    reach a stored record - a provider echoing one back in its raw body - is closed by
-    :meth:`CognitionRecord.redact_the_raw_provider_body`.
+    reach a stored record - a provider echoing one back in its raw body - is screened by
+    :meth:`CognitionRecord.redact_the_raw_provider_body`, which removes labelled and
+    value-shaped secrets and drops any body that still trips the repository's detector.
     """
 
     schema_version: Literal[1] = 1
@@ -332,10 +322,11 @@ class CognitionRequest(CognitionModel):
 
     ``fictional_persona`` and ``campaign`` are free-form JSON objects, so they are
     recursively JSON-validated and deeply frozen exactly like a domain event payload.
-    Their iteration order can therefore never reach a canonical digest unsorted, and
-    :func:`_canonical_prompt_json` additionally puts every array they carry into
-    canonical order, so a persona or campaign projected from a domain ``frozenset`` is
-    the same request in every process.
+    :func:`_canonical_prompt_json` additionally sorts their object keys at every depth,
+    so two ``==``-equal requests serialize to the same bytes and the record stored under
+    a cache key is a function of that key. Array element order is preserved as the caller
+    authored it; projecting a domain ``frozenset`` into a prompt array is the caller's
+    obligation to sort.
 
     ``activity`` and ``channel`` are the domain contracts themselves, so an unknown or
     case-variant value can never fork a cache key or a provider fixture.
@@ -413,10 +404,24 @@ class CognitionRequest(CognitionModel):
 class CognitionResult(CognitionModel):
     """One validated cognition answer, bounded on every numeric field.
 
-    Provider-authored text passes the same screen a prompt passes. ``memory_summary``
-    is written straight back into a later prompt's ``relevant_memories``, so a path or a
-    secret that were accepted here would raise at the next request build instead of at
-    the provider boundary, where a failure can still be handled as a fallback.
+    Provider-authored text is screened the way the text it paraphrases is screened. A
+    filesystem path is refused everywhere. For identifiers and secrets the answer fields
+    split in two, deliberately and as a pair:
+
+    ``interpretation``, ``purchase_reason``, ``discussion_hook``, ``grounded_reasons`` and
+    ``safety_flags`` restate the campaign copy the prompt carried, so they carry the same
+    NARROW rule that copy carries - :func:`contains_secret_or_email_text`. The persona
+    screen's phone and national-identifier clauses are digit-run heuristics that match a
+    price, a discount range, a delivery window or a date range; applying them to a
+    paraphrase would invalidate an answer that merely quoted what it was shown, burn
+    specification section 12's single repair attempt and drop to the rule fallback
+    systematically rather than exceptionally.
+
+    ``memory_summary`` keeps the STRICT persona rule, and it keeps it because
+    ``relevant_memories`` keeps it: a summary is written straight back into a later
+    prompt's memories, so a summary accepted here under a weaker rule would raise at the
+    next request build instead of at the provider boundary, where a failure can still be
+    handled as a fallback. The two fields move together or not at all.
     """
 
     schema_version: Literal[1] = 1
@@ -444,12 +449,12 @@ class CognitionResult(CognitionModel):
         _reject_filesystem_paths(self.memory_summary, label="memory_summary")
         _reject_filesystem_paths(self.grounded_reasons, label="grounded_reasons")
         _reject_filesystem_paths(self.safety_flags, label="safety_flags")
-        _reject_sensitive_text(self.interpretation, label="interpretation")
-        _reject_sensitive_text(self.purchase_reason, label="purchase_reason")
-        _reject_sensitive_text(self.discussion_hook, label="discussion_hook")
+        _reject_secret_or_email_text(self.interpretation, label="interpretation")
+        _reject_secret_or_email_text(self.purchase_reason, label="purchase_reason")
+        _reject_secret_or_email_text(self.discussion_hook, label="discussion_hook")
+        _reject_secret_or_email_text(self.grounded_reasons, label="grounded_reasons")
+        _reject_secret_or_email_text(self.safety_flags, label="safety_flags")
         _reject_sensitive_text(self.memory_summary, label="memory_summary")
-        _reject_sensitive_text(self.grounded_reasons, label="grounded_reasons")
-        _reject_sensitive_text(self.safety_flags, label="safety_flags")
         return self
 
 
@@ -473,6 +478,21 @@ class ProviderUsage(CognitionModel):
                 "and only a fallback may carry one"
             )
         return self
+
+
+class CognitionAnswer(CognitionModel):
+    """One provider answer together with the provenance an event has to record.
+
+    Specification section 13 requires every event to name its source and the model that
+    produced it, so provenance cannot be reachable only through a method one adapter
+    happens to publish beside the port. A service coded against
+    :class:`CognitionProvider` reads both here, and for replay both come out of a single
+    read of a single record rather than two independent ones.
+    """
+
+    schema_version: Literal[1] = 1
+    result: CognitionResult
+    usage: ProviderUsage
 
 
 class CognitionRecord(CognitionModel):
@@ -510,9 +530,17 @@ class CognitionRecord(CognitionModel):
 
 @runtime_checkable
 class CognitionProvider(Protocol):
-    """The single cognition port every adapter implements."""
+    """The single cognition port every adapter implements.
+
+    ``evaluate`` answers the question. ``answer`` returns the same result together with
+    the :class:`ProviderUsage` an event must carry, in one operation, so a consumer can
+    never stamp a replayed fallback as an ordinary call and never observe a result and a
+    provenance drawn from two different reads of the same record.
+    """
 
     async def evaluate(self, request: CognitionRequest) -> CognitionResult: ...
+
+    async def answer(self, request: CognitionRequest) -> CognitionAnswer: ...
 
 
 __all__ = [
@@ -524,6 +552,7 @@ __all__ = [
     "OFFLINE_PROVIDER_KINDS",
     "PROMPT_VERSION",
     "REQUEST_ID_PATTERN",
+    "CognitionAnswer",
     "CognitionError",
     "CognitionModel",
     "CognitionProvider",

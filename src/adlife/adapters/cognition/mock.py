@@ -2,13 +2,18 @@
 
 It exercises the complete cognition pipeline with five fixed fixtures and no model. It
 reads no clock, no socket, no environment variable and no global random stream: the
-fixture is chosen by a content-addressed digest of the request's treatment key, so
-paired experiment arms keep common random numbers.
+fixture is chosen by a content-addressed digest of the request identifier and the
+canonical request JSON, so the same question always draws the same answer.
 """
 
 from __future__ import annotations
 
-from adlife.core.ports.cognition import CognitionRequest, CognitionResult
+from adlife.core.ports.cognition import (
+    CognitionAnswer,
+    CognitionRequest,
+    CognitionResult,
+    ProviderUsage,
+)
 from adlife.core.simulation.engine import canonical_sha256
 
 MOCK_MODEL_ID = "mock-v1"
@@ -141,35 +146,28 @@ class MockCognitionProvider:
         self._seed = seed
 
     def fixture_index(self, request: CognitionRequest) -> int:
-        """Select a fixture from the seed and the request's treatment key.
+        """Select a fixture from the request identifier and the canonical request JSON.
 
-        The key is the question being asked, not the run that happened to ask it: which
-        agent, which campaign, on which channel, at which exposure, at which simulated
-        minute. That is the same common-random-numbers discipline the keyed
-        :class:`~adlife.core.simulation.rng.RandomOracle` enforces elsewhere, and
-        specification section 18 needs it, because it runs its A/B comparisons in rule or
-        mock mode.
+        This is the published rule: every term of the request participates, so a mock
+        answer moves with the mood the agent is in and the memories it carries, exactly
+        as a model's answer would. ``request_id`` is named separately as well as being a
+        field of the digested request, because the identifier is what a caller reasons
+        about when it reads this selection back.
 
-        Digesting the whole canonical request instead would pull in ``request_id`` - the
-        run-global event sequence - so any treatment that changes how many events came
-        before would re-draw every later agent's cognition, and ``mood``, which the
-        treatment being measured moves itself. Both destroy the pairing between arms. The
-        remaining request fields are excluded for the same reason or because they add
-        nothing: ``run_id`` differs between arms by construction, ``activity`` is already
-        fixed by the agent and the minute in a given scenario, and ``relevant_memories``,
-        ``prompt_version`` and ``creative_sha256`` are prompt-shaping detail no fixture
-        depends on. Determinism is untouched: the key is a pure function of the request.
+        An earlier revision digested a six-term treatment tuple instead, to hold common
+        random numbers across the paired arms of specification section 18. That kept the
+        pairing at the cost of a mock that could not react to mood or memory at all, and
+        it was an unratified departure from an explicit directive; the pairing belongs to
+        the experiment harness rather than to the provider. Determinism is unaffected
+        either way: the key is a pure function of the request and the provider seed.
         """
         if not isinstance(request, CognitionRequest):
             raise TypeError("request must be a CognitionRequest")
         digest = canonical_sha256(
             {
-                "agent_id": request.agent_id,
-                "campaign_id": request.campaign_id,
-                "channel": request.channel,
-                "exposure_count": request.exposure_count,
+                "request_id": request.request_id,
+                "request_sha256": canonical_sha256(request),
                 "seed": self._seed,
-                "simulated_minute": request.simulated_minute,
             }
         )
         return int(digest, 16) % MOCK_FIXTURE_COUNT
@@ -177,6 +175,25 @@ class MockCognitionProvider:
     async def evaluate(self, request: CognitionRequest) -> CognitionResult:
         fixture = _FIXTURES[self.fixture_index(request)]
         return fixture.model_copy(update={"request_id": request.request_id})
+
+    async def answer(self, request: CognitionRequest) -> CognitionAnswer:
+        """Report the fixture and the provenance an event must carry with it.
+
+        The counts are zero because they are true: no model was called, so no tokens were
+        spent, and an offline provider may not read a clock to time itself. Reporting an
+        invented estimate would let Task 14 and Task 16 present a fabricated cost.
+        """
+        return CognitionAnswer(
+            result=await self.evaluate(request),
+            usage=ProviderUsage(
+                provider_kind="mock",
+                model_id=MOCK_MODEL_ID,
+                prompt_tokens=0,
+                completion_tokens=0,
+                latency_ms=0,
+                cache_hit=False,
+            ),
+        )
 
 
 __all__ = ["MOCK_FIXTURE_COUNT", "MOCK_MODEL_ID", "MockCognitionProvider"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import time
 from collections.abc import Callable, Mapping
@@ -13,14 +14,20 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from adlife.adapters.cognition.cache import CognitionCache
-from adlife.adapters.cognition.mock import MOCK_FIXTURE_COUNT, MockCognitionProvider
+from adlife.adapters.cognition.mock import (
+    MOCK_FIXTURE_COUNT,
+    MOCK_MODEL_ID,
+    MockCognitionProvider,
+)
 from adlife.adapters.cognition.replay import ReplayCognitionProvider
 from adlife.adapters.cognition.rules import (
     ANNOYED_VALENCE,
     CURIOUS_RELEVANCE,
     POSITIVE_VALENCE,
+    RULE_MODEL_ID,
     SKEPTICAL_CREDIBILITY,
     MismatchedRuleResponse,
+    RuleCognitionInputs,
     RuleCognitionProvider,
     UnknownCognitionRequest,
     _fit,
@@ -28,13 +35,19 @@ from adlife.adapters.cognition.rules import (
 )
 from adlife.core.domain.campaign import Campaign, CampaignId
 from adlife.core.domain.events import EventSource
-from adlife.core.domain.person import PersonProfile, contains_sensitive_text
-from adlife.core.domain.state import Activity, Channel
+from adlife.core.domain.person import (
+    REDACTION_PLACEHOLDER,
+    PersonProfile,
+    contains_secret_or_email_text,
+    contains_sensitive_text,
+)
+from adlife.core.domain.state import Activity, Channel, ConsumerState
 from adlife.core.ports.cognition import (
     MAX_GROUNDED_REASONS,
     MAX_RELEVANT_MEMORIES,
     MAX_REQUEST_JSON_BYTES,
     MAX_SAFETY_FLAGS,
+    CognitionAnswer,
     CognitionError,
     CognitionProvider,
     CognitionRecord,
@@ -44,16 +57,35 @@ from adlife.core.ports.cognition import (
     ProviderKind,
     ProviderMetadata,
     ProviderUsage,
+    SamplingSettings,
+    redact_provider_body,
 )
-from adlife.core.simulation.decision import RuleResponse
+from adlife.core.simulation.decision import RuleResponse, evaluate_rule_response
 from adlife.core.simulation.engine import canonical_sha256, stable_event_id
+
+
+def _rule_inputs(
+    profile: PersonProfile,
+    state: ConsumerState,
+    campaign: Campaign,
+) -> RuleCognitionInputs:
+    return RuleCognitionInputs(
+        profile=profile,
+        state=state,
+        campaign=campaign,
+        placement=campaign.placements[0],
+    )
 
 
 def _rule_provider(
     cognition_request: CognitionRequest,
-    rule_response: RuleResponse,
+    profile: PersonProfile,
+    state: ConsumerState,
+    campaign: Campaign,
 ) -> RuleCognitionProvider:
-    return RuleCognitionProvider({cognition_request.request_id: rule_response})
+    return RuleCognitionProvider(
+        {cognition_request.request_id: _rule_inputs(profile, state, campaign)}
+    )
 
 
 def _recorded_cache(
@@ -103,14 +135,19 @@ async def assert_provider_contract(
     assert result.request_id == cognition_request.request_id
     repeated = await provider_factory().evaluate(cognition_request)
     assert repeated.model_dump_json() == result.model_dump_json()
+    answer = await provider_factory().answer(cognition_request)
+    assert answer.result.model_dump_json() == result.model_dump_json()
+    assert answer.usage.model_id
 
 
 async def test_the_rules_provider_satisfies_the_shared_contract(
     cognition_request: CognitionRequest,
-    rule_response: RuleResponse,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
     await assert_provider_contract(
-        lambda: _rule_provider(cognition_request, rule_response),
+        lambda: _rule_provider(cognition_request, valid_profile, consumer_state, valid_campaign),
         cognition_request,
     )
 
@@ -138,16 +175,75 @@ async def test_every_offline_provider_implements_the_published_protocol(
     tmp_path: Path,
     cognition_request: CognitionRequest,
     provider_metadata: ProviderMetadata,
-    rule_response: RuleResponse,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
     recorded = await MockCognitionProvider().evaluate(cognition_request)
     cache = _recorded_cache(tmp_path, cognition_request, provider_metadata, recorded)
     providers: tuple[CognitionProvider, ...] = (
-        _rule_provider(cognition_request, rule_response),
+        _rule_provider(cognition_request, valid_profile, consumer_state, valid_campaign),
         MockCognitionProvider(),
         ReplayCognitionProvider(cache, provider_metadata),
     )
     assert all(isinstance(provider, CognitionProvider) for provider in providers)
+
+
+async def test_every_offline_provider_reports_its_provenance_through_the_port(
+    tmp_path: Path,
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """A service coded against the port must be able to stamp the right event source.
+
+    Specification section 13 requires every event to carry its source and model
+    identifier, and the brief's emphasis is a replay that reproduces a recorded run
+    including its failure and fallback paths. If provenance were reachable only through a
+    method one adapter happens to publish off-protocol, a service taking a
+    ``CognitionProvider`` would stamp the wrong source on a replayed request.
+    """
+    recorded = await MockCognitionProvider().evaluate(cognition_request)
+    cache = _recorded_cache(tmp_path, cognition_request, provider_metadata, recorded)
+    expected: tuple[tuple[CognitionProvider, str, str], ...] = (
+        (
+            _rule_provider(cognition_request, valid_profile, consumer_state, valid_campaign),
+            "rule",
+            RULE_MODEL_ID,
+        ),
+        (MockCognitionProvider(), "mock", MOCK_MODEL_ID),
+        (ReplayCognitionProvider(cache, provider_metadata), "mock", provider_metadata.model_id),
+    )
+    for provider, kind, model_id in expected:
+        answer = await provider.answer(cognition_request)
+        assert isinstance(answer, CognitionAnswer)
+        assert answer.result.request_id == cognition_request.request_id
+        assert answer.usage.provider_kind == kind
+        assert answer.usage.model_id == model_id
+        assert (
+            answer.result.model_dump_json()
+            == (await provider.evaluate(cognition_request)).model_dump_json()
+        )
+
+
+async def test_an_offline_provider_reports_no_spend_and_no_elapsed_time(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """No model was called and no clock may be read, so the honest numbers are zeros."""
+    providers: tuple[CognitionProvider, ...] = (
+        _rule_provider(cognition_request, valid_profile, consumer_state, valid_campaign),
+        MockCognitionProvider(),
+    )
+    for provider in providers:
+        usage = (await provider.answer(cognition_request)).usage
+        assert (usage.prompt_tokens, usage.completion_tokens, usage.latency_ms) == (0, 0, 0)
+        assert usage.cache_hit is False
+        assert usage.fallback_reason is None
 
 
 def test_every_provider_kind_names_a_persistable_event_source() -> None:
@@ -160,7 +256,9 @@ async def test_providers_evaluate_without_a_wall_clock_or_a_socket(
     tmp_path: Path,
     cognition_request: CognitionRequest,
     provider_metadata: ProviderMetadata,
-    rule_response: RuleResponse,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
     """Offline providers must read no wall clock and open no outbound connection.
 
@@ -181,7 +279,7 @@ async def test_providers_evaluate_without_a_wall_clock_or_a_socket(
     monkeypatch.setattr(socket.socket, "connect", _forbidden)
 
     providers: tuple[CognitionProvider, ...] = (
-        _rule_provider(cognition_request, rule_response),
+        _rule_provider(cognition_request, valid_profile, consumer_state, valid_campaign),
         MockCognitionProvider(),
         ReplayCognitionProvider(cache, provider_metadata),
     )
@@ -219,30 +317,74 @@ def _response(**overrides: float | str) -> RuleResponse:
     return replace(base, **overrides)  # type: ignore[arg-type]
 
 
-async def test_rule_cognition_carries_the_rule_numbers_through_unchanged(
+async def test_rule_cognition_derives_its_answer_from_evaluate_rule_response(
     cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
-    response = _response()
-    result = await _rule_provider(cognition_request, response).evaluate(cognition_request)
-    assert result.valence == 0.40
-    assert result.relevance == 0.50
-    assert result.credibility == 0.70
-    assert result.sentiment_delta == 0.08
-    assert result.recall_delta == 0.14
-    assert result.share_probability == 0.03
+    """The provider computes the rule response itself; it does not restate an injected one.
+
+    Every number below comes out of :func:`evaluate_rule_response` with the inputs the
+    provider was wired with, so the single formula in
+    :mod:`adlife.core.simulation.decision` is what answers a rule-mode request.
+    """
+    expected = evaluate_rule_response(
+        valid_profile,
+        consumer_state,
+        valid_campaign,
+        valid_campaign.placements[0],
+    )
+    provider = _rule_provider(cognition_request, valid_profile, consumer_state, valid_campaign)
+    result = await provider.evaluate(cognition_request)
+    assert provider.rule_response_for(cognition_request) == expected
+    assert result.valence == expected.valence
+    assert result.relevance == expected.relevance
+    assert result.credibility == expected.credibility
+    assert result.sentiment_delta == expected.sentiment_delta
+    assert result.recall_delta == expected.recall_delta
+    assert result.share_probability == expected.share_probability
+    assert f"{expected.purchase_intention:.3f}" in result.purchase_reason
+
+
+async def test_rule_cognition_reacts_to_the_state_it_was_wired_with(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """A different consumer state is a different rule response, not the same one restated."""
+    other_state = consumer_state.model_copy(update={"brand_sentiment": -0.8})
+    first = await _rule_provider(
+        cognition_request, valid_profile, consumer_state, valid_campaign
+    ).evaluate(cognition_request)
+    second = await _rule_provider(
+        cognition_request, valid_profile, other_state, valid_campaign
+    ).evaluate(cognition_request)
+    assert first.purchase_reason != second.purchase_reason
 
 
 async def test_rule_cognition_never_modifies_its_own_baseline(
     cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
-    result = await _rule_provider(cognition_request, _response()).evaluate(cognition_request)
+    result = await _rule_provider(
+        cognition_request, valid_profile, consumer_state, valid_campaign
+    ).evaluate(cognition_request)
     assert result.rule_modifier == 0.0
 
 
 async def test_rule_cognition_reports_three_grounded_reasons(
     cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
-    result = await _rule_provider(cognition_request, _response()).evaluate(cognition_request)
+    result = await _rule_provider(
+        cognition_request, valid_profile, consumer_state, valid_campaign
+    ).evaluate(cognition_request)
     assert len(result.grounded_reasons) == 3
 
 
@@ -292,7 +434,7 @@ def test_the_emotion_band_thresholds_are_the_published_constants() -> None:
     )
 
 
-async def test_rule_cognition_refuses_a_request_it_has_no_rule_response_for(
+async def test_rule_cognition_refuses_a_request_it_has_no_rule_inputs_for(
     cognition_request: CognitionRequest,
 ) -> None:
     provider = RuleCognitionProvider({})
@@ -300,12 +442,92 @@ async def test_rule_cognition_refuses_a_request_it_has_no_rule_response_for(
         await provider.evaluate(cognition_request)
 
 
-async def test_rule_cognition_refuses_a_rule_response_for_another_campaign(
+async def test_rule_cognition_refuses_rule_inputs_for_another_campaign(
     cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
-    provider = _rule_provider(cognition_request, _response(campaign_id="campaign-billboard"))
+    other = valid_campaign.model_copy(update={"campaign_id": "campaign-billboard"})
+    provider = _rule_provider(cognition_request, valid_profile, consumer_state, other)
     with pytest.raises(MismatchedRuleResponse, match="campaign"):
         await provider.evaluate(cognition_request)
+
+
+async def test_rule_cognition_refuses_rule_inputs_for_another_agent(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    other_profile = valid_profile.model_copy(update={"agent_id": "person-002"})
+    other_state = consumer_state.model_copy(update={"agent_id": "person-002"})
+    provider = _rule_provider(cognition_request, other_profile, other_state, valid_campaign)
+    with pytest.raises(MismatchedRuleResponse, match="agent"):
+        await provider.evaluate(cognition_request)
+
+
+def test_rule_cognition_is_built_for_a_whole_tick_and_refuses_an_uncovered_request(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """The terminal fallback proves its coverage BEFORE the tick, not during it.
+
+    Specification section 12 makes this provider the last step before a run aborts, so
+    "the caller must remember to register every request" cannot be left as prose. Building
+    the provider for a tick's requests is an enforced seam: an unwired request is refused
+    at construction, before any provider call exists to fail.
+    """
+    covered = cognition_request
+    uncovered = cognition_request.model_copy(
+        update={"request_id": stable_event_id(cognition_request.run_id, 11)}
+    )
+    inputs = {covered.request_id: _rule_inputs(valid_profile, consumer_state, valid_campaign)}
+    with pytest.raises(UnknownCognitionRequest, match=uncovered.request_id):
+        RuleCognitionProvider.for_requests((covered, uncovered), inputs)
+
+
+async def test_a_rule_provider_built_for_a_tick_answers_every_request_of_that_tick(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    requests = tuple(
+        cognition_request.model_copy(
+            update={"request_id": stable_event_id(cognition_request.run_id, sequence)}
+        )
+        for sequence in (7, 8, 9)
+    )
+    inputs = {
+        request.request_id: _rule_inputs(valid_profile, consumer_state, valid_campaign)
+        for request in requests
+    }
+    provider = RuleCognitionProvider.for_requests(requests, inputs)
+    for request in requests:
+        assert (await provider.evaluate(request)).request_id == request.request_id
+
+
+def test_rule_cognition_refuses_inputs_it_could_never_evaluate(
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """A wiring error surfaces at construction rather than as a mid-run abort."""
+    other_agent = consumer_state.model_copy(update={"agent_id": "person-002"})
+    with pytest.raises(ValueError, match="same agent"):
+        RuleCognitionProvider(
+            {
+                "run-demo:event-00000007": RuleCognitionInputs(
+                    profile=valid_profile,
+                    state=other_agent,
+                    campaign=valid_campaign,
+                    placement=valid_campaign.placements[0],
+                )
+            }
+        )
 
 
 # --- mock provider --------------------------------------------------------------------
@@ -553,9 +775,9 @@ def test_a_cognition_record_refuses_a_result_from_another_request(
         )
 
 
-def test_the_rules_provider_refuses_a_value_that_is_not_a_rule_response() -> None:
-    with pytest.raises(TypeError, match="RuleResponse"):
-        RuleCognitionProvider({"run-demo:event-00000007": "not a rule response"})  # type: ignore[dict-item]
+def test_the_rules_provider_refuses_a_value_that_is_not_a_set_of_rule_inputs() -> None:
+    with pytest.raises(TypeError, match="RuleCognitionInputs"):
+        RuleCognitionProvider({"run-demo:event-00000007": "not rule inputs"})  # type: ignore[dict-item]
 
 
 @pytest.mark.parametrize("seed", [-1, 0.5, True])
@@ -989,11 +1211,97 @@ def test_the_persona_screen_stays_stricter_than_the_untrusted_campaign_screen(
     assert updated.campaign["message"] == f"Special offer. {text}"
 
 
+# --- an answer that paraphrases ad copy is screened the way that ad copy is ------------
+
+
+_PARAPHRASING_RESULT_FIELDS: tuple[tuple[str, Callable[[str], dict[str, object]]], ...] = (
+    ("interpretation", lambda text: {"interpretation": text}),
+    ("purchase_reason", lambda text: {"purchase_reason": text}),
+    ("discussion_hook", lambda text: {"discussion_hook": text}),
+    ("grounded_reasons", lambda text: {"grounded_reasons": (text,)}),
+    ("safety_flags", lambda text: {"safety_flags": (text,)}),
+)
+"""Answer fields whose content is a paraphrase of the campaign copy the prompt carried."""
+
+_PARAPHRASING_IDS = [name for name, _ in _PARAPHRASING_RESULT_FIELDS]
+
+
+@pytest.mark.parametrize(("field", "build"), _PARAPHRASING_RESULT_FIELDS, ids=_PARAPHRASING_IDS)
+@pytest.mark.parametrize("numeric_text", _ORDINARY_NUMERIC_COPY)
+def test_a_result_may_restate_the_ordinary_numeric_copy_it_was_shown(
+    cognition_request: CognitionRequest,
+    field: str,
+    build: Callable[[str], dict[str, object]],
+    numeric_text: str,
+) -> None:
+    """A provider that quotes the price or delivery window it was given is not leaking.
+
+    The persona screen's phone and national-identifier clauses are digit-run heuristics;
+    the port already refuses to apply them to the campaign copy a prompt carries, because
+    a price, a discount range or a delivery window is ordinary advertising text. Applying
+    them to a provider's paraphrase of that same text would invalidate the answer,
+    consume specification section 12's single repair attempt and drop to the rule
+    fallback systematically rather than exceptionally.
+    """
+    result = rule_cognition_result(cognition_request, _response())
+    updated = result.model_copy(update=build(numeric_text))
+    assert numeric_text in str(build(numeric_text)[field])
+    assert updated.request_id == result.request_id
+
+
+@pytest.mark.parametrize(("field", "build"), _PARAPHRASING_RESULT_FIELDS, ids=_PARAPHRASING_IDS)
+@pytest.mark.parametrize(
+    ("label", "text"),
+    _CAMPAIGN_SENSITIVE_TEXTS,
+    ids=[label for label, _ in _CAMPAIGN_SENSITIVE_TEXTS],
+)
+def test_a_result_still_refuses_a_credential_or_a_contact_in_every_paraphrasing_field(
+    cognition_request: CognitionRequest,
+    field: str,
+    build: Callable[[str], dict[str, object]],
+    label: str,
+    text: str,
+) -> None:
+    """Relaxing the digit-run heuristics relaxes nothing about credentials or contacts."""
+    result = rule_cognition_result(cognition_request, _response())
+    with pytest.raises(ValidationError, match="sensitive"):
+        result.model_copy(update=build(text))
+
+
+@pytest.mark.parametrize(
+    ("label", "text"),
+    _PERSONA_ONLY_SENSITIVE_TEXTS,
+    ids=[label for label, _ in _PERSONA_ONLY_SENSITIVE_TEXTS],
+)
+def test_memory_summary_and_relevant_memories_keep_the_strict_screen_as_one_pair(
+    cognition_request: CognitionRequest,
+    label: str,
+    text: str,
+) -> None:
+    """``memory_summary`` is written straight back into a later ``relevant_memories``.
+
+    The two fields therefore have to carry the SAME screen, or a summary accepted at the
+    provider boundary would raise at the next request build, where no fallback is left.
+    They keep the strict persona rule together, because a memory is agent state rather
+    than third-party copy; the five paraphrasing fields above do not feed a prompt and
+    carry the narrow rule instead.
+    """
+    summary = f"The advertisement mentioned {text} while commuting."
+    with pytest.raises(ValidationError, match="sensitive"):
+        cognition_request.model_copy(update={"relevant_memories": (summary,)})
+    result = rule_cognition_result(cognition_request, _response())
+    with pytest.raises(ValidationError, match="sensitive"):
+        result.model_copy(update={"memory_summary": summary})
+
+
 # --- the terminal fallback provider stays inside the cognition error hierarchy ---------
 
 
 async def test_rule_cognition_refuses_a_mismatched_campaign_inside_the_error_hierarchy(
     cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
 ) -> None:
     """The rule provider is the last resort, so its refusals must be catchable as one.
 
@@ -1002,7 +1310,8 @@ async def test_rule_cognition_refuses_a_mismatched_campaign_inside_the_error_hie
     12's "provider failures must never abort a run" has to catch this too, exactly as it
     catches the sibling :class:`UnknownCognitionRequest` and replay's ``CorruptCacheRecord``.
     """
-    provider = _rule_provider(cognition_request, _response(campaign_id="campaign-billboard"))
+    other = valid_campaign.model_copy(update={"campaign_id": "campaign-billboard"})
+    provider = _rule_provider(cognition_request, valid_profile, consumer_state, other)
     with pytest.raises(CognitionError, match="campaign"):
         await provider.evaluate(cognition_request)
 
@@ -1012,7 +1321,7 @@ def test_every_rule_provider_refusal_is_a_cognition_error() -> None:
     assert issubclass(MismatchedRuleResponse, CognitionError)
 
 
-# --- prompt objects are order-canonical, not insertion-ordered ------------------------
+# --- a domain frozenset projection is the CALLER's obligation to sort ------------------
 
 
 def _persona_with(profile: PersonProfile, interests: list[str]) -> dict[str, object]:
@@ -1035,107 +1344,214 @@ def _campaign_with(campaign: Campaign, target_interests: list[str]) -> dict[str,
     }
 
 
-def test_a_request_canonicalises_array_order_inside_its_prompt_objects(
+def test_a_sorted_frozenset_projection_builds_the_same_request_in_every_process(
     cognition_request: CognitionRequest,
     valid_profile: PersonProfile,
     valid_campaign: Campaign,
 ) -> None:
-    """A projection of a domain ``frozenset`` must not depend on this process's hashing.
+    """``sorted(profile.interests)`` is the whole determinism obligation on a caller.
 
     ``PersonProfile.interests`` and ``Campaign.target_interests`` are frozensets, and
     ``freeze_json_mapping`` refuses a real frozenset, so the only projection a caller can
-    write is a list. ``list(frozenset)`` is ordered by the interpreter's per-process
-    string hash seed, so an unsorted array would give the same scenario a different
-    request, a different cache key and a different provider answer in every process.
+    write is a list. ``list(frozenset)`` is ordered by this process's string hash seed;
+    ``sorted(...)`` is not, and the port preserves what it is handed.
     """
     interests = sorted({*valid_profile.interests, "cycling", "cooking"})
     targets = sorted({*valid_campaign.target_interests, "travel", "audio"})
 
-    forward = cognition_request.model_copy(
-        update={
-            "fictional_persona": _persona_with(valid_profile, interests),
-            "campaign": _campaign_with(valid_campaign, targets),
-        }
-    )
-    backward = cognition_request.model_copy(
-        update={
-            "fictional_persona": _persona_with(valid_profile, list(reversed(interests))),
-            "campaign": _campaign_with(valid_campaign, list(reversed(targets))),
-        }
-    )
+    def build() -> CognitionRequest:
+        return cognition_request.model_copy(
+            update={
+                "fictional_persona": _persona_with(
+                    valid_profile, sorted({*valid_profile.interests, "cycling", "cooking"})
+                ),
+                "campaign": _campaign_with(
+                    valid_campaign, sorted({*valid_campaign.target_interests, "travel", "audio"})
+                ),
+            }
+        )
 
-    assert forward == backward
-    assert forward.fictional_persona["interests"] == tuple(interests)
-    assert forward.campaign["target_interests"] == tuple(targets)
-    assert backward.fictional_persona["interests"] == tuple(interests)
-    assert backward.campaign["target_interests"] == tuple(targets)
-    assert forward.model_dump_json() == backward.model_dump_json()
+    first, second = build(), build()
+    assert first == second
+    assert first.model_dump_json() == second.model_dump_json()
+    assert first.fictional_persona["interests"] == tuple(interests)
+    assert first.campaign["target_interests"] == tuple(targets)
 
 
-async def test_array_order_never_changes_the_mock_answer(
+def test_an_unsorted_frozenset_projection_is_a_different_request(
     cognition_request: CognitionRequest,
     valid_profile: PersonProfile,
     valid_campaign: Campaign,
 ) -> None:
+    """The port no longer hides an unsorted projection, so the hazard stays visible.
+
+    Silently reordering the array made two different payloads one request at the cost of
+    rewriting whatever the caller actually wrote. This is the recorded consequence of not
+    doing that: an unsorted projection is a different question, and Tasks 10, 12 and 16
+    must sort before they build the payload.
+    """
     interests = sorted({*valid_profile.interests, "cycling", "cooking"})
-    targets = sorted({*valid_campaign.target_interests, "travel", "audio"})
-    provider = MockCognitionProvider(seed=5)
-    answers = set()
-    for ordering in (interests, list(reversed(interests))):
-        request = cognition_request.model_copy(
-            update={
-                "fictional_persona": _persona_with(valid_profile, ordering),
-                "campaign": _campaign_with(valid_campaign, list(reversed(targets))),
-            }
-        )
-        answers.add((await provider.evaluate(request)).model_dump_json())
-    assert len(answers) == 1
-
-
-def test_array_order_is_canonicalised_at_every_nesting_depth(
-    cognition_request: CognitionRequest,
-    cognition_campaign: dict[str, object],
-) -> None:
     forward = cognition_request.model_copy(
-        update={
-            "campaign": dict(cognition_campaign)
-            | {"creative": {"colors": ["white", "green", "amber"]}}
-        }
+        update={"fictional_persona": _persona_with(valid_profile, interests)}
     )
     backward = cognition_request.model_copy(
-        update={
-            "campaign": dict(cognition_campaign)
-            | {"creative": {"colors": ["green", "amber", "white"]}}
-        }
+        update={"fictional_persona": _persona_with(valid_profile, list(reversed(interests)))}
     )
-    assert forward == backward
-    nested = forward.campaign["creative"]
-    assert isinstance(nested, Mapping)
-    assert nested["colors"] == ("amber", "green", "white")
+    assert forward != backward
+    assert forward.fictional_persona["interests"] == tuple(interests)
+    assert backward.fictional_persona["interests"] == tuple(reversed(interests))
 
 
-def test_array_order_is_canonicalised_for_objects_inside_an_array(
+def test_array_order_is_preserved_at_every_nesting_depth(
     cognition_request: CognitionRequest,
     cognition_campaign: dict[str, object],
 ) -> None:
-    first = {"channel": "mobile-feed", "visibility": 0.8}
-    second = {"channel": "highway-billboard", "visibility": 0.4}
-    forward = cognition_request.model_copy(
+    colors = ["white", "green", "amber"]
+    request = cognition_request.model_copy(
+        update={"campaign": dict(cognition_campaign) | {"creative": {"colors": list(colors)}}}
+    )
+    nested = request.campaign["creative"]
+    assert isinstance(nested, Mapping)
+    assert nested["colors"] == tuple(colors)
+
+
+def test_array_order_is_preserved_for_objects_inside_an_array(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+) -> None:
+    """Object keys inside an array element are sorted; the elements keep their places."""
+    first = {"visibility": 0.8, "channel": "mobile-feed"}
+    second = {"visibility": 0.4, "channel": "highway-billboard"}
+    request = cognition_request.model_copy(
         update={"campaign": dict(cognition_campaign) | {"placements": [first, second]}}
     )
+    placements = request.campaign["placements"]
+    assert isinstance(placements, tuple)
+    assert [dict(element) for element in placements] == [  # type: ignore[call-overload]
+        {"channel": "mobile-feed", "visibility": 0.8},
+        {"channel": "highway-billboard", "visibility": 0.4},
+    ]
+
+
+# --- prompt object KEYS are sorted; prompt array ELEMENTS are left exactly as authored -
+
+
+def test_a_request_serializes_its_prompt_objects_byte_identically_whatever_the_key_order(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+) -> None:
+    """Two ``==``-equal requests must write the same bytes into the cache file.
+
+    The cache key digests a key-sorted canonical JSON, but the stored record is
+    ``model_dump_json()``. Without sorted keys the same key addresses different bytes
+    depending on which order the prompt builder happened to insert in.
+    """
+    forward = cognition_request.model_copy(update={"campaign": dict(cognition_campaign)})
     backward = cognition_request.model_copy(
-        update={"campaign": dict(cognition_campaign) | {"placements": [second, first]}}
+        update={"campaign": dict(reversed(list(cognition_campaign.items())))}
     )
     assert forward == backward
     assert forward.model_dump_json() == backward.model_dump_json()
 
 
-# --- the mock fixture preserves common random numbers across treatment arms -----------
+def test_prompt_object_keys_are_sorted_at_every_nesting_depth(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+) -> None:
+    nested = {"visual_style": "minimal-product", "description": "A calm still life."}
+    forward = cognition_request.model_copy(
+        update={"campaign": dict(cognition_campaign) | {"creative": dict(nested)}}
+    )
+    backward = cognition_request.model_copy(
+        update={
+            "campaign": dict(cognition_campaign)
+            | {"creative": dict(reversed(list(nested.items())))}
+        }
+    )
+    assert forward == backward
+    assert forward.model_dump_json() == backward.model_dump_json()
+    assert list(forward.campaign) == sorted(forward.campaign)
+    creative = forward.campaign["creative"]
+    assert isinstance(creative, Mapping)
+    assert list(creative) == sorted(creative)
+
+
+def test_prompt_object_keys_are_sorted_inside_an_array_element(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+) -> None:
+    element = {"visibility": 0.8, "channel": "mobile-feed"}
+    forward = cognition_request.model_copy(
+        update={"campaign": dict(cognition_campaign) | {"placements": [dict(element)]}}
+    )
+    backward = cognition_request.model_copy(
+        update={
+            "campaign": dict(cognition_campaign)
+            | {"placements": [dict(reversed(list(element.items())))]}
+        }
+    )
+    assert forward == backward
+    assert forward.model_dump_json() == backward.model_dump_json()
+    placements = forward.campaign["placements"]
+    assert isinstance(placements, tuple)
+    first = placements[0]
+    assert isinstance(first, Mapping)
+    assert list(first) == ["channel", "visibility"]
+
+
+_AUTHORED_ARRAYS: tuple[tuple[str, list[object]], ...] = (
+    ("numeric-exposure-history", [2, 10, 3, 1, 21]),
+    ("ranked-placements", ["highway-billboard", "mobile-feed"]),
+    ("ordered-price-points", [1299.0, 999.0, 1499.0]),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "authored"),
+    _AUTHORED_ARRAYS,
+    ids=[label for label, _ in _AUTHORED_ARRAYS],
+)
+def test_a_prompt_array_reaches_the_provider_in_the_order_its_caller_authored(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+    label: str,
+    authored: list[object],
+) -> None:
+    """Array order is prompt content, and a provider is shown the text as written.
+
+    Sorting array elements by their canonical JSON text turns ``[2, 10, 3, 1, 21]`` into
+    ``[10, 1, 21, 2, 3]``, which is arithmetically nonsense in the text the model reads.
+    Determinism is a property of the digest, not a licence to rewrite the payload.
+    """
+    request = cognition_request.model_copy(
+        update={"campaign": dict(cognition_campaign) | {"series": list(authored)}}
+    )
+    assert request.campaign["series"] == tuple(authored)
+    assert json.loads(request.model_dump_json())["campaign"]["series"] == authored
+
+
+def test_a_prompt_array_in_a_different_order_is_a_different_request(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+) -> None:
+    """Callers projecting a domain frozenset must sort; the port no longer does it for them."""
+    forward = cognition_request.model_copy(
+        update={"campaign": dict(cognition_campaign) | {"series": [1, 2, 3]}}
+    )
+    backward = cognition_request.model_copy(
+        update={"campaign": dict(cognition_campaign) | {"series": [3, 2, 1]}}
+    )
+    assert forward != backward
+    assert forward.campaign["series"] == (1, 2, 3)
+    assert backward.campaign["series"] == (3, 2, 1)
+
+
+# --- the mock fixture is the documented digest of request_id and the canonical request -
 
 
 _Variation = Callable[[CognitionRequest, int], dict[str, object]]
 
-_NON_TREATMENT_VARIATIONS: tuple[tuple[str, _Variation], ...] = (
+_CANONICAL_REQUEST_TERMS: tuple[tuple[str, _Variation], ...] = (
     ("request_id", lambda request, step: {"request_id": stable_event_id(request.run_id, step)}),
     (
         "run_id",
@@ -1152,52 +1568,32 @@ _NON_TREATMENT_VARIATIONS: tuple[tuple[str, _Variation], ...] = (
     ),
     ("prompt_version", lambda request, step: {"prompt_version": f"cognition-v{step}"}),
     ("creative_sha256", lambda request, step: {"creative_sha256": f"{step:064x}"}),
+    ("agent_id", lambda request, step: {"agent_id": f"person-{step:03d}"}),
+    ("exposure_count", lambda request, step: {"exposure_count": 1 + step % 14}),
+    ("simulated_minute", lambda request, step: {"simulated_minute": step * 15}),
 )
-_NON_TREATMENT_IDS = [name for name, _ in _NON_TREATMENT_VARIATIONS]
+_CANONICAL_REQUEST_IDS = [name for name, _ in _CANONICAL_REQUEST_TERMS]
 
 
 @pytest.mark.parametrize(
     ("term", "vary"),
-    _NON_TREATMENT_VARIATIONS,
-    ids=_NON_TREATMENT_IDS,
+    _CANONICAL_REQUEST_TERMS,
+    ids=_CANONICAL_REQUEST_IDS,
 )
-def test_the_mock_fixture_ignores_every_term_a_treatment_itself_moves(
+def test_the_mock_fixture_follows_every_term_of_the_canonical_request(
     cognition_request: CognitionRequest,
     term: str,
     vary: _Variation,
 ) -> None:
-    """Paired treatment arms must draw the same mock answer for the same question.
+    """The brief's rule is the whole canonical request, not a chosen subset of it.
 
-    Specification section 18 runs its A/B comparisons in rule or mock mode, so the mock
-    has to preserve common random numbers: a treatment that changes how many events came
-    before, or that moves the mood it is measuring, must not re-draw every later agent's
-    cognition for reasons unrelated to the treatment.
+    Selecting on a six-term treatment tuple left the mock answer insensitive to mood and
+    to the memories the agent carries, which Tasks 12 and 13 will reasonably expect to
+    move a mock answer.
     """
     provider = MockCognitionProvider(seed=2)
     indexes = {
         provider.fixture_index(cognition_request.model_copy(update=vary(cognition_request, step)))
-        for step in range(20)
-    }
-    assert indexes == {provider.fixture_index(cognition_request)}
-
-
-_TREATMENT_VARIATIONS: tuple[tuple[str, Callable[[int], dict[str, object]]], ...] = (
-    ("agent_id", lambda step: {"agent_id": f"person-{step:03d}"}),
-    ("exposure_count", lambda step: {"exposure_count": 1 + step % 14}),
-    ("simulated_minute", lambda step: {"simulated_minute": step * 15}),
-)
-_TREATMENT_IDS = [name for name, _ in _TREATMENT_VARIATIONS]
-
-
-@pytest.mark.parametrize(("term", "vary"), _TREATMENT_VARIATIONS, ids=_TREATMENT_IDS)
-def test_the_mock_fixture_varies_with_every_treatment_term(
-    cognition_request: CognitionRequest,
-    term: str,
-    vary: Callable[[int], dict[str, object]],
-) -> None:
-    provider = MockCognitionProvider()
-    indexes = {
-        provider.fixture_index(cognition_request.model_copy(update=vary(step)))
         for step in range(20)
     }
     assert len(indexes) > 1
@@ -1242,11 +1638,15 @@ def test_the_mock_fixture_varies_with_the_channel_for_some_agent(
     assert separated
 
 
-def test_the_mock_fixture_key_is_exactly_the_documented_treatment_tuple(
+def test_the_mock_fixture_is_the_documented_digest_of_the_whole_request(
     cognition_request: CognitionRequest,
     cognition_campaign: dict[str, object],
 ) -> None:
-    """Pin the full selection key, so no term can be added, renamed or dropped silently."""
+    """Pin the published selection rule: request_id plus the canonical request JSON.
+
+    The digest is rebuilt here from the port's own canonical digest rather than from the
+    adapter, so renaming, dropping or adding a term to the selection key turns this red.
+    """
     for seed in range(3):
         provider = MockCognitionProvider(seed=seed)
         for step in range(6):
@@ -1256,6 +1656,7 @@ def test_the_mock_fixture_key_is_exactly_the_documented_treatment_tuple(
                     "campaign": dict(cognition_campaign) | {"campaign_id": f"campaign-{step}"},
                     "channel": list(get_args(Channel))[step % 2],
                     "exposure_count": 1 + step,
+                    "mood": round(-0.5 + step * 0.2, 2),
                     "simulated_minute": 15 * step,
                 }
             )
@@ -1263,12 +1664,9 @@ def test_the_mock_fixture_key_is_exactly_the_documented_treatment_tuple(
                 int(
                     canonical_sha256(
                         {
-                            "agent_id": request.agent_id,
-                            "campaign_id": request.campaign_id,
-                            "channel": request.channel,
-                            "exposure_count": request.exposure_count,
+                            "request_id": request.request_id,
+                            "request_sha256": canonical_sha256(request),
                             "seed": seed,
-                            "simulated_minute": request.simulated_minute,
                         }
                     ),
                     16,
@@ -1375,6 +1773,130 @@ def test_a_record_without_a_raw_response_stays_empty(
     provider_metadata: ProviderMetadata,
 ) -> None:
     assert _record_with(cognition_request, provider_metadata, None).raw_response is None
+
+
+# --- an environment-variable-shaped secret label is a secret label too ----------------
+
+
+_ENVIRONMENT_SHAPED_CREDENTIALS: tuple[tuple[str, str, str], ...] = (
+    (
+        "adlife-api-key",
+        '{"detail":"ADLIFE_API_KEY: fictional-token-00000000 was rejected"}',
+        "fictional-token-00000000",
+    ),
+    (
+        "openai-api-key",
+        '{"detail":"OPENAI_API_KEY=fictional-token-11111111 is invalid"}',
+        "fictional-token-11111111",
+    ),
+    (
+        "db-password",
+        '{"detail":"DB_PASSWORD: fictional-passphrase-2222"}',
+        "fictional-passphrase-2222",
+    ),
+    (
+        "prefixed-access-token",
+        '{"detail":"X_ACCESS_TOKEN = fictional-token-33333333"}',
+        "fictional-token-33333333",
+    ),
+)
+"""Specification section 6.4 names ``ADLIFE_API_KEY`` itself, so this is the live shape.
+
+Every value here is deliberately NOT vendor-key shaped, so ``_VENDOR_KEY_PATTERN`` cannot
+mask a gap in the secret-label rule; the companion test below proves that.
+"""
+
+_ENVIRONMENT_SHAPED_IDS = [label for label, _, _ in _ENVIRONMENT_SHAPED_CREDENTIALS]
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "secret"),
+    _ENVIRONMENT_SHAPED_CREDENTIALS,
+    ids=_ENVIRONMENT_SHAPED_IDS,
+)
+def test_redaction_covers_an_environment_variable_shaped_secret_label(
+    label: str,
+    body: str,
+    secret: str,
+) -> None:
+    """A credential label preceded by an underscore is still a credential label."""
+    redacted = redact_provider_body(body)
+    assert secret not in redacted
+    assert REDACTION_PLACEHOLDER in redacted
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "secret"),
+    _ENVIRONMENT_SHAPED_CREDENTIALS,
+    ids=_ENVIRONMENT_SHAPED_IDS,
+)
+def test_no_environment_shaped_value_is_caught_by_the_vendor_key_shape(
+    label: str,
+    body: str,
+    secret: str,
+) -> None:
+    """Without its label each value survives, so the label rule is what must catch it."""
+    assert redact_provider_body(secret) == secret
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "secret"),
+    _ENVIRONMENT_SHAPED_CREDENTIALS,
+    ids=_ENVIRONMENT_SHAPED_IDS,
+)
+def test_a_record_redacts_an_environment_variable_shaped_credential(
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+    label: str,
+    body: str,
+    secret: str,
+) -> None:
+    record = _record_with(cognition_request, provider_metadata, body)
+    assert record.raw_response is not None
+    assert secret not in record.raw_response
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "secret"),
+    _ENVIRONMENT_SHAPED_CREDENTIALS,
+    ids=_ENVIRONMENT_SHAPED_IDS,
+)
+def test_the_persona_screen_detects_an_environment_variable_shaped_secret(
+    cognition_request: CognitionRequest,
+    label: str,
+    body: str,
+    secret: str,
+) -> None:
+    """Detection and redaction share one label rule, so both must see the same label."""
+    assert contains_sensitive_text(body)
+    with pytest.raises(ValidationError, match="sensitive"):
+        cognition_request.model_copy(update={"relevant_memories": (body,)})
+
+
+def test_a_raw_body_that_still_trips_the_secret_screen_is_dropped_entirely() -> None:
+    """Redaction is pattern matching, so the record fails closed on whatever is left.
+
+    A label with no value after it is detected by the repository secret screen and not
+    matched by the value-removing pattern, so the body is replaced wholesale rather than
+    stored while the repository's own detector still calls it a secret.
+    """
+    body = '{"error":"provide a password:"}'
+    assert contains_secret_or_email_text(body)
+    assert redact_provider_body(body) == REDACTION_PLACEHOLDER
+
+
+def test_a_stored_raw_body_never_trips_the_repository_secret_screen(
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+) -> None:
+    """The claim the cache module makes about stored records, enforced rather than stated."""
+    bodies = [body for _, body, _ in _ECHOED_CREDENTIALS]
+    bodies += [body for _, body, _ in _ENVIRONMENT_SHAPED_CREDENTIALS]
+    bodies.append('{"error":"provide a password:"}')
+    for body in bodies:
+        record = _record_with(cognition_request, provider_metadata, body)
+        assert record.raw_response is not None
+        assert not contains_secret_or_email_text(record.raw_response)
 
 
 # --- every documented bound and default is pinned in both directions ------------------
@@ -1505,3 +2027,260 @@ def test_a_request_refuses_a_simulated_minute_outside_the_documented_band(
 ) -> None:
     with pytest.raises(ValidationError):
         cognition_request.model_copy(update={"simulated_minute": simulated_minute})
+
+
+# --- every declared identifier and digest pattern is tripped by a test -----------------
+
+
+def _error_fields(error: pytest.ExceptionInfo[ValidationError]) -> set[str]:
+    """The field each reported validation error was raised against.
+
+    Some of these patterns are also covered by a neighbouring rule, so "a ValidationError
+    was raised" is not enough to prove the clause under test did the rejecting. Asserting
+    the reported location does prove it: delete the pattern and the field disappears from
+    this set even when the construction still fails for another reason.
+    """
+    return {str(entry["loc"][0]) for entry in error.value.errors() if entry["loc"]}
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ["Run-Demo", "run demo", "-leading-dash", "run_demo", "r" * 41, ""],
+)
+def test_a_request_refuses_a_run_id_the_identifier_rule_rejects(
+    cognition_persona: dict[str, object],
+    cognition_campaign: dict[str, object],
+    run_id: str,
+) -> None:
+    """``run_id`` names the run directory every artifact is filed under."""
+    with pytest.raises(ValidationError) as error:
+        CognitionRequest(
+            request_id=f"{run_id}:event-00000007",
+            run_id=run_id,
+            simulated_minute=480,
+            agent_id="person-001",
+            fictional_persona=cognition_persona,
+            activity="commute",
+            mood=0.2,
+            relevant_memories=(),
+            campaign=cognition_campaign,
+            channel="mobile-feed",
+            exposure_count=2,
+        )
+    assert "run_id" in _error_fields(error)
+
+
+@pytest.mark.parametrize(
+    "agent_id",
+    ["person-1", "person-0001", "PERSON-001", "person001", "agent-001", ""],
+)
+def test_a_request_refuses_an_agent_id_the_identifier_rule_rejects(
+    cognition_request: CognitionRequest,
+    agent_id: str,
+) -> None:
+    """``agent_id`` keys the oracle draw, the mock fixture and every agent-scoped metric."""
+    with pytest.raises(ValidationError) as error:
+        cognition_request.model_copy(update={"agent_id": agent_id})
+    assert "agent_id" in _error_fields(error)
+
+
+@pytest.mark.parametrize(
+    "creative_sha256",
+    ["a" * 63, "a" * 65, "A" * 64, "g" * 64, "not-a-digest", ""],
+)
+def test_a_request_refuses_a_creative_digest_that_is_not_a_sha_256(
+    cognition_request: CognitionRequest,
+    creative_sha256: str,
+) -> None:
+    """The creative digest is cache-key material, so a near-miss must not be accepted."""
+    with pytest.raises(ValidationError) as error:
+        cognition_request.model_copy(update={"creative_sha256": creative_sha256})
+    assert "creative_sha256" in _error_fields(error)
+
+
+@pytest.mark.parametrize(
+    "prompt_version",
+    ["Cognition-V1", "cognition v1", "-cognition-v1", "cognition_v1", "c" * 41, ""],
+)
+def test_a_request_refuses_a_prompt_version_the_identifier_rule_rejects(
+    cognition_request: CognitionRequest,
+    prompt_version: str,
+) -> None:
+    """The prompt version participates in every cache key, so its spelling is contractual."""
+    with pytest.raises(ValidationError) as error:
+        cognition_request.model_copy(update={"prompt_version": prompt_version})
+    assert "prompt_version" in _error_fields(error)
+
+
+@pytest.mark.parametrize("model_digest", ["a" * 63, "A" * 64, "g" * 64, "not-a-digest", ""])
+def test_provider_metadata_refuses_a_model_digest_that_is_not_a_sha_256(
+    sampling_settings: SamplingSettings,
+    model_digest: str,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        ProviderMetadata(
+            kind="mock",
+            model_id="mock-v1",
+            model_digest=model_digest,
+            sampling=sampling_settings,
+            prompt_sha256="b" * 64,
+        )
+    assert "model_digest" in _error_fields(error)
+
+
+@pytest.mark.parametrize("prompt_sha256", ["b" * 63, "B" * 64, "z" * 64, "not-a-digest", ""])
+def test_provider_metadata_refuses_a_prompt_digest_that_is_not_a_sha_256(
+    sampling_settings: SamplingSettings,
+    prompt_sha256: str,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        ProviderMetadata(
+            kind="mock",
+            model_id="mock-v1",
+            sampling=sampling_settings,
+            prompt_sha256=prompt_sha256,
+        )
+    assert "prompt_sha256" in _error_fields(error)
+
+
+@pytest.mark.parametrize("key", ["0" * 63, "0" * 65, "F" * 64, "z" * 64, "not-a-digest", ""])
+def test_a_record_refuses_a_key_that_is_not_a_sha_256(
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+    key: str,
+) -> None:
+    """A record is addressed by content, so its own key claim has to be a digest."""
+    with pytest.raises(ValidationError) as error:
+        CognitionRecord(
+            key=key,
+            request=cognition_request,
+            provider_metadata=provider_metadata,
+            raw_response=None,
+            result=rule_cognition_result(cognition_request, _response()),
+            usage=ProviderUsage(
+                provider_kind="mock",
+                model_id="mock-v1",
+                prompt_tokens=0,
+                completion_tokens=0,
+                latency_ms=0,
+            ),
+        )
+    assert "key" in _error_fields(error)
+
+
+# --- a value-shaped secret is redacted even under an unlabelled field ------------------
+
+
+_UNLABELLED_SECRET_BODIES: tuple[tuple[str, str, str], ...] = (
+    (
+        "vendor-key-shape",
+        '{"detail":"the credential sk-test-0000000000000000 did not authorize"}',
+        "sk-test-0000000000000000",
+    ),
+    (
+        "vendor-key-underscore-shape",
+        '{"detail":"rejected pk_test_0000000000000000 at the gateway"}',
+        "pk_test_0000000000000000",
+    ),
+    (
+        "jwt-under-an-unlabelled-field",
+        '{"credential":"eyJhbGciOiJmaWN0aW9uIn0.eyJzdWIiOiJmaWN0aW9uYWwifQ.'
+        '0000000000000000000000000000"}',
+        "eyJhbGciOiJmaWN0aW9uIn0.eyJzdWIiOiJmaWN0aW9uYWwifQ.0000000000000000000000000000",
+    ),
+)
+_UNLABELLED_SECRET_IDS = [label for label, _, _ in _UNLABELLED_SECRET_BODIES]
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "secret"),
+    _UNLABELLED_SECRET_BODIES,
+    ids=_UNLABELLED_SECRET_IDS,
+)
+def test_a_value_shaped_secret_is_redacted_without_a_label_to_announce_it(
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+    label: str,
+    body: str,
+    secret: str,
+) -> None:
+    """A provider that quotes a credential does not always name the field it came from.
+
+    None of these bodies carries a secret LABEL, so the label rule cannot fire and the
+    fail-closed residual screen cannot fire either - the value shape is the only thing
+    that can catch them. Every token here is obviously fake.
+    """
+    assert not contains_secret_or_email_text(body)
+    redacted = redact_provider_body(body)
+    assert secret not in redacted
+    assert REDACTION_PLACEHOLDER in redacted
+
+    record = _record_with(cognition_request, provider_metadata, body)
+    assert record.raw_response is not None
+    assert secret not in record.raw_response
+
+
+def test_an_ordinary_contact_address_is_redacted_in_place_rather_than_dropped() -> None:
+    """The email clause removes the address; it does not cost the rest of the body.
+
+    Losing the whole body to the fail-closed screen would still hide the address, so this
+    pins the clause that keeps a diagnostic body readable.
+    """
+    body = '{"detail":"contact ops@vendor.invalid about the quota"}'
+    redacted = redact_provider_body(body)
+    assert "ops@vendor.invalid" not in redacted
+    assert redacted != REDACTION_PLACEHOLDER
+    assert "about the quota" in redacted
+
+
+# --- a sensitive string in the KEY position is screened exactly like a value -----------
+
+
+@pytest.mark.parametrize(
+    ("key_text", "message"),
+    [
+        ("analyst@example.invalid", "sensitive"),
+        ("api_key: sk-live-abcdef1234", "sensitive"),
+        ("+1 415 555 0134", "sensitive"),
+        ("/home/analyst/notes.txt", "filesystem path"),
+        ("C:\\Users\\analyst", "filesystem path"),
+    ],
+)
+def test_a_request_screens_the_persona_object_keys_as_well_as_their_values(
+    cognition_request: CognitionRequest,
+    key_text: str,
+    message: str,
+) -> None:
+    """A prompt object is JSON a caller composes, so a key is as writable as a value."""
+    persona = dict(cognition_request.fictional_persona) | {key_text: "a fictional note"}
+    with pytest.raises(ValidationError, match=message):
+        cognition_request.model_copy(update={"fictional_persona": persona})
+
+
+@pytest.mark.parametrize(
+    ("key_text", "message"),
+    [
+        ("analyst@example.invalid", "sensitive"),
+        ("api_key: sk-live-abcdef1234", "sensitive"),
+        ("/home/analyst/notes.txt", "filesystem path"),
+    ],
+)
+def test_a_request_screens_the_campaign_object_keys_as_well_as_their_values(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+    key_text: str,
+    message: str,
+) -> None:
+    campaign = dict(cognition_campaign) | {key_text: "a fictional note"}
+    with pytest.raises(ValidationError, match=message):
+        cognition_request.model_copy(update={"campaign": campaign})
+
+
+def test_a_request_accepts_an_ordinary_object_key(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+) -> None:
+    """The key screen must not refuse ordinary prompt structure."""
+    campaign = dict(cognition_campaign) | {"delivery_window": "7 to 10 days"}
+    updated = cognition_request.model_copy(update={"campaign": campaign})
+    assert updated.campaign["delivery_window"] == "7 to 10 days"

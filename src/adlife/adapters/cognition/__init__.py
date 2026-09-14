@@ -14,6 +14,8 @@ from adlife.adapters.cognition.mock import (
 from adlife.adapters.cognition.replay import ReplayCognitionProvider
 from adlife.adapters.cognition.rules import (
     RULE_MODEL_ID,
+    MismatchedRuleResponse,
+    RuleCognitionInputs,
     RuleCognitionProvider,
     UnknownCognitionRequest,
     rule_cognition_result,
@@ -28,8 +30,10 @@ __all__ = [
     "CacheMiss",
     "CognitionCache",
     "CorruptCacheRecord",
+    "MismatchedRuleResponse",
     "MockCognitionProvider",
     "ReplayCognitionProvider",
+    "RuleCognitionInputs",
     "RuleCognitionProvider",
     "UnknownCognitionRequest",
     "rule_cognition_result",

@@ -536,40 +536,91 @@ def test_get_returns_a_record_that_still_derives_its_own_key(
     assert CognitionCache.make_key(loaded.request, loaded.provider_metadata) == record.key
 
 
-def test_array_order_never_changes_the_key(
+def test_a_sorted_frozenset_projection_keys_identically_in_every_process(
     cognition_request: CognitionRequest,
     cognition_campaign: dict[str, object],
     valid_profile: PersonProfile,
     valid_campaign: Campaign,
     provider_metadata: ProviderMetadata,
 ) -> None:
-    """A persona or campaign projected from a domain frozenset keys identically.
+    """The canonical digest sorts object keys, never array elements.
 
-    The canonical digest sorts object keys, never array elements, so an unsorted
-    ``list(frozenset)`` projection would key differently in every process. The request
-    contract canonicalises array order, so both orderings are the same question.
+    A caller therefore sorts its own ``list(frozenset)`` projection, and the key is then
+    the same in every process. The port preserves array order rather than rewriting the
+    payload, so this obligation is the caller's and is pinned here.
     """
-    interests = sorted({*valid_profile.interests, "cycling", "cooking"})
-    targets = sorted({*valid_campaign.target_interests, "travel", "audio"})
 
-    def build(ordered_interests: list[str], ordered_targets: list[str]) -> CognitionRequest:
+    def build() -> CognitionRequest:
         return cognition_request.model_copy(
             update={
                 "fictional_persona": {
                     "age_band": "25-34",
                     "household_type": valid_profile.household_type,
-                    "interests": ordered_interests,
+                    "interests": sorted({*valid_profile.interests, "cycling", "cooking"}),
                     "occupation": valid_profile.occupation,
                 },
-                "campaign": dict(cognition_campaign) | {"target_interests": ordered_targets},
+                "campaign": dict(cognition_campaign)
+                | {
+                    "target_interests": sorted(
+                        {*valid_campaign.target_interests, "travel", "audio"}
+                    )
+                },
             }
         )
 
-    forward = build(interests, targets)
-    backward = build(list(reversed(interests)), list(reversed(targets)))
-    assert CognitionCache.make_key(forward, provider_metadata) == CognitionCache.make_key(
+    assert CognitionCache.make_key(build(), provider_metadata) == CognitionCache.make_key(
+        build(), provider_metadata
+    )
+
+
+def test_an_unsorted_array_projection_keys_differently(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+    provider_metadata: ProviderMetadata,
+) -> None:
+    """Array order is prompt content, so it is key material - the recorded consequence."""
+    targets = ["audio", "technology", "travel"]
+    forward = cognition_request.model_copy(
+        update={"campaign": dict(cognition_campaign) | {"target_interests": targets}}
+    )
+    backward = cognition_request.model_copy(
+        update={
+            "campaign": dict(cognition_campaign) | {"target_interests": list(reversed(targets))}
+        }
+    )
+    assert CognitionCache.make_key(forward, provider_metadata) != CognitionCache.make_key(
         backward, provider_metadata
     )
+
+
+def test_mapping_order_never_changes_the_stored_bytes(
+    tmp_path: Path,
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+    provider_metadata: ProviderMetadata,
+) -> None:
+    """The record filed under a key must be a function of that key, byte for byte.
+
+    ``make_key`` digests a key-sorted canonical JSON while ``put`` stores
+    ``model_dump_json()``. If the prompt objects kept their insertion order the same key
+    would address different bytes depending on how the prompt builder assembled them, and
+    re-recording under another ordering would silently rewrite the file.
+    """
+    reordered = cognition_request.model_copy(
+        update={"campaign": dict(reversed(list(cognition_campaign.items())))}
+    )
+    assert reordered == cognition_request
+    forward = _record(cognition_request, provider_metadata)
+    backward = _record(reordered, provider_metadata)
+    assert forward.key == backward.key
+    assert forward.model_dump_json() == backward.model_dump_json()
+
+    cache = CognitionCache(tmp_path)
+    cache.put(forward.key, forward)
+    first = (tmp_path / f"{forward.key}.json").read_text(encoding="utf-8")
+    cache.put(backward.key, backward)
+    second = (tmp_path / f"{backward.key}.json").read_text(encoding="utf-8")
+    assert first == second
 
 
 def test_an_echoed_credential_never_persists_in_a_stored_record(
@@ -598,3 +649,25 @@ def test_an_echoed_credential_never_persists_in_a_stored_record(
     reloaded = cache.get(record.key)
     assert reloaded is not None
     assert reloaded.raw_response == record.raw_response
+
+
+def test_an_environment_shaped_credential_never_persists_in_a_stored_record(
+    tmp_path: Path,
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+) -> None:
+    """Specification section 6.4 reads the key from ``ADLIFE_API_KEY``.
+
+    A provider that echoes the environment variable it was configured from writes the
+    live key into ``runs/RUN_ID`` cache JSON, which is exactly the persistence
+    specification section 19 forbids.
+    """
+    cache = CognitionCache(tmp_path)
+    record = _record(
+        cognition_request,
+        provider_metadata,
+        raw_response='{"detail":"ADLIFE_API_KEY: fictional-token-00000000 was rejected"}',
+    )
+    cache.put(record.key, record)
+    stored = (tmp_path / f"{record.key}.json").read_text(encoding="utf-8")
+    assert "fictional-token-00000000" not in stored

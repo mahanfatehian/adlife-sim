@@ -279,18 +279,18 @@ async def test_replay_reports_a_mismatched_record_inside_the_cognition_error_hie
         await provider.evaluate(cognition_request)
 
 
-async def test_replay_finds_a_record_whose_prompt_arrays_were_built_in_another_order(
+async def test_replay_misses_when_a_prompt_array_was_built_in_another_order(
     tmp_path: Path,
     cognition_request: CognitionRequest,
     cognition_campaign: dict[str, object],
     provider_metadata: ProviderMetadata,
 ) -> None:
-    """A ``list(frozenset)`` projection must replay, not miss.
+    """Array order is prompt content, so a re-ordered array is a different question.
 
-    Array order inside ``fictional_persona`` and ``campaign`` is process-dependent when a
-    caller projects a domain frozenset, so a replay keyed on raw array order would miss in
-    one process and hit in the next. Both the key and the record-binding guard have to
-    agree that these are the same question.
+    The port preserves the array a caller authored rather than sorting it, so a caller
+    that projects a domain frozenset must sort it. This is the recorded consequence: an
+    unsorted projection misses rather than silently replaying another payload's answer,
+    and it misses inside the :class:`CognitionError` hierarchy so a run can fall back.
     """
     targets = ["audio", "technology", "travel"]
     recorded_request = cognition_request.model_copy(
@@ -298,11 +298,84 @@ async def test_replay_finds_a_record_whose_prompt_arrays_were_built_in_another_o
     )
     cache, recorded = await _recorded(tmp_path, recorded_request, provider_metadata)
 
+    provider = ReplayCognitionProvider(cache, provider_metadata)
+    replayed = await provider.evaluate(recorded_request)
+    assert replayed.model_dump_json() == recorded.model_dump_json()
+
     reordered = cognition_request.model_copy(
         update={
             "campaign": dict(cognition_campaign) | {"target_interests": list(reversed(targets))}
         }
     )
-    assert reordered == recorded_request
-    replayed = await ReplayCognitionProvider(cache, provider_metadata).evaluate(reordered)
-    assert replayed.model_dump_json() == recorded.model_dump_json()
+    assert reordered != recorded_request
+    assert reordered.campaign["target_interests"] == tuple(reversed(targets))
+    with pytest.raises(CacheMiss):
+        await provider.evaluate(reordered)
+
+
+async def test_replay_reads_and_validates_its_record_once_per_answer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+) -> None:
+    """The result and its provenance come out of one read of one file.
+
+    Asking for the result and then for the usage re-read, re-parsed and re-validated the
+    same record a second time, so the pair was not atomic over the file it describes.
+    """
+    cache, _ = await _recorded(tmp_path, cognition_request, provider_metadata)
+    reads: list[str] = []
+    original = CognitionCache.get
+
+    def counted(self: CognitionCache, key: str) -> CognitionRecord | None:
+        reads.append(key)
+        return original(self, key)
+
+    monkeypatch.setattr(CognitionCache, "get", counted)
+    provider = ReplayCognitionProvider(cache, provider_metadata)
+
+    answer = await provider.answer(cognition_request)
+    assert len(reads) == 1
+    assert answer.usage.cache_hit is True
+
+    reads.clear()
+    await provider.evaluate(cognition_request)
+    provider.usage_for(cognition_request)
+    assert len(reads) == 2
+
+
+async def test_replay_reproduces_a_recorded_fallback_through_the_port(
+    tmp_path: Path,
+    cognition_request: CognitionRequest,
+    provider_metadata: ProviderMetadata,
+) -> None:
+    """A replayed run must not restamp a recorded fallback as an ordinary replay.
+
+    The original run recorded ``provider_kind="fallback"`` with a reason. A service coded
+    against the port reads that provenance back through ``answer``, so the replayed event
+    stream carries the same source and the same reason as the run it reproduces.
+    """
+    result = await MockCognitionProvider().evaluate(cognition_request)
+    cache = CognitionCache(tmp_path)
+    record = _record(
+        cognition_request,
+        provider_metadata,
+        result,
+        usage=ProviderUsage(
+            provider_kind="fallback",
+            model_id="rule-v1",
+            prompt_tokens=0,
+            completion_tokens=0,
+            latency_ms=0,
+            fallback_reason="invalid-response",
+        ),
+    )
+    cache.put(record.key, record)
+
+    answer = await ReplayCognitionProvider(cache, provider_metadata).answer(cognition_request)
+    assert answer.usage.provider_kind == "fallback"
+    assert answer.usage.fallback_reason == "invalid-response"
+    assert answer.usage.model_id == "rule-v1"
+    assert answer.usage.cache_hit is True
+    assert answer.result.model_dump_json() == result.model_dump_json()

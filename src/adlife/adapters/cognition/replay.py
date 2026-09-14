@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from adlife.adapters.cognition.cache import CacheMiss, CognitionCache, CorruptCacheRecord
 from adlife.core.ports.cognition import (
+    CognitionAnswer,
     CognitionRecord,
     CognitionRequest,
     CognitionResult,
@@ -52,6 +53,21 @@ class ReplayCognitionProvider:
 
     async def evaluate(self, request: CognitionRequest) -> CognitionResult:
         return self.record_for(request).result
+
+    async def answer(self, request: CognitionRequest) -> CognitionAnswer:
+        """Return the recorded result and its recorded provenance from ONE read.
+
+        The recorded ``provider_kind`` and ``fallback_reason`` are carried through
+        untouched, so a run that originally fell back replays as that fallback rather
+        than as an ordinary replay; only ``cache_hit`` is restamped, because serving from
+        the cache is what this provider does. Reading the record once also makes the
+        result and its provenance a single observation of a single file.
+        """
+        record = self.record_for(request)
+        return CognitionAnswer(
+            result=record.result,
+            usage=record.usage.model_copy(update={"cache_hit": True}),
+        )
 
     def usage_for(self, request: CognitionRequest) -> ProviderUsage:
         """Report the recorded usage, marked as the cache hit this replay is."""
