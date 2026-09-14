@@ -111,12 +111,48 @@ turn a security screen into a product defect. The ``x-`` rows overlap
 they are spelled out anyway so the covered header names are readable in one place.
 """
 
+MIN_UNSEGMENTED_VENDOR_KEY_CHARS = 20
+"""How long the tail of a SEGMENT-LESS ``sk``/``pk``/``rk`` token must be to count.
+
+``sk-live-``, ``sk_test_``, ``sk-proj-`` and ``rk_live_`` announce themselves with a
+vendor segment, so a short tail after one is still credible as a key and that branch keeps
+its original eight-character tail. A token with NO segment announces nothing, and the
+prefix on its own is two letters ordinary advertising copy uses: ``pk-collection``,
+``rk-series``, ``example.invalid/sk-2026-collection``. Those were refused at request build
+while the segment-less tail was also eight characters, which is a product defect in a
+simulator whose campaign copy is user-authored free text - a refused advertisement, not a
+prevented leak.
+
+Twenty is chosen against both error directions, and both are measurable:
+
+* TOO LOW costs usability. The longest false refusal reported is
+  ``sk-2026-collection``, a fifteen-character tail. Twenty clears it with five to spare.
+* TOO HIGH costs detection. The shortest real key of this family with no segment is the
+  legacy OpenAI user key, ``sk-`` and forty-eight characters; the ``sk-ant-`` and
+  ``sk-svcacct-`` shapes are longer still. Twenty is under half of the shortest, so every
+  published key of this shape stays matched by a wide margin.
+
+RESIDUAL RISK, stated plainly. A segment-less token with fewer than twenty characters
+after the prefix is no longer detected BY SHAPE. No published vendor key is that short, so
+what is given up is a hand-made or truncated one - and such a token is still caught the
+moment a credential label introduces it, a label sits beside it in a sibling member, a
+transport header names it, or ``Bearer`` precedes it. The one screen it has left behind
+is the shape screen, and that is the whole of the trade.
+"""
+
 VENDOR_SECRET_SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        # Two branches, because the vendor segment is what makes a SHORT tail credible as
+        # a key: `sk-live-abcdefghij` is a credential, `sk-2026-collection` is a landing
+        # path. The segmented branch keeps the original eight-character tail; the
+        # segment-less branch requires MIN_UNSEGMENTED_VENDOR_KEY_CHARS, whose docstring
+        # carries the threshold's justification and its residual risk.
         "openai-style-key",
         re.compile(
-            r"(?<![A-Za-z0-9])(?:sk|pk|rk)[_-](?:live|test|proj)?[_-]?"
-            r"[A-Za-z0-9][A-Za-z0-9._~+/=-]{7,}",
+            r"(?<![A-Za-z0-9])(?:sk|pk|rk)"
+            r"(?:[_-](?:live|test|proj)[_-]?[A-Za-z0-9][A-Za-z0-9._~+/=-]{7,}"
+            r"|[_-][A-Za-z0-9][A-Za-z0-9._~+/=-]"
+            rf"{{{MIN_UNSEGMENTED_VENDOR_KEY_CHARS - 1},}})",
             re.IGNORECASE,
         ),
     ),
@@ -148,7 +184,9 @@ A provider that quotes a credential back does not always name the field it came 
 an unlabelled ``{"credential": "ghp_..."}`` is exactly as much of a leak as a labelled
 one. Every row is a published vendor prefix rather than an entropy guess:
 
-* ``openai-style-key``  - ``sk``/``pk``/``rk`` with a ``live``/``test``/``proj`` segment.
+* ``openai-style-key``  - ``sk``/``pk``/``rk``, either with a ``live``/``test``/``proj``
+  segment and a short tail, or with no segment and a tail of at least
+  :data:`MIN_UNSEGMENTED_VENDOR_KEY_CHARS` characters.
 * ``github-token``      - ``ghp_``, ``gho_``, ``ghu_``, ``ghs_``, ``ghr_``.
 * ``slack-token``       - ``xoxb-``, ``xoxp-``, ``xoxa-``, ``xoxe-``, ``xoxr-``, ``xoxs-``.
 * ``slack-app-token``   - ``xapp-``.
@@ -551,6 +589,7 @@ class PersonProfile(DomainModel):
 __all__ = [
     "AUTH_HEADER_LABELS",
     "MIN_ADJACENT_VALUE_CHARS",
+    "MIN_UNSEGMENTED_VENDOR_KEY_CHARS",
     "REDACTION_PLACEHOLDER",
     "SECRET_ADJACENCY_GAP",
     "SECRET_LABEL_GAP",

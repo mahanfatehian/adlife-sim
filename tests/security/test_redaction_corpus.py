@@ -43,9 +43,11 @@ from adlife.core.domain.person import (
     SECRET_LABEL_WORDS,
     VENDOR_SECRET_SHAPES,
     PersonProfile,
+    contains_labelled_secret_member,
     contains_provider_secret_text,
     contains_secret_or_email_text,
     contains_sensitive_text,
+    redact_secret_text,
 )
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import (
@@ -358,20 +360,50 @@ def test_the_label_tables_are_named_and_documented() -> None:
 # --- S7: the persisted request is a second channel ------------------------------------
 
 
+S7_TOKEN = "sk-live-abcdefghij"
+"""The short vendor-key token the S7 fixtures carry, named so its coverage is explicit.
+
+Ten characters follow ``sk-live-``, which is far below
+:data:`~adlife.core.domain.person.MIN_UNSEGMENTED_VENDOR_KEY_CHARS`. It is detected
+anyway, for three independent reasons that
+``test_the_s7_token_is_covered_by_three_named_screens`` asserts one at a time.
+"""
+
 _LEAKING_CAMPAIGN: dict[str, object] = {
     "call_to_action": "Try it today",
     "campaign_id": "brand-x-launch",
     "message": "A calmer routine",
     "product_category": "wellness",
     "product_name": "Calm Phone",
-    "api_key": "sk-live-abcdefghij",
+    "api_key": S7_TOKEN,
 }
+
+
+def test_the_s7_token_is_covered_by_three_named_screens() -> None:
+    """Name the screens that catch the S7 token instead of relying on one incidentally.
+
+    The token is short, so the narrowing of the segment-less vendor branch (S12) could
+    plausibly have uncovered it. It did not, and each reason is asserted separately so a
+    later narrowing cannot remove all three without a test going red:
+
+    * SHAPE - the token carries a ``live`` segment, and the SEGMENTED branch of
+      ``openai-style-key`` is untouched by S12 and keeps its eight-character tail.
+    * STRUCTURAL - ``contains_labelled_secret_member`` walks JSON and sees the label in
+      the mapping KEY with the credential in the sibling VALUE, which no per-string
+      matcher can see at all. This is the screen the two S7 tests below actually exercise.
+    * LABELLED VALUE - in a raw provider body, ``contains_provider_secret_text`` sees the
+      label and the value it introduces.
+    """
+    assert contains_secret_or_email_text(S7_TOKEN)
+    assert contains_labelled_secret_member({"api_key": S7_TOKEN})
+    assert contains_provider_secret_text(f'{{"api_key":"{S7_TOKEN}"}}')
 
 
 def test_a_campaign_member_keyed_by_a_secret_label_is_refused(
     cognition_request: CognitionRequest,
 ) -> None:
     """The exact dict the verifier persisted to disk through the request channel."""
+    assert contains_labelled_secret_member(_LEAKING_CAMPAIGN)
     with pytest.raises(ValidationError, match="sensitive"):
         cognition_request.model_copy(update={"campaign": dict(_LEAKING_CAMPAIGN)})
 
@@ -379,7 +411,8 @@ def test_a_campaign_member_keyed_by_a_secret_label_is_refused(
 def test_a_persona_member_keyed_by_a_secret_label_is_refused(
     cognition_request: CognitionRequest,
 ) -> None:
-    persona = dict(cognition_request.fictional_persona) | {"api_key": "sk-live-abcdefghij"}
+    persona = dict(cognition_request.fictional_persona) | {"api_key": S7_TOKEN}
+    assert contains_labelled_secret_member(persona)
     with pytest.raises(ValidationError, match="sensitive"):
         cognition_request.model_copy(update={"fictional_persona": persona})
 
@@ -664,3 +697,131 @@ def test_a_body_whose_redaction_expands_still_reads_back(
     reloaded = cache.get(record.key)
     assert reloaded is not None
     assert reloaded.raw_response == record.raw_response
+
+
+# --- S12: the vendor key shape must not mistake ordinary campaign copy for a key ------
+
+
+ORDINARY_COPY_NOT_A_VENDOR_KEY: tuple[str, ...] = (
+    "Buy the pk-collection bundle now",
+    "Visit example.invalid/sk-2026-collection",
+    "Our rk-series headphones are here",
+    "Try the sk-8 blend today",
+)
+"""Campaign copy that opens a hyphenated word with ``sk``, ``pk`` or ``rk``.
+
+This is an ADVERTISING simulator and campaign copy is user-authored free text, so a
+product line called ``rk-series``, a landing path called ``/sk-2026-collection`` and a
+bundle called ``pk-collection`` are all ordinary input. Refusing them at request build is
+a usability defect rather than a security win: nothing has been sent, and the operator is
+told their advertisement carries a credential when it plainly does not.
+
+The first two rows were REFUSED before this round; the last two were already accepted and
+are carried here so the narrowing is pinned from both sides of its boundary.
+"""
+
+REALISTIC_VENDOR_KEYS_STILL_REFUSED: tuple[str, ...] = (
+    "sk-test-0000abcdefghijklmnopqrstuvwxyz0123456789",
+    "sk-proj-0000abcdefghijklmnopqrstuvwxyz01234567",
+)
+"""Obviously fake tokens carrying the LENGTH and SHAPE a real vendor key carries.
+
+Zeros and the alphabet in order: nothing here resembles a live credential. They exist so
+the narrowing above is pinned against the only way it could go wrong - by admitting a
+real key.
+"""
+
+
+@pytest.mark.parametrize("copy_text", ORDINARY_COPY_NOT_A_VENDOR_KEY)
+def test_ordinary_campaign_copy_is_not_a_vendor_key_shape(copy_text: str) -> None:
+    """None of the three text screens may object to ordinary product copy."""
+    assert not contains_secret_or_email_text(copy_text)
+    assert not contains_provider_secret_text(copy_text)
+    assert not contains_sensitive_text(copy_text)
+
+
+@pytest.mark.parametrize("copy_text", ORDINARY_COPY_NOT_A_VENDOR_KEY)
+def test_ordinary_campaign_copy_survives_the_redactor_unchanged(copy_text: str) -> None:
+    """A screen that does not object must be matched by a redactor that does not cut."""
+    assert redact_secret_text(copy_text) == copy_text
+    assert redact_provider_body(copy_text) == copy_text
+
+
+@pytest.mark.parametrize("copy_text", ORDINARY_COPY_NOT_A_VENDOR_KEY)
+def test_ordinary_campaign_copy_is_accepted_at_request_build(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+    copy_text: str,
+) -> None:
+    """The defect this round fixes: the prompt boundary refused the advertisement."""
+    campaign = dict(cognition_campaign) | {"message": copy_text}
+    updated = cognition_request.model_copy(update={"campaign": campaign})
+    assert updated.campaign["message"] == copy_text
+
+
+@pytest.mark.parametrize("key_text", REALISTIC_VENDOR_KEYS_STILL_REFUSED)
+def test_a_realistic_vendor_key_is_still_seen_by_every_text_screen(key_text: str) -> None:
+    """The narrowing may not cost one row of detection on a real key shape."""
+    assert contains_secret_or_email_text(key_text)
+    assert contains_provider_secret_text(key_text)
+    assert contains_sensitive_text(key_text)
+
+
+@pytest.mark.parametrize("key_text", REALISTIC_VENDOR_KEYS_STILL_REFUSED)
+def test_a_realistic_vendor_key_is_still_removed_by_the_redactor(key_text: str) -> None:
+    body = f'{{"detail":"{key_text} was rejected"}}'
+    redacted = redact_provider_body(body)
+    assert key_text not in redacted
+    assert REDACTION_PLACEHOLDER in redacted
+
+
+@pytest.mark.parametrize("key_text", REALISTIC_VENDOR_KEYS_STILL_REFUSED)
+def test_a_realistic_vendor_key_is_still_refused_at_request_build(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+    key_text: str,
+) -> None:
+    campaign = dict(cognition_campaign) | {"note": f"the gateway rejected {key_text}"}
+    with pytest.raises(ValidationError, match="sensitive"):
+        cognition_request.model_copy(update={"campaign": campaign})
+
+
+def test_a_short_segmentless_token_keeps_every_screen_except_the_shape_screen() -> None:
+    """What a short unlabelled ``sk-``/``pk-``/``rk-`` token IS and IS NOT protected by.
+
+    This is the residual risk of the S12 narrowing, written as an assertion rather than
+    left in a docstring. ``sk-2026-collection`` carries no vendor segment and eighteen
+    characters after the prefix, so:
+
+    * IS NOT protected by the value-SHAPE screen. Standing alone in text it is accepted,
+      which is the whole point - it is a landing path, not a credential. A hand-made or
+      truncated credential of that same shape would be missed the same way. No published
+      vendor key of this family is short enough to land here.
+    * IS protected by every LABEL-driven screen. A credential label in the mapping key
+      (S7), a label introducing it in a body (S1/S6), a label in a sibling member (S2), a
+      transport header name (S3) and a ``Bearer`` prefix all still catch it.
+    """
+    token = "sk-2026-collection"
+
+    assert not contains_secret_or_email_text(token)
+    assert not contains_provider_secret_text(token)
+    assert not contains_sensitive_text(token)
+
+    assert contains_labelled_secret_member({"api_key": token})
+    assert contains_provider_secret_text(f'{{"api_key":"{token}"}}')
+    assert contains_provider_secret_text(f'{{"name":"api_key","value":"{token}"}}')
+    assert contains_provider_secret_text(f'{{"received_headers":{{"x-api-key":"{token}"}}}}')
+    bearer_body = f'{{"received_headers":{{"authorization":"Bearer {token}"}}}}'
+    assert contains_provider_secret_text(bearer_body)
+
+
+def test_the_segmented_vendor_branch_keeps_its_original_short_tail() -> None:
+    """S12 narrowed the segment-less branch ONLY; the segmented branch is unchanged.
+
+    Every short vendor token already in this repository's tests carries a segment, so this
+    is the assertion that says the narrowing cost none of them their shape coverage.
+    """
+    segmented = ("sk-live-abcdef1234", "sk-test-0000000000000000", "pk_test_0000000000000000")
+    for token in segmented:
+        assert contains_secret_or_email_text(token), token
+        assert redact_secret_text(token) == REDACTION_PLACEHOLDER, token
