@@ -2206,11 +2206,19 @@ def test_a_value_shaped_secret_is_redacted_without_a_label_to_announce_it(
 ) -> None:
     """A provider that quotes a credential does not always name the field it came from.
 
-    None of these bodies carries a secret LABEL, so the label rule cannot fire and the
-    fail-closed residual screen cannot fire either - the value shape is the only thing
-    that can catch them. Every token here is obviously fake.
+    None of these bodies carries a secret LABEL, so the label rule cannot fire - the
+    value shape is the only thing that can catch them. Every token here is obviously
+    fake.
+
+    CORRECTED BY FINDING S6. This test used to assert ``not
+    contains_secret_or_email_text(body)`` - that the screen was BLIND to every value
+    shape. That blindness was the defect: it made the fail-closed residual re-check
+    inert for any body a real provider returns. The screen and the redactor are now
+    driven from one table, so the assertion states the property that replaced it: the
+    bare token, with no label anywhere near it, is recognised on its own.
     """
-    assert not contains_secret_or_email_text(body)
+    assert contains_secret_or_email_text(secret)
+    assert contains_secret_or_email_text(body)
     redacted = redact_provider_body(body)
     assert secret not in redacted
     assert REDACTION_PLACEHOLDER in redacted

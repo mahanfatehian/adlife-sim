@@ -6,6 +6,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from pydantic import ValidationError
+
 from adlife.core.domain.campaign import Campaign, Placement
 from adlife.core.domain.person import PersonProfile
 from adlife.core.domain.state import ConsumerState
@@ -32,6 +34,26 @@ class UnknownCognitionRequest(CognitionError):
 
     The provider fails closed on purpose. Returning a neutral placeholder would let an
     unwired caller silently receive an answer that no rule produced.
+    """
+
+
+class UnrepresentableRuleResult(CognitionError):
+    """Raised when a rule answer cannot be expressed as a valid :class:`CognitionResult`.
+
+    This exists because of the one thing specification section 12 forbids absolutely:
+    "provider failures must never abort a run". A service implements that by catching
+    :class:`CognitionError` around the terminal fallback, so the fallback may not raise
+    anything else - and it used to raise a bare ``pydantic.ValidationError`` whenever the
+    answer boundary refused the text it composed.
+
+    The live cause was an asymmetry between two screens. A campaign identifier is
+    admitted into the prompt under the NARROW rule, and ``memory_summary`` names that
+    identifier while keeping the STRICT persona rule. An all-digit campaign slug such as
+    ``1234567890`` is legal under the domain rule ``^[a-z0-9][a-z0-9-]{0,79}$`` and is a
+    bare national-identifier shape, so the composed summary is refused. The common case -
+    a slug whose digits merely continue a hyphenated token, ``spring-1234567890`` - was
+    closed in :mod:`adlife.core.domain.person`; what survives is closed here, by making
+    the refusal a :class:`CognitionError` a caller can actually handle.
     """
 
 
@@ -76,6 +98,14 @@ def rule_cognition_result(request: CognitionRequest, response: RuleResponse) -> 
     :func:`adlife.core.simulation.decision.evaluate_rule_response`; no formula is
     duplicated here. ``rule_modifier`` is exactly zero because the rule response already
     IS the baseline - a rule provider that modified it would apply the rule twice.
+
+    Every refusal this function makes is a :class:`CognitionError`. The answer boundary
+    can still object to text composed from a legal campaign slug, and when it does the
+    ``pydantic.ValidationError`` is translated into :class:`UnrepresentableRuleResult`
+    rather than escaping: this is the terminal fallback, and specification section 12
+    requires that a caller catching :class:`CognitionError` cannot have its run aborted
+    by it. ``TypeError`` for a wrongly typed argument is deliberately NOT translated - a
+    caller passing the wrong type has a defect, not a provider failure.
     """
     if not isinstance(request, CognitionRequest):
         raise TypeError("request must be a CognitionRequest")
@@ -89,6 +119,22 @@ def rule_cognition_result(request: CognitionRequest, response: RuleResponse) -> 
         )
 
     emotion = rule_emotion(response)
+    try:
+        return _compose_rule_result(request, response, emotion)
+    except ValidationError as error:
+        raise UnrepresentableRuleResult(
+            "the rule fallback composed an answer the cognition contract refuses for "
+            f"request {request.request_id}: {error.error_count()} field(s) rejected"
+        ) from error
+
+
+def _compose_rule_result(
+    request: CognitionRequest,
+    response: RuleResponse,
+    emotion: Emotion,
+) -> CognitionResult:
+    """Compose the answer text and numbers; the caller owns the failure translation."""
+    campaign_id = request.campaign_id
     return CognitionResult(
         request_id=request.request_id,
         interpretation=_fit(
@@ -260,6 +306,7 @@ __all__ = [
     "RuleCognitionInputs",
     "RuleCognitionProvider",
     "UnknownCognitionRequest",
+    "UnrepresentableRuleResult",
     "rule_cognition_result",
     "rule_emotion",
 ]

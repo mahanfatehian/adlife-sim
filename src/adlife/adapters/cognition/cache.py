@@ -3,13 +3,33 @@
 One JSON record per key lives beneath the run cache directory. Keys are SHA-256 digests
 of the documented material, so a record can never be addressed by a path fragment.
 
-A credential cannot reach a KEY, because no key material carries one: there is no
-credential field on `ProviderMetadata` and `normalize_base_url` strips the userinfo,
-query and fragment a URL could smuggle one through. The other channel is the raw provider
-body, and that one is screened rather than structurally closed: `CognitionRecord` runs
-`redact_provider_body` over it, which removes labelled secrets and value-shaped ones and
-then refuses to store any body the repository's own detector still calls a secret. Every
-other field on a record is validated text that is rejected outright if it carries one.
+WHAT THIS CACHE PROMISES ABOUT CREDENTIALS
+------------------------------------------
+One claim here is STRUCTURAL and holds absolutely: a credential cannot reach a cache KEY,
+because no key material can carry one. There is no credential field on `ProviderMetadata`
+and `normalize_base_url` strips the userinfo, query and fragment a URL could smuggle one
+through.
+
+Every other claim is a SCREEN, and screens are best effort. A stored record carries the
+request, the raw provider body and the validated answer, and each is filtered:
+
+* the raw body by redaction - `redact_provider_body` removes every labelled secret,
+  transport header value, label-adjacent value and vendor key shape the repository can
+  name, then drops the body wholesale if its own broadest detector still objects;
+* the request and the answer by rejection - per-string screening plus a structural walk
+  that refuses a member whose KEY is a credential label and whose VALUE carries text.
+
+The property that follows, and the only one this module asserts, is:
+
+    EVERY CREDENTIAL SHAPE THE REPOSITORY CAN NAME IS REMOVED FROM, OR REFUSED ENTRY TO,
+    A STORED RECORD.
+
+It is NOT "a stored record cannot carry a credential". Perfect secret detection is
+undecidable, and an opaque random token under an unlabelled field is indistinguishable
+from an order number. The named shapes are the tables in `adlife.core.domain.person`, and
+`tests/security/test_redaction_corpus.py` is the corpus that pins them. Treat this as
+defense in depth behind the real control, which is that a key is never written into
+project YAML, SQLite, logs or reports in the first place (specification section 6.4).
 """
 
 from __future__ import annotations

@@ -43,6 +43,8 @@ from adlife.core.domain.json_values import (
 from adlife.core.domain.person import (
     REDACTION_PLACEHOLDER,
     DomainModel,
+    contains_labelled_secret_member,
+    contains_provider_secret_text,
     contains_secret_or_email_text,
     contains_sensitive_text,
     redact_secret_text,
@@ -59,6 +61,28 @@ MAX_GROUNDED_REASONS = 3
 MAX_SAFETY_FLAGS = 8
 MAX_REQUEST_JSON_BYTES = 8192
 """A prompt payload above this canonical size is not a minimized prompt."""
+
+MAX_RAW_RESPONSE_CHARS = 65536
+"""The stored size of a raw provider body, measured AFTER redaction.
+
+Redaction can make a body longer: ``[redacted]`` is ten characters and the shortest
+match it replaces is six. The bound used to be checked before redaction, so a body just
+under it was written at roughly 1.6 times its size and then failed to re-validate on
+read - the write succeeded and the read raised ``CorruptCacheRecord`` (finding S9).
+:func:`bound_raw_provider_body` now settles the redaction and the bound together, so a
+record that can be written can be read.
+"""
+
+RAW_RESPONSE_TRUNCATION_MARKER = "[truncated]"
+"""What a deterministically shortened raw body ends with, so the loss is visible."""
+
+_RAW_RESPONSE_SETTLING_PASSES = 4
+"""How many redact-then-bound passes are allowed before the body is dropped entirely.
+
+Redaction is idempotent and truncation is monotonically shortening, so the pair reaches a
+fixed point in one or two passes. A body that has not settled by the last pass is
+replaced by the bare placeholder rather than stored, which fails closed.
+"""
 
 ProviderKind = Literal["rule", "mock", "replay", "local-llm", "remote-llm", "fallback"]
 """Every value is also a persistable ``EventSource``, so events need no translation."""
@@ -169,19 +193,57 @@ def redact_provider_body(value: str) -> str:
     section 12 forbids; storing it verbatim would put an echoed authorization header on
     disk, which specification section 19 forbids.
 
-    Redaction is pattern matching, so the result is checked against the repository's own
-    secret detector before it is returned. The detector and the redactor do not recognise
-    exactly the same text - a label with no value after it is detected and not removed -
-    and a body the detector still calls a secret is dropped wholesale rather than stored.
-    That is what makes "a stored record cannot carry a credential" a checked property of
-    this function rather than a claim about its patterns.
+    Redaction is pattern matching, so the result is re-checked with
+    :func:`~adlife.core.domain.person.contains_provider_secret_text` - the broadest screen
+    in the repository - and a body that still trips it is dropped wholesale rather than
+    stored. The re-check is what turns a pile of patterns into a stated property:
+
+        EVERY CREDENTIAL SHAPE THE REPOSITORY CAN NAME IS REMOVED FROM A STORED BODY, OR
+        THE BODY IS NOT STORED.
+
+    That is the whole of the promise, and it is deliberately narrower than the one this
+    docstring used to make. It is NOT "a stored record cannot carry a credential". An
+    opaque random token under an unlabelled field, nowhere near a label, is
+    indistinguishable from an order number or a model name, and this function neither
+    removes it nor detects it. The named shapes live in
+    :data:`~adlife.core.domain.person.SECRET_LABEL_WORDS`,
+    :data:`~adlife.core.domain.person.AUTH_HEADER_LABELS` and
+    :data:`~adlife.core.domain.person.VENDOR_SECRET_SHAPES`, and the corpus that pins them
+    is ``tests/security/test_redaction_corpus.py``. This is defense in depth, not a
+    guarantee.
     """
     redacted = redact_secret_text(value)
     for pattern in _REDACTED_PATH_PATTERNS:
         redacted = pattern.sub(REDACTION_PLACEHOLDER, redacted)
-    if contains_secret_or_email_text(redacted):
+    if contains_provider_secret_text(redacted):
         return REDACTION_PLACEHOLDER
     return redacted
+
+
+def bound_raw_provider_body(value: str) -> str:
+    """Redact a raw provider body and settle it inside :data:`MAX_RAW_RESPONSE_CHARS`.
+
+    Redaction runs FIRST and the bound is applied to its result, because a bound checked
+    before redaction bounds the wrong string: ``[redacted]`` is longer than the shortest
+    match, so a body admitted at the limit was stored well past it and then failed to
+    re-validate on read (finding S9). Truncation is deterministic - the first
+    ``MAX_RAW_RESPONSE_CHARS`` characters minus the marker, then
+    :data:`RAW_RESPONSE_TRUNCATION_MARKER` - so the same body always stores the same
+    bytes.
+
+    Redaction and truncation are then run to a fixed point, so re-validating a stored
+    record returns the stored string unchanged. A record that can be written can be read.
+    """
+    text = value
+    for _ in range(_RAW_RESPONSE_SETTLING_PASSES):
+        settled = redact_provider_body(text)
+        if len(settled) > MAX_RAW_RESPONSE_CHARS:
+            keep = MAX_RAW_RESPONSE_CHARS - len(RAW_RESPONSE_TRUNCATION_MARKER)
+            settled = settled[:keep] + RAW_RESPONSE_TRUNCATION_MARKER
+        if settled == text:
+            return text
+        text = settled
+    return REDACTION_PLACEHOLDER
 
 
 class CognitionError(Exception):
@@ -257,6 +319,22 @@ def _reject_secret_or_email_text(value: object, *, label: str) -> None:
             raise ValueError(f"{label} must not contain a sensitive identifier or secret")
 
 
+def _reject_labelled_secret_members(value: object, *, label: str) -> None:
+    """Reject a credential LABEL paired with a value across JSON members.
+
+    The persisted ``request`` is a second credential channel and it was screened only by
+    per-string rejection, which cannot see this shape at all: in ``{"api_key": "sk-..."}``
+    neither the key nor the value is a secret on its own, and the pair is what leaks.
+    Finding S7 wrote exactly that dict to disk. The walk is recursive, so depth is not a
+    hiding place, and it covers the array spelling ``["api_key", "0000..."]`` too.
+    """
+    if contains_labelled_secret_member(value):
+        raise ValueError(
+            f"{label} must not contain a sensitive identifier or secret: "
+            "a member named by a credential label carries a value"
+        )
+
+
 class SamplingSettings(CognitionModel):
     """Provider sampling settings; they participate in every cache key.
 
@@ -276,10 +354,16 @@ class ProviderMetadata(CognitionModel):
 
     There is no credential field, and :meth:`normalize_base_url` removes the userinfo,
     query and fragment a URL could smuggle one through, so neither this metadata nor a
-    cache key derived from it can carry an API key. The other way a credential could
-    reach a stored record - a provider echoing one back in its raw body - is screened by
-    :meth:`CognitionRecord.redact_the_raw_provider_body`, which removes labelled and
-    value-shaped secrets and drops any body that still trips the repository's detector.
+    cache key derived from it can carry an API key. That part IS structural: there is no
+    field to put one in.
+
+    The other channels are screened rather than closed, and the difference matters. A
+    provider that echoes a credential back in its raw body meets
+    :meth:`CognitionRecord.redact_the_raw_provider_body`, and a caller that puts one in
+    the prompt meets :meth:`CognitionRequest.validate_prompt_boundary`. Both work from
+    the named shape tables in :mod:`adlife.core.domain.person` and both are best effort:
+    they remove or refuse every credential shape this repository can name, and they make
+    no claim about an opaque token under an unlabelled field.
     """
 
     schema_version: Literal[1] = 1
@@ -385,6 +469,8 @@ class CognitionRequest(CognitionModel):
         _reject_sensitive_text(self.fictional_persona, label="fictional_persona")
         _reject_secret_or_email_text(self.campaign, label="campaign")
         _reject_sensitive_text(self.relevant_memories, label="relevant_memories")
+        _reject_labelled_secret_members(self.fictional_persona, label="fictional_persona")
+        _reject_labelled_secret_members(self.campaign, label="campaign")
         size = len(self.model_dump_json().encode("utf-8"))
         if size > MAX_REQUEST_JSON_BYTES:
             raise ValueError(
@@ -422,6 +508,28 @@ class CognitionResult(CognitionModel):
     prompt's memories, so a summary accepted here under a weaker rule would raise at the
     next request build instead of at the provider boundary, where a failure can still be
     handled as a fallback. The two fields move together or not at all.
+
+    DOCUMENTED CONSEQUENCE OF THE SPLIT (finding S11). The five narrow fields are
+    PERSISTED provider-authored text, and under the narrow rule they admit phone-shaped
+    and ten-digit-identifier text that the persona fields refuse. A remote provider that
+    wrote ``The advertisement quoted 0800 123 4567`` into ``interpretation`` would have
+    that string stored in the cognition cache. This is accepted deliberately: the same
+    text is admitted into the prompt as campaign copy, so refusing the paraphrase would
+    burn specification section 12's single repair attempt on text the model was shown.
+    Nothing about credentials, vendor key shapes, contact addresses or filesystem paths
+    is relaxed on any of the six fields.
+
+    DOCUMENTED CONSEQUENCE OF KEEPING ``memory_summary`` STRICT (finding S8). A campaign
+    slug is a validated domain identifier that may legally be all digits
+    (``^[a-z0-9][a-z0-9-]{0,79}$``), and the rule fallback names the campaign in its
+    summary. A slug such as ``1234567890`` therefore still composes a summary the strict
+    screen refuses. The refusal is real and it is not silently swallowed - it surfaces as
+    a ``CognitionError`` from :mod:`adlife.adapters.cognition.rules`, never as a bare
+    ``pydantic.ValidationError``, so a service honouring section 12 can handle it.
+    Slugs that merely CONTINUE a hyphenated digit run - ``spring-1234567890``,
+    ``sale-0800-123-4567`` - are admitted, because
+    :mod:`adlife.core.domain.person` no longer treats a hyphen-continued digit run as an
+    identifier.
     """
 
     schema_version: Literal[1] = 1
@@ -498,28 +606,45 @@ class CognitionAnswer(CognitionModel):
 class CognitionRecord(CognitionModel):
     """One cached cognition exchange: the request, the answer, and what it cost.
 
-    Every field on this record is persisted, so every field is screened. The validated
-    ``result`` is screened by rejection, because a bad answer can be retried, repaired or
-    replaced by the rule fallback. ``raw_response`` is screened by redaction, because it
-    is the diagnostic body of a call that may already have failed and there is nothing
-    left to fall back to: an error body is exactly where a provider echoes the
-    authorization header back.
+    Every field on this record is persisted, so every field is screened, and the two
+    screens differ because the two failure costs differ. The validated ``result`` and the
+    ``request`` are screened by REJECTION, because a bad answer can be retried, repaired
+    or replaced by the rule fallback and a bad prompt has not been sent yet.
+    ``raw_response`` is screened by REDACTION, because it is the diagnostic body of a call
+    that may already have failed and there is nothing left to fall back to: an error body
+    is exactly where a provider echoes the authorization header back.
+
+    What that buys, stated so it can be tested rather than believed: every credential
+    shape this repository can name is removed from, or refused entry to, a stored record.
+    The names are :data:`~adlife.core.domain.person.SECRET_LABEL_WORDS`,
+    :data:`~adlife.core.domain.person.AUTH_HEADER_LABELS` and
+    :data:`~adlife.core.domain.person.VENDOR_SECRET_SHAPES`. A shape outside those tables
+    - an opaque random token under an unlabelled field - is not claimed.
     """
 
     schema_version: Literal[1] = 1
     key: str = Field(pattern=r"^[0-9a-f]{64}$")
     request: CognitionRequest
     provider_metadata: ProviderMetadata
-    raw_response: str | None = Field(default=None, max_length=65536)
+    raw_response: str | None = Field(default=None, max_length=MAX_RAW_RESPONSE_CHARS)
     result: CognitionResult
     usage: ProviderUsage
 
-    @field_validator("raw_response")
+    @field_validator("raw_response", mode="before")
     @classmethod
-    def redact_the_raw_provider_body(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return redact_provider_body(value)
+    def redact_the_raw_provider_body(cls, value: object) -> object:
+        """Redact and bound the body BEFORE ``max_length`` is checked.
+
+        The order is the fix for finding S9. Redaction used to run after the length
+        bound, so the bound governed the text nobody stores and the stored text was
+        unbounded: a body just under the limit was written at roughly 1.6 times the
+        limit and then raised ``CorruptCacheRecord`` when the cache read it back.
+        Anything that is not a string is handed on untouched so strict validation
+        reports the type error rather than this validator.
+        """
+        if not isinstance(value, str):
+            return value
+        return bound_raw_provider_body(value)
 
     @model_validator(mode="after")
     def bind_result_to_request(self) -> Self:
@@ -545,12 +670,14 @@ class CognitionProvider(Protocol):
 
 __all__ = [
     "MAX_GROUNDED_REASONS",
+    "MAX_RAW_RESPONSE_CHARS",
     "MAX_RELEVANT_MEMORIES",
     "MAX_REQUEST_JSON_BYTES",
     "MAX_SAFETY_FLAGS",
     "NETWORK_PROVIDER_KINDS",
     "OFFLINE_PROVIDER_KINDS",
     "PROMPT_VERSION",
+    "RAW_RESPONSE_TRUNCATION_MARKER",
     "REQUEST_ID_PATTERN",
     "CognitionAnswer",
     "CognitionError",
@@ -566,5 +693,6 @@ __all__ = [
     "ProviderUsage",
     "RequestId",
     "SamplingSettings",
+    "bound_raw_provider_body",
     "redact_provider_body",
 ]
