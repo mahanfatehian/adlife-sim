@@ -25,8 +25,11 @@ none of it resembles a live credential.
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
 import json
 import logging
+import sqlite3
 import traceback
 from pathlib import Path
 from typing import NamedTuple
@@ -53,7 +56,11 @@ from adlife.adapters.cognition.rules import (
     rule_cognition_result,
 )
 from adlife.adapters.cognition.service import CognitionBudget, CognitionService
+from adlife.adapters.output.jsonl import JsonlEventSink
+from adlife.adapters.output.plain import PlainEventSink
+from adlife.adapters.storage.sqlite_store import SQLiteRunStore
 from adlife.core.domain.campaign import Campaign
+from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.person import (
     AUTH_HEADER_LABELS,
     REDACTION_PLACEHOLDER,
@@ -66,6 +73,9 @@ from adlife.core.domain.person import (
     contains_sensitive_text,
     redact_secret_text,
 )
+from adlife.core.domain.results import RunManifest
+from adlife.core.domain.scenario import Scenario
+from adlife.core.domain.serialization import persisted_text_objection
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import (
     MAX_RAW_RESPONSE_CHARS,
@@ -76,6 +86,8 @@ from adlife.core.ports.cognition import (
     ProviderUsage,
     redact_provider_body,
 )
+from adlife.core.ports.event_sink import EventSinkError
+from adlife.core.ports.run_store import CorruptRunArtifact, InvalidEventBatch
 from adlife.core.simulation.decision import RuleResponse
 from adlife.core.simulation.rng import RandomOracle
 
@@ -1513,4 +1525,151 @@ def test_a_body_that_does_settle_is_still_echoed_after_the_substitution_is_undon
     )
     assert prompts._bounded_echo("a plain body with no credential in it") == (
         "a plain body with no credential in it"
+    )
+
+
+# --- T11: the run artifact is a new place text can come to rest ------------------------
+#
+# Task 11 opens two new paths from an event payload to somewhere permanent: the SQLite run
+# store writes it into results.sqlite3 AND events.jsonl, and the JSONL sink writes it into
+# any file a caller points at. Both are screened at the boundary with the two rules this
+# repository already publishes - the narrow campaign-copy screen and the structural
+# labelled-member walk - and neither introduces a second redactor.
+#
+# WHAT THE STORAGE SCREEN CLAIMS, precisely. The BROAD raw-provider-body screen is
+# deliberately NOT used here: it fires on "Cookie lovers unite: the fictional snack brand"
+# and would refuse ordinary advertising copy, which is the product this simulator exists
+# to model. Seven of the shapes below are therefore outside what the storage screen names
+# on its own - they are raw provider error bodies, and the control that keeps THEM out of
+# an artifact is upstream, where ``redact_provider_body`` empties a body before it can
+# become any message at all. ``test_the_corpus_shape_never_reaches_a_run_artifact``
+# exercises exactly that route end to end and reads every byte the run wrote.
+
+
+def _storage_fixture(
+    tmp_path: Path, run_manifest: RunManifest, valid_scenario: Scenario
+) -> SQLiteRunStore:
+    store = SQLiteRunStore(tmp_path)
+    store.create_run(run_manifest, scenario=valid_scenario)
+    return store
+
+
+def _payload_event(run_manifest: RunManifest, payload: dict[str, object]) -> DomainEvent:
+    return DomainEvent(
+        event_id=f"{run_manifest.run_id}:event-00000000",
+        run_id=run_manifest.run_id,
+        simulated_minute=0,
+        sequence=0,
+        event_type=EventType.COGNITION_FALLBACK,
+        payload=payload,
+        source=EventSource.FALLBACK,
+    )
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_is_refused_entry_to_a_persisted_document(shape: LeakShape) -> None:
+    """A credential under a credential label never reaches an artifact, whatever it is."""
+    assert persisted_text_objection({"api_key": shape.secret}, label="payload") is not None
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_a_run_artifact(
+    shape: LeakShape,
+    tmp_path: Path,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+) -> None:
+    """Route a real provider body through the real upstream control into a real run."""
+    store = _storage_fixture(tmp_path, run_manifest, valid_scenario)
+    event = _payload_event(run_manifest, {"provider_note": redact_provider_body(shape.body)})
+
+    with contextlib.suppress(InvalidEventBatch):
+        store.append_events([event])
+
+    directory = store.run_directory(run_manifest.run_id)
+    survivors = [
+        path.name
+        for path in sorted(directory.rglob("*"))
+        if path.is_file() and shape.secret.encode("utf-8") in path.read_bytes()
+    ]
+    assert survivors == []
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_the_portable_export(
+    shape: LeakShape, tmp_path: Path, run_manifest: RunManifest
+) -> None:
+    path = tmp_path / "events.jsonl"
+    event = _payload_event(run_manifest, {"provider_note": redact_provider_body(shape.body)})
+
+    with JsonlEventSink(path) as sink, contextlib.suppress(EventSinkError):
+        sink.append_many(run_manifest.run_id, [event])
+
+    assert shape.secret.encode("utf-8") not in path.read_bytes()
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_a_human_readable_event_line(
+    shape: LeakShape, run_manifest: RunManifest
+) -> None:
+    """The plain sink omits the payload structurally, so even a RAW body cannot print."""
+    stream = io.StringIO()
+    event = _payload_event(run_manifest, {"provider_note": shape.body})
+
+    PlainEventSink(stream).append_many(run_manifest.run_id, [event])
+
+    assert shape.secret not in stream.getvalue()
+
+
+ARTIFACT_BOUNDARY_MODULES: tuple[Path, ...] = (
+    *sorted((Path(adlife.__file__).resolve().parent / "adapters" / "storage").glob("*.py")),
+    *sorted((Path(adlife.__file__).resolve().parent / "adapters" / "output").glob("*.py")),
+    Path(adlife.__file__).resolve().parent / "core" / "ports" / "run_store.py",
+    Path(adlife.__file__).resolve().parent / "core" / "ports" / "event_sink.py",
+    Path(adlife.__file__).resolve().parent / "core" / "domain" / "serialization.py",
+)
+"""Every module that translates a failure over stored, campaign or provider-derived text."""
+
+
+def test_no_artifact_boundary_failure_chains_the_exception_it_translates() -> None:
+    """The same structural rule the cognition boundary carries, for the storage boundary.
+
+    Everything these modules translate was built from material this repository does not
+    control: a document pydantic rejected and therefore RENDERS, a SQLite error naming the
+    row it refused, a campaign string a user wrote. Chaining any of them puts that material
+    into ``__cause__``, which every formatted traceback and ``logger.exception`` call
+    prints, downstream of the screens that filter the message itself. So inside these
+    modules a ``raise`` may carry no cause but ``None``.
+    """
+    assert ARTIFACT_BOUNDARY_MODULES
+    offenders: list[str] = []
+    for path in ARTIFACT_BOUNDARY_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Raise) or node.cause is None:
+                continue
+            cause = ast.unparse(node.cause)
+            if cause != "None":
+                offenders.append(f"{path.name}:{node.lineno}: raise ... from {cause}")
+    assert offenders == []
+
+
+def test_a_rejected_stored_document_does_not_chain_what_it_rejected(
+    tmp_path: Path, run_manifest: RunManifest, valid_scenario: Scenario
+) -> None:
+    """The concrete case: a tampered event document renders in a pydantic error."""
+    store = _storage_fixture(tmp_path, run_manifest, valid_scenario)
+    store.append_events([_payload_event(run_manifest, {"message": "an ordinary fictional ad"})])
+    with sqlite3.connect(store.database_path(run_manifest.run_id)) as connection:
+        connection.execute(
+            "UPDATE events SET event_json = ?",
+            ('{"payload":{"api_key":"0000abcdef1234567890"},"broken":true}',),
+        )
+
+    with pytest.raises(CorruptRunArtifact) as raised:
+        store.load_run(run_manifest.run_id)
+
+    assert raised.value.__cause__ is None
+    assert "0000abcdef1234567890" not in "".join(
+        traceback.format_exception(type(raised.value), raised.value, raised.value.__traceback__)
     )

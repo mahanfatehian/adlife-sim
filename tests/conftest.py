@@ -1,3 +1,8 @@
+import sqlite3
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import cast
+
 import pytest
 
 from adlife.core.domain.campaign import (
@@ -7,7 +12,9 @@ from adlife.core.domain.campaign import (
     Price,
     TimeWindow,
 )
+from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.person import ConsumerTraits, PersonProfile
+from adlife.core.domain.results import RunManifest
 from adlife.core.domain.scenario import Scenario
 from adlife.core.domain.state import ConsumerState
 from adlife.core.domain.world import Route, RoutineBlock, World, Zone
@@ -17,6 +24,7 @@ from adlife.core.ports.cognition import (
     SamplingSettings,
 )
 from adlife.core.simulation.decision import RuleResponse, evaluate_rule_response
+from adlife.core.simulation.engine import canonical_sha256
 
 
 @pytest.fixture
@@ -211,3 +219,108 @@ def rule_response(
         valid_campaign,
         valid_campaign.placements[0],
     )
+
+
+@pytest.fixture
+def run_manifest(valid_scenario: Scenario) -> RunManifest:
+    """A complete manifest whose scenario digest really addresses ``valid_scenario``."""
+    return RunManifest(
+        run_id="run-storage",
+        scenario_id=valid_scenario.scenario_id,
+        scenario_hash=canonical_sha256(valid_scenario),
+        seed=42,
+        package_version="0.1.0",
+        git_sha="uncommitted",
+        lockfile_sha256="c" * 64,
+        provider="rules",
+        model_id="rules-v1",
+        prompt_version="cognition-v1",
+        prompt_hash="d" * 64,
+        platform="test-platform-x86_64",
+    )
+
+
+@pytest.fixture
+def event_factory(run_manifest: RunManifest) -> Callable[..., DomainEvent]:
+    """Build a well-formed event for the manifest's run at a chosen sequence."""
+
+    def make(
+        sequence: int,
+        *,
+        run_id: str | None = None,
+        event_type: EventType = EventType.STATE_UPDATED,
+        simulated_minute: int = 0,
+        payload: Mapping[str, object] | None = None,
+        source: EventSource = EventSource.RULE,
+        caused_by_event_ids: tuple[str, ...] = (),
+        agent_id: str | None = "person-001",
+        campaign_id: str | None = None,
+        channel: str | None = None,
+        event_id: str | None = None,
+    ) -> DomainEvent:
+        resolved_run_id = run_manifest.run_id if run_id is None else run_id
+        return DomainEvent(
+            event_id=(f"{resolved_run_id}:event-{sequence:08d}" if event_id is None else event_id),
+            run_id=resolved_run_id,
+            simulated_minute=simulated_minute,
+            sequence=sequence,
+            event_type=event_type,
+            agent_id=agent_id,
+            campaign_id=campaign_id,
+            channel=channel,
+            payload={} if payload is None else payload,
+            source=source,
+            caused_by_event_ids=caused_by_event_ids,
+        )
+
+    return make
+
+
+@pytest.fixture
+def failing_connection(monkeypatch: pytest.MonkeyPatch) -> Callable[[int], None]:
+    """Arm the NEXT database connection to fail after a chosen number of statements.
+
+    This is how an interrupted write is reproduced without killing the interpreter: the
+    real connection does real work until the armed budget runs out and then raises the
+    error SQLite raises for a failing device. Only one connection is affected, so the
+    assertion that follows reads the artifact through an ordinary connection.
+    """
+    from adlife.adapters.storage import sqlite_store
+
+    real_connect = sqlite_store.connect_to_database
+    armed: dict[str, int | bool] = {"active": False, "budget": 0}
+
+    class _FailingConnection:
+        def __init__(self, wrapped: sqlite3.Connection, budget: int) -> None:
+            self._wrapped = wrapped
+            self._remaining = budget
+
+        def _spend(self) -> None:
+            if self._remaining <= 0:
+                raise sqlite3.OperationalError("disk I/O error")
+            self._remaining -= 1
+
+        def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+            self._spend()
+            return self._wrapped.execute(sql, parameters)  # type: ignore[arg-type]
+
+        def executemany(self, sql: str, parameters: object) -> sqlite3.Cursor:
+            self._spend()
+            return self._wrapped.executemany(sql, parameters)  # type: ignore[arg-type]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._wrapped, name)
+
+    def connect(path: Path) -> sqlite3.Connection:
+        connection = real_connect(path)
+        if armed["active"]:
+            armed["active"] = False
+            return cast(sqlite3.Connection, _FailingConnection(connection, int(armed["budget"])))
+        return connection
+
+    def arm(statements: int) -> None:
+        armed["active"] = True
+        armed["budget"] = statements
+
+    monkeypatch.setattr(sqlite_store, "connect_to_database", connect)
+    return arm
