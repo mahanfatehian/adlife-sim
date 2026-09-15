@@ -7,18 +7,23 @@ the terminal rule fallback belong to :mod:`adlife.adapters.cognition.service`; a
 
 WHAT THIS MODULE PROMISES ABOUT CREDENTIALS
 -------------------------------------------
-Two claims are STRUCTURAL and hold absolutely.
+Two claims are about STRUCTURE rather than about pattern matching, and each states only
+what a test pins.
 
 * The credential is never read from a configuration file or a command-line argument.
   :func:`resolve_api_key` accepts it from the environment variable specification
   section 6.4 names, or from a hidden prompt the caller supplies, and nothing else.
-  :class:`~adlife.config.models.ProviderSettings` has no field to put one in.
-* The credential lives only in the transport's request headers. It is not stored on the
-  provider, it is not in :class:`~adlife.core.ports.cognition.ProviderMetadata` - which
-  has no credential field and whose ``base_url`` validator strips userinfo, query and
-  fragment - and a base URL carrying userinfo is refused outright rather than silently
-  stripped. That claim is only as strong as the transport, so a remote endpoint reached
-  over plain ``http`` is refused too: see :class:`InsecureProviderUrl`.
+  :class:`~adlife.config.models.ProviderSettings` has no field to put one in. A local
+  endpoint gets the ignored placeholder whatever that variable holds, so a credential
+  exported for a remote run is never re-routed to a loopback model server.
+* The credential is held in the transport's default request headers - it is readable
+  from the client this provider owns - and in nothing this module renders: it is absent
+  from :class:`~adlife.core.ports.cognition.ProviderMetadata`, which has no credential
+  field and whose ``base_url`` validator strips userinfo, query and fragment; from
+  :meth:`OpenAICompatibleProvider.__repr__`; and from every message this exception
+  hierarchy composes. A base URL carrying userinfo is refused outright rather than
+  silently stripped. Headers are only as private as the transport, so a remote endpoint
+  reached over plain ``http`` is refused too: see :class:`InsecureProviderUrl`.
 
 Every other claim is a SCREEN, and screens are best effort. Each failure this module
 raises builds its own message from a status code, a timeout, an exception class name and
@@ -61,6 +66,7 @@ import json
 import logging
 import math
 import os
+import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -77,6 +83,7 @@ from adlife.adapters.cognition.prompts import (
     cognition_json_schema,
     prompt_template_sha256,
 )
+from adlife.config.models import ProviderSettings
 from adlife.core.domain.person import REDACTION_PLACEHOLDER
 from adlife.core.ports.cognition import (
     MAX_TOKEN_COUNT as _MAX_TOKEN_COUNT,
@@ -100,7 +107,11 @@ ADLIFE_API_KEY_VARIABLE: Final = "ADLIFE_API_KEY"
 """The one environment variable specification section 6.4 names."""
 
 LOCAL_API_KEY_PLACEHOLDER: Final = "ollama"
-"""Local endpoints ignore the credential but still require a non-empty header value."""
+"""Local endpoints ignore the credential but still require a non-empty header value.
+
+:func:`resolve_api_key` returns this for ``local`` whatever :data:`ADLIFE_API_KEY_VARIABLE`
+holds, so a remote credential is never forwarded to a loopback model server.
+"""
 
 HIDDEN_API_KEY_PROMPT: Final[Callable[[str], str]] = getpass.getpass
 """The documented hidden prompt. It is never called unless a caller passes it in."""
@@ -131,6 +142,28 @@ warning still reports how many there were, because that number is the useful par
 
 MAX_TOKEN_COUNT: Final = _MAX_TOKEN_COUNT
 """Re-exported from the contract, so a screen here and the bound there cannot drift."""
+
+
+def _configured_timeout_ceiling() -> float:
+    """Read the timeout ceiling off the configuration field rather than restating it."""
+    for constraint in ProviderSettings.model_fields["timeout_seconds"].metadata:
+        upper = getattr(constraint, "le", None)
+        if upper is not None:
+            return float(upper)
+    raise AssertionError(  # pragma: no cover - the field declares ``le`` in this repository
+        "ProviderSettings.timeout_seconds must declare an upper bound"
+    )
+
+
+MAX_TIMEOUT_SECONDS: Final[float] = _configured_timeout_ceiling()
+"""The largest timeout this provider accepts, read off :class:`ProviderSettings`.
+
+Restating the number here would be a second source of truth that drifts. The constructor
+refuses anything above it, and anything non-finite, for the reason the service refuses a
+retry count above its own maximum: a seam may lower a bound and never raise it. An
+infinite or undefined timeout turns specification section 12's "provider failures must
+never abort a run" into "a hung endpoint never lets a run finish".
+"""
 
 ProviderMode = Literal["local", "remote"]
 
@@ -275,6 +308,14 @@ def _numeric_bounds() -> Mapping[str, tuple[float, float]]:
 
 NUMERIC_BOUNDS: Final[Mapping[str, tuple[float, float]]] = _numeric_bounds()
 
+MAX_REPRESENTABLE_MAGNITUDE: Final[float] = sys.float_info.max
+"""The largest magnitude a Python ``float`` can hold.
+
+A JSON integer literal parses to an ``int`` of unbounded magnitude, and converting one
+larger than this raises ``OverflowError``. Comparing an ``int`` against this ``float`` is
+exact in Python and never overflows, so the screen itself is safe.
+"""
+
 
 def resolve_api_key(
     mode: ProviderMode,
@@ -293,15 +334,23 @@ def resolve_api_key(
     a terminal nobody is watching. A caller that can safely ask passes
     :data:`HIDDEN_API_KEY_PROMPT`. No message, error or log record here contains the
     resolved value.
+
+    ``local`` resolves to :data:`LOCAL_API_KEY_PLACEHOLDER` UNCONDITIONALLY, before the
+    environment is consulted at all. Specification section 6.4 constrains where a
+    credential may come from; nothing authorises sending one to a different endpoint
+    than the one it was issued for. Reading the variable here would mean that anyone who
+    had ever exported it for a remote run would silently post that key, in an
+    ``Authorization: Bearer`` header over plaintext loopback, to whatever local model
+    server happened to be listening - and such servers routinely log request headers.
     """
     if mode not in ("local", "remote"):
         raise ValueError("mode must be 'local' or 'remote'")
+    if mode == "local":
+        return LOCAL_API_KEY_PLACEHOLDER
     source = os.environ if environ is None else environ
     configured = source.get(ADLIFE_API_KEY_VARIABLE, "").strip()
     if configured:
         return configured
-    if mode == "local":
-        return LOCAL_API_KEY_PLACEHOLDER
     if prompt is None:
         raise MissingApiKey(
             f"a remote cognition provider needs {ADLIFE_API_KEY_VARIABLE} in the "
@@ -430,11 +479,18 @@ def coerce_cognition_result(content: str, *, request_id: str) -> CognitionResult
     Specification section 12 requires that numeric values are clamped after a validation
     warning is logged, so an answer that overshoots one bound is corrected rather than
     thrown away - burning the single repair attempt on an otherwise complete answer
-    would drop to the rule fallback systematically. Three things are NOT clamped:
+    would drop to the rule fallback systematically. Four things are NOT clamped:
 
     * a non-finite number, because ``min``/``max`` on a NaN invents a value the model
       never produced, and ``1e400`` parses to infinity without ever being a JSON
       constant;
+    * a number no float can represent. ``json.loads`` turns a bare integer literal into
+      a Python ``int`` of unbounded magnitude, and both ``math.isfinite`` and ``float``
+      raise ``OverflowError`` on one above :data:`sys.float_info.max`. ``OverflowError``
+      is not a :class:`~adlife.core.ports.cognition.CognitionError`, so an unscreened
+      one aborts the run - the outcome specification section 12 forbids - and the
+      magnitude is screened by comparison, which is exact between an ``int`` and a
+      ``float``, before any conversion is attempted;
     * a boolean, which is an ``int`` in Python and would silently clamp to 0.0 or 1.0;
     * anything structural - a missing field, a wrong type, a wrong ``request_id``.
 
@@ -446,7 +502,11 @@ def coerce_cognition_result(content: str, *, request_id: str) -> CognitionResult
         raise TypeError("content must be a string")
     try:
         parsed = json.loads(_strip_markdown_fence(content), parse_constant=_reject_json_constant)
-    except ValueError as error:
+    except (ValueError, RecursionError) as error:
+        # ``RecursionError`` is a ``RuntimeError``, not a ``ValueError``: CPython's JSON
+        # scanner raises it rather than ``JSONDecodeError`` when a body nests past the
+        # interpreter's recursion limit. A remote endpoint is untrusted input, so the
+        # depth of what it sends is its choice, and an untranslated one aborts the run.
         raise InvalidProviderResponse(
             f"the provider answer was not valid JSON: {_excerpt(str(error))}",
             raw_response=content,
@@ -477,6 +537,14 @@ def coerce_cognition_result(content: str, *, request_id: str) -> CognitionResult
         value = cleaned.get(name)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             continue
+        if isinstance(value, int) and abs(value) > MAX_REPRESENTABLE_MAGNITUDE:
+            # Refused rather than clamped to the bound, and the message names the field
+            # rather than the value: a provider chooses how many digits it sends, so
+            # echoing one here would put unbounded provider text in a log line.
+            raise InvalidProviderResponse(
+                f"the provider answer gave a value for {name} that no float can represent",
+                raw_response=content,
+            )
         if not math.isfinite(value):
             raise InvalidProviderResponse(
                 f"the provider answer gave a non-finite value for {name}",
@@ -536,9 +604,9 @@ class OpenAICompatibleProvider:
     remote one; the only difference is the base URL, and the provider kind it reports
     follows from that URL rather than from a flag a caller could set wrongly.
 
-    The credential is written once into the transport's headers and is never stored on
-    the instance, never placed in :attr:`provider_metadata`, and never rendered by
-    :meth:`__repr__`.
+    The credential is written once into the transport's default headers, where it stays
+    for the life of the client this provider owns. It is not placed in
+    :attr:`provider_metadata` and not rendered by :meth:`__repr__`.
     """
 
     __slots__ = ("_client", "_clock", "_metadata", "_timeout_seconds", "model")
@@ -563,8 +631,16 @@ class OpenAICompatibleProvider:
             )
         if not isinstance(base_url, str) or not base_url.strip():
             raise ProviderConfigurationError("base_url must be a non-empty string")
-        if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
+        if not isinstance(timeout_seconds, (int, float)):
             raise ProviderConfigurationError("timeout_seconds must be a positive number")
+        # NaN fails every comparison, so a bare ``timeout_seconds <= 0`` admits it, and an
+        # infinity is a timeout that never fires. ``math.isfinite`` is asked only about
+        # floats, because it raises ``OverflowError`` on an ``int`` no float can hold.
+        finite = math.isfinite(timeout_seconds) if isinstance(timeout_seconds, float) else True
+        if not finite or not 0 < timeout_seconds <= MAX_TIMEOUT_SECONDS:
+            raise ProviderConfigurationError(
+                f"timeout_seconds must be a finite number in (0, {MAX_TIMEOUT_SECONDS}]"
+            )
         parts = urlsplit(base_url)
         if parts.username or parts.password:
             raise InsecureProviderUrl(
@@ -694,7 +770,9 @@ class OpenAICompatibleProvider:
 
         try:
             envelope = response.json()
-        except ValueError as error:
+        except (ValueError, RecursionError) as error:
+            # Same scanner, same untrusted depth, one level up: see the note in
+            # :func:`coerce_cognition_result`.
             raise InvalidProviderResponse(
                 "the provider answer was not JSON",
                 raw_response=response.text,
@@ -765,6 +843,8 @@ __all__ = [
     "LOOPBACK_HOSTS",
     "MAX_ECHOED_BODY_CHARS",
     "MAX_ECHOED_FIELD_NAMES",
+    "MAX_REPRESENTABLE_MAGNITUDE",
+    "MAX_TIMEOUT_SECONDS",
     "MAX_TOKEN_COUNT",
     "NUMERIC_BOUNDS",
     "InsecureProviderUrl",

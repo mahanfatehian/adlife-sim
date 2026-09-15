@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import socket
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -1303,3 +1304,51 @@ def test_a_retry_count_that_is_not_an_integer_is_refused(
             oracle=RandomOracle(root_seed=ROOT_SEED),
             retries=retries,  # type: ignore[arg-type]
         )
+
+
+# --- fix round 2: the run survives an untranslatable body -----------------------------
+
+
+def _deeply_nested_json() -> str:
+    """A JSON array nested far past any interpreter's recursion limit."""
+    depth = sys.getrecursionlimit() * 20
+    return "[" * depth + "]" * depth
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_deeply_nested_json(), id="deeply-nested-body"),
+        pytest.param(
+            _content("placeholder").replace('"valence": 0.3', '"valence": ' + "9" * 400),
+            id="integer-literal-no-float-can-hold",
+        ),
+    ],
+)
+async def test_a_body_python_cannot_decode_falls_back_instead_of_aborting_the_run(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+    body: str,
+) -> None:
+    """Specification section 12's binding sentence, at the level it binds.
+
+    A body nested past the recursion limit made CPython's JSON scanner raise
+    ``RecursionError``; a bare integer literal larger than ``sys.float_info.max`` made
+    ``math.isfinite`` raise ``OverflowError``. Neither is a ``ValueError`` and neither is
+    a :class:`~adlife.core.ports.cognition.CognitionError`, so both escaped the provider,
+    escaped :meth:`CognitionService._dispatch` - which catches ``ProviderCallError`` and
+    ``CognitionError`` only - and aborted the whole run through the task group.
+    """
+    body = body.replace("placeholder", cognition_request.request_id)
+    provider, _ = _scripted([body, body])
+    service = _service(
+        _fallback([cognition_request], valid_profile, consumer_state, valid_campaign)
+    )
+
+    resolution = await service.evaluate_one(cognition_request, provider)
+
+    assert resolution.source == "fallback"
+    assert resolution.fallback_reason == "invalid-response"
+    assert resolution.result.request_id == cognition_request.request_id
