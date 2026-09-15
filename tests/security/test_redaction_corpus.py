@@ -24,18 +24,30 @@ none of it resembles a live credential.
 
 from __future__ import annotations
 
+import json
+import logging
+import traceback
 from pathlib import Path
 from typing import NamedTuple
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
 from adlife.adapters.cognition.cache import CognitionCache
+from adlife.adapters.cognition.openai_compatible import (
+    MAX_ECHOED_BODY_CHARS,
+    OpenAICompatibleProvider,
+    ProviderHttpError,
+    coerce_cognition_result,
+)
+from adlife.adapters.cognition.prompts import build_repair_messages
 from adlife.adapters.cognition.rules import (
     RuleCognitionInputs,
     RuleCognitionProvider,
     rule_cognition_result,
 )
+from adlife.adapters.cognition.service import CognitionBudget, CognitionService
 from adlife.core.domain.campaign import Campaign
 from adlife.core.domain.person import (
     AUTH_HEADER_LABELS,
@@ -60,6 +72,7 @@ from adlife.core.ports.cognition import (
     redact_provider_body,
 )
 from adlife.core.simulation.decision import RuleResponse
+from adlife.core.simulation.rng import RandomOracle
 
 
 class LeakShape(NamedTuple):
@@ -825,3 +838,198 @@ def test_the_segmented_vendor_branch_keeps_its_original_short_tail() -> None:
     for token in segmented:
         assert contains_secret_or_email_text(token), token
         assert redact_secret_text(token) == REDACTION_PLACEHOLDER, token
+
+
+# --- T10: the network provider's own diagnostic channels ------------------------------
+#
+# Task 10 is the first code that touches a network, and it opens four NEW paths a
+# provider body can travel: a raised ProviderCallError's message, the repair prompt that
+# echoes a rejected answer back to the model, the CognitionResolution the run and report
+# layers read, and the log records the service writes. Every shape already in
+# LEAK_CORPUS is replayed down each of them here, so adding one row above still gains
+# assertions about the network boundary as well as about the cache.
+
+
+async def _no_sleep(_: float) -> None:
+    """The service's retry sleep, made instant so a security test never waits."""
+    return None
+
+
+def _network_provider(
+    handler: object,
+    *,
+    api_key: str = "sk-live-AAAABBBBCCCCDDDD",
+) -> OpenAICompatibleProvider:
+    return OpenAICompatibleProvider(
+        base_url="https://provider.invalid/v1",
+        model="test-model",
+        api_key=api_key,
+        timeout_seconds=5.0,
+        transport=httpx.MockTransport(handler),  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+async def test_the_corpus_shape_never_reaches_a_provider_error_message(
+    shape: LeakShape,
+    cognition_request: CognitionRequest,
+) -> None:
+    """An error body is exactly where a provider echoes a credential back."""
+    provider = _network_provider(lambda _: httpx.Response(500, text=shape.body))
+    with pytest.raises(ProviderHttpError) as caught:
+        await provider.evaluate(cognition_request)
+    assert shape.secret not in str(caught.value)
+    assert shape.secret not in repr(caught.value)
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_a_repair_prompt(
+    shape: LeakShape,
+    cognition_request: CognitionRequest,
+) -> None:
+    """The repair prompt is a second copy of a rejected body, sent back over the wire."""
+    messages = build_repair_messages(
+        cognition_request,
+        invalid_content=shape.body,
+        error=f"schema rejected: {shape.body}",
+    )
+    assert shape.secret not in json.dumps(messages)
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+async def test_the_corpus_shape_never_reaches_a_cognition_resolution(
+    shape: LeakShape,
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A resolution is handed to the event, storage and report layers."""
+    fallback = RuleCognitionProvider.for_requests(
+        [cognition_request],
+        {
+            cognition_request.request_id: RuleCognitionInputs(
+                profile=valid_profile,
+                state=consumer_state,
+                campaign=valid_campaign,
+                placement=valid_campaign.placements[0],
+            )
+        },
+    )
+    service = CognitionService(
+        fallback=fallback,
+        budget=CognitionBudget(per_agent=6, total=180),
+        oracle=RandomOracle(root_seed=7),
+        sleep=_no_sleep,
+    )
+    provider = _network_provider(
+        lambda _: httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": shape.body}}]},
+        )
+    )
+    with caplog.at_level(logging.DEBUG):
+        resolution = await service.evaluate_one(cognition_request, provider)
+    assert resolution.source == "fallback"
+    assert resolution.raw_response is not None
+    assert shape.secret not in resolution.raw_response
+    assert not contains_provider_secret_text(resolution.raw_response)
+    assert all(shape.secret not in record.getMessage() for record in caplog.records)
+
+
+# --- T10 fix round 1: three more channels the network boundary opens ------------------
+#
+# Every row above is short, so none of them reached the bound an HTTP error body is cut
+# at, the JSON KEY position a provider chooses for itself, or the exception chain a
+# schema rejection leaves behind. All three are exercised from the same rows here.
+
+
+def _straddling_body(shape: LeakShape) -> str:
+    """Pad a shape so its secret starts nine characters before the echo bound.
+
+    The padding ends in a space rather than running straight into the shape, because a
+    label pattern needs its word boundary: ``mmmmapi_key`` is not ``api_key``, and a test
+    that glued the two together would be proving something about its own padding.
+    """
+    head = shape.body.index(shape.secret)
+    width = max(0, MAX_ECHOED_BODY_CHARS - 9 - head)
+    padding = "m" * (width - 1) + " " if width else ""
+    return padding + shape.body
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+async def test_the_corpus_shape_survives_no_boundary_of_the_error_body_bound(
+    shape: LeakShape,
+    cognition_request: CognitionRequest,
+) -> None:
+    """A bound applied before redaction bounds the wrong string (finding S9).
+
+    The shape is padded so that its secret starts nine characters before the cut. Cutting
+    first leaves a nine-character fragment that no vendor pattern matches any more, and
+    redacting afterwards therefore leaves it in the message and in the retry log line.
+    """
+    provider = _network_provider(lambda _: httpx.Response(500, text=_straddling_body(shape)))
+    with pytest.raises(ProviderHttpError) as caught:
+        await provider.evaluate(cognition_request)
+    message = str(caught.value)
+    assert shape.secret not in message
+    assert not contains_provider_secret_text(message)
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_the_undefined_field_warning(
+    shape: LeakShape,
+    cognition_request: CognitionRequest,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provider names its own JSON keys, so a KEY is provider-controlled text too.
+
+    An undefined field is dropped with a warning that echoes its NAME, and that was the
+    one diagnostic in the provider module that never met the published redactor.
+    """
+    content = {
+        "request_id": cognition_request.request_id,
+        shape.body: "dropped",
+    }
+    with caplog.at_level(logging.WARNING), pytest.raises(CognitionError):
+        coerce_cognition_result(json.dumps(content), request_id=cognition_request.request_id)
+    written = "\n".join(record.getMessage() for record in caplog.records)
+    assert "undefined field" in written
+    assert shape.secret not in written
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_a_formatted_traceback(
+    shape: LeakShape,
+    cognition_request: CognitionRequest,
+) -> None:
+    """A pydantic error prints the value it rejected, and a traceback prints the chain.
+
+    ``emotion`` is a closed enumeration, so any body put there is rejected and the
+    rejected value is what the underlying ``ValidationError`` renders.
+    """
+    content = {
+        "schema_version": 1,
+        "request_id": cognition_request.request_id,
+        "interpretation": "A calm fictional handset.",
+        "emotion": shape.body,
+        "valence": 0.3,
+        "relevance": 0.5,
+        "credibility": 0.7,
+        "sentiment_delta": 0.06,
+        "recall_delta": 0.12,
+        "purchase_reason": "Rule-derived intention.",
+        "share_probability": 0.04,
+        "discussion_hook": "A phone pitched at a calmer routine.",
+        "grounded_reasons": ["matches technology interest"],
+        "memory_summary": "Saw campaign-phone on mobile-feed.",
+        "rule_modifier": 0.05,
+        "safety_flags": [],
+    }
+    with pytest.raises(CognitionError) as caught:
+        coerce_cognition_result(json.dumps(content), request_id=cognition_request.request_id)
+    rendered = "".join(
+        traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
+    )
+    assert shape.secret not in rendered

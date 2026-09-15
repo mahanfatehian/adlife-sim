@@ -73,6 +73,16 @@ read - the write succeeded and the read raised ``CorruptCacheRecord`` (finding S
 record that can be written can be read.
 """
 
+MAX_TOKEN_COUNT = 2**53 - 1
+"""The largest token count a usage record may report.
+
+Token counts are the one numeric field a provider supplies that is not read off a
+documented range, so they need a ceiling of their own. It is the largest integer a
+IEEE-754 double represents exactly, which keeps a count inside what canonical JSON,
+a SQLite ``INTEGER`` column and a JavaScript report reader all round-trip unchanged.
+A provider that reports more than this has not measured anything.
+"""
+
 RAW_RESPONSE_TRUNCATION_MARKER = "[truncated]"
 """What a deterministically shortened raw body ends with, so the loss is visible."""
 
@@ -389,7 +399,11 @@ class ProviderMetadata(CognitionModel):
             raise ValueError("base_url must name a valid host") from error
         if not host:
             raise ValueError("base_url must name a valid host")
-        netloc = host if port is None else f"{host}:{port}"
+        # ``hostname`` strips the brackets an IPv6 literal must keep, so rebuilding the
+        # netloc without them produced ``http://::1:11434/v1`` - a URL whose port no
+        # longer parses. The brackets are restored here rather than at each caller.
+        literal = f"[{host}]" if ":" in host else host
+        netloc = literal if port is None else f"{literal}:{port}"
         return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
     @model_validator(mode="after")
@@ -567,13 +581,23 @@ class CognitionResult(CognitionModel):
 
 
 class ProviderUsage(CognitionModel):
-    """What one cognition answer cost and where it came from."""
+    """What one cognition answer cost and where it came from.
+
+    The token counts carry an upper bound as well as a lower one. They are the only
+    numbers in this contract a remote provider supplies outright rather than having them
+    clamped against a documented range, and an unbounded integer here is written to the
+    cognition cache and later to a results database: a count above ``2**63-1`` makes a
+    SQLite ``INTEGER`` write raise ``OverflowError``, which is not a
+    :class:`CognitionError` and would abort a run. :data:`MAX_TOKEN_COUNT` is the bound,
+    and :func:`adlife.adapters.cognition.openai_compatible.extract_token_usage` reports
+    zero rather than an unmeasured number for anything above it.
+    """
 
     schema_version: Literal[1] = 1
     provider_kind: ProviderKind
     model_id: str = Field(min_length=1, max_length=120)
-    prompt_tokens: int = Field(ge=0)
-    completion_tokens: int = Field(ge=0)
+    prompt_tokens: int = Field(ge=0, le=MAX_TOKEN_COUNT)
+    completion_tokens: int = Field(ge=0, le=MAX_TOKEN_COUNT)
     latency_ms: int = Field(ge=0)
     cache_hit: bool = False
     fallback_reason: FallbackReason | None = None
@@ -674,6 +698,7 @@ __all__ = [
     "MAX_RELEVANT_MEMORIES",
     "MAX_REQUEST_JSON_BYTES",
     "MAX_SAFETY_FLAGS",
+    "MAX_TOKEN_COUNT",
     "NETWORK_PROVIDER_KINDS",
     "OFFLINE_PROVIDER_KINDS",
     "PROMPT_VERSION",
