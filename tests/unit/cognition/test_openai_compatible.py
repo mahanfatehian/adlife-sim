@@ -8,11 +8,14 @@ prove the transport seam holds.
 
 from __future__ import annotations
 
+import asyncio
 import getpass
+import gzip
 import json
 import logging
 import socket
 import sys
+import time
 import traceback
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -25,15 +28,18 @@ from adlife.adapters.cognition import openai_compatible, prompts
 from adlife.adapters.cognition.openai_compatible import (
     ADLIFE_API_KEY_VARIABLE,
     DEFAULT_LOCAL_BASE_URL,
+    ECHOED_BODY_TRUNCATION_MARKER,
     HIDDEN_API_KEY_PROMPT,
     LOCAL_API_KEY_PLACEHOLDER,
     MAX_ECHOED_BODY_CHARS,
     MAX_ECHOED_FIELD_NAMES,
+    MAX_RESPONSE_BODY_BYTES,
     MAX_TIMEOUT_SECONDS,
     InsecureProviderUrl,
     InvalidProviderResponse,
     MissingApiKey,
     OpenAICompatibleProvider,
+    OversizedProviderResponse,
     ProviderCallError,
     ProviderConfigurationError,
     ProviderHttpError,
@@ -60,9 +66,11 @@ from adlife.adapters.cognition.prompts import (
     prompt_template_sha256,
 )
 from adlife.config.models import AppConfig, ProviderSettings, SimulationSettings
+from adlife.core.domain.person import contains_provider_secret_text
 from adlife.core.ports.cognition import (
     MAX_TOKEN_COUNT,
     RAW_RESPONSE_TRUNCATION_MARKER,
+    CognitionError,
     CognitionProvider,
     CognitionRequest,
     CognitionResult,
@@ -1020,26 +1028,148 @@ def test_no_configuration_field_may_carry_a_credential() -> None:
 
 # --- fix round 1: the diagnostic, digest, usage and transport guards ------------------
 
+STRADDLE_SURVIVORS = (4, 8, 12, 16)
+"""How many characters of a credential fall on the near side of an echo bound.
 
+One offset is not enough. A vendor shape matches again once enough of it is present, so
+a long-enough surviving fragment is removed by the redaction that follows a bound and a
+short-enough one carries too little to assert about; the defect lives between those two
+ends. Every offset here was measured to leave a readable fragment under the defective
+ordering and none under the shipped one.
+"""
+
+MAX_INNOCENT_FRAGMENT = 3
+"""The longest secret prefix an echoed diagnostic may share with ordinary prose.
+
+Measured rather than assumed: across the whole leak corpus and every offset above, the
+shipped ordering leaves at most ONE character - a single letter or digit that also
+occurs in the endpoint URL or the status line - and the defective ordering leaves four.
+"""
+
+
+def _longest_surviving_fragment(text: str, secret: str) -> int:
+    """How many LEADING characters of ``secret`` are still readable in ``text``.
+
+    A bound leaves a PREFIX behind, so the prefix length is exactly what a bound applied
+    before redaction produces and exactly what an assertion about that defect has to
+    measure. ``secret not in text`` is true of every fragment and therefore pins nothing.
+    """
+    for length in range(len(secret), 0, -1):
+        if secret[:length] in text:
+            return length
+    return 0
+
+
+async def _error_message_for(body: str, request: CognitionRequest) -> str:
+    """The diagnostic a failing HTTP body produces, through the real provider path."""
+    provider = _provider(lambda _: httpx.Response(500, text=body))
+    with pytest.raises(ProviderHttpError) as caught:
+        await provider.evaluate(request)
+    await provider.aclose()
+    return str(caught.value)
+
+
+async def _measured_echo_cut(request: CognitionRequest) -> int:
+    """Where the echo bound actually cuts, measured through the provider.
+
+    MEASURED rather than recomputed from the constants, because a straddle calibrated to
+    today's arithmetic stops straddling the moment that arithmetic changes - which is
+    exactly how the first version of this test came to pass against the defect it was
+    written for. The padding character is redaction-free, so every surviving one was
+    kept by the bound rather than by a pattern.
+    """
+    message = await _error_message_for("z" * (MAX_ECHOED_BODY_CHARS * 3), request)
+    return message.count("z")
+
+
+def _measured_repair_cut(request: CognitionRequest) -> int:
+    """Where the repair-echo bound actually cuts, measured through the prompt builder."""
+    echoed = build_repair_messages(
+        request,
+        invalid_content="z" * (MAX_REPAIR_BODY_CHARS * 3),
+        error="schema rejected",
+    )[-2]["content"]
+    return echoed.count("z")
+
+
+@pytest.mark.parametrize("surviving", STRADDLE_SURVIVORS)
 async def test_a_credential_straddling_the_error_body_bound_is_still_removed(
+    surviving: int,
     cognition_request: CognitionRequest,
 ) -> None:
     """A bound applied BEFORE redaction bounds the wrong string (finding S9).
 
-    The vendor token starts nine characters before the cut, so bounding first leaves the
-    fragment ``ghp_ABCDE`` behind - short enough that the vendor shape no longer matches
-    it, and therefore never redacted afterwards. Redacting first removes the whole token
-    and the bound is then applied to a body that no longer carries one.
+    The token is placed so that exactly ``surviving`` of its characters fall on the near
+    side of the measured cut. Bounding first leaves that fragment behind - too short for
+    the vendor shape to match, so the redaction that runs afterwards never sees it - and
+    the fragment reaches this message and the WARNING line the service logs from it.
+    Redacting first removes the whole token, and the bound is then applied to a body that
+    no longer carries one.
     """
     secret = "ghp_" + "A" * 36
-    body = "m" * (MAX_ECHOED_BODY_CHARS - 10) + " " + secret + "tail"
-    provider = _provider(lambda _: httpx.Response(500, text=body))
-    with pytest.raises(ProviderHttpError) as caught:
-        await provider.evaluate(cognition_request)
-    message = str(caught.value)
-    assert secret[:9] not in message
+    cut = await _measured_echo_cut(cognition_request)
+    body = "z" * (cut - surviving - 1) + " " + secret + "tail"
+    assert body.index(secret) == cut - surviving
+    message = await _error_message_for(body, cognition_request)
     assert secret not in message
+    assert _longest_surviving_fragment(message, secret) <= MAX_INNOCENT_FRAGMENT
     assert len(message) < MAX_ECHOED_BODY_CHARS + 300
+
+
+@pytest.mark.parametrize("surviving", STRADDLE_SURVIVORS)
+def test_a_credential_straddling_the_repair_echo_bound_is_still_removed(
+    surviving: int,
+    cognition_request: CognitionRequest,
+) -> None:
+    """The repair echo carries the same ordering rule, and carries it outbound.
+
+    This echo is the one place in the repository where provider-controlled text is
+    deliberately TRANSMITTED: it is the assistant turn :meth:`repair_call` posts back to
+    the endpoint. Nothing redacts it a second time behind this call - unlike the error
+    message, which meets the redactor again in ``ProviderCallError.__init__`` - so
+    bounding before redacting here ships a credential fragment to a third party.
+    """
+    secret = "ghp_" + "A" * 36
+    cut = _measured_repair_cut(cognition_request)
+    body = "z" * (cut - surviving - 1) + " " + secret + "tail"
+    assert body.index(secret) == cut - surviving
+    echoed = build_repair_messages(
+        cognition_request,
+        invalid_content=body,
+        error="schema rejected",
+    )[-2]["content"]
+    assert secret not in echoed
+    assert _longest_surviving_fragment(echoed, secret) <= MAX_INNOCENT_FRAGMENT
+    assert len(echoed) <= MAX_REPAIR_BODY_CHARS
+
+
+async def test_the_configured_timeout_reaches_the_transport(
+    cognition_request: CognitionRequest,
+) -> None:
+    """Validating a timeout the client never receives would be decoration.
+
+    Several tests refuse a bad ``timeout_seconds`` and none of them observed the good one
+    arriving anywhere: the whole constructor guard, and the specification section 7 bound
+    behind it, rest on one keyword reaching :class:`httpx.AsyncClient`. ``httpx`` stamps
+    the effective timeout on each request it sends, so the value is observable offline -
+    a transport that saw ``None`` was handed a client built without one.
+    """
+    seen: list[object] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.extensions.get("timeout"))
+        return httpx.Response(200, json=_completion(_content(cognition_request.request_id)))
+
+    provider = OpenAICompatibleProvider(
+        base_url=REMOTE_BASE_URL,
+        model="test-model",
+        api_key="test-secret",
+        timeout_seconds=7.0,
+        transport=httpx.MockTransport(handler),
+    )
+    await provider.evaluate(cognition_request)
+    await provider.aclose()
+    assert seen == [{"connect": 7.0, "read": 7.0, "write": 7.0, "pool": 7.0}]
 
 
 def test_an_undefined_field_name_is_redacted_before_it_is_logged(
@@ -1067,7 +1197,15 @@ def test_the_number_of_undefined_field_names_echoed_is_bounded(
     cognition_request: CognitionRequest,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An external API that adds a thousand fields must not write a thousand into a log."""
+    """An external API that adds a thousand fields must not write a thousand into a log.
+
+    The count is asserted against a LITERAL, not against the constant under test: a
+    ``count <= MAX_ECHOED_FIELD_NAMES`` comparison is satisfied by every value that
+    constant could be raised to, so it cannot notice the cap being raised or deleted.
+    Ten eighteen-character names join to 198 characters, well inside the echo bound, so
+    the absence of the truncation marker says the NAME cap is what limited this line
+    rather than the character cap behind it.
+    """
     content = json.loads(_content(cognition_request.request_id))
     for index in range(400):
         content["padding_field_" + format(index, "04d")] = index
@@ -1075,8 +1213,126 @@ def test_the_number_of_undefined_field_names_echoed_is_bounded(
         coerce_cognition_result(json.dumps(content), request_id=cognition_request.request_id)
     written = "\n".join(record.getMessage() for record in caplog.records)
     assert "400" in written
-    assert written.count("padding_field_") <= MAX_ECHOED_FIELD_NAMES
+    assert MAX_ECHOED_FIELD_NAMES == 10
+    assert written.count("padding_field_") == 10
+    assert ECHOED_BODY_TRUNCATION_MARKER not in written
     assert len(written) < MAX_ECHOED_BODY_CHARS + 300
+
+
+async def test_an_oversized_provider_answer_is_refused_rather_than_read_into_the_run(
+    cognition_request: CognitionRequest,
+) -> None:
+    """A response body is provider-controlled input, and it was the one left unbounded.
+
+    Everything downstream processes the WHOLE body before any bound applies, because
+    this module redacts before it truncates: a multi-megabyte error body is redacted end
+    to end up to four times to produce a 500-character excerpt, and a large enough one
+    raises ``MemoryError`` - which is not a :class:`CognitionError` and therefore aborts
+    the run specification section 12 says a provider failure may never abort.
+    """
+    oversized = b"z" * (MAX_RESPONSE_BODY_BYTES + 1)
+    provider = _provider(lambda _: httpx.Response(200, content=oversized))
+    with pytest.raises(OversizedProviderResponse) as caught:
+        await provider.evaluate(cognition_request)
+    await provider.aclose()
+    assert isinstance(caught.value, CognitionError)
+    assert str(MAX_RESPONSE_BODY_BYTES) in str(caught.value)
+    assert caught.value.retryable is False
+    assert caught.value.fallback_reason == "invalid-response"
+
+
+async def test_an_oversized_error_body_is_bounded_before_it_is_redacted_and_echoed(
+    cognition_request: CognitionRequest,
+) -> None:
+    """The failing-status path reads the same body, and reads it four times over.
+
+    ``_raise_for_status`` excerpts ``response.text``, so an unbounded error body is the
+    cheapest way to spend an unbounded amount of memory and CPU inside one attempt that
+    the service will then retry.
+    """
+    oversized = b"z" * (MAX_RESPONSE_BODY_BYTES + 1)
+    provider = _provider(lambda _: httpx.Response(500, content=oversized))
+    with pytest.raises(OversizedProviderResponse):
+        await provider.evaluate(cognition_request)
+    await provider.aclose()
+
+
+async def test_an_answer_exactly_on_the_response_bound_is_still_read(
+    cognition_request: CognitionRequest,
+) -> None:
+    """The bound is a bound, not a blanket refusal: the last allowed byte is allowed.
+
+    A provider may legitimately return a verbose envelope, so this pins the comparison
+    as well as the constant - an off-by-one here refuses an answer the contract accepts.
+    """
+    envelope = _completion(_content(cognition_request.request_id))
+    envelope["id"] = "z"
+    body = json.dumps(envelope).encode("utf-8")
+    envelope["id"] = "z" * (MAX_RESPONSE_BODY_BYTES - len(body) + 1)
+    body = json.dumps(envelope).encode("utf-8")
+    assert len(body) == MAX_RESPONSE_BODY_BYTES
+    provider = _provider(lambda _: httpx.Response(200, content=body))
+    result = await provider.evaluate(cognition_request)
+    await provider.aclose()
+    assert result.request_id == cognition_request.request_id
+
+
+async def test_a_compressed_answer_is_read_through_the_bounded_stream(
+    cognition_request: CognitionRequest,
+) -> None:
+    """A bounded read decodes the stream itself, so the answer it rebuilds is re-framed.
+
+    Carrying ``content-encoding`` across would ask ``httpx`` to decompress a body this
+    provider has already decompressed, and that raises ``httpx.DecodingError`` while the
+    answer is being rebuilt - outside the try block, so a BARE transport exception on the
+    one path specification section 12 says may never abort a run. Every header that
+    describes the content is kept; only the three that describe the old wire framing go.
+    """
+    packed = gzip.compress(
+        json.dumps(_completion(_content(cognition_request.request_id))).encode("utf-8")
+    )
+    provider = _provider(
+        lambda _: httpx.Response(
+            200,
+            content=packed,
+            headers={"content-encoding": "gzip", "content-type": "application/json"},
+        )
+    )
+    result = await provider.evaluate(cognition_request)
+    await provider.aclose()
+    assert result.request_id == cognition_request.request_id
+
+
+async def test_a_dribbling_endpoint_cannot_outlast_the_configured_timeout(
+    cognition_request: CognitionRequest,
+) -> None:
+    """The configured timeout has to bound the CALL, not each socket operation.
+
+    ``httpx`` spreads one number over connect, read, write and pool, and the read
+    timeout bounds the wait for each CHUNK rather than for the whole exchange. An
+    endpoint that answers one byte just inside every read timeout therefore never times
+    out, and specification section 7 fixes a provider timeout precisely so that one
+    attempt cannot run forever.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(30)
+        return httpx.Response(200, json=_completion(_content(cognition_request.request_id)))
+
+    provider = OpenAICompatibleProvider(
+        base_url=REMOTE_BASE_URL,
+        model="test-model",
+        api_key="test-secret",
+        timeout_seconds=0.05,
+        transport=httpx.MockTransport(handler),
+    )
+    started = time.monotonic()
+    with pytest.raises(ProviderTimeout) as caught:
+        await provider.evaluate(cognition_request)
+    elapsed = time.monotonic() - started
+    await provider.aclose()
+    assert elapsed < 10
+    assert "0.05 seconds" in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -1515,6 +1771,47 @@ def test_the_prompt_module_claims_only_the_screen_it_can_keep(
     documentation = f"{prompts.__doc__}\n{prompts.cognition_json_schema.__doc__}"
     assert "no credential can reach a prompt" not in documentation
     assert "can never disagree" not in documentation
+
+
+def test_the_prompt_module_does_not_claim_to_screen_transport_header_labels(
+    cognition_persona: dict[str, object],
+    cognition_campaign: dict[str, object],
+) -> None:
+    """Campaign copy meets the NARROW screen, which does not know header names.
+
+    ``contains_secret_or_email_text`` deliberately excludes ``AUTH_HEADER_LABELS``,
+    because ``cookie``, ``authorization`` and their neighbours are ordinary advertising
+    words and screening campaign copy for them refuses ordinary campaign copy. The
+    consequence is that this shape is ACCEPTED and carried into the fenced block, and
+    into the stored cognition record, verbatim - while the repository can plainly name
+    it: ``contains_provider_secret_text`` sees it and ``redact_provider_body`` removes
+    it from a provider body. So the module prose may not say that every shape this
+    repository can name is refused entry to a prompt. That is the overstated-screen
+    class task 9 withdrew nine times, and the sentence has to describe the screen the
+    request contract actually runs.
+    """
+    admitted = "authorization: Bearer 0000abcdef1234567890"
+    assert contains_provider_secret_text(admitted)
+    campaign = dict(cognition_campaign)
+    campaign["message"] = admitted
+    request = CognitionRequest(
+        request_id="run-demo:event-00000007",
+        run_id="run-demo",
+        simulated_minute=480,
+        agent_id="person-001",
+        fictional_persona=cognition_persona,
+        activity="commute",
+        mood=0.2,
+        relevant_memories=(),
+        campaign=campaign,
+        channel="mobile-feed",
+        exposure_count=2,
+    )
+    assert admitted in _data_block(build_messages(request)[1]["content"])
+
+    documentation = " ".join((prompts.__doc__ or "").split())
+    assert "SHAPE this repository can name is refused entry to a prompt" not in documentation
+    assert "AUTH_HEADER_LABELS" in documentation
 
 
 def test_the_requested_schema_body_is_the_documented_expectation() -> None:

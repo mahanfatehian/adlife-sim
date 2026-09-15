@@ -12,9 +12,24 @@ the prefix of that request id, because
 :data:`~adlife.core.ports.cognition.REQUEST_ID_PATTERN` requires the id the answer must
 echo to begin with it.
 
-Every filesystem-path and credential SHAPE this repository can name is refused entry to a
-prompt, because :class:`~adlife.core.ports.cognition.CognitionRequest` refuses those
-shapes at construction. That is a screen and screens are best effort, exactly as
+A filesystem path is refused entry to a prompt everywhere, and a credential is screened
+by the rule its own field carries, because
+:class:`~adlife.core.ports.cognition.CognitionRequest` runs those screens at
+construction. The campaign screen is deliberately the NARROWER of the two. Persona text
+meets :func:`~adlife.core.domain.person.contains_sensitive_text`; campaign text meets
+:func:`~adlife.core.domain.person.contains_secret_or_email_text`, which knows the
+credential label words and the vendor key shapes but NOT the transport header names in
+:data:`~adlife.core.domain.person.AUTH_HEADER_LABELS`, because ``cookie``,
+``authorization`` and their neighbours are ordinary words in advertising copy and
+screening for them rejects ordinary campaigns. So campaign copy spelling
+``authorization: Bearer <token>`` or ``cookie: session=<token>`` is ACCEPTED, and it is
+carried verbatim into the fenced block and into the cognition record that stores the
+request - even though this repository can name that shape elsewhere, where
+:func:`~adlife.core.domain.person.contains_provider_secret_text` sees it and
+:func:`~adlife.core.ports.cognition.redact_provider_body` removes it from a provider
+body.
+
+That is a screen and screens are best effort, exactly as
 :mod:`adlife.adapters.cognition.cache` and
 :mod:`adlife.adapters.cognition.openai_compatible` say of the same tables: it is NOT "a
 credential cannot reach a prompt". An opaque unlabelled token is indistinguishable from

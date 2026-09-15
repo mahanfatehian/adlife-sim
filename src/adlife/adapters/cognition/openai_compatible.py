@@ -61,6 +61,7 @@ not a provider failure.
 
 from __future__ import annotations
 
+import asyncio
 import getpass
 import json
 import logging
@@ -142,6 +143,37 @@ warning still reports how many there were, because that number is the useful par
 
 MAX_TOKEN_COUNT: Final = _MAX_TOKEN_COUNT
 """Re-exported from the contract, so a screen here and the bound there cannot drift."""
+
+MAX_RESPONSE_BODY_BYTES: Final = 1_048_576
+"""How many bytes of one answer this provider reads before refusing it.
+
+A response body is provider-controlled input of unbounded length, and it was the last
+such input this module did not bound - next to token counts, echoed bodies, echoed field
+NAMES, recursion depth, float magnitude and the timeout itself. Nothing downstream can
+bound it afterwards, because the rule here is to redact BEFORE truncating: :func:`_excerpt`
+runs the published redactor over the WHOLE body up to four times to produce a
+500-character diagnostic, and :func:`coerce_cognition_result` parses the whole content
+before it reads a field. The cost is linear in the length, so a hostile or merely broken
+endpoint buys seconds of CPU and a multiple of the body in peak memory per attempt, and
+the service retries the attempt. A large enough body raises ``MemoryError``, which is not
+a :class:`~adlife.core.ports.cognition.CognitionError` and therefore aborts the run that
+specification section 12 says a provider failure may never abort.
+
+One mebibyte is about two orders of magnitude above a legitimate answer:
+:attr:`~adlife.core.ports.cognition.SamplingSettings.max_output_tokens` is capped at 8192,
+and a chat-completion envelope carrying that many tokens is tens of kilobytes.
+"""
+
+_FRAMING_HEADERS: Final[frozenset[str]] = frozenset(
+    {"content-encoding", "content-length", "transfer-encoding"}
+)
+"""Headers that describe the WIRE framing of a body this module has already decoded.
+
+A bounded read decodes the stream itself, so the response it rebuilds is re-framed by
+``httpx``. Carrying these three across would describe the old framing of a body that no
+longer has it; every header that describes the CONTENT, ``content-type`` above all, is
+kept so that decoding a body is unchanged by the bound.
+"""
 
 
 def _configured_timeout_ceiling() -> float:
@@ -259,6 +291,20 @@ class ProviderHttpError(ProviderCallError):
     """
 
     fallback_reason: ClassVar[FallbackReason] = "http-error"
+
+
+class OversizedProviderResponse(ProviderCallError):
+    """The answer passed :data:`MAX_RESPONSE_BODY_BYTES` and was dropped, not parsed.
+
+    It is not retryable: an endpoint that answers with megabytes answers with megabytes
+    again, and every attempt costs the same memory. It is deliberately NOT an
+    :class:`InvalidProviderResponse`, because that failure spends specification section
+    12's one repair attempt on echoing the rejected body back to the model, and there is
+    no body here that may be echoed.
+    """
+
+    fallback_reason: ClassVar[FallbackReason] = "invalid-response"
+    default_retryable: ClassVar[bool] = False
 
 
 class InvalidProviderResponse(ProviderCallError):
@@ -796,17 +842,37 @@ class OpenAICompatibleProvider:
         )
 
     async def _send(self, payload: Mapping[str, object]) -> httpx.Response:
-        """Post the payload, translating every transport failure into this hierarchy.
+        """Post the payload bounded in time and in size, translating every failure.
 
         The messages are composed here rather than taken from the transport exception:
         an httpx message carries the request URL and, for some backends, request detail,
         and composing our own is the reliable way to keep a diagnostic free of anything
         the caller configured.
+
+        TWO BOUNDS, because the configured timeout is only one of them and is not the
+        one it looks like. ``httpx`` spreads ``timeout_seconds`` over connect, read,
+        write and pool, and the read timeout bounds the wait for each CHUNK rather than
+        for the exchange: an endpoint that answers one byte just inside every read
+        timeout never times out. The deadline below bounds the whole attempt, which is
+        what specification section 7 fixes a provider timeout for, and
+        :meth:`_read_bounded` bounds what may arrive inside it.
         """
         endpoint = self._metadata.base_url
+        request = self._client.build_request("POST", CHAT_COMPLETIONS_PATH, json=dict(payload))
         try:
-            return await self._client.post(CHAT_COMPLETIONS_PATH, json=dict(payload))
-        except httpx.TimeoutException as error:
+            async with asyncio.timeout(self._timeout_seconds):
+                streamed = await self._client.send(request, stream=True)
+                try:
+                    status = streamed.status_code
+                    headers = [
+                        (name, value)
+                        for name, value in streamed.headers.multi_items()
+                        if name.lower() not in _FRAMING_HEADERS
+                    ]
+                    body = await self._read_bounded(streamed)
+                finally:
+                    await streamed.aclose()
+        except (httpx.TimeoutException, TimeoutError) as error:
             raise ProviderTimeout(
                 f"the cognition endpoint {endpoint} did not answer within "
                 f"{self._timeout_seconds} seconds ({type(error).__name__})"
@@ -815,6 +881,34 @@ class OpenAICompatibleProvider:
             raise ProviderUnavailable(
                 f"the cognition endpoint {endpoint} could not be reached ({type(error).__name__})"
             ) from error
+        return httpx.Response(
+            status_code=status,
+            headers=headers,
+            content=body,
+            request=request,
+        )
+
+    async def _read_bounded(self, response: httpx.Response) -> bytes:
+        """Read at most :data:`MAX_RESPONSE_BODY_BYTES` of an answer, then refuse it.
+
+        The bound is checked on each chunk before that chunk is kept and before anything
+        further is awaited, so the peak this costs is the bound plus one chunk rather
+        than whatever the endpoint decided to send. The body is neither truncated nor
+        echoed: half a JSON answer is not an answer, and the message names the bound
+        rather than any part of the body.
+        """
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > MAX_RESPONSE_BODY_BYTES:
+                raise OversizedProviderResponse(
+                    f"the cognition endpoint {self._metadata.base_url} answered with more "
+                    f"than {MAX_RESPONSE_BODY_BYTES} bytes; the rest was not read and "
+                    "the answer was dropped"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         try:
@@ -844,6 +938,7 @@ __all__ = [
     "MAX_ECHOED_BODY_CHARS",
     "MAX_ECHOED_FIELD_NAMES",
     "MAX_REPRESENTABLE_MAGNITUDE",
+    "MAX_RESPONSE_BODY_BYTES",
     "MAX_TIMEOUT_SECONDS",
     "MAX_TOKEN_COUNT",
     "NUMERIC_BOUNDS",
@@ -851,6 +946,7 @@ __all__ = [
     "InvalidProviderResponse",
     "MissingApiKey",
     "OpenAICompatibleProvider",
+    "OversizedProviderResponse",
     "ProviderCall",
     "ProviderCallError",
     "ProviderConfigurationError",

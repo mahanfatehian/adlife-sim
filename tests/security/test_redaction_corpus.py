@@ -41,7 +41,7 @@ from adlife.adapters.cognition.openai_compatible import (
     ProviderHttpError,
     coerce_cognition_result,
 )
-from adlife.adapters.cognition.prompts import build_repair_messages
+from adlife.adapters.cognition.prompts import MAX_REPAIR_BODY_CHARS, build_repair_messages
 from adlife.adapters.cognition.rules import (
     RuleCognitionInputs,
     RuleCognitionProvider,
@@ -945,36 +945,134 @@ async def test_the_corpus_shape_never_reaches_a_cognition_resolution(
 # schema rejection leaves behind. All three are exercised from the same rows here.
 
 
-def _straddling_body(shape: LeakShape) -> str:
-    """Pad a shape so its secret starts nine characters before the echo bound.
+STRADDLE_SURVIVORS = (4, 12)
+"""How many characters of a corpus secret fall on the near side of an echo bound.
+
+A single offset pins almost nothing: a fragment long enough for the vendor shape to
+match again is removed by the redaction that follows a bound, and a fragment of one or
+two characters is indistinguishable from ordinary prose. Both offsets here were measured
+to leave a readable fragment of eleven corpus rows under the defective ordering.
+"""
+
+MAX_INNOCENT_FRAGMENT = 3
+"""The longest secret prefix a redacted diagnostic may share with ordinary prose.
+
+Measured over this corpus at every offset above: the shipped ordering leaves at most ONE
+character, and the defective ordering leaves four or more. Asserting only that the WHOLE
+secret is absent - which is what the first version of this test asserted - holds for
+every fragment and therefore holds for the defect too.
+"""
+
+
+def _longest_surviving_fragment(text: str, secret: str) -> int:
+    """How many LEADING characters of ``secret`` are still readable in ``text``.
+
+    A bound leaves a PREFIX behind, so the prefix length is what a bound applied before
+    redaction produces and what an assertion about that defect has to measure.
+    """
+    for length in range(len(secret), 0, -1):
+        if secret[:length] in text:
+            return length
+    return 0
+
+
+async def _measured_echo_cut(request: CognitionRequest) -> int:
+    """Where the echo bound actually cuts, measured through the provider.
+
+    MEASURED rather than restated from the constants. The first version of this helper
+    subtracted a hand-written nine from :data:`MAX_ECHOED_BODY_CHARS`, and the fix that
+    introduced a truncation marker moved the cut three characters without moving the
+    padding: every corpus row then straddled a point the bound no longer cut at, and the
+    module stopped testing the ordering it is named for. The padding character below is
+    redaction-free, so every one that survives was kept by the bound, not by a pattern.
+    """
+    provider = _network_provider(
+        lambda _: httpx.Response(500, text="z" * (MAX_ECHOED_BODY_CHARS * 3))
+    )
+    with pytest.raises(ProviderHttpError) as caught:
+        await provider.evaluate(request)
+    await provider.aclose()
+    return str(caught.value).count("z")
+
+
+def _measured_repair_cut(request: CognitionRequest) -> int:
+    """Where the repair-echo bound actually cuts, measured through the prompt builder."""
+    echoed = build_repair_messages(
+        request,
+        invalid_content="z" * (MAX_REPAIR_BODY_CHARS * 3),
+        error="schema rejected",
+    )[-2]["content"]
+    return echoed.count("z")
+
+
+def _straddling_body(shape: LeakShape, *, cut: int, surviving: int) -> str:
+    """Pad a shape so that ``surviving`` characters of its secret precede ``cut``.
 
     The padding ends in a space rather than running straight into the shape, because a
-    label pattern needs its word boundary: ``mmmmapi_key`` is not ``api_key``, and a test
+    label pattern needs its word boundary: ``zzzzapi_key`` is not ``api_key``, and a test
     that glued the two together would be proving something about its own padding.
     """
     head = shape.body.index(shape.secret)
-    width = max(0, MAX_ECHOED_BODY_CHARS - 9 - head)
-    padding = "m" * (width - 1) + " " if width else ""
-    return padding + shape.body
+    width = cut - surviving - head
+    assert width >= 1, "the corpus row is too long to straddle this bound"
+    return "z" * (width - 1) + " " + shape.body
 
 
+@pytest.mark.parametrize("surviving", STRADDLE_SURVIVORS)
 @pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
 async def test_the_corpus_shape_survives_no_boundary_of_the_error_body_bound(
     shape: LeakShape,
+    surviving: int,
     cognition_request: CognitionRequest,
 ) -> None:
     """A bound applied before redaction bounds the wrong string (finding S9).
 
-    The shape is padded so that its secret starts nine characters before the cut. Cutting
-    first leaves a nine-character fragment that no vendor pattern matches any more, and
-    redacting afterwards therefore leaves it in the message and in the retry log line.
+    The shape is padded so that exactly ``surviving`` characters of its secret fall on
+    the near side of the measured cut. Cutting first leaves that fragment, no vendor
+    pattern matches it any more, and redacting afterwards therefore leaves it in the
+    message and in the retry log line the service writes from it.
     """
-    provider = _network_provider(lambda _: httpx.Response(500, text=_straddling_body(shape)))
+    cut = await _measured_echo_cut(cognition_request)
+    body = _straddling_body(shape, cut=cut, surviving=surviving)
+    assert body.index(shape.secret) == cut - surviving
+    provider = _network_provider(lambda _: httpx.Response(500, text=body))
     with pytest.raises(ProviderHttpError) as caught:
         await provider.evaluate(cognition_request)
+    await provider.aclose()
     message = str(caught.value)
     assert shape.secret not in message
     assert not contains_provider_secret_text(message)
+    assert _longest_surviving_fragment(message, shape.secret) <= MAX_INNOCENT_FRAGMENT
+
+
+@pytest.mark.parametrize("surviving", STRADDLE_SURVIVORS)
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_survives_no_boundary_of_the_repair_echo_bound(
+    shape: LeakShape,
+    surviving: int,
+    cognition_request: CognitionRequest,
+) -> None:
+    """The same ordering rule, on the copy that is posted back to the endpoint.
+
+    Every row above is far shorter than the repair bound, so none of them reached it.
+    This is the only echoed body the repository transmits rather than logs, and it has no
+    second redaction behind it: the assistant turn goes straight into the HTTPS request
+    that ``repair_call`` sends.
+    """
+    cut = _measured_repair_cut(cognition_request)
+    body = _straddling_body(shape, cut=cut, surviving=surviving)
+    assert body.index(shape.secret) == cut - surviving
+    messages = build_repair_messages(
+        cognition_request,
+        invalid_content=body,
+        error=f"schema rejected: {body}",
+    )
+    assert shape.secret not in json.dumps(messages)
+    # Only the two ECHOED turns are searched for a fragment. The replayed original
+    # exchange carries the request id, a creative digest and a fenced data block, and a
+    # short prefix such as ``0000`` occurs there in text nobody echoed.
+    echoed = " ".join((messages[-2]["content"], messages[-1]["content"]))
+    assert _longest_surviving_fragment(echoed, shape.secret) <= MAX_INNOCENT_FRAGMENT
 
 
 @pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
