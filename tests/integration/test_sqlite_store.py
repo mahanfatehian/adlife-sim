@@ -9,26 +9,42 @@ at all. "Reads back without complaining" is the failure mode this module exists 
 
 from __future__ import annotations
 
+import ast
+import inspect
 import re
 import sqlite3
+import tracemalloc
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
+from adlife.adapters.storage import schema as schema_module
+from adlife.adapters.storage import sqlite_store as sqlite_store_module
 from adlife.adapters.storage.schema import (
+    BUSY_TIMEOUT_MS,
     SCHEMA_VERSION,
     TABLE_NAMES,
     connect_to_database,
 )
-from adlife.adapters.storage.sqlite_store import MAX_INPUT_DOCUMENT_BYTES, SQLiteRunStore
+from adlife.adapters.storage.sqlite_store import (
+    MAX_INPUT_DOCUMENT_BYTES,
+    MAX_STORED_DOCUMENT_CHARS,
+    SQLiteRunStore,
+)
 from adlife.core.domain.events import DomainEvent, EventType
 from adlife.core.domain.results import RunManifest, SimulationResult
 from adlife.core.domain.scenario import Scenario
-from adlife.core.domain.serialization import canonical_event_line, canonical_json
-from adlife.core.domain.state import ConsumerState
+from adlife.core.domain.serialization import (
+    MAX_EVENT_LINE_CHARS,
+    canonical_event_line,
+    canonical_json,
+)
+from adlife.core.domain.state import ConsumerState, Memory
+from adlife.core.ports.cognition import ProviderUsage
 from adlife.core.ports.run_store import (
     CorruptRunArtifact,
+    InvalidEventBatch,
     ProviderUsageLog,
     RunCheckpoint,
     SchemaVersionMismatch,
@@ -65,6 +81,26 @@ def started_run(
 
 def raw(store: SQLiteRunStore, run_id: str) -> sqlite3.Connection:
     return sqlite3.connect(store.database_path(run_id))
+
+
+def stored_sequences(store: SQLiteRunStore, run_id: str) -> list[int]:
+    """What the authoritative database really holds, whatever the store just reported."""
+    with raw(store, run_id) as connection:
+        return [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT sequence FROM events WHERE run_id = ? ORDER BY sequence", (run_id,)
+            )
+        ]
+
+
+def files_carrying(store: SQLiteRunStore, run_id: str, secret: str) -> list[str]:
+    """Every artifact byte of the run, the write-ahead log included."""
+    return [
+        path.name
+        for path in sorted(store.run_directory(run_id).rglob("*"))
+        if path.is_file() and secret.encode("utf-8") in path.read_bytes()
+    ]
 
 
 def test_the_schema_creates_exactly_the_documented_tables(
@@ -111,18 +147,48 @@ def test_a_missing_schema_version_row_is_refused(
         started_run.load_run(run_manifest.run_id)
 
 
+ORPHAN_ROWS: tuple[tuple[str, str, tuple[object, ...]], ...] = (
+    (
+        "events",
+        "INSERT INTO events (event_id, run_id, sequence, simulated_minute, "
+        "event_type, event_json) VALUES (?, ?, ?, ?, ?, ?)",
+        ("x:event-00000000", "run-unknown", 0, 0, "run.started", "{}"),
+    ),
+    (
+        "checkpoints",
+        "INSERT INTO checkpoints (run_id, simulated_minute, checkpoint_json) VALUES (?, ?, ?)",
+        ("run-unknown", 0, "{}"),
+    ),
+    (
+        "metrics",
+        "INSERT INTO metrics (run_id, metric_name, metric_value) VALUES (?, ?, ?)",
+        ("run-unknown", "notice_rate", 0.5),
+    ),
+)
+"""One row per table that references ``runs``, each naming a run that does not exist."""
+
+
+@pytest.mark.parametrize(
+    ("statement", "parameters"),
+    [(statement, parameters) for _, statement, parameters in ORPHAN_ROWS],
+    ids=[table for table, _, _ in ORPHAN_ROWS],
+)
 def test_foreign_keys_are_enforced_by_the_connection_the_store_opens(
-    started_run: SQLiteRunStore, run_manifest: RunManifest
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    statement: str,
+    parameters: tuple[object, ...],
 ) -> None:
-    """``PRAGMA foreign_keys`` is a silent no-op inside a transaction, so test the effect."""
+    """``PRAGMA foreign_keys`` is a silent no-op inside a transaction, so test the effect.
+
+    Every table that references ``runs`` is covered: a row orphaned from its run would
+    not be seen by the store's own cross-checks either, because each of them filters by
+    ``run_id`` and so cannot notice a row belonging to no run at all.
+    """
     connection = connect_to_database(started_run.database_path(run_manifest.run_id))
     try:
         with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                "INSERT INTO events (event_id, run_id, sequence, simulated_minute, "
-                "event_type, event_json) VALUES (?, ?, ?, ?, ?, ?)",
-                ("x:event-00000000", "run-unknown", 0, 0, "run.started", "{}"),
-            )
+            connection.execute(statement, parameters)
     finally:
         connection.close()
 
@@ -149,7 +215,26 @@ def test_the_connection_waits_rather_than_failing_immediately_on_a_busy_database
     finally:
         connection.close()
 
-    assert busy_timeout >= 5000
+    assert busy_timeout == BUSY_TIMEOUT_MS
+
+
+def test_the_busy_timeout_is_the_one_this_module_sets_and_not_the_driver_default(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The driver's own default is five seconds, which is also the value we want.
+
+    Asserting five seconds therefore cannot fail: it is what a connection with no pragma
+    at all reports. Moving the configured value somewhere the driver would never choose
+    makes the assertion bite on the line that sets it.
+    """
+    monkeypatch.setattr(schema_module, "BUSY_TIMEOUT_MS", 1234)
+    connection = connect_to_database(started_run.database_path(run_manifest.run_id))
+    try:
+        busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+    finally:
+        connection.close()
+
+    assert busy_timeout == 1234
 
 
 def test_the_connection_uses_the_documented_synchronous_level(
@@ -522,14 +607,23 @@ def test_a_second_store_refuses_to_continue_an_export_that_lost_a_line(
     run_manifest: RunManifest,
     event_factory: Callable[..., DomainEvent],
 ) -> None:
-    """The export and the database must agree before another tick is appended to either."""
+    """The two artifacts must agree BEFORE the tick is committed to either of them.
+
+    A refusal evaluated after its own effect is not a refusal. It widens the divergence
+    it reports, and a caller that retries the tick it was told was rejected is then told
+    the sequence is taken - a run that can neither continue nor be read.
+    """
     path = started_run.events_jsonl_path(run_manifest.run_id)
     lines = path.read_text(encoding="utf-8").splitlines()
     path.write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
     reopened = SQLiteRunStore(started_run.root)
 
-    with pytest.raises(CorruptRunArtifact, match="lines"):
-        reopened.append_events([event_factory(3, simulated_minute=45)])
+    for _ in range(2):
+        with pytest.raises(CorruptRunArtifact, match="lines"):
+            reopened.append_events([event_factory(3, simulated_minute=45)])
+
+    assert stored_sequences(reopened, run_manifest.run_id) == [0, 1, 2]
+    assert path.read_text(encoding="utf-8").splitlines() == lines[:2]
 
 
 def test_a_second_store_refuses_to_continue_an_unterminated_export(
@@ -633,12 +727,18 @@ def test_a_missing_input_scenario_is_refused(
 def test_an_input_document_beyond_the_documented_bound_is_refused(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
-    """A file claiming to be a scenario is bounded before it is parsed."""
+    """A file claiming to be a scenario is bounded before it is parsed.
+
+    The refusal must name the BOUND. An ordinary parse failure also mentions the
+    scenario, so a test that matched only that could not tell the bound from its
+    absence - and the bound is the half that keeps the read from materialising 4 MiB
+    of anything a file happens to hold.
+    """
     started_run.scenario_json_path(run_manifest.run_id).write_text(
         "x" * (MAX_INPUT_DOCUMENT_BYTES + 1), encoding="utf-8"
     )
 
-    with pytest.raises(CorruptRunArtifact, match="scenario"):
+    with pytest.raises(CorruptRunArtifact, match="exceeds"):
         started_run.load_run(run_manifest.run_id)
 
 
@@ -767,3 +867,453 @@ def test_a_run_identifier_that_is_not_one_is_refused_before_a_path_is_built(
 ) -> None:
     with pytest.raises(UnsafeRunLocation, match="not a run identifier"):
         store.run_directory(hostile)
+
+
+# --- the two artifacts of one tick, and what happens when only one of them lands -------
+#
+# The database is authoritative and the export is derived from it, so the failure that
+# matters is a committed tick whose export line never reached the device. These pin the
+# three properties that makes survivable: the failure is TYPED, the divergence never
+# widens, and the derived artifact can be re-derived.
+
+
+def test_a_failing_export_append_is_refused_as_a_typed_storage_error(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full device on events.jsonl is a persistence failure, not an untyped crash."""
+
+    def refuse(path: Path, text: str) -> None:
+        raise OSError(28, "No space left on device", str(path))
+
+    monkeypatch.setattr(sqlite_store_module, "append_export_lines", refuse)
+
+    with pytest.raises(StorageError) as raised:
+        started_run.append_events([event_factory(3, simulated_minute=45)])
+
+    assert raised.value.__cause__ is None
+    assert "No space left" not in str(raised.value)
+
+
+def test_a_committed_tick_whose_export_line_was_lost_never_widens_the_divergence(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The crash case the brief names: a kill between the commit and the export fsync."""
+
+    def refuse(path: Path, text: str) -> None:
+        raise OSError("the device is full")
+
+    monkeypatch.setattr(sqlite_store_module, "append_export_lines", refuse)
+    with pytest.raises(StorageError):
+        started_run.append_events([event_factory(3, simulated_minute=45)])
+    monkeypatch.undo()
+
+    with pytest.raises(CorruptRunArtifact, match="lines"):
+        started_run.append_events([event_factory(4, simulated_minute=60)])
+
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2, 3]
+
+
+def test_an_export_lost_to_a_failed_append_is_rebuilt_from_the_database(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQLite is the durable store; the export is a derived artifact, so it is derivable."""
+
+    def refuse(path: Path, text: str) -> None:
+        raise OSError("the device is full")
+
+    monkeypatch.setattr(sqlite_store_module, "append_export_lines", refuse)
+    with pytest.raises(StorageError):
+        started_run.append_events([event_factory(3, simulated_minute=45)])
+    monkeypatch.undo()
+    with pytest.raises(CorruptRunArtifact, match="lines"):
+        started_run.load_run(run_manifest.run_id)
+
+    assert started_run.rebuild_export(run_manifest.run_id) == 4
+
+    loaded = started_run.load_run(run_manifest.run_id)
+    assert [event.sequence for event in loaded.events] == [0, 1, 2, 3]
+    started_run.append_events([event_factory(4, simulated_minute=60)])
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2, 3, 4]
+
+
+def test_a_rebuilt_export_is_byte_identical_to_the_one_the_writer_would_have_left(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """Re-deriving must reproduce the artifact, not merely something that parses."""
+    path = started_run.events_jsonl_path(run_manifest.run_id)
+    expected = path.read_bytes()
+    path.write_bytes(b"")
+
+    assert started_run.rebuild_export(run_manifest.run_id) == 3
+
+    assert path.read_bytes() == expected
+
+
+def test_a_failing_export_rebuild_is_refused_as_a_typed_storage_error(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repair that fails must leave the previous export and a typed failure behind."""
+
+    def refuse(source: object, target: object) -> None:
+        raise OSError("the device is full")
+
+    monkeypatch.setattr(sqlite_store_module.os, "replace", refuse)
+    path = started_run.events_jsonl_path(run_manifest.run_id)
+    before = path.read_bytes()
+
+    with pytest.raises(StorageError) as raised:
+        started_run.rebuild_export(run_manifest.run_id)
+
+    assert raised.value.__cause__ is None
+    assert path.read_bytes() == before
+    directory = started_run.run_directory(run_manifest.run_id)
+    assert [item.name for item in directory.iterdir() if item.name.endswith(".tmp")] == []
+
+
+def test_rebuilding_an_export_from_a_gapped_database_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """A re-derive is only honest if the rows it derives from are themselves a run."""
+    path = started_run.events_jsonl_path(run_manifest.run_id)
+    before = path.read_bytes()
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DELETE FROM events WHERE sequence = 1")
+
+    with pytest.raises(CorruptRunArtifact, match="contiguous"):
+        started_run.rebuild_export(run_manifest.run_id)
+
+    assert path.read_bytes() == before
+
+
+# --- the two write paths that had no screen -------------------------------------------
+#
+# ``daily_reflection`` is provider paraphrase and carries no screen anywhere else in the
+# repository, and ``ProviderUsage.model_id`` is free text a configuration supplies. Both
+# reach a permanent artifact, so both are screened where they are written.
+
+CREDENTIAL_TOKEN = "0000abcdef1234567890"
+CREDENTIAL_TEXT = f"remember api_key={CREDENTIAL_TOKEN} for the fictional checkout"
+
+
+def test_a_checkpoint_whose_reflection_reads_as_a_credential_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, consumer_state: ConsumerState
+) -> None:
+    """The same string is refused in an event payload; a checkpoint is no different."""
+    checkpoint = RunCheckpoint(
+        run_id=run_manifest.run_id,
+        simulated_minute=1440,
+        next_event_sequence=3,
+        states=(consumer_state.model_copy(update={"daily_reflection": CREDENTIAL_TEXT}),),
+    )
+
+    with pytest.raises(StorageError, match="credential"):
+        started_run.save_checkpoint(checkpoint)
+
+    assert files_carrying(started_run, run_manifest.run_id, CREDENTIAL_TOKEN) == []
+    assert started_run.load_run(run_manifest.run_id).checkpoints == ()
+
+
+def test_a_checkpoint_memory_summary_that_reads_as_a_credential_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, consumer_state: ConsumerState
+) -> None:
+    """The screen walks the whole document, not one named field of it."""
+    checkpoint = RunCheckpoint(
+        run_id=run_manifest.run_id,
+        simulated_minute=1440,
+        next_event_sequence=3,
+        states=(
+            consumer_state.model_copy(
+                update={
+                    "memories": (
+                        Memory(
+                            memory_id="memory-0001",
+                            created_minute=15,
+                            kind="advertising",
+                            summary=CREDENTIAL_TEXT,
+                            salience=0.5,
+                            caused_by_event_ids=("run-storage:event-00000001",),
+                        ),
+                    )
+                }
+            ),
+        ),
+    )
+
+    with pytest.raises(StorageError, match="credential"):
+        started_run.save_checkpoint(checkpoint)
+
+    assert files_carrying(started_run, run_manifest.run_id, CREDENTIAL_TOKEN) == []
+
+
+def test_provider_usage_whose_model_id_reads_as_a_credential_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """A model identifier is free configuration text on its way to a permanent document."""
+    log = ProviderUsageLog(
+        run_id=run_manifest.run_id,
+        records=(
+            ProviderUsage(
+                provider_kind="mock",
+                model_id=f"api_key={CREDENTIAL_TOKEN}",
+                prompt_tokens=0,
+                completion_tokens=0,
+                latency_ms=0,
+            ),
+        ),
+    )
+
+    with pytest.raises(StorageError, match="credential"):
+        started_run.save_provider_usage(log)
+
+    assert files_carrying(started_run, run_manifest.run_id, CREDENTIAL_TOKEN) == []
+
+
+# --- bounds, on the way in as well as on the way out ----------------------------------
+
+
+def test_an_event_too_large_to_read_back_is_refused_before_it_is_written(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """A writer that can create a document its own reader refuses corrupts at write time."""
+    oversized = event_factory(
+        3, simulated_minute=45, payload={"note": "x" * (MAX_EVENT_LINE_CHARS + 1)}
+    )
+
+    with pytest.raises(InvalidEventBatch, match="characters"):
+        started_run.append_events([oversized])
+
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2]
+    assert len(started_run.load_run(run_manifest.run_id).events) == 3
+
+
+def test_a_stored_event_document_beyond_the_line_bound_is_refused_as_too_large(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """The bound covers a tampered database blob, and says so rather than 'not an event'."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute(
+            "UPDATE events SET event_json = ? WHERE sequence = 1",
+            ("x" * (MAX_EVENT_LINE_CHARS + 1),),
+        )
+
+    with pytest.raises(CorruptRunArtifact, match="exceeds"):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_a_stored_manifest_beyond_the_document_bound_is_refused_unmaterialised(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """results.sqlite3 is user-supplied data; a blob in it is bounded as a file would be."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute(
+            "UPDATE runs SET manifest_json = ?", ("x" * (8 * MAX_STORED_DOCUMENT_CHARS),)
+        )
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(CorruptRunArtifact, match="exceeds"):
+            started_run.load_run(run_manifest.run_id)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 4 * MAX_STORED_DOCUMENT_CHARS
+
+
+def test_a_stored_result_beyond_the_document_bound_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute(
+            "UPDATE runs SET status = ?, result_json = ?",
+            ("completed", "x" * (MAX_STORED_DOCUMENT_CHARS + 1)),
+        )
+
+    with pytest.raises(CorruptRunArtifact, match="exceeds"):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_a_stored_checkpoint_beyond_the_document_bound_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, consumer_state: ConsumerState
+) -> None:
+    started_run.save_checkpoint(
+        RunCheckpoint(
+            run_id=run_manifest.run_id,
+            simulated_minute=1440,
+            next_event_sequence=3,
+            states=(consumer_state,),
+        )
+    )
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute(
+            "UPDATE checkpoints SET checkpoint_json = ?",
+            ("x" * (MAX_STORED_DOCUMENT_CHARS + 1),),
+        )
+
+    with pytest.raises(CorruptRunArtifact, match="exceeds"):
+        started_run.load_run(run_manifest.run_id)
+
+
+# --- deterministic ordering and the DDL constraints, proved by effect ------------------
+
+
+def reshuffle_rows(store: SQLiteRunStore, run_id: str, table: str, columns: str) -> None:
+    """Rewrite one table's rows in reverse physical order, leaving the data identical."""
+    with raw(store, run_id) as connection:
+        rows = connection.execute(f"SELECT {columns} FROM {table}").fetchall()
+        connection.execute(f"DELETE FROM {table}")
+        placeholders = ", ".join("?" for _ in columns.split(","))
+        connection.executemany(
+            f"INSERT INTO {table} ({columns}) VALUES ({placeholders})", list(reversed(rows))
+        )
+
+
+EVENT_COLUMNS = "event_id, run_id, sequence, simulated_minute, event_type, event_json"
+
+
+def test_streaming_returns_events_in_sequence_order_whatever_their_physical_order(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """The streaming reader feeds replay and the live interface; rowid order is not order."""
+    reshuffle_rows(started_run, run_manifest.run_id, "events", EVENT_COLUMNS)
+
+    streamed = list(started_run.iter_events(run_manifest.run_id))
+
+    assert [event.sequence for event in streamed] == [0, 1, 2]
+
+
+def test_checkpoints_are_returned_in_minute_order_whatever_their_physical_order(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, consumer_state: ConsumerState
+) -> None:
+    for minute in (1440, 2880):
+        started_run.save_checkpoint(
+            RunCheckpoint(
+                run_id=run_manifest.run_id,
+                simulated_minute=minute,
+                next_event_sequence=3,
+                states=(consumer_state,),
+            )
+        )
+    reshuffle_rows(
+        started_run, run_manifest.run_id, "checkpoints", "run_id, simulated_minute, checkpoint_json"
+    )
+
+    loaded = started_run.load_run(run_manifest.run_id)
+
+    assert [checkpoint.simulated_minute for checkpoint in loaded.checkpoints] == [1440, 2880]
+
+
+MULTI_ROW_TABLES = ("events", "checkpoints", "metrics")
+"""The three tables that can answer one run with more than one row."""
+
+AGGREGATES = ("COUNT(", "MAX(")
+
+
+def sql_literals(module: object) -> list[str]:
+    """Every SQL string the module hands to a cursor, as the cursor receives it."""
+    source = Path(inspect.getfile(module)).read_text(encoding="utf-8")
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in {"execute", "executemany"} or not node.args:
+            continue
+        argument = node.args[0]
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            found.append(argument.value)
+    return found
+
+
+def test_every_select_that_can_return_two_rows_orders_them_explicitly() -> None:
+    """The binding rule is that no result may depend on rowid or insertion order.
+
+    An effect test can only show that the rows came back sorted, and they do come back
+    sorted with the ORDER BY deleted: SQLite happens to answer these predicates from an
+    index whose order is the one we want. That is the query planner's choice, not a
+    promise, and it changes with a schema change, an ANALYZE, or a different build. So
+    the clause is asserted where it actually lives - in the statement text - and the
+    round-trip tests beside this one keep the ORDER BY COLUMN honest.
+    """
+    offenders = [
+        statement
+        for statement in sql_literals(sqlite_store_module)
+        if statement.upper().startswith("SELECT")
+        and any(f"FROM {table}" in statement for table in MULTI_ROW_TABLES)
+        and not any(aggregate in statement.upper() for aggregate in AGGREGATES)
+        and "ORDER BY" not in statement.upper()
+    ]
+
+    assert offenders == []
+
+
+def test_the_guard_above_sees_the_statements_it_claims_to_guard() -> None:
+    """A structural guard that matched nothing would pass on an empty repository."""
+    ordered = [
+        statement
+        for statement in sql_literals(sqlite_store_module)
+        if statement.upper().startswith("SELECT") and "ORDER BY" in statement.upper()
+    ]
+
+    assert len(ordered) == 4
+
+
+def test_streaming_refuses_a_gap_as_loudly_as_loading_does(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """A replay driven from the streaming reader must not silently skip a lost event."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DELETE FROM events WHERE sequence = 1")
+
+    with pytest.raises(CorruptRunArtifact, match="contiguous"):
+        list(started_run.iter_events(run_manifest.run_id))
+
+
+def test_streaming_from_a_sequence_refuses_a_gap_at_its_own_starting_point(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DELETE FROM events WHERE sequence = 1")
+
+    with pytest.raises(CorruptRunArtifact, match="contiguous"):
+        list(started_run.iter_events(run_manifest.run_id, start_sequence=1))
+
+
+def test_the_schema_refuses_a_second_row_for_one_event_identifier(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """``event_id TEXT PRIMARY KEY`` is the last line of defence under the port's rules."""
+    connection = connect_to_database(started_run.database_path(run_manifest.run_id))
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO events ({EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+                ("run-storage:event-00000000", run_manifest.run_id, 9, 0, "state.updated", "{}"),
+            )
+    finally:
+        connection.close()
+
+
+def test_the_schema_refuses_a_second_row_for_one_run_and_sequence(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """``UNIQUE(run_id, sequence)`` is what makes the contiguity read single-valued."""
+    connection = connect_to_database(started_run.database_path(run_manifest.run_id))
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO events ({EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+                ("run-storage:event-00000099", run_manifest.run_id, 0, 0, "state.updated", "{}"),
+            )
+    finally:
+        connection.close()

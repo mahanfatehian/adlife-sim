@@ -48,6 +48,18 @@ MAX_EVENT_LINE_CHARS = 1_048_576
 """An export line above this is refused unread; a single line is one event, not a file."""
 
 
+class EventLineTooLong(ValueError):
+    """Raised when a document claiming to be one event is above the line bound.
+
+    This is a DISTINCT type rather than a plain ``ValueError`` so that a reader can say
+    "too large" instead of "not an event". The two are different artifacts: a document
+    over the bound may be a perfectly well-formed event that this build will not
+    materialise, and reporting it as malformed sends the reader looking for the wrong
+    damage. It also keeps the bound itself observable, so a test can tell the bound from
+    its absence.
+    """
+
+
 def canonical_json(value: BaseModel | Mapping[str, object]) -> str:
     """Render one document in the canonical form described in the module docstring."""
     if isinstance(value, BaseModel):
@@ -81,7 +93,7 @@ def parse_event_line(line: str) -> DomainEvent:
     if not isinstance(line, str):
         raise TypeError("parse_event_line needs a string")
     if len(line) > MAX_EVENT_LINE_CHARS:
-        raise ValueError(f"event line exceeds {MAX_EVENT_LINE_CHARS} characters")
+        raise EventLineTooLong(f"event line exceeds {MAX_EVENT_LINE_CHARS} characters")
     return DomainEvent.model_validate_json(line)
 
 
@@ -132,6 +144,7 @@ def persisted_text_objection(value: object, *, label: str) -> str | None:
 __all__ = [
     "CANONICAL_SEPARATORS",
     "MAX_EVENT_LINE_CHARS",
+    "EventLineTooLong",
     "canonical_event_line",
     "canonical_json",
     "parse_event_line",

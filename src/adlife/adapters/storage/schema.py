@@ -27,7 +27,13 @@ SCHEMA_VERSION = 1
 """Bump this when the stored shape changes. An artifact at any other version is refused."""
 
 BUSY_TIMEOUT_MS = 5_000
-"""Wait for a concurrent writer rather than failing the tick immediately."""
+"""Wait for a concurrent writer rather than failing the tick immediately.
+
+This is applied in ONE place, the ``busy_timeout`` pragma below. ``sqlite3.connect``
+accepts a ``timeout`` argument that sets the same thing, and passing both left the pragma
+provably dead: its default is five seconds, so a connection that never ran the pragma
+reported exactly the configured value and no test could tell the two apart.
+"""
 
 TABLE_NAMES: tuple[str, ...] = ("schema_meta", "runs", "events", "checkpoints", "metrics")
 
@@ -89,8 +95,13 @@ def connect_to_database(path: Path) -> sqlite3.Connection:
     ``isolation_level=None`` turns off the driver's implicit transaction handling so the
     store can own transaction boundaries explicitly: one ``BEGIN IMMEDIATE`` ... ``COMMIT``
     per tick, and nothing started behind its back.
+
+    The busy timeout is set by the pragma and nowhere else, so the pragma is the line a
+    test can hold responsible for it; see :data:`BUSY_TIMEOUT_MS`. Nothing contends for a
+    lock before it runs - the connection takes no lock until the first statement of the
+    first transaction, which is several lines below.
     """
-    connection = sqlite3.connect(path, isolation_level=None, timeout=BUSY_TIMEOUT_MS / 1000)
+    connection = sqlite3.connect(path, isolation_level=None)
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")

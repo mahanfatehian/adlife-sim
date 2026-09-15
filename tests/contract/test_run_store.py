@@ -160,6 +160,25 @@ def test_a_duplicate_event_identifier_is_refused(
     valid_scenario: Scenario,
     event_factory: Callable[..., DomainEvent],
 ) -> None:
+    """The IDENTIFIER rule, tripped on its own.
+
+    A batch that merely repeats a stored sequence trips the contiguity rule first, so it
+    says nothing about this one. Here the sequence continues correctly and only the
+    identifier is the one an already-stored event carries.
+    """
+    store.create_run(run_manifest, scenario=valid_scenario)
+    store.append_events([event_factory(0)])
+
+    with pytest.raises(InvalidEventBatch, match="stable event identifier"):
+        store.append_events([event_factory(1, event_id=stable_event_id(run_manifest.run_id, 0))])
+
+
+def test_re_appending_an_already_stored_sequence_is_refused(
+    store: SQLiteRunStore,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
     store.create_run(run_manifest, scenario=valid_scenario)
     store.append_events([event_factory(0)])
 

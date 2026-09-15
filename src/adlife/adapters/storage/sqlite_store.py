@@ -8,7 +8,17 @@ run directory is never observed half-written. A document is written to a sibling
 moved over its target, so a reader sees the previous version or the new one. A tick is one
 ``BEGIN IMMEDIATE`` ... ``COMMIT``, so a killed process leaves the tick either wholly
 recorded or wholly absent. The portable export is appended only AFTER the database commit,
-so a database failure can never leave a line in the export that no row backs.
+so a database failure can never leave a line in the export that no row backs, and it is
+COUNTED and checked against the database's own next sequence BEFORE the transaction opens,
+so a disagreement between the two artifacts refuses the tick instead of recording it and
+reporting the refusal afterwards. A caller that sees a failure from
+:meth:`SQLiteRunStore.append_events` knows the tick was not stored.
+
+What two files cannot be is atomic TOGETHER. A kill or a full device between the commit
+and the export's fsync leaves a committed tick whose exported line never landed. SQLite is
+the durable store and the export is derived from it, so that state is refused on the next
+append and on every load, and :meth:`SQLiteRunStore.rebuild_export` re-derives the export
+from the rows that back it rather than leaving the run unreadable for the rest of its life.
 
 REFUSED, NOT REPAIRED. Every read verifies what it reads: the schema version, the manifest
 against ``run.json``, the stored inputs against the digest the manifest claims, each event
@@ -47,6 +57,7 @@ from adlife.core.domain.results import RunManifest, SimulationResult
 from adlife.core.domain.scenario import Scenario
 from adlife.core.domain.serialization import (
     MAX_EVENT_LINE_CHARS,
+    EventLineTooLong,
     canonical_event_line,
     canonical_json,
     parse_event_line,
@@ -84,6 +95,15 @@ PROVIDER_USAGE_DOCUMENT = "provider-usage.json"
 READ_CHUNK_CHARS = 65_536
 MAX_INPUT_DOCUMENT_BYTES = 4_194_304
 """A scenario is bounded by the domain model; a file claiming to be one is bounded here."""
+
+MAX_STORED_DOCUMENT_CHARS = 4_194_304
+"""The same bound for a manifest, result or checkpoint blob read back out of the database.
+
+``results.sqlite3`` is user-supplied data on exactly the same footing as the files beside
+it, so the three columns that hold a whole document are read through ``substr`` and the
+oversized case is refused on the truncation rather than after the whole blob has been
+pulled into memory.
+"""
 
 VALID_STATUSES: frozenset[str] = frozenset({"running", "completed", "failed", "interrupted"})
 
@@ -285,20 +305,35 @@ class SQLiteRunStore:
             connection.close()
 
     def append_events(self, events: Sequence[DomainEvent]) -> None:
-        """Record one committed tick: one transaction, then one export append."""
+        """Record one committed tick: one transaction, then one export append.
+
+        EVERYTHING THAT CAN REFUSE THE TICK RUNS FIRST. The batch is serialised and
+        bounded, the export is counted, and that count is checked against the database's
+        own next sequence inside the transaction that will do the writing - all before a
+        single row is inserted. A refusal therefore means the tick was not recorded, which
+        is the only thing that lets a caller retry it.
+        """
         if isinstance(events, (str, bytes)) or not isinstance(events, Sequence):
             raise InvalidEventBatch("a batch must be a sequence of DomainEvent")
         if len(events) == 0:
             return
         run_id = batch_run_id(events)
-        path = self.database_path(run_id)
-        connection = self._connect(run_id, path)
+        lines = self._event_lines(events)
+        connection = self._connect(run_id, self.database_path(run_id))
         try:
+            exported = self._exported_lines.get(run_id)
+            if exported is None:
+                exported = self._count_export_lines(run_id, self.events_jsonl_path(run_id))
             connection.execute("BEGIN IMMEDIATE")
             try:
                 _status, next_sequence = self._read_open_run(connection, run_id)
+                if exported != next_sequence:
+                    raise CorruptRunArtifact(
+                        f"events.jsonl for run {run_id} holds {exported} lines where the "
+                        f"database holds {next_sequence} events"
+                    )
                 _, batch = validate_event_batch(events, next_sequence=next_sequence)
-                for event in batch:
+                for event, line in zip(batch, lines, strict=True):
                     connection.execute(
                         "INSERT INTO events (event_id, run_id, sequence, simulated_minute, "
                         "event_type, event_json) VALUES (?, ?, ?, ?, ?, ?)",
@@ -308,7 +343,7 @@ class SQLiteRunStore:
                             event.sequence,
                             event.simulated_minute,
                             event.event_type.value,
-                            canonical_event_line(event),
+                            line,
                         ),
                     )
                 connection.execute("COMMIT")
@@ -322,22 +357,45 @@ class SQLiteRunStore:
                 raise
         finally:
             connection.close()
-        self._append_to_export(run_id, next_sequence, batch)
+        self._append_to_export(run_id, exported, lines)
 
-    def _append_to_export(
-        self, run_id: str, next_sequence: int, batch: Sequence[DomainEvent]
-    ) -> None:
-        export = self.events_jsonl_path(run_id)
-        exported = self._exported_lines.get(run_id)
-        if exported is None:
-            exported = self._count_export_lines(run_id, export)
-        if exported != next_sequence:
-            raise CorruptRunArtifact(
-                f"events.jsonl for run {run_id} holds {exported} lines where the database "
-                f"holds {next_sequence} events"
+    def _event_lines(self, events: Sequence[DomainEvent]) -> tuple[str, ...]:
+        """Serialise the batch, refusing a line this store could not read back.
+
+        :data:`MAX_EVENT_LINE_CHARS` is the READER's bound. Enforced only there, a writer
+        could store an event that its own reader refuses: the write would report success
+        and every later read would call the intact run corrupt, with nothing to point at.
+        It is checked here, before the transaction opens.
+        """
+        lines = []
+        for event in events:
+            line = canonical_event_line(event)
+            if len(line) > MAX_EVENT_LINE_CHARS:
+                raise InvalidEventBatch(
+                    f"event {event.sequence} serialises to {len(line)} characters, above "
+                    f"the {MAX_EVENT_LINE_CHARS} characters a stored event may hold"
+                )
+            lines.append(line)
+        return tuple(lines)
+
+    def _append_to_export(self, run_id: str, exported: int, lines: Sequence[str]) -> None:
+        """Extend the derived artifact, translating a device failure like any other.
+
+        An untranslated :class:`OSError` here would escape the family the port documents,
+        reach the command line as an unexpected defect rather than an artifact failure,
+        and carry the filename it was raised with into the traceback.
+        """
+        try:
+            append_export_lines(
+                self.events_jsonl_path(run_id), "".join(f"{line}\n" for line in lines)
             )
-        append_export_lines(export, "".join(f"{canonical_event_line(e)}\n" for e in batch))
-        self._exported_lines[run_id] = exported + len(batch)
+        except OSError as error:
+            self._exported_lines.pop(run_id, None)
+            raise StorageError(
+                f"run {run_id} committed a tick but could not extend {EVENTS_EXPORT}: "
+                f"{type(error).__name__}"
+            ) from None
+        self._exported_lines[run_id] = exported + len(lines)
 
     def _count_export_lines(self, run_id: str, export: Path) -> int:
         try:
@@ -345,10 +403,59 @@ class SQLiteRunStore:
         except (OSError, ValueError) as error:
             raise CorruptRunArtifact(f"events.jsonl for run {run_id}: {error}") from None
 
+    def rebuild_export(self, run_id: str) -> int:
+        """Re-derive ``events.jsonl`` from the database rows; return the lines written.
+
+        Specification section 13 makes SQLite the durable event store and the JSONL file
+        an append-only portable EXPORT of it. Two files cannot be written atomically
+        together, so a kill or a full device between the commit and the export's fsync
+        leaves a run that is whole in the store and short in the export - and every read
+        then refuses it, correctly, but for the rest of its life.
+
+        This is the way out, and it is deliberately something a caller asks for rather
+        than something a read quietly does: the rows are streamed through the same
+        contiguity and document checks a load applies, so a database that is not itself a
+        run is refused instead of being copied into an export that agrees with it. The
+        file is built beside its target and moved over it, so an interrupted repair leaves
+        the previous export rather than a half-written one.
+        """
+        export = self.events_jsonl_path(run_id)
+        temporary = export.with_name(
+            f".{export.name}.{os.getpid()}.{next(_TEMPORARY_SUFFIXES)}.tmp"
+        )
+        written = 0
+        try:
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                for event in self.iter_events(run_id):
+                    handle.write(f"{canonical_event_line(event)}\n")
+                    written += 1
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, export)
+        except OSError as error:
+            raise StorageError(
+                f"run {run_id} could not rebuild {EVENTS_EXPORT}: {type(error).__name__}"
+            ) from None
+        finally:
+            temporary.unlink(missing_ok=True)
+        self._exported_lines[run_id] = written
+        return written
+
     def save_checkpoint(self, checkpoint: RunCheckpoint) -> None:
-        """Store one day-boundary checkpoint inside its own transaction."""
+        """Store one day-boundary checkpoint inside its own transaction.
+
+        The checkpoint is SCREENED like every other persisted document. It carries
+        ``daily_reflection`` and each memory summary, which are provider paraphrase and
+        are bounded but not screened where they are constructed, so this is the only
+        boundary between an LLM sentence and a permanent artifact.
+        """
         if not isinstance(checkpoint, RunCheckpoint):
             raise TypeError("checkpoint must be a RunCheckpoint")
+        objection = persisted_text_objection(
+            checkpoint.model_dump(mode="json"), label="the checkpoint"
+        )
+        if objection is not None:
+            raise StorageError(objection)
         run_id = checkpoint.run_id
         connection = self._connect(run_id, self.database_path(run_id))
         try:
@@ -384,9 +491,18 @@ class SQLiteRunStore:
             connection.close()
 
     def save_provider_usage(self, log: ProviderUsageLog) -> None:
-        """Replace the run's provider-usage document atomically."""
+        """Replace the run's provider-usage document atomically.
+
+        ``model_id`` is free configuration text and reaches the document verbatim, so the
+        log is screened on the same rules as the manifest beside it.
+        """
         if not isinstance(log, ProviderUsageLog):
             raise TypeError("log must be a ProviderUsageLog")
+        objection = persisted_text_objection(
+            log.model_dump(mode="json"), label="the provider usage log"
+        )
+        if objection is not None:
+            raise StorageError(objection)
         run_id = log.run_id
         connection = self._connect(run_id, self.database_path(run_id))
         try:
@@ -463,9 +579,9 @@ class SQLiteRunStore:
         connection = self._connect(run_id, self.database_path(run_id))
         try:
             row = connection.execute(
-                "SELECT status, manifest_json, result_json, created_at, completed_at "
-                "FROM runs WHERE run_id = ?",
-                (run_id,),
+                "SELECT status, substr(manifest_json, 1, ?), substr(result_json, 1, ?), "
+                "created_at, completed_at FROM runs WHERE run_id = ?",
+                (MAX_STORED_DOCUMENT_CHARS + 1, MAX_STORED_DOCUMENT_CHARS + 1, run_id),
             ).fetchone()
             if row is None:
                 raise RunNotFound(f"run {run_id} is not stored here")
@@ -503,7 +619,7 @@ class SQLiteRunStore:
         """Read the provider-usage document back, refusing one that is not this run's."""
         path = self.provider_usage_json_path(run_id)
         try:
-            text = self._read_bounded_text(path)
+            text = self._read_bounded_text(run_id, path, label=PROVIDER_USAGE_DOCUMENT)
             log = ProviderUsageLog.model_validate_json(text)
         except (OSError, ValueError) as error:
             raise CorruptRunArtifact(
@@ -514,19 +630,35 @@ class SQLiteRunStore:
         return log
 
     def iter_events(self, run_id: str, *, start_sequence: int = 0) -> Iterator[DomainEvent]:
-        """Stream a run's events in sequence order without loading the whole run."""
+        """Stream a run's events in sequence order without loading the whole run.
+
+        CONTIGUITY IS CHECKED HERE TOO. A load refuses a run with a hole in it, and a
+        stream that accepted the same artifact would let replay and the live interface -
+        the two documented consumers of this method - reproduce a run that never
+        happened, quietly. The check costs one comparison per row and needs no second
+        query, because the rows arrive in sequence order.
+        """
         if not isinstance(start_sequence, int) or start_sequence < 0:
             raise ValueError("start_sequence must be a non-negative integer")
         connection = self._connect(run_id, self.database_path(run_id))
         try:
             cursor = connection.execute(
-                "SELECT event_id, sequence, simulated_minute, event_type, event_json "
-                "FROM events WHERE run_id = ? AND sequence >= ? ORDER BY sequence",
-                (run_id, start_sequence),
+                "SELECT event_id, sequence, simulated_minute, event_type, "
+                "substr(event_json, 1, ?) FROM events WHERE run_id = ? AND sequence >= ? "
+                "ORDER BY sequence",
+                (MAX_EVENT_LINE_CHARS + 1, run_id, start_sequence),
             )
+            expected = start_sequence
             while rows := cursor.fetchmany(256):
                 for event_row in rows:
-                    yield self._read_event(run_id, event_row)
+                    event = self._read_event(run_id, event_row)
+                    if event.sequence != expected:
+                        raise CorruptRunArtifact(
+                            f"the events stored for run {run_id} are not contiguous from "
+                            f"{start_sequence}"
+                        )
+                    expected += 1
+                    yield event
         finally:
             connection.close()
 
@@ -578,8 +710,9 @@ class SQLiteRunStore:
         return str(status), int(next_sequence)
 
     def _read_manifest(self, run_id: str, manifest_json: object) -> RunManifest:
+        document = self._bounded_column(run_id, manifest_json, label="the stored manifest")
         try:
-            manifest = RunManifest.model_validate_json(str(manifest_json))
+            manifest = RunManifest.model_validate_json(document)
         except ValueError:
             raise CorruptRunArtifact(
                 f"the manifest stored for run {run_id} is not a manifest"
@@ -599,8 +732,9 @@ class SQLiteRunStore:
                     f"run {run_id} is recorded as {status} but carries no result"
                 )
             return None
+        document = self._bounded_column(run_id, result_json, label="the stored result")
         try:
-            result = SimulationResult.model_validate_json(str(result_json))
+            result = SimulationResult.model_validate_json(document)
         except ValueError:
             raise CorruptRunArtifact(
                 f"the result stored for run {run_id} is not a result"
@@ -625,9 +759,9 @@ class SQLiteRunStore:
                 f"run {run_id} holds {stored} events, above the {max_events} this read allows"
             )
         rows = connection.execute(
-            "SELECT event_id, sequence, simulated_minute, event_type, event_json "
-            "FROM events WHERE run_id = ? ORDER BY sequence",
-            (run_id,),
+            "SELECT event_id, sequence, simulated_minute, event_type, "
+            "substr(event_json, 1, ?) FROM events WHERE run_id = ? ORDER BY sequence",
+            (MAX_EVENT_LINE_CHARS + 1, run_id),
         ).fetchall()
         events = tuple(self._read_event(run_id, row) for row in rows)
         for index, event in enumerate(events):
@@ -641,6 +775,11 @@ class SQLiteRunStore:
         event_id, sequence, simulated_minute, event_type, event_json = row
         try:
             event = parse_event_line(str(event_json))
+        except EventLineTooLong:
+            raise CorruptRunArtifact(
+                f"the event document at sequence {sequence} of run {run_id} exceeds "
+                f"{MAX_EVENT_LINE_CHARS} characters"
+            ) from None
         except ValueError:
             raise CorruptRunArtifact(
                 f"the event document at sequence {sequence} of run {run_id} is not an event"
@@ -662,14 +801,17 @@ class SQLiteRunStore:
         self, connection: sqlite3.Connection, run_id: str
     ) -> tuple[RunCheckpoint, ...]:
         rows = connection.execute(
-            "SELECT simulated_minute, checkpoint_json FROM checkpoints WHERE run_id = ? "
-            "ORDER BY simulated_minute",
-            (run_id,),
+            "SELECT simulated_minute, substr(checkpoint_json, 1, ?) FROM checkpoints "
+            "WHERE run_id = ? ORDER BY simulated_minute",
+            (MAX_STORED_DOCUMENT_CHARS + 1, run_id),
         ).fetchall()
         checkpoints = []
         for simulated_minute, checkpoint_json in rows:
+            document = self._bounded_column(
+                run_id, checkpoint_json, label=f"the checkpoint at minute {simulated_minute}"
+            )
             try:
-                checkpoint = RunCheckpoint.model_validate_json(str(checkpoint_json))
+                checkpoint = RunCheckpoint.model_validate_json(document)
             except ValueError:
                 raise CorruptRunArtifact(
                     f"the checkpoint at minute {simulated_minute} of run {run_id} is not a "
@@ -700,15 +842,42 @@ class SQLiteRunStore:
                 f"the metric rows stored for run {run_id} disagree with its recorded result"
             )
 
-    def _read_bounded_text(self, path: Path) -> str:
+    def _bounded_column(self, run_id: str, value: object, *, label: str) -> str:
+        """Refuse a whole-document column above the bound rather than parsing it.
+
+        The column was selected through ``substr`` at one character above the bound, so
+        the oversized case is recognised on a truncation and the rest of the blob is never
+        pulled out of the database at all. ``results.sqlite3`` is user-supplied data on
+        the same footing as the files beside it; nothing about being a database row makes
+        a document safe to materialise unread.
+        """
+        document = str(value)
+        if len(document) > MAX_STORED_DOCUMENT_CHARS:
+            raise CorruptRunArtifact(
+                f"{label} for run {run_id} exceeds {MAX_STORED_DOCUMENT_CHARS} characters"
+            )
+        return document
+
+    def _read_bounded_text(self, run_id: str, path: Path, *, label: str) -> str:
+        """Read one artifact document, refusing an oversized file as oversized.
+
+        The bound raises a refusal of its own rather than a ``ValueError`` the caller
+        would flatten into its ordinary "this is not a scenario" message. A test that
+        cannot tell the bound from a parse failure cannot tell the bound from its own
+        deletion either.
+        """
         if path.stat().st_size > MAX_INPUT_DOCUMENT_BYTES:
-            raise ValueError(f"{path.name} exceeds {MAX_INPUT_DOCUMENT_BYTES} bytes")
+            raise CorruptRunArtifact(
+                f"{label} for run {run_id} exceeds {MAX_INPUT_DOCUMENT_BYTES} bytes"
+            )
         return path.read_text(encoding="utf-8")
 
     def _read_scenario(self, run_id: str, manifest: RunManifest) -> Scenario:
         path = self.scenario_json_path(run_id)
         try:
-            scenario = Scenario.model_validate_json(self._read_bounded_text(path))
+            scenario = Scenario.model_validate_json(
+                self._read_bounded_text(run_id, path, label="inputs/scenario.json")
+            )
         except (OSError, ValueError) as error:
             raise CorruptRunArtifact(
                 f"inputs/scenario.json for run {run_id} is not a scenario: {type(error).__name__}"
@@ -721,7 +890,7 @@ class SQLiteRunStore:
 
     def _verify_run_document(self, run_id: str, manifest: RunManifest) -> None:
         try:
-            text = self._read_bounded_text(self.run_json_path(run_id))
+            text = self._read_bounded_text(run_id, self.run_json_path(run_id), label=RUN_DOCUMENT)
         except (OSError, ValueError) as error:
             raise CorruptRunArtifact(
                 f"run.json for run {run_id} could not be read: {type(error).__name__}"
@@ -751,7 +920,9 @@ class SQLiteRunStore:
         if result is None:
             return
         try:
-            text = self._read_bounded_text(self.metrics_json_path(run_id))
+            text = self._read_bounded_text(
+                run_id, self.metrics_json_path(run_id), label=METRICS_DOCUMENT
+            )
         except (OSError, ValueError) as error:
             raise CorruptRunArtifact(
                 f"metrics.json for run {run_id} could not be read: {type(error).__name__}"

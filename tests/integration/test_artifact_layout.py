@@ -21,7 +21,7 @@ from adlife.core.domain.results import RunManifest, SimulationResult
 from adlife.core.domain.scenario import Scenario
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.cognition import ProviderUsage
-from adlife.core.ports.run_store import ProviderUsageLog, StorageError
+from adlife.core.ports.run_store import ProviderUsageLog, StorageError, UnsafeRunLocation
 from adlife.core.simulation.engine import canonical_sha256
 
 RUN_DIRECTORY_ENTRIES = {
@@ -251,17 +251,98 @@ def test_a_failed_document_write_leaves_the_previous_document_intact(
 
 
 def test_a_leftover_temporary_sibling_is_not_part_of_any_run(
-    store: SQLiteRunStore, run_manifest: RunManifest, valid_scenario: Scenario
+    store: SQLiteRunStore,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A kill during create_run leaves a sibling; it must never be read as a run."""
+    """A kill during create_run leaves a sibling; it must never be read as a run.
+
+    The sibling's name is taken FROM THE STORE rather than invented here. A hand-written
+    name only proves that a string with a dot in it is not a run identifier; it proves
+    nothing about the name this store actually leaves behind, which is the name a reader
+    would have to refuse.
+    """
     store.create_run(run_manifest, scenario=valid_scenario)
-    leftover = store.root / "runs" / f".{run_manifest.run_id}.12345.tmp"
-    leftover.mkdir()
+    captured: list[Path] = []
+
+    def never_publish(temporary: Path, final: Path) -> None:
+        captured.append(temporary)
+
+    monkeypatch.setattr(sqlite_store_module, "publish_directory", never_publish)
+    unpublished = run_manifest.model_copy(update={"run_id": "run-interrupted"})
+    store.create_run(unpublished, scenario=valid_scenario)
+    monkeypatch.undo()
+    leftover = captured[0]
+    assert leftover.is_dir()
 
     with pytest.raises(StorageError):
         store.load_run(leftover.name)
+    with pytest.raises(UnsafeRunLocation):
+        store.run_directory(leftover.name)
 
     assert store.load_run(run_manifest.run_id).manifest == run_manifest
+
+
+def test_the_temporary_sibling_a_kill_leaves_can_never_name_a_run_directory(
+    store: SQLiteRunStore,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sibling is built INSIDE runs/, so its name must be one no run can have.
+
+    A sibling named like a run identifier is not merely untidy. ``create_run`` builds its
+    sibling first and removes it on any failure, so a sibling whose name collided with an
+    existing published run would send the cleanup path at that run's directory and delete
+    a completed artifact - and a leftover from a kill would reserve a run identifier that
+    can then never be created. Both follow from the name alone.
+    """
+    captured: list[Path] = []
+
+    def never_publish(temporary: Path, final: Path) -> None:
+        captured.append(temporary)
+
+    monkeypatch.setattr(sqlite_store_module, "publish_directory", never_publish)
+    store.create_run(run_manifest, scenario=valid_scenario)
+    leftover = captured[0]
+
+    with pytest.raises(UnsafeRunLocation):
+        store.run_directory(leftover.name)
+
+    assert leftover.parent == store.root / "runs"
+
+
+def test_a_failed_metrics_write_leaves_the_run_completable(
+    store: SQLiteRunStore,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """metrics.json is published BEFORE the database records the outcome.
+
+    Reversed, a failed document write would leave the database saying "completed" while
+    metrics.json still held the placeholder, and every later read of the run would refuse
+    it as corrupt. The run must instead still be open, and still be completable.
+    """
+    store.create_run(run_manifest, scenario=valid_scenario)
+    result = SimulationResult(
+        run_id=run_manifest.run_id, status="completed", final_minute=0, event_count=0
+    )
+
+    def refuse(path: Path, text: str) -> None:
+        raise OSError("the device is full")
+
+    monkeypatch.setattr(sqlite_store_module, "write_document_atomically", refuse)
+    with pytest.raises(StorageError):
+        store.complete_run(result)
+    monkeypatch.undo()
+
+    assert store.load_run(run_manifest.run_id).status == "running"
+
+    store.complete_run(result)
+
+    assert store.load_run(run_manifest.run_id).status == "completed"
 
 
 @pytest.mark.parametrize(

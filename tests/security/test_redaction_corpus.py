@@ -87,7 +87,13 @@ from adlife.core.ports.cognition import (
     redact_provider_body,
 )
 from adlife.core.ports.event_sink import EventSinkError
-from adlife.core.ports.run_store import CorruptRunArtifact, InvalidEventBatch
+from adlife.core.ports.run_store import (
+    CorruptRunArtifact,
+    InvalidEventBatch,
+    ProviderUsageLog,
+    RunCheckpoint,
+    StorageError,
+)
 from adlife.core.simulation.decision import RuleResponse
 from adlife.core.simulation.rng import RandomOracle
 
@@ -1593,6 +1599,68 @@ def test_the_corpus_shape_never_reaches_a_run_artifact(
         if path.is_file() and shape.secret.encode("utf-8") in path.read_bytes()
     ]
     assert survivors == []
+
+
+def _surviving_artifacts(store: SQLiteRunStore, run_id: str, secret: str) -> list[str]:
+    return [
+        path.name
+        for path in sorted(store.run_directory(run_id).rglob("*"))
+        if path.is_file() and secret.encode("utf-8") in path.read_bytes()
+    ]
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_a_stored_checkpoint(
+    shape: LeakShape,
+    tmp_path: Path,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+    consumer_state: ConsumerState,
+) -> None:
+    """``daily_reflection`` is LLM paraphrase, and a checkpoint is where it comes to rest.
+
+    It has no screen of its own anywhere in the repository, so the persistence boundary
+    is the one place that can refuse it. Same upstream control, same corpus, same rule.
+    """
+    store = _storage_fixture(tmp_path, run_manifest, valid_scenario)
+    reflection = redact_provider_body(shape.body)[:1000] or REDACTION_PLACEHOLDER
+    checkpoint = RunCheckpoint(
+        run_id=run_manifest.run_id,
+        simulated_minute=0,
+        next_event_sequence=0,
+        states=(consumer_state.model_copy(update={"daily_reflection": reflection}),),
+    )
+
+    with contextlib.suppress(StorageError):
+        store.save_checkpoint(checkpoint)
+
+    assert _surviving_artifacts(store, run_manifest.run_id, shape.secret) == []
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_the_provider_usage_document(
+    shape: LeakShape, tmp_path: Path, run_manifest: RunManifest, valid_scenario: Scenario
+) -> None:
+    """``model_id`` is free configuration text written verbatim to a permanent document."""
+    store = _storage_fixture(tmp_path, run_manifest, valid_scenario)
+    model_id = redact_provider_body(shape.body)[:120] or REDACTION_PLACEHOLDER
+    log = ProviderUsageLog(
+        run_id=run_manifest.run_id,
+        records=(
+            ProviderUsage(
+                provider_kind="mock",
+                model_id=model_id,
+                prompt_tokens=0,
+                completion_tokens=0,
+                latency_ms=0,
+            ),
+        ),
+    )
+
+    with contextlib.suppress(StorageError):
+        store.save_provider_usage(log)
+
+    assert _surviving_artifacts(store, run_manifest.run_id, shape.secret) == []
 
 
 @pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
