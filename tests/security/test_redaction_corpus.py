@@ -24,21 +24,26 @@ none of it resembles a live credential.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import traceback
 from pathlib import Path
 from typing import NamedTuple
 
+import h11
 import httpx
 import pytest
 from pydantic import ValidationError
 
-from adlife.adapters.cognition.cache import CognitionCache
+import adlife
+from adlife.adapters.cognition import openai_compatible, prompts
+from adlife.adapters.cognition.cache import CognitionCache, CorruptCacheRecord
 from adlife.adapters.cognition.openai_compatible import (
     MAX_ECHOED_BODY_CHARS,
     OpenAICompatibleProvider,
     ProviderHttpError,
+    UnusableApiKey,
     coerce_cognition_result,
 )
 from adlife.adapters.cognition.prompts import MAX_REPAIR_BODY_CHARS, build_repair_messages
@@ -1131,3 +1136,381 @@ def test_the_corpus_shape_never_reaches_a_formatted_traceback(
         traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
     )
     assert shape.secret not in rendered
+
+
+# --- T10 fix round 3, C1: the exception CHAIN is a channel of its own -----------------
+#
+# Fix round 1 closed this shape on the pydantic path: a ``ValidationError`` renders the
+# value it rejected, so ``InvalidProviderResponse`` suppresses it with ``from None``
+# rather than chaining it. The transport path had the same defect and a worse payload -
+# ``h11`` refuses an illegal header value with a message that QUOTES the whole header,
+# so a credential carrying one character illegal in a header value reached every
+# formatted traceback through ``ProviderUnavailable.__cause__``.
+#
+# Two closures, because one alone is not enough. The chain is suppressed everywhere a
+# cognition failure translates another exception (pinned structurally below), and the
+# credential is screened BEFORE it is written into a header at all, so the underlying
+# refusal is never raised in the first place.
+
+
+ILLEGAL_HEADER_CREDENTIAL = "sk-test-0000111122223333"
+"""An obviously fake credential. The tests below append an illegal character to it."""
+
+LEGAL_TEST_CREDENTIAL = "sk-test-0000aaaabbbbcccc"
+"""An obviously fake credential a header can carry, for building a client with."""
+
+
+class _H11ValidatingTransport(httpx.AsyncBaseTransport):
+    """The header validation a real connection performs, with no socket opened.
+
+    ``httpx`` accepts an illegal header VALUE at client construction and at
+    ``build_request``; only the wire layer objects. ``httpcore`` hands the raw headers to
+    ``h11``, whose ``LocalProtocolError`` message is ``Illegal header value <the whole
+    value>``, and ``httpx._transports.default.map_httpcore_exceptions`` re-raises that as
+    :class:`httpx.LocalProtocolError`, which IS an :class:`httpx.HTTPError`. This
+    transport runs exactly that validation through the real ``h11`` state machine and
+    re-raises it exactly the way the real stack does, so the exception under test is the
+    one a live call produces rather than a hand-written stand-in.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[httpx.Request] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.sent.append(request)
+        connection = h11.Connection(our_role=h11.CLIENT)
+        try:
+            connection.send(
+                h11.Request(
+                    method=request.method,
+                    target=request.url.raw_path,
+                    headers=list(request.headers.raw),
+                )
+            )
+        except h11.LocalProtocolError as error:
+            raise httpx.LocalProtocolError(str(error)) from error
+        return httpx.Response(200, json={})
+
+
+def test_the_wire_layer_really_does_quote_the_header_it_refuses() -> None:
+    """The premise of the test below, asserted rather than assumed.
+
+    If a future ``h11`` stops quoting the offending value, this fails and the test that
+    follows becomes vacuous - which is exactly when its justification needs re-reading.
+    """
+    connection = h11.Connection(our_role=h11.CLIENT)
+    with pytest.raises(h11.LocalProtocolError) as caught:
+        connection.send(
+            h11.Request(
+                method="POST",
+                target="/v1/chat/completions",
+                headers=[
+                    ("host", "provider.invalid"),
+                    ("authorization", f"Bearer {ILLEGAL_HEADER_CREDENTIAL}\nx-injected: 1"),
+                ],
+            )
+        )
+    assert ILLEGAL_HEADER_CREDENTIAL in str(caught.value)
+
+
+async def test_a_transport_refusal_never_reaches_a_formatted_traceback(
+    cognition_request: CognitionRequest,
+) -> None:
+    """C1: the live key reached every traceback through ``ProviderUnavailable.__cause__``.
+
+    The credential screen is bypassed deliberately - the client is built with a legal
+    credential and the illegal one is written into the transport default headers
+    afterwards - because what is under test here is the CHAIN, not the screen. Both
+    closures are needed: a transport failure that quotes a request is not limited to the
+    one header this module writes.
+    """
+    transport = _H11ValidatingTransport()
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.invalid/v1",
+        model="test-model",
+        api_key=LEGAL_TEST_CREDENTIAL,
+        timeout_seconds=5.0,
+        transport=transport,
+    )
+    provider._client.headers["Authorization"] = f"Bearer {ILLEGAL_HEADER_CREDENTIAL}\nx-injected: 1"
+    with pytest.raises(CognitionError) as caught:
+        await provider.evaluate(cognition_request)
+    rendered = "".join(
+        traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
+    )
+    await provider.aclose()
+    assert ILLEGAL_HEADER_CREDENTIAL not in rendered
+    assert ILLEGAL_HEADER_CREDENTIAL not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("label", "suffix"),
+    [
+        ("newline", "\nx-injected: 1"),
+        ("carriage-return", "\rx-injected: 1"),
+        ("null", "\x00"),
+        ("non-ascii", "—"),
+        ("delete", "\x7f"),
+    ],
+)
+def test_a_credential_a_header_cannot_carry_is_refused_before_it_reaches_one(
+    label: str,
+    suffix: str,
+) -> None:
+    """The second closure: screen the credential SHAPE before it is written anywhere.
+
+    ``non-ascii`` is a separate defect of the same family: ``httpx`` encodes a header
+    value as ASCII at client construction, so a credential carrying one raised a bare
+    ``UnicodeEncodeError`` out of the constructor - not a
+    :class:`~adlife.core.ports.cognition.CognitionError`, which is the one shape
+    specification section 12 forbids from escaping this boundary.
+
+    The message must name nothing about the value: not the value, not a fragment of it,
+    not the offending character and not its position.
+    """
+    credential = f"{ILLEGAL_HEADER_CREDENTIAL}{suffix}"
+    with pytest.raises(UnusableApiKey) as caught:
+        OpenAICompatibleProvider(
+            base_url="https://provider.invalid/v1",
+            model="test-model",
+            api_key=credential,
+            timeout_seconds=5.0,
+            transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+        )
+    message = str(caught.value)
+    assert isinstance(caught.value, CognitionError)
+    assert ILLEGAL_HEADER_CREDENTIAL not in message
+    assert suffix.strip() not in message
+    assert caught.value.__cause__ is None
+    rendered = "".join(
+        traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
+    )
+    assert ILLEGAL_HEADER_CREDENTIAL not in rendered
+
+
+def test_a_credential_a_header_can_carry_is_still_accepted() -> None:
+    """The screen must not refuse the credentials real endpoints issue.
+
+    Every shape here is printable ASCII with no space: the vendor prefixes, a JWT, a
+    base64url token with padding, and the local placeholder.
+    """
+    for credential in (
+        LEGAL_TEST_CREDENTIAL,
+        "sk-test-proj-0000_1111-2222.3333",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIwMDAwIn0.AAAABBBBCCCCDDDD",
+        "0000aaaa1111bbbb2222cccc3333dddd==",
+        "ollama",
+    ):
+        provider = OpenAICompatibleProvider(
+            base_url="https://provider.invalid/v1",
+            model="test-model",
+            api_key=credential,
+            timeout_seconds=5.0,
+            transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+        )
+        assert provider.provider_metadata.kind == "remote-llm"
+
+
+def test_a_corrupt_cache_record_does_not_chain_the_value_it_rejected(
+    tmp_path: Path,
+) -> None:
+    """The same shape on the cache path: pydantic renders the input it refused.
+
+    A cache file holds provider-derived text, so the value a rejected record carries can
+    be a credential an endpoint echoed. ``CorruptCacheRecord`` names the key and nothing
+    else; without the suppression the whole rejected document travelled out on
+    ``__cause__``.
+    """
+    secret = "0000abcdef1234567890"
+    key = "a" * 64
+    cache = CognitionCache(tmp_path)
+    path = cache.path_for(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"key": key, "x_authorization_echo": f"Bearer {secret}"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(CorruptCacheRecord) as caught:
+        cache.get(key)
+    rendered = "".join(
+        traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
+    )
+    assert secret not in rendered
+    assert secret not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
+def test_the_rule_fallback_does_not_chain_the_value_it_rejected(
+    cognition_request: CognitionRequest,
+    cognition_campaign: dict[str, object],
+) -> None:
+    """The terminal fallback carried the same defect as the provider it backs up.
+
+    ``UnrepresentableRuleResult`` reports how many fields were rejected and never which
+    values, exactly as ``InvalidProviderResponse`` does - and then chained the
+    ``ValidationError`` that renders every one of them.
+
+    The slug is held in a VARIABLE rather than written at the raising call, because a
+    formatted traceback quotes its own source lines: a literal there would be found in
+    the rendering whether or not the chain carried it, and the assertion would pin
+    nothing.
+    """
+    campaign_id = "1234567890"
+    campaign = dict(cognition_campaign) | {"campaign_id": campaign_id}
+    request = cognition_request.model_copy(update={"campaign": campaign})
+    with pytest.raises(CognitionError) as caught:
+        rule_cognition_result(request, _rule_response(campaign_id))
+    rendered = "".join(
+        traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
+    )
+    assert campaign_id not in rendered
+    assert "memory_summary" not in rendered
+    assert caught.value.__cause__ is None
+
+
+COGNITION_BOUNDARY_MODULES: tuple[Path, ...] = (
+    *sorted((Path(adlife.__file__).resolve().parent / "adapters" / "cognition").glob("*.py")),
+    Path(adlife.__file__).resolve().parent / "core" / "ports" / "cognition.py",
+)
+"""Every module that handles provider, header, URL or credential material."""
+
+
+def test_no_cognition_boundary_failure_chains_the_exception_it_translates() -> None:
+    """The class of defect, closed structurally rather than one call site at a time.
+
+    Every exception these modules translate was built from provider-controlled input - a
+    header this repository composed, a URL a caller configured, a body an endpoint sent,
+    or a document pydantic rejected and therefore renders. Chaining ANY of them puts that
+    material into ``__cause__``, which every formatted traceback, ``logger.exception``
+    call and crash report prints, downstream of the redaction that screens the message
+    itself.
+
+    So the rule is structural, and this walks the source to enforce it: inside these
+    modules a ``raise`` may carry no cause but ``None``. It is a rule about the CHAIN and
+    not about diagnostics - each of these failures already reports the status, the
+    exception class name, the rejected-field count or the cache key in its own screened
+    message.
+    """
+    assert COGNITION_BOUNDARY_MODULES
+    offenders: list[str] = []
+    for path in COGNITION_BOUNDARY_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Raise) or node.cause is None:
+                continue
+            cause = ast.unparse(node.cause)
+            if cause != "None":
+                offenders.append(f"{path.name}:{node.lineno}: raise ... from {cause}")
+    assert offenders == []
+
+
+# --- T10 fix round 3, I4 + I8: the fail-closed arm of both settling loops --------------
+#
+# Two functions run the same redact-then-bound loop to a fixed point - ``_excerpt``, which
+# builds a diagnostic out of a failing provider body, and ``_bounded_echo``, which builds
+# the assistant turn a repair prompt quotes - and each drops the text entirely if it has
+# not settled after four passes. Keeping a credential out of an echoed string is the whole
+# job of both, and NO test executed either final arm: flipping either to ``return text``
+# left the suite green while shipping unsettled, unredacted text to a third party.
+#
+# WHAT THESE TESTS SUBSTITUTE AND WHY. With the shipped redactor no body is known that
+# fails to settle: redaction is idempotent, truncation is monotonically shortening, and a
+# search over the cut boundary found no input that changes for four consecutive passes.
+# That is precisely why the arm is a DEFENSIVE bound on a seam rather than a branch on
+# ordinary input, and it is why the only honest way to execute it is to hand each loop a
+# redactor that does not settle. The substitution is the published redactor's NAME inside
+# one module for the duration of one test; no second redactor is added to the repository,
+# and nothing production imports is changed.
+
+
+def _never_settles(value: str) -> str:
+    """A redactor that never reaches a fixed point, and removes nothing on the way.
+
+    One trailing space per pass: the text differs on every pass, so the loop can never
+    take its ``settled == text`` exit, and the credential is still in the string - which
+    is what makes the fail-open mutation observable rather than merely different.
+    """
+    return f"{value} "
+
+
+UNSETTLED_BODY: str = '{"error":{"message":"api_key 0000abcdef1234567890 was rejected"}}'
+"""A body carrying a corpus-shaped credential, for the two loops to fail closed on."""
+
+UNSETTLED_SECRET: str = "0000abcdef1234567890"
+
+
+def test_a_diagnostic_body_that_never_settles_is_dropped_rather_than_echoed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I4: the arm in ``openai_compatible._excerpt``."""
+    monkeypatch.setattr(openai_compatible, "redact_provider_body", _never_settles)
+    excerpt = openai_compatible._excerpt(UNSETTLED_BODY)
+    assert excerpt == REDACTION_PLACEHOLDER
+    assert UNSETTLED_SECRET not in excerpt
+
+
+async def test_a_failing_status_whose_body_never_settles_echoes_no_body_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+    cognition_request: CognitionRequest,
+) -> None:
+    """I4 through the public surface the arm exists to protect.
+
+    ``ProviderHttpError`` quotes the failing body, so an unsettled body reaches a log
+    line, a report and a stored resolution. The message keeps its shape - the status and
+    the endpoint are still named - and carries the bare placeholder where the body was.
+    """
+    monkeypatch.setattr(openai_compatible, "redact_provider_body", _never_settles)
+    provider = _network_provider(lambda _: httpx.Response(500, text=UNSETTLED_BODY))
+    with pytest.raises(ProviderHttpError) as caught:
+        await provider.evaluate(cognition_request)
+    await provider.aclose()
+    message = str(caught.value)
+    assert UNSETTLED_SECRET not in message
+    assert REDACTION_PLACEHOLDER in message
+    assert "HTTP 500" in message
+
+
+def test_a_repair_echo_that_never_settles_is_dropped_rather_than_echoed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I8: the same arm in ``prompts._bounded_echo``."""
+    monkeypatch.setattr(prompts, "redact_provider_body", _never_settles)
+    echoed = prompts._bounded_echo(UNSETTLED_BODY)
+    assert echoed == REDACTION_PLACEHOLDER
+    assert UNSETTLED_SECRET not in echoed
+
+
+def test_a_repair_prompt_sends_no_body_it_could_not_settle(
+    monkeypatch: pytest.MonkeyPatch,
+    cognition_request: CognitionRequest,
+) -> None:
+    """I8 through the public surface: this text is POSTED to a third party.
+
+    Both echoes - the rejected answer quoted as an assistant turn and the failure text
+    quoted in the repair instruction - go through the same loop, so both are asserted.
+    """
+    monkeypatch.setattr(prompts, "redact_provider_body", _never_settles)
+    messages = prompts.build_repair_messages(
+        cognition_request,
+        invalid_content=UNSETTLED_BODY,
+        error=f"schema rejected: {UNSETTLED_BODY}",
+    )
+    assert UNSETTLED_SECRET not in json.dumps(messages)
+    assert messages[-2]["content"] == REDACTION_PLACEHOLDER
+    assert REDACTION_PLACEHOLDER in messages[-1]["content"]
+
+
+def test_a_body_that_does_settle_is_still_echoed_after_the_substitution_is_undone() -> None:
+    """The two tests above must not be passing because the loop drops everything.
+
+    With the real redactor the same body settles and is echoed, so the placeholder in
+    those assertions is the fail-closed arm firing rather than the loop's ordinary
+    behaviour.
+    """
+    assert openai_compatible._excerpt("a plain body with no credential in it") == (
+        "a plain body with no credential in it"
+    )
+    assert prompts._bounded_echo("a plain body with no credential in it") == (
+        "a plain body with no credential in it"
+    )

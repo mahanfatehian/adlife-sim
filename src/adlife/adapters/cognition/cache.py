@@ -132,10 +132,16 @@ class CognitionCache:
             return None
         try:
             record = CognitionRecord.model_validate_json(text)
-        except ValueError as error:
+        except ValueError:
+            # ``from None``, not ``from error``: a stored record is provider-derived text,
+            # and a pydantic error RENDERS every input value it rejected. Chaining it put
+            # the whole refused document - an echoed authorization header included - into
+            # ``__cause__``, which every formatted traceback prints, past the redaction
+            # that screens what a caller logs. The key is the diagnostic; the content is
+            # on disk for whoever is entitled to read it.
             raise CorruptCacheRecord(
                 f"cognition cache record {key} is not a valid record"
-            ) from error
+            ) from None
         if record.key != key or self.make_key(record.request, record.provider_metadata) != key:
             raise CorruptCacheRecord(
                 f"cognition cache record {key} does not address its own content"

@@ -73,14 +73,35 @@ read - the write succeeded and the read raised ``CorruptCacheRecord`` (finding S
 record that can be written can be read.
 """
 
-MAX_TOKEN_COUNT = 2**53 - 1
+MAX_USAGE_INTEGER = 2**53 - 1
+"""The largest integer any field of a :class:`ProviderUsage` may report.
+
+The three numbers a usage record carries are the only ones in this contract that are not
+read off a documented range, so they need a ceiling of their own. It is the largest
+integer an IEEE-754 double represents exactly, which keeps a value inside what canonical
+JSON, a SQLite ``INTEGER`` column and a JavaScript report reader all round-trip unchanged.
+
+The ceiling is ONE number under three names, because the reason is one reason. The names
+are kept apart so that a reader of ``latency_ms`` is not told to consult a constant about
+tokens, and so that a later task can move one of them without silently moving the others.
+"""
+
+MAX_TOKEN_COUNT = MAX_USAGE_INTEGER
 """The largest token count a usage record may report.
 
-Token counts are the one numeric field a provider supplies that is not read off a
-documented range, so they need a ceiling of their own. It is the largest integer a
-IEEE-754 double represents exactly, which keeps a count inside what canonical JSON,
-a SQLite ``INTEGER`` column and a JavaScript report reader all round-trip unchanged.
-A provider that reports more than this has not measured anything.
+A provider that reports more than this has not measured anything, and
+:func:`adlife.adapters.cognition.openai_compatible.extract_token_usage` reports zero for
+it rather than presenting an unmeasured number as a count.
+"""
+
+MAX_LATENCY_MS = MAX_USAGE_INTEGER
+"""The largest latency a usage record may report.
+
+It carried only ``ge=0`` when the token counts gained their ceiling, and it reaches every
+place they reach. The cache key is derived from the request and the provider metadata, so
+it does NOT cover ``usage``: a corrupted or hand-edited cache record still addresses its
+own content whatever latency sits inside it, and this bound is what refuses one. A
+monotonic clock needs about 285,000 years to reach it.
 """
 
 RAW_RESPONSE_TRUNCATION_MARKER = "[truncated]"
@@ -395,8 +416,10 @@ class ProviderMetadata(CognitionModel):
         try:
             host = parts.hostname
             port = parts.port
-        except ValueError as error:
-            raise ValueError("base_url must name a valid host") from error
+        except ValueError:
+            # ``from None``: the chained error quotes the part of the URL it could not
+            # parse, and a base URL is caller-configured text that can carry userinfo.
+            raise ValueError("base_url must name a valid host") from None
         if not host:
             raise ValueError("base_url must name a valid host")
         # ``hostname`` strips the brackets an IPv6 literal must keep, so rebuilding the
@@ -475,8 +498,10 @@ class CognitionRequest(CognitionModel):
                 self.campaign.get("campaign_id"),
                 strict=True,
             )
-        except ValidationError as error:
-            raise ValueError("campaign must carry a campaign_id slug") from error
+        except ValidationError:
+            # ``from None``: a pydantic error renders the value it rejected, and the value
+            # here is a member of untrusted campaign data.
+            raise ValueError("campaign must carry a campaign_id slug") from None
         _reject_filesystem_paths(self.fictional_persona, label="fictional_persona")
         _reject_filesystem_paths(self.campaign, label="campaign")
         _reject_filesystem_paths(self.relevant_memories, label="relevant_memories")
@@ -583,14 +608,20 @@ class CognitionResult(CognitionModel):
 class ProviderUsage(CognitionModel):
     """What one cognition answer cost and where it came from.
 
-    The token counts carry an upper bound as well as a lower one. They are the only
+    ALL THREE numbers carry an upper bound as well as a lower one. They are the only
     numbers in this contract a remote provider supplies outright rather than having them
     clamped against a documented range, and an unbounded integer here is written to the
-    cognition cache and later to a results database: a count above ``2**63-1`` makes a
+    cognition cache and later to a results database: a value above ``2**63-1`` makes a
     SQLite ``INTEGER`` write raise ``OverflowError``, which is not a
-    :class:`CognitionError` and would abort a run. :data:`MAX_TOKEN_COUNT` is the bound,
-    and :func:`adlife.adapters.cognition.openai_compatible.extract_token_usage` reports
-    zero rather than an unmeasured number for anything above it.
+    :class:`CognitionError` and would abort a run.
+
+    :data:`MAX_TOKEN_COUNT` bounds the two counts and
+    :func:`adlife.adapters.cognition.openai_compatible.extract_token_usage` reports zero
+    rather than an unmeasured number for anything above it. :data:`MAX_LATENCY_MS` bounds
+    the duration; it is not supplied by the provider but measured by the caller, so the
+    threat it answers is a corrupted or tampered cache record rather than a hostile
+    endpoint - :meth:`adlife.adapters.cognition.cache.CognitionCache.make_key` covers the
+    request and the provider metadata and does not cover ``usage``.
     """
 
     schema_version: Literal[1] = 1
@@ -598,7 +629,7 @@ class ProviderUsage(CognitionModel):
     model_id: str = Field(min_length=1, max_length=120)
     prompt_tokens: int = Field(ge=0, le=MAX_TOKEN_COUNT)
     completion_tokens: int = Field(ge=0, le=MAX_TOKEN_COUNT)
-    latency_ms: int = Field(ge=0)
+    latency_ms: int = Field(ge=0, le=MAX_LATENCY_MS)
     cache_hit: bool = False
     fallback_reason: FallbackReason | None = None
 
@@ -694,11 +725,13 @@ class CognitionProvider(Protocol):
 
 __all__ = [
     "MAX_GROUNDED_REASONS",
+    "MAX_LATENCY_MS",
     "MAX_RAW_RESPONSE_CHARS",
     "MAX_RELEVANT_MEMORIES",
     "MAX_REQUEST_JSON_BYTES",
     "MAX_SAFETY_FLAGS",
     "MAX_TOKEN_COUNT",
+    "MAX_USAGE_INTEGER",
     "NETWORK_PROVIDER_KINDS",
     "OFFLINE_PROVIDER_KINDS",
     "PROMPT_VERSION",

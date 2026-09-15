@@ -41,10 +41,15 @@ every byte of simulation data is fenced between :data:`BEGIN_SIMULATION_DATA` an
 :data:`END_SIMULATION_DATA` and the system instruction states that the fenced text is
 data to analyse rather than instructions to obey. Simulation data that spells either
 marker is neutralised by a JSON escape before serialization, so hostile campaign copy
-cannot close the fence and continue outside it; the escape decodes to the original
-character, so no content is lost. The SAME neutralization runs on the rejected body a
-repair prompt echoes back, because that echo is untrusted text sitting outside the
-fence. Neutralization stops the echo forging a fence of its own; it does not put the
+cannot close the fence and continue outside it. INSIDE THE FENCE nothing is lost, because
+the fenced block is JSON and the escape decodes back to the underscore. The SAME
+neutralization runs on the rejected body a repair prompt echoes back, because that echo is
+untrusted text sitting outside the fence - and THERE IT IS A VISIBLE EDIT, which the claim
+this paragraph used to make denied: an assistant turn is plain text rather than JSON, so a
+model reads the six characters of the escape rather than an underscore. That is the
+intended trade, made knowingly. A rejected answer is quoted so the model can correct its
+SHAPE, and a marker it can no longer spell is worth more than a marker it reproduces
+exactly. Neutralization stops the echo forging a fence of its own; it does not put the
 echo under an untrusted declaration, so :data:`ECHOED_ANSWER_CLAUSE` does that, and the
 system instruction carries it.
 
@@ -165,13 +170,20 @@ validates against the contract itself.
 
 
 def _neutralize_markers(text: str) -> str:
-    """Make sure no fenced content can spell either marker.
+    """Make sure no content can spell either marker.
 
-    The replacement is a JSON unicode escape for the underscore, so the decoded value a
-    model reads is unchanged while the literal marker never appears a second time in the
-    message. Campaign copy is untrusted input; without this, ``END_SIMULATION_DATA``
-    inside a campaign message closes the fence and whatever follows reads as
-    instructions.
+    The replacement is a JSON unicode escape for the underscore, so the literal marker
+    never appears a second time in the message. Campaign copy is untrusted input; without
+    this, ``END_SIMULATION_DATA`` inside a campaign message closes the fence and whatever
+    follows reads as instructions.
+
+    WHETHER ANYTHING IS LOST DEPENDS ON WHERE THE RESULT LANDS, and this function is used
+    in both places. Inside the fenced block the text is JSON, so the escape decodes to the
+    underscore and the value a model reads is unchanged. In the assistant turn that
+    :func:`_bounded_echo` produces the text is NOT JSON, so the escape is read literally
+    and the echo differs from the body the endpoint sent - by exactly the marker it may
+    not spell, which is the point. The claim that no content is ever lost was true only of
+    the first case and is corrected here.
     """
     for marker in (BEGIN_SIMULATION_DATA, END_SIMULATION_DATA):
         text = text.replace(marker, marker.replace("_", "\\u005f", 1))
@@ -214,6 +226,17 @@ def _bounded_echo(value: str) -> str:
     :data:`SYSTEM_INSTRUCTION` declares trusted. The chain is real: hostile campaign copy
     reaches a model inside the fence, a model can echo it back in an invalid answer, and
     that answer is what a repair prompt quotes.
+
+    An assistant turn is plain text rather than JSON, so the escape is NOT decoded here: a
+    body that spelled a marker is echoed back carrying the escape where its underscore
+    was. The echo is therefore not byte-identical to the rejected answer, and it is not
+    meant to be - it is quoted so the model can correct the answer's shape.
+
+    A body that will not settle is replaced by the bare placeholder rather than echoed.
+    That arm is a defensive bound on a seam: with the published redactor no input is known
+    that fails to settle, because redaction is idempotent and truncation only shortens.
+    ``tests/security/test_redaction_corpus.py`` executes it by substituting a redactor
+    that does not settle, and shows what a fail-open arm would post to a third party.
     """
     text = value
     for _ in range(_SETTLING_PASSES):

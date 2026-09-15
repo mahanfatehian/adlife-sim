@@ -44,6 +44,7 @@ from adlife.adapters.cognition.openai_compatible import (
     ProviderCall,
     ProviderCallError,
 )
+from adlife.config.models import SimulationSettings
 from adlife.core.ports.cognition import (
     MAX_RAW_RESPONSE_CHARS,
     CognitionAnswer,
@@ -67,6 +68,36 @@ logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_PROVIDER_CALLS: Final = 4
 """How many provider calls may be in flight at once."""
+
+
+def _configured_cognition_ceiling(field_name: str) -> int:
+    """Read a cognitive-event ceiling off the configuration field rather than restating it.
+
+    The same technique as
+    :func:`adlife.adapters.cognition.openai_compatible._configured_timeout_ceiling`, for
+    the same reason: a number written twice is a number that drifts, and the point of the
+    ceiling is that the configuration field and the component that spends the budget
+    agree about it.
+    """
+    for constraint in SimulationSettings.model_fields[field_name].metadata:
+        upper = getattr(constraint, "le", None)
+        if upper is not None:
+            return int(upper)
+    raise AssertionError(  # pragma: no cover - both fields declare ``le`` in this repository
+        f"SimulationSettings.{field_name} must declare an upper bound"
+    )
+
+
+MAX_COGNITION_PER_AGENT: Final[int] = _configured_cognition_ceiling("max_cognition_per_agent")
+"""Specification section 7: "Maximum cognitive events: 6 per agent per run"."""
+
+MAX_COGNITION_TOTAL: Final[int] = _configured_cognition_ceiling("max_cognition_total")
+"""The run-wide ceiling, read off :attr:`SimulationSettings.max_cognition_total`.
+
+Specification section 7 states the per-agent limit and section 7's population ceiling of
+30 agents bounds the rest; the configuration field carries the run-wide number this
+repository commits to, and this is the one place that enforces it.
+"""
 
 MAX_PROVIDER_RETRIES: Final = 2
 """Specification section 7's ceiling, and the upper bound of ``ProviderSettings.retries``.
@@ -140,6 +171,15 @@ class CognitionBudget:
     A budget bounds DISPATCHES. A cache hit spends nothing, because replaying a recorded
     run must not exhaust a budget it never spent, and one dispatch is one cognitive
     event however many transport retries it needed.
+
+    Both values are bounded ABOVE as well as below, by the ceilings read off
+    :class:`~adlife.config.models.SimulationSettings`. This class is the only thing that
+    enforces specification section 7's "Maximum cognitive events: 6 per agent per run":
+    nothing downstream re-checks it, so a budget constructed above the ceiling spends a
+    seventh cognitive event without any error. It is refused for the same reason
+    :class:`CognitionService` refuses a retry count above :data:`MAX_PROVIDER_RETRIES` and
+    the provider refuses a timeout above its own maximum - a seam may lower a documented
+    bound and may never raise one.
     """
 
     per_agent: int
@@ -152,6 +192,16 @@ class CognitionBudget:
             raise TypeError("total must be an integer")
         if self.per_agent < 0 or self.total < 0:
             raise ValueError("a cognition budget must not be negative")
+        if self.per_agent > MAX_COGNITION_PER_AGENT:
+            raise ValueError(
+                "a cognition budget may not exceed the documented "
+                f"{MAX_COGNITION_PER_AGENT} cognitive events per agent per run"
+            )
+        if self.total > MAX_COGNITION_TOTAL:
+            raise ValueError(
+                "a cognition budget may not exceed the documented "
+                f"{MAX_COGNITION_TOTAL} cognitive events per run"
+            )
 
 
 class CognitionResolution(CognitionModel):
@@ -610,6 +660,8 @@ class CognitionService:
 
 
 __all__ = [
+    "MAX_COGNITION_PER_AGENT",
+    "MAX_COGNITION_TOTAL",
     "MAX_CONCURRENT_PROVIDER_CALLS",
     "MAX_PROVIDER_ATTEMPTS",
     "MAX_PROVIDER_RETRIES",

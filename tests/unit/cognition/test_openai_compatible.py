@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -25,6 +26,7 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from adlife.adapters.cognition import openai_compatible, prompts
+from adlife.adapters.cognition.cache import CognitionCache
 from adlife.adapters.cognition.openai_compatible import (
     ADLIFE_API_KEY_VARIABLE,
     DEFAULT_LOCAL_BASE_URL,
@@ -68,10 +70,13 @@ from adlife.adapters.cognition.prompts import (
 from adlife.config.models import AppConfig, ProviderSettings, SimulationSettings
 from adlife.core.domain.person import contains_provider_secret_text
 from adlife.core.ports.cognition import (
+    MAX_LATENCY_MS,
     MAX_TOKEN_COUNT,
+    MAX_USAGE_INTEGER,
     RAW_RESPONSE_TRUNCATION_MARKER,
     CognitionError,
     CognitionProvider,
+    CognitionRecord,
     CognitionRequest,
     CognitionResult,
     ProviderUsage,
@@ -954,13 +959,24 @@ def test_an_ipv6_endpoint_keeps_its_brackets_through_normalization() -> None:
 
 
 def test_provider_metadata_is_credential_free_and_normalized() -> None:
+    """The metadata a cache key is made of carries no credential and no trailing slash.
+
+    This used to build the provider from ``...?token=abcdefghijklmnop#fragment`` and
+    assert the token was absent from the metadata - true, but only because the validator
+    dropped the query, which is the defect I1 reports: the endpoint posted to was not the
+    endpoint configured. Such a URL is now refused outright (see
+    ``test_a_base_url_carrying_a_query_or_fragment_is_refused_not_stripped``) and the
+    substance that belongs here - no credential reaches the metadata - is asserted
+    against the userinfo shape, which the validator still strips for every OTHER producer
+    of a :class:`ProviderMetadata`.
+    """
     provider = _provider(
         lambda _: httpx.Response(200),
-        base_url="https://provider.invalid/v1?token=abcdefghijklmnop#fragment",
+        base_url="https://provider.invalid/v1/",
         api_key=REALISTIC_FAKE_KEY,
     )
     metadata = provider.provider_metadata
-    assert metadata.base_url == "https://provider.invalid/v1"
+    assert metadata.base_url == "https://provider.invalid/v1/"
     assert metadata.model_id == "test-model"
     assert metadata.prompt_sha256 == prompt_template_sha256()
     assert metadata.sampling.temperature == 0.0
@@ -1883,3 +1899,227 @@ def test_the_system_instruction_declares_an_echoed_prior_answer_untrusted(
     assert "echoed back" in ECHOED_ANSWER_CLAUSE
     assert "outside" in ECHOED_ANSWER_CLAUSE
     assert "never instruction" in ECHOED_ANSWER_CLAUSE
+
+
+# --- T10 fix round 3, I1: the endpoint called must be the endpoint configured ----------
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://provider.invalid/v1?api-version=2026-01-01",
+        "https://provider.invalid/v1?api_key=abcdefghijklmnop",
+        "https://provider.invalid/v1#deployment",
+        "https://provider.invalid/v1?tenant=research#deployment",
+        "http://127.0.0.1:11434/v1?keep_alive=0",
+    ],
+)
+def test_a_base_url_carrying_a_query_or_fragment_is_refused_not_stripped(
+    base_url: str,
+) -> None:
+    """The module's own rule, applied to the two parts it used to drop in silence.
+
+    :meth:`ProviderMetadata.normalize_base_url` removes the query and the fragment, and
+    the client is built from the NORMALIZED value, so a caller who configured
+    ``?api-version=2026-01-01`` - which several hosted OpenAI-compatible gateways
+    require - was posting to an endpoint they never configured and getting an opaque
+    404 or 401 back. Refusing is the same choice the userinfo shape already makes, and
+    for the same stated reason: a silently stripped URL fails later and unrecognisably.
+    """
+    with pytest.raises(InsecureProviderUrl) as caught:
+        OpenAICompatibleProvider(
+            base_url=base_url,
+            model="test-model",
+            api_key=REALISTIC_FAKE_KEY,
+            timeout_seconds=5.0,
+            transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+        )
+    assert "abcdefghijklmnop" not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
+def test_a_base_url_with_neither_a_query_nor_a_fragment_is_still_accepted() -> None:
+    """The refusal must not reject the endpoints the specification itself names."""
+    for base_url in (DEFAULT_LOCAL_BASE_URL, REMOTE_BASE_URL, "https://provider.invalid/v1/"):
+        provider = _provider(lambda _: httpx.Response(200), base_url=base_url)
+        assert provider.provider_metadata.base_url is not None
+
+
+# --- T10 fix round 3, I5: the usage record's third integer is bounded too -------------
+
+
+def test_the_usage_contract_refuses_a_latency_above_its_ceiling() -> None:
+    """``latency_ms`` was left carrying only ``ge=0`` when the token counts gained a top.
+
+    It reaches the same places they do - a persisted cache record, an event, the report
+    metrics and a SQLite ``INTEGER`` column - and the cache key is derived from the
+    request and the provider metadata, so it does NOT cover ``usage``: a hand-edited or
+    corrupted record still addresses its own content with any latency at all inside it.
+    The bound is where that is refused.
+    """
+    assert MAX_LATENCY_MS == MAX_USAGE_INTEGER == MAX_TOKEN_COUNT
+    usage = ProviderUsage(
+        provider_kind="remote-llm",
+        model_id="test-model",
+        prompt_tokens=0,
+        completion_tokens=0,
+        latency_ms=MAX_LATENCY_MS,
+    )
+    assert usage.latency_ms == MAX_LATENCY_MS
+    with pytest.raises(PydanticValidationError):
+        ProviderUsage(
+            provider_kind="remote-llm",
+            model_id="test-model",
+            prompt_tokens=0,
+            completion_tokens=0,
+            latency_ms=MAX_LATENCY_MS + 1,
+        )
+
+
+async def test_a_tampered_cache_record_cannot_carry_an_unbounded_latency(
+    tmp_path: Path,
+    cognition_request: CognitionRequest,
+) -> None:
+    """The threat the bound answers, driven end to end through a real cache file.
+
+    The record is edited on disk to carry a latency no clock could measure, and it still
+    addresses its own content because the key covers the request and the provider
+    metadata and not the usage. The contract is what refuses it, and the refusal is a
+    ``CognitionError`` rather than a bare ``ValidationError``.
+    """
+    provider = _provider(_answering(cognition_request.request_id))
+    metadata = provider.provider_metadata
+    key = CognitionCache.make_key(cognition_request, metadata)
+    cache = CognitionCache(tmp_path)
+    cache.put(
+        key,
+        CognitionRecord(
+            key=key,
+            request=cognition_request,
+            provider_metadata=metadata,
+            raw_response=None,
+            result=(await provider.answer(cognition_request)).result,
+            usage=ProviderUsage(
+                provider_kind="remote-llm",
+                model_id="test-model",
+                prompt_tokens=1,
+                completion_tokens=1,
+                latency_ms=5,
+            ),
+        ),
+    )
+    await provider.aclose()
+    path = cache.path_for(key)
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["usage"]["latency_ms"] = MAX_LATENCY_MS + 1
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    with pytest.raises(CognitionError):
+        cache.get(key)
+
+
+async def test_a_clock_that_cannot_be_trusted_never_aborts_a_run(
+    cognition_request: CognitionRequest,
+) -> None:
+    """Bounding the field must not turn a SUCCESSFUL call into a bare ValidationError.
+
+    A monotonic clock cannot reach the ceiling in a quarter of a million years, so the
+    clamp is unreachable in a real run; it exists because ``clock`` is a seam, and a seam
+    that can make a successful provider answer raise a non-``CognitionError`` is exactly
+    what specification section 12 forbids.
+    """
+    readings = iter([0.0, float(MAX_LATENCY_MS)])
+    provider = _provider(
+        _answering(cognition_request.request_id),
+        clock=lambda: next(readings),
+    )
+    answer = await provider.answer(cognition_request)
+    await provider.aclose()
+    assert answer.usage.latency_ms == MAX_LATENCY_MS
+
+
+# --- T10 fix round 3, I6: the two JSON-constant guards, pinned by their diagnostics ----
+#
+# Both guards were inert in the sense that matters: removing either left the whole suite
+# green, because the value they refuse is refused again further downstream by a different
+# check with a different message. They are KEPT rather than deleted, and what the tests
+# below pin is the specific diagnostic each one produces - which is the only observable
+# difference between having the guard and not having it.
+#
+# Kept, because each one refuses the value EARLIER and in a place the later check cannot
+# reach: ``parse_constant`` fires wherever the constant appears, including inside a field
+# no numeric clamp visits, and ``allow_nan=False`` is what turns a value the JSON module
+# would happily serialize into a refusal instead of a body that then fails validation for
+# a reason that names the wrong cause.
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+async def test_a_bare_json_constant_is_named_by_the_guard_that_refuses_it(
+    cognition_request: CognitionRequest,
+    literal: str,
+) -> None:
+    """``parse_constant`` refuses the constant at PARSE time and says which one it was.
+
+    Without it the value becomes a Python float and is refused several steps later by
+    ``math.isfinite``, whose message names the FIELD and not the constant - so a reader
+    of the log is told that ``valence`` was non-finite rather than that the endpoint
+    emitted a JSON extension this parser does not accept. ``1e400`` is deliberately
+    absent from the parameters: it is an ordinary number literal, not a JSON constant,
+    and the finiteness check is what refuses it.
+    """
+    body = _content(cognition_request.request_id).replace('"valence": 0.3', f'"valence": {literal}')
+    provider = _provider(lambda _: httpx.Response(200, json=_completion(body)))
+    with pytest.raises(InvalidProviderResponse) as caught:
+        await provider.evaluate(cognition_request)
+    await provider.aclose()
+    message = str(caught.value)
+    assert "JSON constant" in message
+    assert literal in message
+    assert "non-finite value" not in message
+
+
+async def test_the_json_constant_guard_reaches_a_field_no_numeric_clamp_visits(
+    cognition_request: CognitionRequest,
+) -> None:
+    """The reason the guard is kept rather than deleted, stated as a test.
+
+    ``grounded_reasons`` holds strings, so nothing in the clamp loop ever looks at it. A
+    constant there is refused by the parse-time guard with the constant named; without
+    the guard it survives parsing and is refused by serialization, whose message says a
+    value was not representable and names neither the constant nor the field.
+    """
+    body = _content(cognition_request.request_id).replace(
+        '"grounded_reasons": ["matches technology interest", "second exposure"]',
+        '"grounded_reasons": [Infinity]',
+    )
+    provider = _provider(lambda _: httpx.Response(200, json=_completion(body)))
+    with pytest.raises(InvalidProviderResponse) as caught:
+        await provider.evaluate(cognition_request)
+    await provider.aclose()
+    assert "JSON constant Infinity" in str(caught.value)
+
+
+async def test_a_non_representable_value_is_refused_by_serialization_by_name(
+    cognition_request: CognitionRequest,
+) -> None:
+    """The second guard: ``allow_nan=False`` plus the arm that translates its refusal.
+
+    ``1e400`` is an ordinary JSON number literal that parses to infinity, so the
+    parse-time guard never sees it, and it sits in a field the clamp loop never visits.
+    ``json.dumps`` is what refuses it, and only because ``allow_nan=False`` is passed:
+    without that argument the module emits ``Infinity`` into the answer JSON and the
+    failure resurfaces as a schema rejection that names a field count instead of the
+    cause. The ``except ValueError`` arm is what keeps that refusal from escaping as a
+    bare ``ValueError``, which is the shape specification section 12 forbids.
+    """
+    body = _content(cognition_request.request_id).replace(
+        '"grounded_reasons": ["matches technology interest", "second exposure"]',
+        '"grounded_reasons": [1e400]',
+    )
+    provider = _provider(lambda _: httpx.Response(200, json=_completion(body)))
+    with pytest.raises(InvalidProviderResponse) as caught:
+        await provider.evaluate(cognition_request)
+    await provider.aclose()
+    message = str(caught.value)
+    assert isinstance(caught.value, CognitionError)
+    assert "not representable as JSON" in message
+    assert "field(s) rejected" not in message

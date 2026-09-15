@@ -24,6 +24,7 @@ import pytest
 from adlife.adapters.cognition.cache import CacheMiss, CognitionCache
 from adlife.adapters.cognition.mock import MockCognitionProvider
 from adlife.adapters.cognition.openai_compatible import (
+    MAX_RESPONSE_BODY_BYTES,
     InvalidProviderResponse,
     OpenAICompatibleProvider,
     ProviderCall,
@@ -40,6 +41,8 @@ from adlife.adapters.cognition.rules import (
     UnknownCognitionRequest,
 )
 from adlife.adapters.cognition.service import (
+    MAX_COGNITION_PER_AGENT,
+    MAX_COGNITION_TOTAL,
     MAX_CONCURRENT_PROVIDER_CALLS,
     MAX_PROVIDER_ATTEMPTS,
     MAX_PROVIDER_RETRIES,
@@ -52,7 +55,7 @@ from adlife.adapters.cognition.service import (
     CognitionService,
     DuplicateCognitionRequest,
 )
-from adlife.config.models import ProviderSettings
+from adlife.config.models import ProviderSettings, SimulationSettings
 from adlife.core.domain.campaign import Campaign
 from adlife.core.domain.person import PersonProfile
 from adlife.core.domain.state import ConsumerState
@@ -1352,3 +1355,169 @@ async def test_a_body_python_cannot_decode_falls_back_instead_of_aborting_the_ru
     assert resolution.source == "fallback"
     assert resolution.fallback_reason == "invalid-response"
     assert resolution.result.request_id == cognition_request.request_id
+
+
+# --- T10 fix round 3, I2 + I3: the budget enforces specification section 7's ceiling ---
+
+
+def test_the_budget_ceilings_are_read_off_the_configuration_fields() -> None:
+    """Restating either number here would be a second source of truth that drifts.
+
+    The retry ceiling and the timeout ceiling in this task are both read off
+    :class:`ProviderSettings`; the two cognitive-event ceilings were the only spec-7
+    limits left as prose. They are read the same way.
+    """
+    assert MAX_COGNITION_PER_AGENT == 6
+    assert MAX_COGNITION_TOTAL == 180
+    fields = SimulationSettings.model_fields
+    per_agent = next(
+        constraint.le
+        for constraint in fields["max_cognition_per_agent"].metadata
+        if getattr(constraint, "le", None) is not None
+    )
+    total = next(
+        constraint.le
+        for constraint in fields["max_cognition_total"].metadata
+        if getattr(constraint, "le", None) is not None
+    )
+    assert (per_agent, total) == (MAX_COGNITION_PER_AGENT, MAX_COGNITION_TOTAL)
+
+
+def test_a_budget_above_the_per_agent_ceiling_is_refused() -> None:
+    """Specification section 7: maximum cognitive events, 6 per agent per run.
+
+    The budget is what enforces that number - nothing downstream re-checks it - so a
+    service constructed with per_agent=7 would spend a seventh cognitive event on an
+    agent and the run would exceed a documented limit without any error.
+    """
+    with pytest.raises(ValueError, match=str(MAX_COGNITION_PER_AGENT)):
+        CognitionBudget(per_agent=MAX_COGNITION_PER_AGENT + 1, total=MAX_COGNITION_TOTAL)
+
+
+def test_a_budget_above_the_run_total_ceiling_is_refused() -> None:
+    with pytest.raises(ValueError, match=str(MAX_COGNITION_TOTAL)):
+        CognitionBudget(per_agent=MAX_COGNITION_PER_AGENT, total=MAX_COGNITION_TOTAL + 1)
+
+
+def test_a_budget_at_the_ceiling_itself_is_accepted() -> None:
+    """A seam may lower a bound and never raise it, so the ceiling is inclusive."""
+    budget = CognitionBudget(per_agent=MAX_COGNITION_PER_AGENT, total=MAX_COGNITION_TOTAL)
+    assert (budget.per_agent, budget.total) == (MAX_COGNITION_PER_AGENT, MAX_COGNITION_TOTAL)
+
+
+async def test_the_service_cannot_be_built_to_exceed_the_per_agent_ceiling(
+    cognition_persona: dict[str, object],
+    cognition_campaign: dict[str, object],
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """The bound has to bite where budget is actually spent, not only at construction."""
+    requests = tuple(
+        _request(cognition_persona, cognition_campaign, sequence=index + 1, agent_id="person-001")
+        for index in range(MAX_COGNITION_PER_AGENT + 2)
+    )
+    fallback = _fallback(requests, valid_profile, consumer_state, valid_campaign)
+    provider, calls = _scripted([ECHO] * len(requests))
+    service = _service(
+        fallback,
+        budget=CognitionBudget(per_agent=MAX_COGNITION_PER_AGENT, total=MAX_COGNITION_TOTAL),
+    )
+    resolved = await service.evaluate_many(requests, provider)
+    await provider.aclose()
+    assert len(calls) == MAX_COGNITION_PER_AGENT
+    assert service.spent_for("person-001") == MAX_COGNITION_PER_AGENT
+    exhausted = [
+        resolution
+        for resolution in resolved.values()
+        if resolution.fallback_reason == "budget-exhausted"
+    ]
+    assert len(exhausted) == 2
+
+
+# --- T10 fix round 3, I7: the newest failure class, driven through the service ---------
+
+
+async def test_an_oversized_answer_never_aborts_the_run(
+    cognition_persona: dict[str, object],
+    cognition_campaign: dict[str, object],
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """Specification section 12: a provider failure must never abort a run.
+
+    :class:`OversizedProviderResponse` is the failure class the head commit added, and it
+    was the only one never driven through :class:`CognitionService` - so the sentence
+    above was unpinned for it, and a service that failed to absorb it would have looked
+    green. The resolution must be a complete rule answer stamped ``invalid-response``.
+    """
+    request = _request(cognition_persona, cognition_campaign)
+    oversized = b"z" * (MAX_RESPONSE_BODY_BYTES + 1)
+    provider, calls = _scripted([httpx.Response(200, content=oversized)])
+    service = _service(_fallback([request], valid_profile, consumer_state, valid_campaign))
+    resolution = await service.evaluate_one(request, provider)
+    await provider.aclose()
+    assert resolution.source == "fallback"
+    assert resolution.fallback_reason == "invalid-response"
+    assert resolution.result.request_id == request.request_id
+    assert len(calls) == 1
+
+
+async def test_an_oversized_answer_is_neither_retried_nor_repaired(
+    cognition_persona: dict[str, object],
+    cognition_campaign: dict[str, object],
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """Both halves of the class docstring, asserted through the component that acts on it.
+
+    It is not retryable, because an endpoint that answers with megabytes answers with
+    megabytes again and every attempt costs the same memory; and it is deliberately NOT
+    an :class:`InvalidProviderResponse`, because the repair attempt echoes the rejected
+    body back to the model and there is no body here that may be echoed. One transport
+    call, and no repair exchange.
+    """
+    request = _request(cognition_persona, cognition_campaign)
+    oversized = b"z" * (MAX_RESPONSE_BODY_BYTES + 1)
+    provider, calls = _scripted([httpx.Response(200, content=oversized)] * MAX_PROVIDER_ATTEMPTS)
+    sleeps = _Sleeps()
+    service = _service(
+        _fallback([request], valid_profile, consumer_state, valid_campaign),
+        sleep=sleeps,
+    )
+    resolution = await service.evaluate_one(request, provider)
+    await provider.aclose()
+    assert len(calls) == 1
+    assert sleeps.delays == []
+    assert resolution.attempts == 1
+
+
+async def test_an_oversized_answer_lets_the_rest_of_the_batch_finish(
+    cognition_persona: dict[str, object],
+    cognition_campaign: dict[str, object],
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """A run that must not abort is a BATCH that finishes, not one request that does.
+
+    The failure is raised inside a task group, so an unabsorbed one would cancel its
+    siblings and surface as an ``ExceptionGroup``; this is the assertion that says the
+    other agents in the same tick still get their answers.
+    """
+    requests = _requests(cognition_persona, cognition_campaign, 3)
+    oversized = b"z" * (MAX_RESPONSE_BODY_BYTES + 1)
+    responses: list[object] = [httpx.Response(200, content=oversized), ECHO, ECHO]
+    provider, calls = _scripted(responses)
+    service = _service(_fallback(requests, valid_profile, consumer_state, valid_campaign))
+    resolved = await service.evaluate_many(requests, provider)
+    await provider.aclose()
+    assert len(calls) == 3
+    assert sorted(resolved) == sorted(request.request_id for request in requests)
+    sources = sorted(resolution.source for resolution in resolved.values())
+    assert sources == ["fallback", "remote-llm", "remote-llm"]
+    assert all(
+        resolution.result.request_id == request_id for request_id, resolution in resolved.items()
+    )

@@ -122,10 +122,15 @@ def rule_cognition_result(request: CognitionRequest, response: RuleResponse) -> 
     try:
         return _compose_rule_result(request, response, emotion)
     except ValidationError as error:
+        rejected = error.error_count()
+        # The count is composed here and the chain is dropped: reporting how many fields
+        # were refused and not which values is pointless while ``__cause__`` carries a
+        # ``ValidationError`` that renders every one of them into any traceback. The
+        # refused text is composed from campaign copy, which is untrusted input.
         raise UnrepresentableRuleResult(
             "the rule fallback composed an answer the cognition contract refuses for "
-            f"request {request.request_id}: {error.error_count()} field(s) rejected"
-        ) from error
+            f"request {request.request_id}: {rejected} field(s) rejected"
+        ) from None
 
 
 def _compose_rule_result(

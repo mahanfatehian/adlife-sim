@@ -21,9 +21,23 @@ what a test pins.
   from :class:`~adlife.core.ports.cognition.ProviderMetadata`, which has no credential
   field and whose ``base_url`` validator strips userinfo, query and fragment; from
   :meth:`OpenAICompatibleProvider.__repr__`; and from every message this exception
-  hierarchy composes. A base URL carrying userinfo is refused outright rather than
-  silently stripped. Headers are only as private as the transport, so a remote endpoint
-  reached over plain ``http`` is refused too: see :class:`InsecureProviderUrl`.
+  hierarchy composes. A base URL carrying userinfo, a query or a fragment is refused
+  outright rather than silently stripped, so the endpoint this provider posts to is
+  always the endpoint a caller configured. Headers are only as private as the transport,
+  so a remote endpoint reached over plain ``http`` is refused too: see
+  :class:`InsecureProviderUrl`. The credential itself is screened for the characters an
+  HTTP header value can hold BEFORE it is written into one, because the layer that would
+  otherwise refuse it quotes the whole header in its message: see :class:`UnusableApiKey`.
+
+NO FAILURE THIS MODULE RAISES CARRIES A CHAINED CAUSE. ``__cause__`` and ``__context__``
+are rendered by every formatted traceback, ``logger.exception`` call and crash report,
+downstream of the screen that redacts the message itself, so an exception translated here
+is suppressed with ``from None`` rather than chained - a ``pydantic.ValidationError``
+renders the input value it rejected, an ``h11`` protocol error renders the whole header
+value it refused, and an ``httpx`` error renders the request it was raised for. The two
+transport arms go further and compose their failure OUTSIDE the handler, so there is no
+context left to suppress. ``tests/security/test_redaction_corpus.py`` walks this module
+and refuses any ``raise ... from`` whose cause is not ``None``.
 
 Every other claim is a SCREEN, and screens are best effort. Each failure this module
 raises builds its own message from a status code, a timeout, an exception class name and
@@ -31,11 +45,8 @@ the redacted endpoint, rather than echoing a transport exception; every echoed b
 every echoed provider-chosen field NAME passes through
 :func:`~adlife.core.ports.cognition.redact_provider_body` - the published redactor; this
 module never writes a second one; and redaction runs BEFORE any bound, because a bound
-checked first chops a credential into a fragment no pattern matches afterwards. A
-rejected answer's underlying ``pydantic.ValidationError`` is suppressed with ``from
-None`` rather than chained, because such an error renders the input value it rejected
-and an exception chain is rendered by any traceback. The property that follows, and the
-only one asserted here, is the repository-wide one:
+checked first chops a credential into a fragment no pattern matches afterwards. The
+property that follows, and the only one asserted here, is the repository-wide one:
 
     EVERY CREDENTIAL SHAPE THE REPOSITORY CAN NAME IS REMOVED FROM, OR REFUSED ENTRY TO,
     A MESSAGE, A LOG RECORD OR A STORED RECORD THIS MODULE PRODUCES.
@@ -67,6 +78,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -87,9 +99,7 @@ from adlife.adapters.cognition.prompts import (
 from adlife.config.models import ProviderSettings
 from adlife.core.domain.person import REDACTION_PLACEHOLDER
 from adlife.core.ports.cognition import (
-    MAX_TOKEN_COUNT as _MAX_TOKEN_COUNT,
-)
-from adlife.core.ports.cognition import (
+    MAX_LATENCY_MS,
     CognitionAnswer,
     CognitionError,
     CognitionRequest,
@@ -100,6 +110,9 @@ from adlife.core.ports.cognition import (
     ProviderUsage,
     SamplingSettings,
     redact_provider_body,
+)
+from adlife.core.ports.cognition import (
+    MAX_TOKEN_COUNT as _MAX_TOKEN_COUNT,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,6 +129,20 @@ holds, so a remote credential is never forwarded to a loopback model server.
 
 HIDDEN_API_KEY_PROMPT: Final[Callable[[str], str]] = getpass.getpass
 """The documented hidden prompt. It is never called unless a caller passes it in."""
+
+_HEADER_SAFE_CREDENTIAL: Final = re.compile(r"[\x21-\x7e]+")
+"""Visible ASCII with no space: what this provider accepts as a credential.
+
+RFC 9110 also admits horizontal tab, space and the ``obs-text`` range in a field value,
+and this screen admits none of them, deliberately. ``httpx`` encodes a header value as
+ASCII, so ``obs-text`` cannot survive it at all; a leading or trailing space is stripped
+by any conforming peer, which would send a credential different from the one configured;
+and no vendor issues a key containing a space, so refusing the whole class costs nothing
+and removes the guesswork about which half of such a value was meant.
+
+The screen is about the CHARACTER SET only. It says nothing about whether a credential is
+valid, current or authorized - only the endpoint can answer that.
+"""
 
 DEFAULT_LOCAL_BASE_URL: Final = "http://127.0.0.1:11434/v1"
 """Specification section 6.3's default local endpoint."""
@@ -208,14 +235,39 @@ class MissingApiKey(ProviderConfigurationError):
     """Raised when no credential is available. The message names the source, not a value."""
 
 
-class InsecureProviderUrl(ProviderConfigurationError):
-    """Raised when a base URL would expose the credential.
+class UnusableApiKey(ProviderConfigurationError):
+    """Raised when a credential cannot be written into an HTTP header value.
 
-    Two shapes are refused, and neither message names any part of the URL.
+    The screen runs before the client is built, because every layer below refuses such a
+    credential with a message that QUOTES it: ``httpx`` encodes a header value as ASCII
+    and raises ``UnicodeEncodeError`` - which is not a
+    :class:`~adlife.core.ports.cognition.CognitionError` and therefore aborts the run
+    specification section 12 says a provider failure may never abort - and ``h11`` refuses
+    an illegal value on the wire with ``Illegal header value <the whole value>``, which
+    reached every formatted traceback through ``ProviderUnavailable.__cause__``.
+
+    The message names the number of offending characters and nothing else: not the value,
+    not a fragment of it, not the character and not its position.
+    """
+
+
+class InsecureProviderUrl(ProviderConfigurationError):
+    """Raised when a base URL would expose the credential or move the endpoint.
+
+    Three shapes are refused, and no message names any part of the URL.
 
     * A URL carrying userinfo. It is refused rather than quietly stripped: a caller who
       put a credential in a URL needs to know it was not used, and a silently stripped
       URL fails later as an opaque authentication error.
+    * A URL carrying a query string or a fragment, for exactly the same reason.
+      :meth:`~adlife.core.ports.cognition.ProviderMetadata.normalize_base_url` removes
+      both so that neither can smuggle a credential into a cache key, and this provider
+      builds its client from that normalized value - so a configured
+      ``?api-version=2026-01-01`` or ``?deployment=...``, which several hosted
+      OpenAI-compatible gateways require, was dropped and the call went somewhere the
+      caller never configured. Stripping is right for the metadata, which is derived from
+      whatever a stored record happens to carry; refusing is right here, where a caller
+      wrote the URL and can fix it.
     * Plain ``http`` to a host that is not loopback. The one structural claim this module
       makes about the credential is that it lives only in the transport request headers,
       and that claim is worth exactly as much as the transport. An ``Authorization:
@@ -429,6 +481,13 @@ def _excerpt(body: str) -> str:
     :func:`~adlife.core.ports.cognition.redact_provider_body` is idempotent, so running
     it twice removes nothing extra. Both passes are the published redactor; this module
     writes no second one.
+
+    A body that has not settled after :data:`_EXCERPT_SETTLING_PASSES` is dropped for the
+    bare placeholder rather than echoed. That arm is a defensive bound on a seam rather
+    than a branch on ordinary input: with the published redactor no body is known that
+    fails to settle, because redaction is idempotent and truncation only shortens.
+    ``tests/security/test_redaction_corpus.py`` executes it by substituting a redactor
+    that does not settle, and shows what a fail-open arm would put in a diagnostic.
     """
     text = body
     for _ in range(_EXCERPT_SETTLING_PASSES):
@@ -556,7 +615,7 @@ def coerce_cognition_result(content: str, *, request_id: str) -> CognitionResult
         raise InvalidProviderResponse(
             f"the provider answer was not valid JSON: {_excerpt(str(error))}",
             raw_response=content,
-        ) from error
+        ) from None
     if not isinstance(parsed, dict):
         raise InvalidProviderResponse(
             "the provider answer was not a JSON object",
@@ -611,15 +670,19 @@ def coerce_cognition_result(content: str, *, request_id: str) -> CognitionResult
 
     try:
         answer_json = json.dumps(cleaned, allow_nan=False)
-    except ValueError as error:
+    except ValueError:
         # A non-finite number OUTSIDE the clamped fields - inside ``grounded_reasons``,
         # say - reaches here rather than the ``isfinite`` check above, and ``json.dumps``
-        # refuses it. Without this arm that refusal escapes as a bare ``ValueError``,
-        # which is exactly the shape specification section 12 forbids from aborting a run.
+        # refuses it, but only because ``allow_nan=False`` is passed: the default emits
+        # the JSON extension ``Infinity`` and the failure resurfaces two steps later as a
+        # schema rejection naming a field count instead of the cause. Without this arm the
+        # refusal escapes as a bare ``ValueError``, which is exactly the shape
+        # specification section 12 forbids from aborting a run. Both halves are pinned by
+        # ``test_a_non_representable_value_is_refused_by_serialization_by_name``.
         raise InvalidProviderResponse(
             "the provider answer carried a value that is not representable as JSON",
             raw_response=content,
-        ) from error
+        ) from None
 
     try:
         result = CognitionResult.model_validate_json(answer_json)
@@ -675,6 +738,16 @@ class OpenAICompatibleProvider:
                 "a cognition provider needs a non-empty credential; resolve one with "
                 f"resolve_api_key() from {ADLIFE_API_KEY_VARIABLE} or a hidden prompt"
             )
+        if _HEADER_SAFE_CREDENTIAL.fullmatch(api_key) is None:
+            # Counted, never quoted: the whole point of refusing here rather than letting
+            # the transport refuse is that the transport's refusal renders the value.
+            rejected = sum(1 for character in api_key if not 0x21 <= ord(character) <= 0x7E)
+            raise UnusableApiKey(
+                f"the resolved credential carries {rejected} character(s) that an HTTP "
+                "header value cannot hold; a credential is visible ASCII with no space, "
+                "so check for a stray newline, quote or space around the value of "
+                f"{ADLIFE_API_KEY_VARIABLE}"
+            )
         if not isinstance(base_url, str) or not base_url.strip():
             raise ProviderConfigurationError("base_url must be a non-empty string")
         if not isinstance(timeout_seconds, (int, float)):
@@ -713,6 +786,14 @@ class OpenAICompatibleProvider:
         normalized = metadata.base_url
         if normalized is None:  # pragma: no cover - a network kind always keeps its URL
             raise ProviderConfigurationError("the provider base URL could not be normalized")
+        if parts.query or parts.fragment:
+            # Checked AFTER the metadata is built, so an unusable scheme or host is still
+            # reported as the configuration error it is rather than as this one.
+            raise InsecureProviderUrl(
+                "the provider base URL must not carry a query string or a fragment; "
+                "neither is sent, so the endpoint called would not be the endpoint "
+                "configured"
+            )
         self.model = model
         self._metadata = metadata
         self._timeout_seconds = float(timeout_seconds)
@@ -811,18 +892,23 @@ class OpenAICompatibleProvider:
 
         started = self._clock()
         response = await self._send(payload)
-        elapsed_ms = max(0, round((self._clock() - started) * 1000))
+        # Clamped into the contract's range rather than handed over raw. A monotonic clock
+        # needs about 285,000 years to reach the ceiling, so this is unreachable in a real
+        # run; ``clock`` is a seam, and a seam that can make a SUCCESSFUL provider answer
+        # raise a bare ``pydantic.ValidationError`` out of this method is the one outcome
+        # specification section 12 forbids.
+        elapsed_ms = min(max(0, round((self._clock() - started) * 1000)), MAX_LATENCY_MS)
         self._raise_for_status(response)
 
         try:
             envelope = response.json()
-        except (ValueError, RecursionError) as error:
+        except (ValueError, RecursionError):
             # Same scanner, same untrusted depth, one level up: see the note in
             # :func:`coerce_cognition_result`.
             raise InvalidProviderResponse(
                 "the provider answer was not JSON",
                 raw_response=response.text,
-            ) from error
+            ) from None
         content = extract_message_content(envelope)
         result = coerce_cognition_result(content, request_id=request.request_id)
         prompt_tokens, completion_tokens = extract_token_usage(envelope)
@@ -859,6 +945,8 @@ class OpenAICompatibleProvider:
         """
         endpoint = self._metadata.base_url
         request = self._client.build_request("POST", CHAT_COMPLETIONS_PATH, json=dict(payload))
+        timed_out = False
+        failure = ""
         try:
             async with asyncio.timeout(self._timeout_seconds):
                 streamed = await self._client.send(request, stream=True)
@@ -873,20 +961,33 @@ class OpenAICompatibleProvider:
                 finally:
                     await streamed.aclose()
         except (httpx.TimeoutException, TimeoutError) as error:
+            timed_out = True
+            failure = type(error).__name__
+        except httpx.HTTPError as error:
+            failure = type(error).__name__
+        else:
+            return httpx.Response(
+                status_code=status,
+                headers=headers,
+                content=body,
+                request=request,
+            )
+        # Composed HERE rather than inside the handler, and this is the C1 fix. A
+        # transport exception is built from the request it failed on: ``h11`` refuses an
+        # illegal header value with ``Illegal header value <the whole value>``, so a
+        # credential carrying one character a header cannot hold travelled out on
+        # ``__cause__`` and into every formatted traceback. ``from None`` alone stops a
+        # traceback RENDERING the chain; raising after the handler has exited leaves no
+        # chain to render and no live reference to the failed request. Only the exception
+        # CLASS NAME crosses, which is the part that tells a reader what went wrong.
+        if timed_out:
             raise ProviderTimeout(
                 f"the cognition endpoint {endpoint} did not answer within "
-                f"{self._timeout_seconds} seconds ({type(error).__name__})"
-            ) from error
-        except httpx.HTTPError as error:
-            raise ProviderUnavailable(
-                f"the cognition endpoint {endpoint} could not be reached ({type(error).__name__})"
-            ) from error
-        return httpx.Response(
-            status_code=status,
-            headers=headers,
-            content=body,
-            request=request,
-        )
+                f"{self._timeout_seconds} seconds ({failure})"
+            ) from None
+        raise ProviderUnavailable(
+            f"the cognition endpoint {endpoint} could not be reached ({failure})"
+        ) from None
 
     async def _read_bounded(self, response: httpx.Response) -> bytes:
         """Read at most :data:`MAX_RESPONSE_BODY_BYTES` of an answer, then refuse it.
@@ -911,20 +1012,29 @@ class OpenAICompatibleProvider:
         return b"".join(chunks)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
+        """Translate an error status, keeping the failed request out of the chain.
+
+        ``httpx.HTTPStatusError`` holds the whole ``Request`` it was raised for, whose
+        headers carry this provider's ``Authorization`` value, so the failure is composed
+        after the handler exits: there is then no ``__cause__``, no ``__context__`` and no
+        live reference to those headers on the exception that escapes.
+        """
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
             status = error.response.status_code
             body = _excerpt(error.response.text)
-            endpoint = self._metadata.base_url
-            if status == httpx.codes.TOO_MANY_REQUESTS:
-                raise ProviderRateLimited(
-                    f"the cognition endpoint {endpoint} rate limited this run: {body}"
-                ) from error
-            raise ProviderHttpError(
-                f"the cognition endpoint {endpoint} answered HTTP {status}: {body}",
-                retryable=status >= 500,
-            ) from error
+        else:
+            return
+        endpoint = self._metadata.base_url
+        if status == httpx.codes.TOO_MANY_REQUESTS:
+            raise ProviderRateLimited(
+                f"the cognition endpoint {endpoint} rate limited this run: {body}"
+            ) from None
+        raise ProviderHttpError(
+            f"the cognition endpoint {endpoint} answered HTTP {status}: {body}",
+            retryable=status >= 500,
+        ) from None
 
 
 __all__ = [
@@ -955,6 +1065,7 @@ __all__ = [
     "ProviderRateLimited",
     "ProviderTimeout",
     "ProviderUnavailable",
+    "UnusableApiKey",
     "coerce_cognition_result",
     "extract_message_content",
     "extract_token_usage",
