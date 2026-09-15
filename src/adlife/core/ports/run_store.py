@@ -14,7 +14,9 @@ rules live here rather than in the SQLite adapter so a second adapter inherits t
   identifier built from exactly that pair;
 * sequences are contiguous - the batch begins where the run left off;
 * every ``caused_by_event_ids`` entry names an EARLIER event of the SAME run;
-* nothing persisted carries text that the repository's published screens object to.
+* nothing persisted carries text that the repository's published screens object to -
+  screened over the WHOLE event document rather than over its payload alone, because
+  ``model_id`` and ``channel`` are free text of the same kind and reach the same files.
 
 Checkpoints are day-scoped on purpose. The social layer carries two accumulators across
 the ticks of one simulated day and resets both at the daily reflection, so a checkpoint
@@ -93,6 +95,23 @@ class InvalidEventBatch(StorageError):
 
 class CorruptRunArtifact(StorageError):
     """Raised when a stored artifact cannot be trusted. It is never silently accepted."""
+
+
+class ExportNotExtended(StorageError):
+    """Raised when a tick WAS recorded but its portable export line could not be written.
+
+    Every other refusal from :meth:`RunStore.append_events` means the tick was not
+    recorded, and a caller may retry it. This one means the opposite, and nothing but a
+    distinct type can say so: the database has already committed when the export append
+    fails, because two files cannot be written atomically together and the durable store
+    is committed first on purpose.
+
+    A caller that retries a tick refused this way is told its sequence is already taken; a
+    caller that abandons it discards a tick the run really holds. The recovery is neither:
+    the export is a DERIVED artifact, so
+    :meth:`~adlife.adapters.storage.sqlite_store.SQLiteRunStore.rebuild_export` re-derives
+    it from the rows that back it, and the run continues from there.
+    """
 
 
 class SchemaVersionMismatch(StorageError):
@@ -225,6 +244,15 @@ def validate_event_batch(
     Causality is checked without reading a single stored row: an event is addressed by
     ``(run_id, sequence)`` and its identifier is built from exactly that pair, so a cause
     exists precisely when it names this run and a sequence below the caused event's own.
+
+    THE SCREEN COVERS THE WHOLE DOCUMENT. ``payload`` is not the only free text an event
+    carries to disk: ``model_id`` is 120 characters of configuration text and ``channel``
+    is 80 characters of placement text, and the store writes every field of the event into
+    ``events.jsonl`` and into ``results.sqlite3`` verbatim. Screening one field would leave
+    the others open on the authoritative write path, so the serialised document is screened
+    whole and a field added later is covered without a second edit here. The screen remains
+    best effort, and refusing a document is not a promise that the artifact carries no
+    credential.
     """
     run_id = batch_run_id(events)
     batch = tuple(events)
@@ -249,7 +277,7 @@ def validate_event_batch(
                     f"recorded: {cause}"
                 )
         objection = persisted_text_objection(
-            dict(event.payload), label=f"the payload of event {event.sequence}"
+            event.model_dump(mode="json"), label=f"event {event.sequence}"
         )
         if objection is not None:
             raise InvalidEventBatch(objection)
@@ -287,6 +315,7 @@ __all__ = [
     "WINDOWS_RESERVED_NAMES",
     "CorruptRunArtifact",
     "DuplicateRun",
+    "ExportNotExtended",
     "InvalidEventBatch",
     "ProviderUsageLog",
     "RunAlreadyComplete",

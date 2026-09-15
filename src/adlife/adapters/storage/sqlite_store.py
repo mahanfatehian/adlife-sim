@@ -9,10 +9,13 @@ moved over its target, so a reader sees the previous version or the new one. A t
 ``BEGIN IMMEDIATE`` ... ``COMMIT``, so a killed process leaves the tick either wholly
 recorded or wholly absent. The portable export is appended only AFTER the database commit,
 so a database failure can never leave a line in the export that no row backs, and it is
-COUNTED and checked against the database's own next sequence BEFORE the transaction opens,
-so a disagreement between the two artifacts refuses the tick instead of recording it and
-reporting the refusal afterwards. A caller that sees a failure from
-:meth:`SQLiteRunStore.append_events` knows the tick was not stored.
+MEASURED - counted by reading the file, on every append, never recalled from what this
+instance last wrote - and checked against the database's own next sequence BEFORE the
+transaction opens, so a disagreement between the two artifacts refuses the tick instead of
+recording it and reporting the refusal afterwards. A caller that sees a failure from
+:meth:`SQLiteRunStore.append_events` knows the tick was not stored, with one named
+exception: :class:`~adlife.core.ports.run_store.ExportNotExtended` means the opposite, and
+says so in its own type.
 
 What two files cannot be is atomic TOGETHER. A kill or a full device between the commit
 and the export's fsync leaves a committed tick whose exported line never landed. SQLite is
@@ -67,6 +70,7 @@ from adlife.core.ports.run_store import (
     MAX_LOADED_EVENTS,
     CorruptRunArtifact,
     DuplicateRun,
+    ExportNotExtended,
     InvalidEventBatch,
     ProviderUsageLog,
     RunAlreadyComplete,
@@ -184,13 +188,12 @@ def _rollback_quietly(connection: sqlite3.Connection) -> None:
 class SQLiteRunStore:
     """Store and read runs beneath ``<project root>/runs/<run id>/``."""
 
-    __slots__ = ("_exported_lines", "_root")
+    __slots__ = ("_root",)
 
     def __init__(self, root: Path) -> None:
         if not isinstance(root, Path):
             raise TypeError("root must be a Path")
         self._root = root.resolve()
-        self._exported_lines: dict[str, int] = {}
 
     @property
     def root(self) -> Path:
@@ -280,7 +283,6 @@ class SQLiteRunStore:
         except BaseException:
             shutil.rmtree(temporary, ignore_errors=True)
             raise
-        self._exported_lines[manifest.run_id] = 0
 
     def _create_database(self, path: Path, manifest: RunManifest) -> None:
         connection = connect_to_database(path)
@@ -310,8 +312,23 @@ class SQLiteRunStore:
         EVERYTHING THAT CAN REFUSE THE TICK RUNS FIRST. The batch is serialised and
         bounded, the export is counted, and that count is checked against the database's
         own next sequence inside the transaction that will do the writing - all before a
-        single row is inserted. A refusal therefore means the tick was not recorded, which
-        is the only thing that lets a caller retry it.
+        single row is inserted.
+
+        THE EXPORT IS MEASURED, NOT REMEMBERED. The count comes from reading the file on
+        every append, never from what this instance last wrote to it. A remembered count
+        is a claim about a file rather than a fact about it, and it is wrong in both
+        directions: it misses an export that SHRANK behind a live instance - the exact
+        divergence this check exists to catch - and it condemns a healthy run whose two
+        artifacts another writer extended together. The cost is one streaming pass over
+        the export per tick, paid to make the guard a measurement.
+
+        THE POSTCONDITION, STATED EXACTLY. Every refusal raised here means the tick was
+        not recorded and may be retried - EXCEPT
+        :class:`~adlife.core.ports.run_store.ExportNotExtended`, which means the database
+        committed and only the derived export is short. That case cannot be made to vanish
+        - two files are not atomic together - so it is carried by its own type instead of
+        being covered by a postcondition that is false for it. Recover it with
+        :meth:`rebuild_export`, not by retrying.
         """
         if isinstance(events, (str, bytes)) or not isinstance(events, Sequence):
             raise InvalidEventBatch("a batch must be a sequence of DomainEvent")
@@ -321,9 +338,7 @@ class SQLiteRunStore:
         lines = self._event_lines(events)
         connection = self._connect(run_id, self.database_path(run_id))
         try:
-            exported = self._exported_lines.get(run_id)
-            if exported is None:
-                exported = self._count_export_lines(run_id, self.events_jsonl_path(run_id))
+            exported = self._count_export_lines(run_id, self.events_jsonl_path(run_id))
             connection.execute("BEGIN IMMEDIATE")
             try:
                 _status, next_sequence = self._read_open_run(connection, run_id)
@@ -357,7 +372,7 @@ class SQLiteRunStore:
                 raise
         finally:
             connection.close()
-        self._append_to_export(run_id, exported, lines)
+        self._append_to_export(run_id, lines)
 
     def _event_lines(self, events: Sequence[DomainEvent]) -> tuple[str, ...]:
         """Serialise the batch, refusing a line this store could not read back.
@@ -378,7 +393,7 @@ class SQLiteRunStore:
             lines.append(line)
         return tuple(lines)
 
-    def _append_to_export(self, run_id: str, exported: int, lines: Sequence[str]) -> None:
+    def _append_to_export(self, run_id: str, lines: Sequence[str]) -> None:
         """Extend the derived artifact, translating a device failure like any other.
 
         An untranslated :class:`OSError` here would escape the family the port documents,
@@ -390,12 +405,10 @@ class SQLiteRunStore:
                 self.events_jsonl_path(run_id), "".join(f"{line}\n" for line in lines)
             )
         except OSError as error:
-            self._exported_lines.pop(run_id, None)
-            raise StorageError(
+            raise ExportNotExtended(
                 f"run {run_id} committed a tick but could not extend {EVENTS_EXPORT}: "
                 f"{type(error).__name__}"
             ) from None
-        self._exported_lines[run_id] = exported + len(lines)
 
     def _count_export_lines(self, run_id: str, export: Path) -> int:
         try:
@@ -438,7 +451,6 @@ class SQLiteRunStore:
             ) from None
         finally:
             temporary.unlink(missing_ok=True)
-        self._exported_lines[run_id] = written
         return written
 
     def save_checkpoint(self, checkpoint: RunCheckpoint) -> None:
@@ -828,6 +840,15 @@ class SQLiteRunStore:
     def _verify_metrics_table(
         self, connection: sqlite3.Connection, run_id: str, result: SimulationResult | None
     ) -> None:
+        """Check the queryable projection against the result, coercing nothing blindly.
+
+        ``metric_value REAL NOT NULL`` is an AFFINITY, not a type: SQLite stores whatever
+        a writer hands it, so the column can hold text or a blob. A bare ``float()`` on
+        it turned a tampered row into a raw :class:`ValueError` escaping ``load_run``,
+        outside the :class:`~adlife.core.ports.run_store.StorageError` family the command
+        line maps to exit code 4. A row that is not a number is a corrupt artifact and is
+        reported as one.
+        """
         rows = connection.execute(
             "SELECT metric_name, metric_value FROM metrics WHERE run_id = ? ORDER BY metric_name",
             (run_id,),
@@ -837,7 +858,13 @@ class SQLiteRunStore:
             if result is None
             else sorted((name, float(value)) for name, value in result.metrics.items())
         )
-        if [(str(name), float(value)) for name, value in rows] != expected:
+        try:
+            stored = [(str(name), float(value)) for name, value in rows]
+        except (TypeError, ValueError):
+            raise CorruptRunArtifact(
+                f"a metric row stored for run {run_id} does not hold a number"
+            ) from None
+        if stored != expected:
             raise CorruptRunArtifact(
                 f"the metric rows stored for run {run_id} disagree with its recorded result"
             )
@@ -914,7 +941,6 @@ class SQLiteRunStore:
                 f"events.jsonl for run {run_id} holds {index + 1} lines where the database "
                 f"holds {len(expected)} events"
             )
-        self._exported_lines[run_id] = len(expected)
 
     def _verify_metrics_document(self, run_id: str, result: SimulationResult | None) -> None:
         if result is None:

@@ -13,10 +13,12 @@ replayable run - it has stored something that reads back without complaining.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from adlife.adapters.storage.sqlite_store import SQLiteRunStore
 from adlife.core.domain.events import DomainEvent, EventSource, EventType
@@ -25,8 +27,10 @@ from adlife.core.domain.scenario import Scenario
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import ProviderUsage
 from adlife.core.ports.run_store import (
+    MAX_PROVIDER_USAGE_RECORDS,
     CorruptRunArtifact,
     DuplicateRun,
+    ExportNotExtended,
     InvalidEventBatch,
     ProviderUsageLog,
     RunAlreadyComplete,
@@ -109,6 +113,7 @@ def test_every_storage_failure_is_one_typed_family() -> None:
         RunAlreadyComplete,
         InvalidEventBatch,
         CorruptRunArtifact,
+        ExportNotExtended,
         RunTooLargeToLoad,
         UnsafeRunLocation,
     ):
@@ -668,6 +673,69 @@ def test_provider_usage_for_another_run_is_refused(
 
     with pytest.raises(RunNotFound):
         store.save_provider_usage(ProviderUsageLog(run_id="run-other", records=()))
+
+
+def usage_records(count: int) -> tuple[ProviderUsage, ...]:
+    """``count`` identical usage records, the cheapest shape the model accepts."""
+    return tuple(
+        ProviderUsage(
+            provider_kind="mock",
+            model_id="mock-v1",
+            prompt_tokens=0,
+            completion_tokens=0,
+            latency_ms=0,
+        )
+        for _ in range(count)
+    )
+
+
+def test_a_provider_usage_log_at_the_documented_record_bound_is_accepted() -> None:
+    """The bound must admit the largest legitimate log, or it is the wrong bound."""
+    log = ProviderUsageLog(run_id="run-storage", records=usage_records(MAX_PROVIDER_USAGE_RECORDS))
+
+    assert len(log.records) == MAX_PROVIDER_USAGE_RECORDS
+
+
+def test_a_provider_usage_log_beyond_the_documented_record_bound_is_refused() -> None:
+    """Without the bound the writer can store a document its own reader then refuses."""
+    with pytest.raises(ValidationError):
+        ProviderUsageLog(
+            run_id="run-storage",
+            records=usage_records(MAX_PROVIDER_USAGE_RECORDS + 1),
+        )
+
+
+def test_a_stored_usage_document_beyond_the_record_bound_is_refused_on_read(
+    store: SQLiteRunStore, run_manifest: RunManifest, valid_scenario: Scenario
+) -> None:
+    """The bound is the READER's too: an oversized document on disk is not a usage log.
+
+    This is what makes the write-side bound load-bearing rather than decorative. A
+    document with one record more than the model admits is a real file that a store
+    without the bound could have written, and it reads back as a typed refusal.
+    """
+    store.create_run(run_manifest, scenario=valid_scenario)
+    record = {
+        "schema_version": 1,
+        "provider_kind": "mock",
+        "model_id": "mock-v1",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "latency_ms": 0,
+        "fallback_reason": None,
+    }
+    store.provider_usage_json_path(run_manifest.run_id).write_bytes(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_manifest.run_id,
+                "records": [record] * (MAX_PROVIDER_USAGE_RECORDS + 1),
+            }
+        ).encode("utf-8")
+    )
+
+    with pytest.raises(CorruptRunArtifact, match=r"provider-usage\.json"):
+        store.load_provider_usage(run_manifest.run_id)
 
 
 def test_loading_more_events_than_the_caller_allows_is_refused_rather_than_read(

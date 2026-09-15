@@ -256,6 +256,7 @@ def event_factory(run_manifest: RunManifest) -> Callable[..., DomainEvent]:
         agent_id: str | None = "person-001",
         campaign_id: str | None = None,
         channel: str | None = None,
+        model_id: str | None = None,
         event_id: str | None = None,
     ) -> DomainEvent:
         resolved_run_id = run_manifest.run_id if run_id is None else run_id
@@ -270,6 +271,7 @@ def event_factory(run_manifest: RunManifest) -> Callable[..., DomainEvent]:
             channel=channel,
             payload={} if payload is None else payload,
             source=source,
+            model_id=model_id,
             caused_by_event_ids=caused_by_event_ids,
         )
 

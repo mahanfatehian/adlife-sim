@@ -256,6 +256,18 @@ LEAK_CORPUS: tuple[LeakShape, ...] = (
         '{"api_key":"AAAABBBBCCCC"}',
         "AAAABBBBCCCC",
     ),
+    # --- 11-C1: a credential wearing a model identifier's shape ----------------------
+    #
+    # ``DomainEvent.model_id`` and ``ProviderUsage.model_id`` are 120 characters of free
+    # configuration text that reach events.jsonl, results.sqlite3 and
+    # provider-usage.json verbatim. A key pasted into a model-name setting - the shape a
+    # single mistyped configuration line produces - is a credential in every one of them.
+    LeakShape(
+        "11-C1",
+        "model-identifier-carrying-a-vendor-key",
+        "gpt-4o-mini-2026-05-13-sk-live-AAAABBBBCCCCDDDD",
+        "AAAABBBBCCCCDDDD",
+    ),
 )
 """Add a shape here and every assertion below covers it."""
 
@@ -1664,11 +1676,61 @@ def test_the_corpus_shape_never_reaches_the_provider_usage_document(
 
 
 @pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_a_stored_event_model_identifier(
+    shape: LeakShape, tmp_path: Path, run_manifest: RunManifest, valid_scenario: Scenario
+) -> None:
+    """``DomainEvent.model_id`` is written verbatim to BOTH artifacts of a run.
+
+    It is the same free configuration text as ``ProviderUsage.model_id``, on the
+    authoritative write path rather than on the usage document, and it was screened by
+    nothing at all: the event screen looked only at ``payload``.
+    """
+    store = _storage_fixture(tmp_path, run_manifest, valid_scenario)
+    model_id = redact_provider_body(shape.body)[:120] or REDACTION_PLACEHOLDER
+    event = _payload_event(run_manifest, {}).model_copy(update={"model_id": model_id})
+
+    with contextlib.suppress(InvalidEventBatch):
+        store.append_events([event])
+
+    assert _surviving_artifacts(store, run_manifest.run_id, shape.secret) == []
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_a_stored_event_channel(
+    shape: LeakShape, tmp_path: Path, run_manifest: RunManifest, valid_scenario: Scenario
+) -> None:
+    """``channel`` is the other free-text field an event carries into both artifacts."""
+    store = _storage_fixture(tmp_path, run_manifest, valid_scenario)
+    channel = redact_provider_body(shape.body)[:80] or REDACTION_PLACEHOLDER
+    event = _payload_event(run_manifest, {}).model_copy(update={"channel": channel})
+
+    with contextlib.suppress(InvalidEventBatch):
+        store.append_events([event])
+
+    assert _surviving_artifacts(store, run_manifest.run_id, shape.secret) == []
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
 def test_the_corpus_shape_never_reaches_the_portable_export(
     shape: LeakShape, tmp_path: Path, run_manifest: RunManifest
 ) -> None:
     path = tmp_path / "events.jsonl"
     event = _payload_event(run_manifest, {"provider_note": redact_provider_body(shape.body)})
+
+    with JsonlEventSink(path) as sink, contextlib.suppress(EventSinkError):
+        sink.append_many(run_manifest.run_id, [event])
+
+    assert shape.secret.encode("utf-8") not in path.read_bytes()
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
+def test_the_corpus_shape_never_reaches_the_portable_export_through_a_model_identifier(
+    shape: LeakShape, tmp_path: Path, run_manifest: RunManifest
+) -> None:
+    """The sibling adapter writes the same fields and carries the same screen."""
+    path = tmp_path / "events.jsonl"
+    model_id = redact_provider_body(shape.body)[:120] or REDACTION_PLACEHOLDER
+    event = _payload_event(run_manifest, {}).model_copy(update={"model_id": model_id})
 
     with JsonlEventSink(path) as sink, contextlib.suppress(EventSinkError):
         sink.append_many(run_manifest.run_id, [event])

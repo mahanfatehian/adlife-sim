@@ -10,6 +10,7 @@ at all. "Reads back without complaining" is the failure mode this module exists 
 from __future__ import annotations
 
 import ast
+import contextlib
 import inspect
 import re
 import sqlite3
@@ -44,6 +45,7 @@ from adlife.core.domain.state import ConsumerState, Memory
 from adlife.core.ports.cognition import ProviderUsage
 from adlife.core.ports.run_store import (
     CorruptRunArtifact,
+    ExportNotExtended,
     InvalidEventBatch,
     ProviderUsageLog,
     RunCheckpoint,
@@ -477,6 +479,33 @@ def test_a_metric_edited_behind_the_store_is_refused(
         started_run.load_run(run_manifest.run_id)
 
 
+@pytest.mark.parametrize("tampered", ["not-a-number", b"\x00\x01"], ids=["text", "blob"])
+def test_a_metric_value_that_is_not_a_number_stays_inside_the_storage_family(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, tampered: object
+) -> None:
+    """``REAL NOT NULL`` is an affinity, not a type: SQLite stores what it is given.
+
+    The cross-check coerced the column with a bare ``float()``, so a tampered row escaped
+    as a raw ``ValueError`` from inside ``load_run`` - straight past the ``StorageError``
+    family the command line maps to exit code 4, and reported as an unexpected defect
+    rather than as the corrupt artifact it is.
+    """
+    started_run.complete_run(
+        SimulationResult(
+            run_id=run_manifest.run_id,
+            status="completed",
+            final_minute=30,
+            event_count=3,
+            metrics={"notice_rate": 0.5},
+        )
+    )
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("UPDATE metrics SET metric_value = ?", (tampered,))
+
+    with pytest.raises(CorruptRunArtifact, match="metric"):
+        started_run.load_run(run_manifest.run_id)
+
+
 def test_metrics_are_stored_one_row_per_metric_in_a_stable_order(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
@@ -637,6 +666,50 @@ def test_a_second_store_refuses_to_continue_an_unterminated_export(
 
     with pytest.raises(CorruptRunArtifact, match="unterminated"):
         reopened.append_events([event_factory(3, simulated_minute=45)])
+
+
+def test_an_export_that_shrank_behind_a_live_store_is_still_detected(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """The guard must MEASURE the export, not recall what this instance last wrote to it.
+
+    ``started_run`` is the instance that wrote every one of those three lines, so a
+    remembered count says three and the database says three and the two agree - about a
+    file that no longer holds three lines. The divergence then widens with every tick,
+    which is the failure the guard exists to prevent, arriving by a different door.
+    """
+    path = started_run.events_jsonl_path(run_manifest.run_id)
+    kept = path.read_bytes().split(b"\n")[:2]
+    path.write_bytes(b"\n".join(kept) + b"\n")
+
+    with pytest.raises(CorruptRunArtifact, match="lines"):
+        started_run.append_events([event_factory(3, simulated_minute=45)])
+
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2]
+    assert path.read_bytes().count(b"\n") == 2
+
+
+def test_a_run_another_writer_extended_consistently_is_not_condemned(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """The other half of the same defect: a remembered count also condemns a healthy run.
+
+    A second store appends a tick to BOTH artifacts, so they agree exactly. The first
+    instance's memory of the file is now stale-low, and a guard evaluated against it
+    reports a divergence that does not exist - refusing a run whose two artifacts are
+    line-for-line identical.
+    """
+    second = SQLiteRunStore(started_run.root)
+    second.append_events([event_factory(3, simulated_minute=45)])
+
+    started_run.append_events([event_factory(4, simulated_minute=60)])
+
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2, 3, 4]
+    assert started_run.load_run(run_manifest.run_id).events[4].simulated_minute == 60
 
 
 def test_a_missing_export_is_refused(
@@ -897,6 +970,47 @@ def test_a_failing_export_append_is_refused_as_a_typed_storage_error(
     assert "No space left" not in str(raised.value)
 
 
+def test_a_tick_the_export_could_not_take_is_reported_as_its_own_typed_failure(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal means the tick was not recorded - on every path but this one.
+
+    The database has already committed when the export append fails, so the general
+    postcondition is FALSE here and no amount of docstring makes it true. A caller that
+    cannot tell the two cases apart either retries a tick that is already stored - and is
+    told its sequence is taken - or abandons one that is not. The distinction is therefore
+    carried by the type, where a caller can branch on it.
+    """
+
+    def refuse(path: Path, text: str) -> None:
+        raise OSError("the device is full")
+
+    monkeypatch.setattr(sqlite_store_module, "append_export_lines", refuse)
+
+    with pytest.raises(ExportNotExtended) as raised:
+        started_run.append_events([event_factory(3, simulated_minute=45)])
+
+    assert isinstance(raised.value, StorageError)
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2, 3]
+    assert started_run.events_jsonl_path(run_manifest.run_id).read_bytes().count(b"\n") == 3
+
+
+def test_every_other_refusal_of_a_tick_keeps_the_postcondition_it_documents(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """The typed distinction is only worth carrying if the ordinary refusal is the other one."""
+    with pytest.raises(StorageError) as raised:
+        started_run.append_events([event_factory(3, model_id=CREDENTIAL_MODEL_ID)])
+
+    assert not isinstance(raised.value, ExportNotExtended)
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2]
+
+
 def test_a_committed_tick_whose_export_line_was_lost_never_widens_the_divergence(
     started_run: SQLiteRunStore,
     run_manifest: RunManifest,
@@ -1075,6 +1189,74 @@ def test_provider_usage_whose_model_id_reads_as_a_credential_is_refused(
         started_run.save_provider_usage(log)
 
     assert files_carrying(started_run, run_manifest.run_id, CREDENTIAL_TOKEN) == []
+
+
+CREDENTIAL_MODEL_ID = f"local-llama-3-api_key={CREDENTIAL_TOKEN}"
+CREDENTIAL_CHANNEL = f"mobile-feed-api_key={CREDENTIAL_TOKEN}"
+
+
+def test_an_event_model_identifier_that_reads_as_a_credential_never_reaches_an_artifact(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """``DomainEvent.model_id`` is the same free configuration text as the usage log's.
+
+    It is 120 characters of anything, it is written verbatim into BOTH ``events.jsonl``
+    and ``results.sqlite3``, and those are permanent, portable artifacts. Screening the
+    payload alone left this field open on the authoritative write path while the
+    identically shaped ``ProviderUsage.model_id`` was screened in the same module.
+    """
+    event = event_factory(3, simulated_minute=45, model_id=CREDENTIAL_MODEL_ID)
+
+    with contextlib.suppress(InvalidEventBatch):
+        started_run.append_events([event])
+
+    assert files_carrying(started_run, run_manifest.run_id, CREDENTIAL_TOKEN) == []
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2]
+    with pytest.raises(InvalidEventBatch, match="credential"):
+        started_run.append_events([event])
+
+
+def test_an_event_channel_that_reads_as_a_credential_never_reaches_an_artifact(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """``channel`` is the other free-text field of an event: 80 characters of anything."""
+    event = event_factory(3, simulated_minute=45, channel=CREDENTIAL_CHANNEL)
+
+    with contextlib.suppress(InvalidEventBatch):
+        started_run.append_events([event])
+
+    assert files_carrying(started_run, run_manifest.run_id, CREDENTIAL_TOKEN) == []
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2]
+    with pytest.raises(InvalidEventBatch, match="credential"):
+        started_run.append_events([event])
+
+
+def test_an_ordinary_event_channel_and_model_identifier_are_still_accepted(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """The widened screen must not refuse the configuration this simulator really runs."""
+    started_run.append_events(
+        [
+            event_factory(
+                3,
+                simulated_minute=45,
+                event_type=EventType.COGNITION_COMPLETED,
+                campaign_id="campaign-phone",
+                channel="mobile-feed",
+                model_id="qwen2.5:7b-instruct",
+            )
+        ]
+    )
+
+    loaded = started_run.load_run(run_manifest.run_id)
+    assert loaded.events[3].model_id == "qwen2.5:7b-instruct"
+    assert loaded.events[3].channel == "mobile-feed"
 
 
 # --- bounds, on the way in as well as on the way out ----------------------------------

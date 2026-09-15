@@ -271,6 +271,31 @@ def test_a_jsonl_sink_refuses_a_payload_string_that_reads_as_a_credential(
     assert path.read_bytes() == b""
 
 
+def test_a_jsonl_sink_refuses_a_model_identifier_that_reads_as_a_credential(
+    event_factory: Callable[..., DomainEvent], tmp_path: Path
+) -> None:
+    """The export writes every field of an event, so every field of one is screened."""
+    path = tmp_path / "events.jsonl"
+    event = event_factory(0, model_id="local-llama-3-api_key=0000abcdef1234567890")
+
+    with JsonlEventSink(path) as sink, pytest.raises(EventSinkError, match="credential"):
+        sink.append_many("run-storage", [event])
+
+    assert path.read_bytes() == b""
+
+
+def test_a_jsonl_sink_refuses_a_channel_that_reads_as_a_credential(
+    event_factory: Callable[..., DomainEvent], tmp_path: Path
+) -> None:
+    path = tmp_path / "events.jsonl"
+    event = event_factory(0, channel="mobile-feed-api_key=0000abcdef1234567890")
+
+    with JsonlEventSink(path) as sink, pytest.raises(EventSinkError, match="credential"):
+        sink.append_many("run-storage", [event])
+
+    assert path.read_bytes() == b""
+
+
 def test_a_jsonl_sink_accepts_ordinary_campaign_copy(
     event_factory: Callable[..., DomainEvent], tmp_path: Path
 ) -> None:
@@ -282,6 +307,42 @@ def test_a_jsonl_sink_accepts_ordinary_campaign_copy(
         sink.append_many("run-storage", [event_factory(0, payload={"message": copy_text})])
 
     assert copy_text in path.read_text(encoding="utf-8")
+
+
+def test_a_jsonl_sink_refuses_a_line_its_own_reader_could_not_read_back(
+    event_factory: Callable[..., DomainEvent], tmp_path: Path
+) -> None:
+    """``MAX_EVENT_LINE_CHARS`` is the reader's bound, so the writer has to apply it too.
+
+    Enforced only on the read side it is worse than absent: the sink reports success, the
+    oversized line is durably in the file, and every later read of an otherwise intact
+    export refuses it with nothing to point at. The authoritative store already refuses
+    such a batch before its transaction opens; this is the same bound in the sibling
+    adapter that writes the same lines.
+    """
+    path = tmp_path / "events.jsonl"
+    oversized = event_factory(0, payload={"note": "x" * (MAX_EVENT_LINE_CHARS + 1)})
+
+    with JsonlEventSink(path) as sink, pytest.raises(EventSinkError, match="characters"):
+        sink.append_many("run-storage", [oversized])
+
+    assert path.read_bytes() == b""
+
+
+def test_a_jsonl_sink_refuses_an_oversized_line_without_writing_the_batch_around_it(
+    event_factory: Callable[..., DomainEvent], tmp_path: Path
+) -> None:
+    """A batch is refused whole: the first event must not survive the second's refusal."""
+    path = tmp_path / "events.jsonl"
+    batch = [
+        event_factory(0),
+        event_factory(1, payload={"note": "x" * (MAX_EVENT_LINE_CHARS + 1)}),
+    ]
+
+    with JsonlEventSink(path) as sink, pytest.raises(EventSinkError, match="characters"):
+        sink.append_many("run-storage", batch)
+
+    assert path.read_bytes() == b""
 
 
 def test_a_sink_refuses_anything_that_is_not_a_domain_event(tmp_path: Path) -> None:

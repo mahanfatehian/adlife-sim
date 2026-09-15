@@ -12,6 +12,15 @@ of whatever the operating system felt like writing.
 Unlike the plain sink this one must write the payload - an export that dropped it would
 not be an export - so it screens what it writes with the same published rule the campaign
 copy passes, and refuses the whole batch rather than writing a line and complaining after.
+The screen covers the WHOLE event document rather than its payload alone: ``model_id`` and
+``channel`` are free text of the same kind and land in the same file. It stays best effort
+and is not a promise that an exported line carries no credential.
+
+:data:`~adlife.core.domain.serialization.MAX_EVENT_LINE_CHARS` is enforced on the way IN as
+well as on the way out. It is the READER's bound, and a sink that did not apply it could
+durably write a line that this repository's own reader refuses - the writer reporting
+success and every later read calling the intact file corrupt. The authoritative store
+applies the same bound before its transaction opens; this is the sibling of that check.
 """
 
 from __future__ import annotations
@@ -22,7 +31,11 @@ from types import TracebackType
 from typing import IO, Self
 
 from adlife.core.domain.events import DomainEvent
-from adlife.core.domain.serialization import canonical_event_line, persisted_text_objection
+from adlife.core.domain.serialization import (
+    MAX_EVENT_LINE_CHARS,
+    canonical_event_line,
+    persisted_text_objection,
+)
 from adlife.core.ports.event_sink import EventSinkError, validate_sink_batch
 
 
@@ -67,11 +80,17 @@ class JsonlEventSink:
         lines = []
         for event in batch:
             objection = persisted_text_objection(
-                dict(event.payload), label=f"the payload of event {event.sequence}"
+                event.model_dump(mode="json"), label=f"event {event.sequence}"
             )
             if objection is not None:
                 raise EventSinkError(objection)
-            lines.append(f"{canonical_event_line(event)}\n")
+            line = canonical_event_line(event)
+            if len(line) > MAX_EVENT_LINE_CHARS:
+                raise EventSinkError(
+                    f"event {event.sequence} serialises to {len(line)} characters, above "
+                    f"the {MAX_EVENT_LINE_CHARS} characters a stored event may hold"
+                )
+            lines.append(f"{line}\n")
         self._handle.write("".join(lines))
         self._handle.flush()
 
