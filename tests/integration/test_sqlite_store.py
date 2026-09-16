@@ -31,7 +31,9 @@ from adlife.adapters.storage.schema import (
 from adlife.adapters.storage.sqlite_store import (
     MAX_INPUT_DOCUMENT_BYTES,
     MAX_STORED_DOCUMENT_CHARS,
+    READ_CHUNK_CHARS,
     SQLiteRunStore,
+    iter_export_lines,
 )
 from adlife.core.domain.events import DomainEvent, EventType
 from adlife.core.domain.results import RunManifest, SimulationResult
@@ -44,6 +46,8 @@ from adlife.core.domain.serialization import (
 from adlife.core.domain.state import ConsumerState, Memory
 from adlife.core.ports.cognition import ProviderUsage
 from adlife.core.ports.run_store import (
+    MAX_CHECKPOINTS,
+    MINUTES_PER_DAY,
     CorruptRunArtifact,
     ExportNotExtended,
     InvalidEventBatch,
@@ -380,23 +384,32 @@ def test_persian_text_survives_the_database_round_trip(
 def test_a_truncated_export_line_is_refused(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
-    """A half-written last line must never read back as a valid run."""
-    path = started_run.events_jsonl_path(run_manifest.run_id)
-    text = path.read_text(encoding="utf-8")
-    path.write_text(text[: len(text) - 20], encoding="utf-8")
+    """A half-written last line must never read back as a valid run.
 
-    with pytest.raises(CorruptRunArtifact, match=re.escape("events.jsonl")):
+    THE DAMAGE IS WRITTEN AS BYTES, and the refusal has to name it. A text-mode write
+    translates every newline into a carriage return and a newline on Windows, so the
+    export stops matching the database at LINE 1 - and the run is refused for a line
+    ending this test never meant to inject, before the reader ever reaches the
+    truncation it did. A test that cannot tell those apart passes, on this platform,
+    for a reason that has nothing to do with the damage it describes.
+    """
+    path = started_run.events_jsonl_path(run_manifest.run_id)
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) - 20])
+
+    with pytest.raises(CorruptRunArtifact, match="unterminated"):
         started_run.load_run(run_manifest.run_id)
 
 
 def test_an_export_missing_a_line_is_refused(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
+    """The refusal must COUNT the lines rather than trip over a rewritten line ending."""
     path = started_run.events_jsonl_path(run_manifest.run_id)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    path.write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
+    kept = path.read_bytes().split(b"\n")[:2]
+    path.write_bytes(b"\n".join(kept) + b"\n")
 
-    with pytest.raises(CorruptRunArtifact, match=re.escape("events.jsonl")):
+    with pytest.raises(CorruptRunArtifact, match="holds 2 lines where the database holds 3"):
         started_run.load_run(run_manifest.run_id)
 
 
@@ -405,12 +418,13 @@ def test_an_export_line_that_disagrees_with_the_database_is_refused(
     run_manifest: RunManifest,
     event_factory: Callable[..., DomainEvent],
 ) -> None:
+    """The refusal must name the line the damage is on, not the one in front of it."""
     path = started_run.events_jsonl_path(run_manifest.run_id)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    lines[1] = canonical_event_line(event_factory(1, simulated_minute=777))
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    lines = path.read_bytes().split(b"\n")
+    lines[1] = canonical_event_line(event_factory(1, simulated_minute=777)).encode("utf-8")
+    path.write_bytes(b"\n".join(lines))
 
-    with pytest.raises(CorruptRunArtifact, match=re.escape("events.jsonl")):
+    with pytest.raises(CorruptRunArtifact, match="line 2 is not the event"):
         started_run.load_run(run_manifest.run_id)
 
 
@@ -425,12 +439,29 @@ def test_an_export_whose_last_line_has_no_newline_is_refused(
         started_run.load_run(run_manifest.run_id)
 
 
+def test_an_export_rewritten_with_this_platform_s_line_endings_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """The export is byte-exact, so a copy that gained carriage returns is not it.
+
+    This is the platform trap the damage tests above were falling into, pinned from the
+    reader's side: opened in universal-newline mode the reader would strip the carriage
+    returns and accept a file the writer never wrote, and every byte-for-byte claim this
+    module makes about the export would hold only where a line ending is one byte.
+    """
+    path = started_run.events_jsonl_path(run_manifest.run_id)
+    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+
+    with pytest.raises(CorruptRunArtifact, match="line 1 is not the event"):
+        started_run.load_run(run_manifest.run_id)
+
+
 def test_an_export_line_beyond_the_documented_bound_is_refused_without_reading_it_all(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
     path = started_run.events_jsonl_path(run_manifest.run_id)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write("x" * 2_000_000 + "\n")
+    with path.open("ab") as handle:
+        handle.write(b"x" * 2_000_000 + b"\n")
 
     with pytest.raises(CorruptRunArtifact, match="exceeds"):
         started_run.load_run(run_manifest.run_id)
@@ -440,7 +471,7 @@ def test_a_tampered_manifest_document_is_refused(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
     path = started_run.run_json_path(run_manifest.run_id)
-    path.write_text(path.read_text(encoding="utf-8").replace('"seed":42', '"seed":43'), "utf-8")
+    path.write_bytes(path.read_bytes().replace(b'"seed":42', b'"seed":43'))
 
     with pytest.raises(CorruptRunArtifact, match=re.escape("run.json")):
         started_run.load_run(run_manifest.run_id)
@@ -450,10 +481,7 @@ def test_a_tampered_input_scenario_is_refused(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
     path = started_run.scenario_json_path(run_manifest.run_id)
-    path.write_text(
-        path.read_text(encoding="utf-8").replace("Contract fixture", "Tampered fixture"),
-        encoding="utf-8",
-    )
+    path.write_bytes(path.read_bytes().replace(b"Contract fixture", b"Tampered fixture"))
 
     with pytest.raises(CorruptRunArtifact, match="scenario"):
         started_run.load_run(run_manifest.run_id)
@@ -509,6 +537,15 @@ def test_a_metric_value_that_is_not_a_number_stays_inside_the_storage_family(
 def test_metrics_are_stored_one_row_per_metric_in_a_stable_order(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
+    """The order the WRITER left is the claim, so the rows are read in the order it wrote.
+
+    ``ORDER BY metric_name`` in this test's own query re-sorted whatever the writer had
+    done, so the assertion held with ``sorted()`` deleted from the insert: it pinned the
+    query the test wrote rather than the order the store stores. ``rowid`` is insertion
+    order, and the metrics are handed over in an order that is NOT the sorted one, so a
+    writer that stopped sorting is visible here - which is what makes two runs with the
+    same metrics two identical files.
+    """
     started_run.complete_run(
         SimulationResult(
             run_id=run_manifest.run_id,
@@ -521,7 +558,7 @@ def test_metrics_are_stored_one_row_per_metric_in_a_stable_order(
 
     with raw(started_run, run_manifest.run_id) as connection:
         rows = connection.execute(
-            "SELECT metric_name, metric_value FROM metrics ORDER BY metric_name"
+            "SELECT metric_name, metric_value FROM metrics ORDER BY rowid"
         ).fetchall()
 
     assert rows == [("average_recall", 0.125), ("notice_rate", 0.5), ("shares", 2.0)]
@@ -643,16 +680,16 @@ def test_a_second_store_refuses_to_continue_an_export_that_lost_a_line(
     the sequence is taken - a run that can neither continue nor be read.
     """
     path = started_run.events_jsonl_path(run_manifest.run_id)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    path.write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
+    kept = path.read_bytes().split(b"\n")[:2]
+    path.write_bytes(b"\n".join(kept) + b"\n")
     reopened = SQLiteRunStore(started_run.root)
 
     for _ in range(2):
-        with pytest.raises(CorruptRunArtifact, match="lines"):
+        with pytest.raises(CorruptRunArtifact, match="holds 2 lines"):
             reopened.append_events([event_factory(3, simulated_minute=45)])
 
     assert stored_sequences(reopened, run_manifest.run_id) == [0, 1, 2]
-    assert path.read_text(encoding="utf-8").splitlines() == lines[:2]
+    assert path.read_bytes() == b"\n".join(kept) + b"\n"
 
 
 def test_a_second_store_refuses_to_continue_an_unterminated_export(
@@ -807,8 +844,8 @@ def test_an_input_document_beyond_the_documented_bound_is_refused(
     absence - and the bound is the half that keeps the read from materialising 4 MiB
     of anything a file happens to hold.
     """
-    started_run.scenario_json_path(run_manifest.run_id).write_text(
-        "x" * (MAX_INPUT_DOCUMENT_BYTES + 1), encoding="utf-8"
+    started_run.scenario_json_path(run_manifest.run_id).write_bytes(
+        b"x" * (MAX_INPUT_DOCUMENT_BYTES + 1)
     )
 
     with pytest.raises(CorruptRunArtifact, match="exceeds"):
@@ -818,8 +855,8 @@ def test_an_input_document_beyond_the_documented_bound_is_refused(
 def test_a_provider_usage_document_naming_another_run_is_refused(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
-    started_run.provider_usage_json_path(run_manifest.run_id).write_text(
-        canonical_json(ProviderUsageLog(run_id="run-other")), encoding="utf-8"
+    started_run.provider_usage_json_path(run_manifest.run_id).write_bytes(
+        canonical_json(ProviderUsageLog(run_id="run-other")).encode("utf-8")
     )
 
     with pytest.raises(CorruptRunArtifact, match="another run"):
@@ -829,7 +866,7 @@ def test_a_provider_usage_document_naming_another_run_is_refused(
 def test_a_provider_usage_document_that_is_not_a_usage_log_is_refused(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
-    started_run.provider_usage_json_path(run_manifest.run_id).write_text("{", encoding="utf-8")
+    started_run.provider_usage_json_path(run_manifest.run_id).write_bytes(b"{")
 
     with pytest.raises(CorruptRunArtifact, match=re.escape("provider-usage.json")):
         started_run.load_run(run_manifest.run_id)
@@ -850,6 +887,224 @@ def test_a_checkpoint_document_that_disagrees_with_its_own_row_is_refused(
         connection.execute("UPDATE checkpoints SET checkpoint_json = ?", (forged,))
 
     with pytest.raises(CorruptRunArtifact, match="disagrees"):
+        started_run.load_run(run_manifest.run_id)
+
+
+# --- a driver error is a persistence failure, and the family has no holes in it --------
+#
+# ``results.sqlite3`` is user-supplied data on the same footing as the files beside it, so
+# a table can be missing from it, and a lock can outlast the busy timeout on a machine
+# doing real work. Both arrived as a raw ``sqlite3.Error`` out of the store - neither a
+# ``StorageError`` nor anything the command line maps to exit code 4, and reported as an
+# unexpected defect rather than as the artifact failure it is. This is the escape finding
+# I4 reported for a tampered metric row, one layer further out.
+
+
+def test_a_database_that_cannot_answer_a_read_is_refused_as_a_typed_failure(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """A load reads four tables; a database missing one of them is a corrupt artifact."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DROP TABLE metrics")
+
+    with pytest.raises(CorruptRunArtifact, match=re.escape("results.sqlite3")):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_streaming_from_a_database_that_cannot_answer_is_refused_as_a_typed_failure(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """The streaming reader feeds replay and the live interface, and fails the same way."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DROP TABLE events")
+
+    with pytest.raises(CorruptRunArtifact, match=re.escape("results.sqlite3")):
+        list(started_run.iter_events(run_manifest.run_id))
+
+
+def test_a_write_that_cannot_read_the_run_row_is_refused_as_a_typed_failure(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """Every writer asks the same question first: is this run open, and where is it?"""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DROP TABLE runs")
+
+    with pytest.raises(StorageError, match=re.escape("results.sqlite3")):
+        started_run.save_provider_usage(ProviderUsageLog(run_id=run_manifest.run_id))
+
+
+def test_a_tick_whose_transaction_cannot_open_is_refused_as_a_typed_failure(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    failing_connection: Callable[[int], None],
+) -> None:
+    """``BEGIN IMMEDIATE`` takes the write lock, so it is the statement that waits.
+
+    A lock held past the busy timeout fails exactly here, outside the try that translates
+    every other statement of the tick, and the run must not record it either way.
+    """
+    failing_connection(1)
+
+    with pytest.raises(StorageError):
+        started_run.append_events([event_factory(3, simulated_minute=45)])
+
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2]
+    assert started_run.events_jsonl_path(run_manifest.run_id).read_bytes().count(b"\n") == 3
+
+
+def test_a_checkpoint_whose_transaction_cannot_open_is_refused_as_a_typed_failure(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    consumer_state: ConsumerState,
+    failing_connection: Callable[[int], None],
+) -> None:
+    """The same statement, on the checkpoint writer, with the same obligation."""
+    failing_connection(1)
+
+    with pytest.raises(StorageError):
+        started_run.save_checkpoint(
+            RunCheckpoint(
+                run_id=run_manifest.run_id,
+                simulated_minute=1440,
+                next_event_sequence=3,
+                states=(consumer_state,),
+            )
+        )
+
+    assert started_run.load_run(run_manifest.run_id).checkpoints == ()
+
+
+def test_completing_a_run_whose_transaction_cannot_open_is_refused_as_a_typed_failure(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    failing_connection: Callable[[int], None],
+) -> None:
+    """And on the writer that closes the run: the schema read and the status read pass."""
+    failing_connection(2)
+
+    with pytest.raises(StorageError):
+        started_run.complete_run(
+            SimulationResult(
+                run_id=run_manifest.run_id, status="completed", final_minute=30, event_count=3
+            )
+        )
+
+    assert started_run.load_run(run_manifest.run_id).status == "running"
+
+
+# --- every clause of the row-agreement checks, tripped one at a time -------------------
+#
+# A stored event is two copies of one record: the document, and the columns the store
+# indexes it by. Four of the five clauses that hold those two to each other, and the
+# checkpoint check's run clause, could each be deleted with the whole suite green - so an
+# artifact edited behind the store's back in exactly those ways read back as a run that
+# never happened. One test per clause, each tampering with one thing only.
+
+
+def test_an_event_document_that_is_not_the_row_s_own_event_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """The ``event_id`` column addresses the document; a row may not hold another's."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute(
+            "UPDATE events SET event_id = ? WHERE sequence = 1",
+            (f"{run_manifest.run_id}:event-00000009",),
+        )
+
+    with pytest.raises(CorruptRunArtifact, match="disagrees"):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_an_event_document_naming_another_run_is_refused(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """A run directory that reads back another run's events is not this run's record."""
+    forged = canonical_event_line(
+        event_factory(
+            1,
+            simulated_minute=15,
+            run_id="run-other",
+            event_id=f"{run_manifest.run_id}:event-00000001",
+        )
+    )
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("UPDATE events SET event_json = ? WHERE sequence = 1", (forged,))
+
+    with pytest.raises(CorruptRunArtifact, match="disagrees"):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_an_event_document_whose_sequence_is_not_the_row_s_is_refused(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """The refusal must name the disagreement, not the gap it would look like.
+
+    With this clause deleted the contiguity check downstream still refuses the run, but
+    for the wrong reason and with the wrong report: it calls a complete stream gapped.
+    """
+    forged = canonical_event_line(
+        event_factory(7, simulated_minute=15, event_id=f"{run_manifest.run_id}:event-00000001")
+    )
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("UPDATE events SET event_json = ? WHERE sequence = 1", (forged,))
+
+    with pytest.raises(CorruptRunArtifact, match="disagrees"):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_an_event_document_whose_type_is_not_the_row_s_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """``event_type`` is the column a report groups by; it must be the document's own."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute(
+            "UPDATE events SET event_type = ? WHERE sequence = 1", (EventType.RUN_FAILED.value,)
+        )
+
+    with pytest.raises(CorruptRunArtifact, match="disagrees"):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_a_checkpoint_document_naming_another_run_is_refused(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, consumer_state: ConsumerState
+) -> None:
+    """The checkpoint's other row-agreement clause: a resume must not restore another run."""
+    checkpoint = RunCheckpoint(
+        run_id=run_manifest.run_id,
+        simulated_minute=1440,
+        next_event_sequence=3,
+        states=(consumer_state,),
+    )
+    started_run.save_checkpoint(checkpoint)
+    forged = canonical_json(checkpoint.model_copy(update={"run_id": "run-other"}))
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("UPDATE checkpoints SET checkpoint_json = ?", (forged,))
+
+    with pytest.raises(CorruptRunArtifact, match="disagrees"):
+        started_run.load_run(run_manifest.run_id)
+
+
+def test_rows_that_do_not_describe_one_consistent_run_stay_inside_the_storage_family(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """The last-resort translation, driven rather than assumed.
+
+    Every check above it passes here: the manifest, the events, the checkpoints, the
+    metrics and the export all agree with their own rows. ``created_at`` is handed
+    straight from the column to :class:`StoredRun`, which is the only thing that
+    validates it, so a tampered timestamp is what reaches the model - and without the
+    translation a raw pydantic ``ValidationError`` escapes ``load_run``, outside the
+    ``StorageError`` family the command line maps to exit code 4.
+    """
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("UPDATE runs SET created_at = ?", ("the day before yesterday",))
+
+    with pytest.raises(CorruptRunArtifact, match="single consistent run"):
         started_run.load_run(run_manifest.run_id)
 
 
@@ -900,10 +1155,7 @@ def test_a_tampered_metrics_document_is_refused(
         )
     )
     path = started_run.metrics_json_path(run_manifest.run_id)
-    path.write_text(
-        path.read_text(encoding="utf-8").replace('"notice_rate":0.5', '"notice_rate":0.9'),
-        encoding="utf-8",
-    )
+    path.write_bytes(path.read_bytes().replace(b'"notice_rate":0.5', b'"notice_rate":0.9'))
 
     with pytest.raises(CorruptRunArtifact, match=re.escape("metrics.json")):
         started_run.load_run(run_manifest.run_id)
@@ -914,8 +1166,8 @@ def test_a_tampered_input_scenario_whose_shape_is_still_valid_is_refused(
 ) -> None:
     """A scenario that still parses but is a different scenario must not replay as this one."""
     other = valid_scenario.model_copy(update={"days": 2})
-    started_run.scenario_json_path(run_manifest.run_id).write_text(
-        canonical_json(other), encoding="utf-8"
+    started_run.scenario_json_path(run_manifest.run_id).write_bytes(
+        canonical_json(other).encode("utf-8")
     )
 
     with pytest.raises(CorruptRunArtifact, match="addresses"):
@@ -1293,6 +1545,29 @@ def test_a_stored_event_document_beyond_the_line_bound_is_refused_as_too_large(
         started_run.load_run(run_manifest.run_id)
 
 
+def test_the_export_is_read_in_bounded_chunks_rather_than_materialised(tmp_path: Path) -> None:
+    """The chunk size is what makes the export's line bound a bound on the READ.
+
+    Nothing named this number, and the docstring beside it claims a property the number
+    is the whole of: at ten times its documented value the peak doubles, and at a
+    thousand times the entire file is pulled into memory in one read and no refusal
+    happens at all - the oversized line is yielded as though it were an event.
+    """
+    assert READ_CHUNK_CHARS == 65_536
+    path = tmp_path / "events.jsonl"
+    path.write_bytes(b"x" * (8 * 1024 * 1024) + b"\n")
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValueError, match="exceeds"):
+            list(iter_export_lines(path))
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 2 * MAX_EVENT_LINE_CHARS
+
+
 def test_a_stored_manifest_beyond_the_document_bound_is_refused_unmaterialised(
     started_run: SQLiteRunStore, run_manifest: RunManifest
 ) -> None:
@@ -1345,6 +1620,59 @@ def test_a_stored_checkpoint_beyond_the_document_bound_is_refused(
 
     with pytest.raises(CorruptRunArtifact, match="exceeds"):
         started_run.load_run(run_manifest.run_id)
+
+
+def test_a_run_at_the_documented_checkpoint_bound_is_still_read(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, consumer_state: ConsumerState
+) -> None:
+    """Eight is one checkpoint per day boundary of the longest run, plus its start.
+
+    A bound that refused the largest legitimate run would be the wrong bound, so the read
+    has to admit exactly ``MAX_CHECKPOINTS`` before the test below asks it to refuse one
+    more.
+    """
+    for day in range(MAX_CHECKPOINTS):
+        started_run.save_checkpoint(
+            RunCheckpoint(
+                run_id=run_manifest.run_id,
+                simulated_minute=day * MINUTES_PER_DAY,
+                next_event_sequence=3,
+                states=(consumer_state,),
+            )
+        )
+
+    loaded = started_run.load_run(run_manifest.run_id)
+
+    assert len(loaded.checkpoints) == MAX_CHECKPOINTS
+
+
+def test_more_checkpoints_than_a_run_can_hold_are_refused_unmaterialised(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """``MAX_CHECKPOINTS`` on the model bounds the VALUE; the READ has to be bounded too.
+
+    A ``max_length`` on :class:`StoredRun` refuses the ninth checkpoint only after every
+    row has been pulled out of the database and every document materialised - each one up
+    to ``MAX_STORED_DOCUMENT_CHARS`` - so a tampered table of a thousand rows is read in
+    full and rejected afterwards. The bound belongs in the query, one row past itself, so
+    the extra row is what the refusal is built from rather than the whole table.
+    """
+    blob = "x" * (256 * 1024)
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.executemany(
+            "INSERT INTO checkpoints (run_id, simulated_minute, checkpoint_json) VALUES (?, ?, ?)",
+            [(run_manifest.run_id, minute, blob) for minute in range(64)],
+        )
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(CorruptRunArtifact, match=f"more than the {MAX_CHECKPOINTS}"):
+            started_run.load_run(run_manifest.run_id)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert peak < (MAX_CHECKPOINTS + 8) * len(blob)
 
 
 # --- deterministic ordering and the DDL constraints, proved by effect ------------------

@@ -67,6 +67,7 @@ from adlife.core.domain.serialization import (
     persisted_text_objection,
 )
 from adlife.core.ports.run_store import (
+    MAX_CHECKPOINTS,
     MAX_LOADED_EVENTS,
     CorruptRunArtifact,
     DuplicateRun,
@@ -339,8 +340,8 @@ class SQLiteRunStore:
         connection = self._connect(run_id, self.database_path(run_id))
         try:
             exported = self._count_export_lines(run_id, self.events_jsonl_path(run_id))
-            connection.execute("BEGIN IMMEDIATE")
             try:
+                connection.execute("BEGIN IMMEDIATE")
                 _status, next_sequence = self._read_open_run(connection, run_id)
                 if exported != next_sequence:
                     raise CorruptRunArtifact(
@@ -471,8 +472,8 @@ class SQLiteRunStore:
         run_id = checkpoint.run_id
         connection = self._connect(run_id, self.database_path(run_id))
         try:
-            connection.execute("BEGIN IMMEDIATE")
             try:
+                connection.execute("BEGIN IMMEDIATE")
                 _, next_sequence = self._read_open_run(connection, run_id)
                 if checkpoint.next_event_sequence != next_sequence:
                     raise StorageError(
@@ -549,8 +550,8 @@ class SQLiteRunStore:
                     f"has recorded {next_sequence} events"
                 )
             self._write_document(run_id, self.metrics_json_path(run_id), canonical_json(result))
-            connection.execute("BEGIN IMMEDIATE")
             try:
+                connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
                     "UPDATE runs SET status = ?, result_json = ?, completed_at = ? "
                     "WHERE run_id = ?",
@@ -603,6 +604,10 @@ class SQLiteRunStore:
             events = self._read_events(connection, run_id, max_events)
             checkpoints = self._read_checkpoints(connection, run_id)
             self._verify_metrics_table(connection, run_id, result)
+        except sqlite3.Error as error:
+            raise CorruptRunArtifact(
+                f"results.sqlite3 for run {run_id} could not be read: {type(error).__name__}"
+            ) from None
         finally:
             connection.close()
 
@@ -671,6 +676,10 @@ class SQLiteRunStore:
                         )
                     expected += 1
                     yield event
+        except sqlite3.Error as error:
+            raise CorruptRunArtifact(
+                f"results.sqlite3 for run {run_id} could not be read: {type(error).__name__}"
+            ) from None
         finally:
             connection.close()
 
@@ -709,11 +718,25 @@ class SQLiteRunStore:
         return connection
 
     def _read_open_run(self, connection: sqlite3.Connection, run_id: str) -> tuple[str, int]:
-        row = connection.execute(
-            "SELECT r.status, (SELECT COALESCE(MAX(e.sequence) + 1, 0) FROM events e "
-            "WHERE e.run_id = r.run_id) FROM runs r WHERE r.run_id = ?",
-            (run_id,),
-        ).fetchone()
+        """Answer the question every writer asks first, or refuse inside the family.
+
+        The driver's own failures are persistence failures: a dropped table, a database
+        the operating system could not read, a lock that outlasted the busy timeout. An
+        untranslated :class:`sqlite3.Error` from here is none of the types this port
+        publishes, so the command line reports an unexpected defect instead of an
+        artifact failure, and the SQLite message - which names the row it refused -
+        travels with it.
+        """
+        try:
+            row = connection.execute(
+                "SELECT r.status, (SELECT COALESCE(MAX(e.sequence) + 1, 0) FROM events e "
+                "WHERE e.run_id = r.run_id) FROM runs r WHERE r.run_id = ?",
+                (run_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise CorruptRunArtifact(
+                f"results.sqlite3 for run {run_id} could not be read: {type(error).__name__}"
+            ) from None
         if row is None:
             raise RunNotFound(f"run {run_id} is not stored here")
         status, next_sequence = row
@@ -812,11 +835,26 @@ class SQLiteRunStore:
     def _read_checkpoints(
         self, connection: sqlite3.Connection, run_id: str
     ) -> tuple[RunCheckpoint, ...]:
+        """Read the checkpoints, bounding the READ and not only what it returns.
+
+        :data:`~adlife.core.ports.run_store.MAX_CHECKPOINTS` on
+        :class:`~adlife.core.ports.run_store.StoredRun` bounds the VALUE: it refuses the
+        ninth checkpoint after all of them have been pulled out of the database and each
+        document materialised, up to :data:`MAX_STORED_DOCUMENT_CHARS` apiece. A bound
+        that cannot stop the read it exists to bound is not one, so the query carries it,
+        selected one row past itself on the same discipline as the ``substr`` columns:
+        the extra row is what the refusal is built from, and a table holding more rows
+        than a run can have is never read.
+        """
         rows = connection.execute(
             "SELECT simulated_minute, substr(checkpoint_json, 1, ?) FROM checkpoints "
-            "WHERE run_id = ? ORDER BY simulated_minute",
-            (MAX_STORED_DOCUMENT_CHARS + 1, run_id),
+            "WHERE run_id = ? ORDER BY simulated_minute LIMIT ?",
+            (MAX_STORED_DOCUMENT_CHARS + 1, run_id, MAX_CHECKPOINTS + 1),
         ).fetchall()
+        if len(rows) > MAX_CHECKPOINTS:
+            raise CorruptRunArtifact(
+                f"run {run_id} holds more than the {MAX_CHECKPOINTS} checkpoints a run can have"
+            )
         checkpoints = []
         for simulated_minute, checkpoint_json in rows:
             document = self._bounded_column(

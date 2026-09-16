@@ -13,6 +13,7 @@ replayable run - it has stored something that reads back without complaining.
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -27,6 +28,8 @@ from adlife.core.domain.scenario import Scenario
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import ProviderUsage
 from adlife.core.ports.run_store import (
+    MAX_CHECKPOINTS,
+    MAX_LOADED_EVENTS,
     MAX_PROVIDER_USAGE_RECORDS,
     CorruptRunArtifact,
     DuplicateRun,
@@ -252,6 +255,25 @@ def test_a_causal_reference_to_another_run_is_refused(
 
     with pytest.raises(InvalidEventBatch, match="causal"):
         store.append_events([event_factory(1, caused_by_event_ids=("run-other:event-00000000",))])
+
+
+def test_a_causal_reference_that_is_not_an_event_identifier_at_all_is_refused(
+    store: SQLiteRunStore,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """A cause is checked by READING it, so text that is not an identifier is a refusal.
+
+    ``caused_by_event_ids`` is 160 characters of free text per entry as far as the domain
+    model is concerned: the model checks uniqueness and self-reference, not shape. The
+    clause that refuses an unreadable one was the only thing standing between that text
+    and an index into a parse result that is ``None``.
+    """
+    store.create_run(run_manifest, scenario=valid_scenario)
+
+    with pytest.raises(InvalidEventBatch, match="causal"):
+        store.append_events([event_factory(0, caused_by_event_ids=("not-an-event-identifier",))])
 
 
 def test_a_causal_reference_to_an_earlier_event_of_the_same_batch_is_accepted(
@@ -736,6 +758,36 @@ def test_a_stored_usage_document_beyond_the_record_bound_is_refused_on_read(
 
     with pytest.raises(CorruptRunArtifact, match=r"provider-usage\.json"):
         store.load_provider_usage(run_manifest.run_id)
+
+
+def test_the_documented_read_bounds_are_the_numbers_this_port_publishes() -> None:
+    """Both are MEMORY bounds, and a memory bound that nothing states can be relaxed.
+
+    Neither number was named anywhere in the tests: multiplying either by a thousand left
+    the whole suite green, which makes the docstrings beside them a description of an
+    intention rather than of this build. ``MAX_CHECKPOINTS`` is derived here from the
+    scenario model's own day bound rather than restated, because that is where the eight
+    comes from - one checkpoint per day boundary of the longest run the model admits,
+    plus the start of the run.
+    """
+    assert MAX_LOADED_EVENTS == 500_000
+    assert MAX_CHECKPOINTS == 8
+    longest_run_in_days = next(
+        constraint.le
+        for constraint in Scenario.model_fields["days"].metadata
+        if getattr(constraint, "le", None) is not None
+    )
+    assert longest_run_in_days + 1 == MAX_CHECKPOINTS
+
+
+def test_the_event_ceiling_is_the_default_a_caller_that_names_none_gets() -> None:
+    """The ceiling is only a ceiling if it is what an unqualified read applies.
+
+    ``load_run(run_id)`` is how every caller in this repository reads a run, so a default
+    wired to anything else would leave the bound tested and unused.
+    """
+    for read in (SQLiteRunStore.load_run, RunStore.load_run):
+        assert inspect.signature(read).parameters["max_events"].default == MAX_LOADED_EVENTS
 
 
 def test_loading_more_events_than_the_caller_allows_is_refused_rather_than_read(
