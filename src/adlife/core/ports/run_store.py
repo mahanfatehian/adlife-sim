@@ -36,7 +36,10 @@ from adlife.core.domain.events import DomainEvent
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.results import RunManifest, SimulationResult
 from adlife.core.domain.scenario import Scenario
-from adlife.core.domain.serialization import persisted_text_objection
+from adlife.core.domain.serialization import (
+    DocumentNotSerialisable,
+    persisted_model_objection,
+)
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import ProviderUsage
 
@@ -276,9 +279,10 @@ def validate_event_batch(
                     f"event {event.sequence} names a causal event that this run has not "
                     f"recorded: {cause}"
                 )
-        objection = persisted_text_objection(
-            event.model_dump(mode="json"), label=f"event {event.sequence}"
-        )
+        try:
+            objection = persisted_model_objection(event, label=f"event {event.sequence}")
+        except DocumentNotSerialisable as error:
+            raise InvalidEventBatch(str(error)) from None
         if objection is not None:
             raise InvalidEventBatch(objection)
 

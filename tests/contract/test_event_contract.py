@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from adlife.core.domain.events import DomainEvent, EventSource, EventType
+from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.results import RunManifest, SimulationResult
 
 
@@ -150,6 +151,65 @@ def test_domain_event_rejects_cyclic_payload() -> None:
 
     with pytest.raises(ValidationError):
         DomainEvent.model_validate(data)
+
+
+def nested_payload(depth: int) -> dict[str, object]:
+    """A payload of exactly ``depth`` nested JSON objects."""
+    value: dict[str, object] = {"leaf": 1}
+    for _ in range(depth - 1):
+        value = {"nested": value}
+    return value
+
+
+def test_domain_event_rejects_a_payload_nested_beyond_the_documented_depth() -> None:
+    """The model ACCEPTED a payload its own serializer refuses, and nothing translated.
+
+    At roughly ninety-nine levels pydantic-core's serializer raises a bare ``ValueError``
+    reading "Circular reference detected (depth exceeded)". The event was already built by
+    then, so that failure surfaced from whichever writer serialised it next, outside both
+    the storage and the event-sink families. Bounding the depth here means the event
+    cannot exist.
+    """
+    data = noticed_event().model_dump(mode="python")
+    data["payload"] = nested_payload(MAX_JSON_DEPTH + 1)
+
+    with pytest.raises(ValidationError, match="nest"):
+        DomainEvent.model_validate(data)
+
+
+def test_domain_event_accepts_a_payload_at_the_documented_depth() -> None:
+    """The bound has to admit the deepest payload it names, or it is a different bound."""
+    data = noticed_event().model_dump(mode="python")
+    data["payload"] = nested_payload(MAX_JSON_DEPTH)
+
+    event = DomainEvent.model_validate(data)
+
+    assert event.model_dump(mode="json")["payload"] == nested_payload(MAX_JSON_DEPTH)
+
+
+def test_the_documented_nesting_depth_is_the_number_this_build_publishes() -> None:
+    """A bound nothing states can be relaxed, and this one has to clear pydantic's own.
+
+    pydantic-core refuses a document of about a hundred nested containers, so a domain
+    bound at or above that would let the serializer fail before the model did - which is
+    the defect this constant closes.
+    """
+    assert MAX_JSON_DEPTH == 32
+    assert MAX_JSON_DEPTH < 99
+
+
+def test_a_result_metric_map_is_bound_by_the_same_nesting_rule() -> None:
+    """``SimulationResult.metrics`` is the other free-form JSON a run writes to disk."""
+    with pytest.raises(ValidationError, match="nest"):
+        SimulationResult.model_validate(
+            {
+                "run_id": "run-contract",
+                "status": "completed",
+                "final_minute": 60,
+                "event_count": 1,
+                "metrics": {"reach": nested_payload(MAX_JSON_DEPTH + 1)},
+            }
+        )
 
 
 @pytest.mark.parametrize(

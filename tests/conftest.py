@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 import pytest
 
@@ -278,36 +278,54 @@ def event_factory(run_manifest: RunManifest) -> Callable[..., DomainEvent]:
     return make
 
 
+class FailingConnection(Protocol):
+    """Arm a failing connection, and report the statements it let through.
+
+    ``executed`` is what makes a statement budget auditable. A test that merely names a
+    number cannot tell "the failure landed after the first INSERT" from "the failure
+    landed before every INSERT", and one of the two proves nothing about a rollback.
+    """
+
+    executed: list[str]
+
+    def __call__(self, statements: int) -> None: ...
+
+
 @pytest.fixture
-def failing_connection(monkeypatch: pytest.MonkeyPatch) -> Callable[[int], None]:
+def failing_connection(monkeypatch: pytest.MonkeyPatch) -> FailingConnection:
     """Arm the NEXT database connection to fail after a chosen number of statements.
 
     This is how an interrupted write is reproduced without killing the interpreter: the
     real connection does real work until the armed budget runs out and then raises the
     error SQLite raises for a failing device. Only one connection is affected, so the
     assertion that follows reads the artifact through an ordinary connection.
+
+    Every statement the armed connection ACCEPTS is recorded on ``executed``, so a test
+    can assert which statements ran before the failure rather than assuming it.
     """
     from adlife.adapters.storage import sqlite_store
 
     real_connect = sqlite_store.connect_to_database
     armed: dict[str, int | bool] = {"active": False, "budget": 0}
+    executed: list[str] = []
 
     class _FailingConnection:
         def __init__(self, wrapped: sqlite3.Connection, budget: int) -> None:
             self._wrapped = wrapped
             self._remaining = budget
 
-        def _spend(self) -> None:
+        def _spend(self, sql: str) -> None:
             if self._remaining <= 0:
                 raise sqlite3.OperationalError("disk I/O error")
             self._remaining -= 1
+            executed.append(" ".join(sql.split()))
 
         def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
-            self._spend()
+            self._spend(sql)
             return self._wrapped.execute(sql, parameters)  # type: ignore[arg-type]
 
         def executemany(self, sql: str, parameters: object) -> sqlite3.Cursor:
-            self._spend()
+            self._spend(sql)
             return self._wrapped.executemany(sql, parameters)  # type: ignore[arg-type]
 
         def __getattr__(self, name: str) -> object:
@@ -323,6 +341,8 @@ def failing_connection(monkeypatch: pytest.MonkeyPatch) -> Callable[[int], None]
     def arm(statements: int) -> None:
         armed["active"] = True
         armed["budget"] = statements
+        executed.clear()
 
+    arm.executed = executed  # type: ignore[attr-defined]
     monkeypatch.setattr(sqlite_store, "connect_to_database", connect)
-    return arm
+    return cast(FailingConnection, arm)

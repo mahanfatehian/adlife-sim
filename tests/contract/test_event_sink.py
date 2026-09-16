@@ -7,10 +7,11 @@ refuses a batch that belongs to another run, and - for the portable JSONL export
 writes one canonical line per event that reads back as the same event, byte for byte.
 
 The two sinks differ in what they are allowed to show. ``PlainEventSink`` renders a
-human-readable line and structurally omits the payload, because a payload is the one
-field on an event whose text came from outside this repository. ``JsonlEventSink`` must
-write the payload - it is an export - so it screens what it writes with the same narrow
-rule the campaign copy carries.
+human-readable line and structurally omits the payload; it also SCREENS every field it
+does print, because ``channel`` is free placement text and a printed line is a log.
+``JsonlEventSink`` must write the payload - it is an export - so it screens the whole
+document with the same narrow rule the campaign copy carries. Neither screen is a
+guarantee that a published line carries no credential; both are best effort.
 """
 
 from __future__ import annotations
@@ -23,10 +24,16 @@ from pathlib import Path
 import pytest
 
 from adlife.adapters.output.jsonl import JsonlEventSink
-from adlife.adapters.output.plain import PlainEventSink, format_event_line
+from adlife.adapters.output.plain import (
+    PlainEventSink,
+    event_line_objection,
+    format_event_line,
+    printed_fields,
+)
 from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.serialization import (
     MAX_EVENT_LINE_CHARS,
+    DocumentNotSerialisable,
     canonical_event_line,
     canonical_json,
     parse_event_line,
@@ -102,6 +109,81 @@ def test_a_plain_sink_never_prints_the_payload_of_an_event(
     )
 
     assert "zzz-distinctive-payload-text" not in stream.getvalue()
+
+
+def test_a_plain_sink_refuses_a_channel_that_reads_as_a_credential(
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """``channel`` is eighty characters of free placement text on a PUBLICATION path.
+
+    The plain sink is the third writer of the same event, and it printed this field
+    verbatim while its module docstring claimed it could publish nothing unscreened.
+    """
+    stream = io.StringIO()
+    event = event_factory(0, channel="mobile-feed-api_key=0000abcdef1234567890")
+
+    with pytest.raises(EventSinkError, match="credential"):
+        PlainEventSink(stream).append_many("run-storage", [event])
+
+    assert stream.getvalue() == ""
+
+
+def test_a_plain_sink_refuses_the_whole_batch_around_an_unpublishable_line(
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """A tick is refused whole: the first line must not survive the second's refusal."""
+    stream = io.StringIO()
+    batch = [
+        event_factory(0),
+        event_factory(1, channel="mobile-feed-api_key=0000abcdef1234567890"),
+    ]
+
+    with pytest.raises(EventSinkError, match="credential"):
+        PlainEventSink(stream).append_many("run-storage", batch)
+
+    assert stream.getvalue() == ""
+
+
+def test_a_plain_sink_screens_every_field_its_line_renders(
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """The screen is applied to the mapping the line is built from, not to a copy of it.
+
+    A field added to :func:`printed_fields` is therefore screened without a second edit,
+    which is what the module docstring now claims. The screen remains best effort.
+    """
+    event = event_factory(0, channel="mobile-feed-api_key=0000abcdef1234567890")
+
+    assert set(printed_fields(event)) == {
+        "simulated_minute",
+        "sequence",
+        "event_type",
+        "agent_id",
+        "campaign_id",
+        "channel",
+        "source",
+    }
+    assert format_event_line(event) == " | ".join(printed_fields(event).values())
+    assert event_line_objection(event) is not None
+    assert event_line_objection(event_factory(0, channel="mobile-feed")) is None
+
+
+def test_a_plain_sink_still_prints_the_channels_this_simulator_really_runs(
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """A screen that refused ``highway-billboard`` would be a refusal of the product."""
+    stream = io.StringIO()
+    PlainEventSink(stream).append_many(
+        "run-storage",
+        [
+            event_factory(0, channel="mobile-feed", campaign_id="campaign-phone"),
+            event_factory(1, channel="highway-billboard", campaign_id="campaign-phone"),
+        ],
+    )
+
+    printed = stream.getvalue()
+    assert "mobile-feed" in printed
+    assert "highway-billboard" in printed
 
 
 def test_a_plain_sink_refuses_a_batch_belonging_to_another_run(
@@ -343,6 +425,60 @@ def test_a_jsonl_sink_refuses_an_oversized_line_without_writing_the_batch_around
         sink.append_many("run-storage", batch)
 
     assert path.read_bytes() == b""
+
+
+def bypass_constructed_deep_event(depth: int) -> DomainEvent:
+    """An event the domain model would refuse, built without it.
+
+    The depth bound closed in :mod:`adlife.core.domain.json_values` means an event like
+    this cannot be validated into existence. A serializer must still not fail with a bare
+    ``ValueError``, because ``model_construct`` is a real door and a future field could
+    reopen the same one.
+    """
+    payload: dict[str, object] = {"leaf": 1}
+    for _ in range(depth - 1):
+        payload = {"nested": payload}
+    return DomainEvent.model_construct(
+        schema_version=1,
+        event_id="run-storage:event-00000000",
+        run_id="run-storage",
+        simulated_minute=0,
+        sequence=0,
+        event_type=EventType.STATE_UPDATED,
+        agent_id=None,
+        campaign_id=None,
+        channel=None,
+        payload=payload,
+        source=EventSource.RULE,
+        model_id=None,
+        prompt_hash=None,
+        caused_by_event_ids=(),
+    )
+
+
+def test_a_jsonl_sink_refuses_a_document_its_serializer_cannot_render(tmp_path: Path) -> None:
+    """A bare ``ValueError`` from pydantic-core escaped the whole EventSinkError family."""
+    path = tmp_path / "events.jsonl"
+
+    with JsonlEventSink(path) as sink, pytest.raises(EventSinkError, match="could not be rendered"):
+        sink.append_many("run-storage", [bypass_constructed_deep_event(200)])
+
+    assert path.read_bytes() == b""
+
+
+def test_canonical_json_names_a_document_its_serializer_refuses(tmp_path: Path) -> None:
+    """The refusal is a distinct type so a caller can tell it from "not a document"."""
+    with pytest.raises(DocumentNotSerialisable, match="could not be rendered"):
+        canonical_event_line(bypass_constructed_deep_event(200))
+
+
+def test_a_document_that_cannot_be_rendered_carries_no_cause(tmp_path: Path) -> None:
+    """The document pydantic refused is user-supplied text and must not reach a traceback."""
+    with pytest.raises(DocumentNotSerialisable) as raised:
+        canonical_event_line(bypass_constructed_deep_event(200))
+
+    assert raised.value.__cause__ is None
+    assert "leaf" not in str(raised.value)
 
 
 def test_a_sink_refuses_anything_that_is_not_a_domain_event(tmp_path: Path) -> None:

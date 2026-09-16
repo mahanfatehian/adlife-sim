@@ -57,7 +57,7 @@ from adlife.adapters.cognition.rules import (
 )
 from adlife.adapters.cognition.service import CognitionBudget, CognitionService
 from adlife.adapters.output.jsonl import JsonlEventSink
-from adlife.adapters.output.plain import PlainEventSink
+from adlife.adapters.output.plain import PlainEventSink, printed_fields
 from adlife.adapters.storage.sqlite_store import SQLiteRunStore
 from adlife.core.domain.campaign import Campaign
 from adlife.core.domain.events import DomainEvent, EventSource, EventType
@@ -1738,17 +1738,110 @@ def test_the_corpus_shape_never_reaches_the_portable_export_through_a_model_iden
     assert shape.secret.encode("utf-8") not in path.read_bytes()
 
 
+PLAIN_SINK_SURFACE: tuple[str, ...] = (
+    "payload",
+    "simulated_minute",
+    "sequence",
+    "event_type",
+    "agent_id",
+    "campaign_id",
+    "channel",
+    "source",
+)
+"""``payload`` plus every event field the human-readable line renders.
+
+The old test parametrized ``payload`` alone, which is the ONE field the plain sink does
+not print. It therefore proved the omission and nothing else, while ``channel`` - eighty
+characters of free placement text - was printed verbatim.
+"""
+
+_PLAIN_SINK_FIELD_LIMITS: dict[str, int] = {"channel": 80}
+"""How much of a body each free-text field can hold, from the domain model's own bound."""
+
+
+def _plain_sink_event(field: str, run_manifest: RunManifest, body: str) -> DomainEvent | None:
+    """Put a provider body into one published field, or return None if the model refuses.
+
+    ``payload`` takes the RAW body, because the sink's claim about it is structural: it is
+    never printed at all. Every other field takes the body through ``redact_provider_body``
+    - the real upstream control, on the same route the store's own channel and model_id
+    tests use - because a field the model accepts is reached by a message, not by a raw
+    body, and seven corpus shapes are outside what the narrow persisted screen names.
+    """
+    base = _payload_event(run_manifest, {})
+    if field == "payload":
+        return base.model_copy(update={"payload": {"provider_note": body}})
+    text = redact_provider_body(body)[: _PLAIN_SINK_FIELD_LIMITS.get(field)]
+    try:
+        return base.model_copy(update={field: text or REDACTION_PLACEHOLDER})
+    except ValidationError:
+        return None
+
+
+@pytest.mark.parametrize("field", PLAIN_SINK_SURFACE)
 @pytest.mark.parametrize("shape", LEAK_CORPUS, ids=_CORPUS_IDS)
 def test_the_corpus_shape_never_reaches_a_human_readable_event_line(
-    shape: LeakShape, run_manifest: RunManifest
+    shape: LeakShape, field: str, run_manifest: RunManifest
 ) -> None:
-    """The plain sink omits the payload structurally, so even a RAW body cannot print."""
-    stream = io.StringIO()
-    event = _payload_event(run_manifest, {"provider_note": shape.body})
+    """Every field the plain sink publishes, not only the one it structurally omits.
 
-    PlainEventSink(stream).append_many(run_manifest.run_id, [event])
+    A terminal line is a log, a log is pasted into an issue report, and the plain sink is
+    the THIRD publication path of the same event. Where the domain model itself refuses
+    the body - an identifier pattern, an enumeration, an integer - the refusal is the
+    proof; where it accepts one, the sink has to screen it. This remains best effort: a
+    printed line is not promised to be free of credentials.
+    """
+    stream = io.StringIO()
+    event = _plain_sink_event(field, run_manifest, shape.body)
+    if event is None:
+        return
+
+    with contextlib.suppress(EventSinkError):
+        PlainEventSink(stream).append_many(run_manifest.run_id, [event])
 
     assert shape.secret not in stream.getvalue()
+
+
+def test_the_published_surface_above_names_every_field_the_plain_sink_prints() -> None:
+    """A parametrization that missed a printed field is how ``channel`` stayed open.
+
+    The line is rendered FROM this mapping, so a field added to the line without being
+    added here fails this test rather than shipping unscreened.
+    """
+    event = DomainEvent(
+        event_id="run-storage:event-00000000",
+        run_id="run-storage",
+        simulated_minute=0,
+        sequence=0,
+        event_type=EventType.RUN_STARTED,
+        source=EventSource.RULE,
+    )
+
+    assert set(printed_fields(event)) <= set(PLAIN_SINK_SURFACE)
+    assert {"channel", "agent_id", "campaign_id"} <= set(printed_fields(event))
+
+
+def test_a_model_that_refuses_the_body_is_what_makes_a_constrained_field_safe() -> None:
+    """The half of the parametrization above that returns early, asserted on purpose."""
+    manifest_run = "run-storage"
+    base = DomainEvent(
+        event_id=f"{manifest_run}:event-00000000",
+        run_id=manifest_run,
+        simulated_minute=0,
+        sequence=0,
+        event_type=EventType.RUN_STARTED,
+        source=EventSource.RULE,
+    )
+    for field in (
+        "simulated_minute",
+        "sequence",
+        "event_type",
+        "agent_id",
+        "campaign_id",
+        "source",
+    ):
+        with pytest.raises(ValidationError):
+            base.model_copy(update={field: "api_key=0000abcdef1234567890"})
 
 
 ARTIFACT_BOUNDARY_MODULES: tuple[Path, ...] = (

@@ -19,6 +19,15 @@ Every frozenset field in this repository carries a ``when_used="json"`` serializ
 sorts it, so ``model_dump(mode="json")`` is already order-stable and sorting keys on top
 of it makes the whole document independent of dictionary and set iteration order.
 
+A SERIALIZER CAN REFUSE, AND ITS REFUSAL IS NAMED HERE. ``model_dump(mode="json")`` and
+``json.dumps`` both raise a bare ``ValueError`` on a document they will not render - a
+nesting depth past pydantic-core's recursion guard is the case that reached this
+repository. A bare ``ValueError`` from a writer is outside every family the ports publish,
+so it is translated into :class:`DocumentNotSerialisable` here, once, and every caller
+translates that one type into its own family. The domain bound in
+:data:`~adlife.core.domain.json_values.MAX_JSON_DEPTH` means a validated document never
+reaches this path; this is the answer for a document built around the model.
+
 The screen at the bottom is the other half of writing to disk: what may be persisted at
 all. It reuses the published rules from :mod:`adlife.core.domain.person` - the narrow
 campaign-copy screen and the structural labelled-member walk - and never introduces a
@@ -60,21 +69,49 @@ class EventLineTooLong(ValueError):
     """
 
 
+class DocumentNotSerialisable(ValueError):
+    """Raised when a serializer will not render a document this repository built.
+
+    It is a DISTINCT type, and it is a ``ValueError`` so that the existing ``except
+    ValueError`` readers keep working. Every writer translates it into the family its own
+    port publishes: a bare ``ValueError`` escaping a writer reaches the command line as an
+    unexpected defect rather than as a refused tick or a refused publication.
+
+    The message names nothing about the document. The thing that was refused was built
+    from campaign copy, provider paraphrase or a stored blob, and pydantic RENDERS what it
+    rejects - putting it into a message or a ``__cause__`` is the leak the screens below
+    exist to prevent.
+    """
+
+
+def json_document(value: BaseModel) -> dict[str, object]:
+    """``model_dump(mode="json")``, with the serializer's own refusal given a type."""
+    try:
+        return value.model_dump(mode="json")
+    except (ValueError, RecursionError):
+        raise DocumentNotSerialisable(
+            f"a {type(value).__name__} document could not be rendered as JSON"
+        ) from None
+
+
 def canonical_json(value: BaseModel | Mapping[str, object]) -> str:
     """Render one document in the canonical form described in the module docstring."""
     if isinstance(value, BaseModel):
-        payload: object = value.model_dump(mode="json")
+        payload: object = json_document(value)
     elif isinstance(value, Mapping):
         payload = thaw_json_mapping(value)
     else:
         raise TypeError("canonical_json needs a pydantic model or a mapping")
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=CANONICAL_SEPARATORS,
-    )
+    try:
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=CANONICAL_SEPARATORS,
+        )
+    except (ValueError, RecursionError):
+        raise DocumentNotSerialisable("a document could not be rendered as JSON") from None
 
 
 def canonical_event_line(event: DomainEvent) -> str:
@@ -115,6 +152,16 @@ def _walk_strings(value: object) -> list[str]:
     return []
 
 
+def persisted_model_objection(value: BaseModel, *, label: str) -> str | None:
+    """:func:`persisted_text_objection` over a MODEL, rendered once through the one door.
+
+    Every writer screened a model by calling ``model_dump(mode="json")`` itself, which is
+    the call that raises a bare ``ValueError`` on a document the serializer refuses. There
+    is one rendering path now, and it raises :class:`DocumentNotSerialisable`.
+    """
+    return persisted_text_objection(json_document(value), label=label)
+
+
 def persisted_text_objection(value: object, *, label: str) -> str | None:
     """Name the place a document carries text that must not be written, or return None.
 
@@ -144,9 +191,12 @@ def persisted_text_objection(value: object, *, label: str) -> str | None:
 __all__ = [
     "CANONICAL_SEPARATORS",
     "MAX_EVENT_LINE_CHARS",
+    "DocumentNotSerialisable",
     "EventLineTooLong",
     "canonical_event_line",
     "canonical_json",
+    "json_document",
     "parse_event_line",
+    "persisted_model_objection",
     "persisted_text_objection",
 ]

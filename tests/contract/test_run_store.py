@@ -19,6 +19,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
+from conftest import FailingConnection
 from pydantic import ValidationError
 
 from adlife.adapters.storage.sqlite_store import SQLiteRunStore
@@ -128,20 +129,26 @@ def test_an_appended_batch_is_all_or_nothing_when_a_statement_fails(
     run_manifest: RunManifest,
     valid_scenario: Scenario,
     domain_events: tuple[DomainEvent, ...],
-    failing_connection: Callable[[int], None],
+    failing_connection: FailingConnection,
 ) -> None:
     """One transaction contains the whole tick: a mid-batch failure stores nothing.
 
-    Three statements succeed - ``BEGIN IMMEDIATE``, the single status-and-sequence read,
-    and the first event insert - so the failure lands with a row already written inside
-    the transaction. Without the rollback that first row would survive.
+    THE BUDGET IS FOUR, AND THE FOURTH STATEMENT IS THE ONE THAT MATTERS. The armed
+    connection spends one statement reading the schema version, one on ``BEGIN
+    IMMEDIATE``, one on the single status-and-sequence read, and the fourth on the FIRST
+    event insert; the second insert is refused. At three the failure landed before any
+    insert at all, so the test could not have seen a partially written batch and said so
+    in its own docstring anyway. The assertion below therefore names the insert it
+    depends on rather than trusting the arithmetic.
     """
     store.create_run(run_manifest, scenario=valid_scenario)
-    failing_connection(3)
+    failing_connection(4)
 
     with pytest.raises(StorageError):
         store.append_events(domain_events)
 
+    inserts = [sql for sql in failing_connection.executed if sql.startswith("INSERT INTO events")]
+    assert len(inserts) == 1
     assert store.load_run(run_manifest.run_id).events == ()
 
 
@@ -150,16 +157,80 @@ def test_a_failed_append_leaves_the_portable_export_untouched(
     run_manifest: RunManifest,
     valid_scenario: Scenario,
     domain_events: tuple[DomainEvent, ...],
-    failing_connection: Callable[[int], None],
+    failing_connection: FailingConnection,
 ) -> None:
     """The database commits first, so a database failure can never leak into the JSONL."""
     store.create_run(run_manifest, scenario=valid_scenario)
-    failing_connection(3)
+    failing_connection(4)
 
     with pytest.raises(StorageError):
         store.append_events(domain_events)
 
     assert store.events_jsonl_path(run_manifest.run_id).read_bytes() == b""
+
+
+def bypass_constructed_deep_event(run_id: str, depth: int) -> DomainEvent:
+    """An event the domain model refuses, built without it, at a serialisable depth.
+
+    The nesting bound closed in :mod:`adlife.core.domain.json_values` means this cannot be
+    validated into existence. ``model_construct`` is still a real door, and the store must
+    answer whatever comes through it inside the family its port publishes.
+    """
+    payload: dict[str, object] = {"leaf": 1}
+    for _ in range(depth - 1):
+        payload = {"nested": payload}
+    return DomainEvent.model_construct(
+        schema_version=1,
+        event_id=f"{run_id}:event-00000000",
+        run_id=run_id,
+        simulated_minute=0,
+        sequence=0,
+        event_type=EventType.STATE_UPDATED,
+        agent_id=None,
+        campaign_id=None,
+        channel=None,
+        payload=payload,
+        source=EventSource.RULE,
+        model_id=None,
+        prompt_hash=None,
+        caused_by_event_ids=(),
+    )
+
+
+def test_a_batch_the_serializer_cannot_render_stays_inside_the_storage_family(
+    store: SQLiteRunStore,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+) -> None:
+    """A bare ``ValueError`` from pydantic-core escaped StorageError entirely.
+
+    The CLI maps this family to exit code 4 and an unexpected defect to exit code 1, so an
+    untranslated serializer refusal aborts a run as a crash rather than as a refused tick.
+    """
+    store.create_run(run_manifest, scenario=valid_scenario)
+    event = bypass_constructed_deep_event(run_manifest.run_id, 200)
+
+    with pytest.raises(StorageError, match="could not be rendered"):
+        store.append_events([event])
+
+    assert store.load_run(run_manifest.run_id).events == ()
+    assert store.events_jsonl_path(run_manifest.run_id).read_bytes() == b""
+
+
+def test_a_document_the_serializer_cannot_render_carries_no_cause(
+    store: SQLiteRunStore,
+    run_manifest: RunManifest,
+    valid_scenario: Scenario,
+) -> None:
+    """The refused document was built from campaign and provider text; it stays off the
+    traceback like every other artifact-boundary refusal."""
+    store.create_run(run_manifest, scenario=valid_scenario)
+
+    with pytest.raises(StorageError) as raised:
+        store.append_events([bypass_constructed_deep_event(run_manifest.run_id, 200)])
+
+    assert raised.value.__cause__ is None
+    assert "leaf" not in str(raised.value)
 
 
 def test_a_duplicate_event_identifier_is_refused(

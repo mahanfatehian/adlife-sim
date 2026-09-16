@@ -23,8 +23,15 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
-"""Bump this when the stored shape changes. An artifact at any other version is refused."""
+SCHEMA_VERSION = 2
+"""Bump this when the stored shape changes. An artifact at any other version is refused.
+
+Version 2 adds ``events.export_offset``: the byte length ``events.jsonl`` reaches once
+that event's line has been appended. It is what lets the divergence guard compare the
+export against the database in constant time instead of streaming the whole file on
+every tick - a cost that grows with the run and, on a maximum run, exceeds the entire
+performance budget specification section 20 gives the run.
+"""
 
 BUSY_TIMEOUT_MS = 5_000
 """Wait for a concurrent writer rather than failing the tick immediately.
@@ -57,6 +64,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
       simulated_minute INTEGER NOT NULL,
       event_type TEXT NOT NULL,
       event_json TEXT NOT NULL,
+      export_offset INTEGER NOT NULL,
       UNIQUE(run_id, sequence)
     )
     """,
@@ -77,8 +85,9 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX events_by_minute ON events(run_id, simulated_minute, sequence)",
+    "CREATE INDEX events_by_export_offset ON events(run_id, export_offset)",
 )
-"""The brief's data definition, plus ``runs.result_json``.
+"""The brief's data definition, plus ``runs.result_json`` and ``events.export_offset``.
 
 The result carries ``final_minute``, ``failure_reason`` and the metric map, and none of
 those has a column. Without it a completed run could not be read back as the
@@ -86,6 +95,12 @@ those has a column. Without it a completed run could not be read back as the
 FAILED run - which the task requires to be reproducible byte for byte - would lose the
 reason it failed. The ``metrics`` table stays exactly as specified: it is the queryable
 projection, and the store checks the two against each other on every load.
+
+``events.export_offset`` records where each event's line ENDS in ``events.jsonl``. It is
+derived data - the running total of the canonical lines the same rows hold - and it is
+written inside the same transaction as the row it describes, so it cannot drift from it.
+Its index exists for one query: ``MAX(export_offset)`` for one run, which is how the
+divergence guard learns how long the export should be without opening it.
 """
 
 

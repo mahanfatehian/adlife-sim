@@ -33,8 +33,9 @@ from typing import IO, Self
 from adlife.core.domain.events import DomainEvent
 from adlife.core.domain.serialization import (
     MAX_EVENT_LINE_CHARS,
+    DocumentNotSerialisable,
     canonical_event_line,
-    persisted_text_objection,
+    persisted_model_objection,
 )
 from adlife.core.ports.event_sink import EventSinkError, validate_sink_batch
 
@@ -79,12 +80,13 @@ class JsonlEventSink:
             return
         lines = []
         for event in batch:
-            objection = persisted_text_objection(
-                event.model_dump(mode="json"), label=f"event {event.sequence}"
-            )
+            try:
+                objection = persisted_model_objection(event, label=f"event {event.sequence}")
+                line = canonical_event_line(event)
+            except DocumentNotSerialisable as error:
+                raise EventSinkError(str(error)) from None
             if objection is not None:
                 raise EventSinkError(objection)
-            line = canonical_event_line(event)
             if len(line) > MAX_EVENT_LINE_CHARS:
                 raise EventSinkError(
                     f"event {event.sequence} serialises to {len(line)} characters, above "

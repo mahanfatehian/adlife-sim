@@ -325,13 +325,13 @@ def test_events_are_returned_in_sequence_order_whatever_their_physical_order(
     """Nothing in this store may depend on rowid or insertion order."""
     with raw(started_run, run_manifest.run_id) as connection:
         rows = connection.execute(
-            "SELECT event_id, run_id, sequence, simulated_minute, event_type, event_json "
-            "FROM events ORDER BY sequence"
+            "SELECT event_id, run_id, sequence, simulated_minute, event_type, event_json, "
+            "export_offset FROM events ORDER BY sequence"
         ).fetchall()
         connection.execute("DELETE FROM events")
         connection.executemany(
             "INSERT INTO events (event_id, run_id, sequence, simulated_minute, event_type, "
-            "event_json) VALUES (?, ?, ?, ?, ?, ?)",
+            "event_json, export_offset) VALUES (?, ?, ?, ?, ?, ?, ?)",
             list(reversed(rows)),
         )
 
@@ -747,6 +747,168 @@ def test_a_run_another_writer_extended_consistently_is_not_condemned(
 
     assert stored_sequences(started_run, run_manifest.run_id) == [0, 1, 2, 3, 4]
     assert started_run.load_run(run_manifest.run_id).events[4].simulated_minute == 60
+
+
+class ExportReadTally:
+    """Count the characters the store reads back out of ``events.jsonl``."""
+
+    def __init__(self) -> None:
+        self.characters = 0
+
+
+def count_export_reads(monkeypatch: pytest.MonkeyPatch) -> ExportReadTally:
+    """Tally every character read from any events.jsonl, whoever opens it and however."""
+    tally = ExportReadTally()
+    real_open = Path.open
+
+    class _CountingHandle:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def read(self, *arguments: object) -> str:
+            chunk = self._handle.read(*arguments)  # type: ignore[attr-defined]
+            tally.characters += len(chunk)
+            return chunk
+
+        def __iter__(self) -> object:
+            return iter(self._handle)  # type: ignore[call-overload]
+
+        def __enter__(self) -> _CountingHandle:
+            return self
+
+        def __exit__(self, *details: object) -> None:
+            self._handle.close()  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._handle, name)
+
+    def counting_open(self: Path, mode: str = "r", *arguments: object, **keywords: object):
+        handle = real_open(self, mode, *arguments, **keywords)  # type: ignore[arg-type]
+        if self.name == "events.jsonl" and "r" in mode and "+" not in mode:
+            return _CountingHandle(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    return tally
+
+
+def test_the_divergence_guard_does_not_grow_with_the_number_of_stored_events(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard must stay honest AND stay affordable; it was only the first.
+
+    Measuring the export by streaming it is a measurement, and it was the right answer to
+    a remembered count. It is also quadratic in the length of a run: every tick re-reads
+    every line already written. On a maximum run - thirty agents over seven simulated days,
+    672 ticks - that is roughly ninety seconds of pure reading, against the ten seconds
+    specification section 20 allows the WHOLE rule-mode run.
+
+    So the cost model is pinned here: what an append reads from the export does not grow
+    with what the export already holds.
+    """
+    tally = count_export_reads(monkeypatch)
+
+    before = tally.characters
+    started_run.append_events([event_factory(3, simulated_minute=45)])
+    early = tally.characters - before
+
+    for sequence in range(4, 60):
+        started_run.append_events([event_factory(sequence, simulated_minute=60)])
+
+    before = tally.characters
+    started_run.append_events([event_factory(60, simulated_minute=75)])
+    late = tally.characters - before
+
+    assert late <= early
+    assert late <= MAX_EVENT_LINE_CHARS
+    assert started_run.events_jsonl_path(run_manifest.run_id).stat().st_size > 0
+
+
+def test_the_divergence_guard_still_measures_the_export_it_guards(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A constant-time guard that consulted nothing would be a remembered count again.
+
+    The file's own length is what the fast path compares, so a ``stat`` that never happens
+    is the failure this pins.
+    """
+    consulted: list[str] = []
+    real_stat = Path.stat
+
+    def counting_stat(self: Path, **keywords: object) -> object:
+        if self.name == "events.jsonl":
+            consulted.append(self.name)
+        return real_stat(self, **keywords)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "stat", counting_stat)
+
+    started_run.append_events([event_factory(3, simulated_minute=45)])
+
+    assert consulted
+
+
+def test_a_tick_is_refused_onto_a_database_with_a_hole_in_it(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """``MAX(sequence) + 1`` is where the next event goes, not proof of a run.
+
+    With sequence one deleted the database still reports three events and the export still
+    holds three lines, so both halves of the old guard agreed - about a stream with a hole
+    in it. The tick was accepted, and every read of the run refused it afterwards.
+    """
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DELETE FROM events WHERE sequence = 1")
+
+    with pytest.raises(CorruptRunArtifact, match="contiguous"):
+        started_run.append_events([event_factory(3, simulated_minute=45)])
+
+    assert stored_sequences(started_run, run_manifest.run_id) == [0, 2]
+
+
+def test_a_checkpoint_is_refused_onto_a_database_with_a_hole_in_it(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    consumer_state: ConsumerState,
+) -> None:
+    """Every writer asks the same question, so every writer inherits the same answer."""
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("DELETE FROM events WHERE sequence = 1")
+
+    with pytest.raises(CorruptRunArtifact, match="contiguous"):
+        started_run.save_checkpoint(
+            RunCheckpoint(
+                run_id=run_manifest.run_id,
+                simulated_minute=0,
+                next_event_sequence=3,
+                states=(consumer_state,),
+            )
+        )
+
+
+def test_a_stored_sequence_below_zero_is_refused(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+) -> None:
+    """A count that matches the maximum is not contiguity; the run has to start at zero.
+
+    ``sequence`` carries no CHECK constraint, so a tampered row can hold a negative one.
+    Three rows numbered -1, 1 and 2 give a count of three and a maximum of two, which is
+    exactly what an unbroken run of three events gives.
+    """
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("UPDATE events SET sequence = -1 WHERE sequence = 0")
+
+    with pytest.raises(CorruptRunArtifact, match="contiguous"):
+        started_run.append_events([event_factory(3, simulated_minute=45)])
 
 
 def test_a_missing_export_is_refused(
@@ -1689,7 +1851,9 @@ def reshuffle_rows(store: SQLiteRunStore, run_id: str, table: str, columns: str)
         )
 
 
-EVENT_COLUMNS = "event_id, run_id, sequence, simulated_minute, event_type, event_json"
+EVENT_COLUMNS = (
+    "event_id, run_id, sequence, simulated_minute, event_type, event_json, export_offset"
+)
 
 
 def test_streaming_returns_events_in_sequence_order_whatever_their_physical_order(
@@ -1807,8 +1971,16 @@ def test_the_schema_refuses_a_second_row_for_one_event_identifier(
     try:
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                f"INSERT INTO events ({EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
-                ("run-storage:event-00000000", run_manifest.run_id, 9, 0, "state.updated", "{}"),
+                f"INSERT INTO events ({EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "run-storage:event-00000000",
+                    run_manifest.run_id,
+                    9,
+                    0,
+                    "state.updated",
+                    "{}",
+                    9_999,
+                ),
             )
     finally:
         connection.close()
@@ -1822,8 +1994,16 @@ def test_the_schema_refuses_a_second_row_for_one_run_and_sequence(
     try:
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                f"INSERT INTO events ({EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
-                ("run-storage:event-00000099", run_manifest.run_id, 0, 0, "state.updated", "{}"),
+                f"INSERT INTO events ({EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "run-storage:event-00000099",
+                    run_manifest.run_id,
+                    0,
+                    0,
+                    "state.updated",
+                    "{}",
+                    9_999,
+                ),
             )
     finally:
         connection.close()
