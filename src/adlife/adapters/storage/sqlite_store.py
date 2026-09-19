@@ -181,11 +181,26 @@ def rendered_document(
     with a bare ``ValueError``. Untranslated it escapes
     :class:`~adlife.core.ports.run_store.StorageError` entirely, so the command line
     reports an unexpected defect instead of a refused artifact.
+
+    THE WRITE BOUND IS THE OTHER HALF OF THE READ BOUND. Every document read back out of
+    ``results.sqlite3`` is bounded by :data:`MAX_STORED_DOCUMENT_CHARS`, so a writer that
+    did not apply the same bound could durably store a result this build then refuses for
+    the rest of the run's life - the writer reporting success while every later read calls
+    the intact artifact corrupt. That is the defect class already closed for events, and
+    the domain models' own ``max_length`` values are not the control: ``model_construct``
+    is a real door, and the store answers whatever comes through it inside the family its
+    port publishes.
     """
     try:
-        return canonical_json(value)
+        text = canonical_json(value)
     except DocumentNotSerialisable as error:
         raise failure(str(error)) from None
+    if len(text) > MAX_STORED_DOCUMENT_CHARS:
+        raise failure(
+            f"a document of {len(text)} characters exceeds the "
+            f"{MAX_STORED_DOCUMENT_CHARS} a stored document may hold"
+        )
+    return text
 
 
 def screened_document(value: BaseModel, *, label: str, failure: type[StorageError]) -> None:

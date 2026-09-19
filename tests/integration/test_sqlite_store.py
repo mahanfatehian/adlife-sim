@@ -12,8 +12,10 @@ from __future__ import annotations
 import ast
 import contextlib
 import inspect
+import os
 import re
 import sqlite3
+import subprocess
 import tracemalloc
 from collections.abc import Callable
 from pathlib import Path
@@ -87,6 +89,28 @@ def started_run(
 
 def raw(store: SQLiteRunStore, run_id: str) -> sqlite3.Connection:
     return sqlite3.connect(store.database_path(run_id))
+
+
+def make_directory_link(link: Path, target: Path) -> None:
+    """Put a link at ``link`` pointing at ``target``, using a junction on Windows.
+
+    A directory symlink needs elevation there, so the test falls back to ``mklink /J``,
+    which does not - the same helper the campaign importer's escape test uses.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return
+    except (NotImplementedError, OSError):
+        if os.name != "nt":
+            raise
+
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def stored_sequences(store: SQLiteRunStore, run_id: str) -> list[int]:
@@ -2007,3 +2031,93 @@ def test_the_schema_refuses_a_second_row_for_one_run_and_sequence(
             )
     finally:
         connection.close()
+
+
+def test_a_run_directory_the_root_would_not_contain_is_refused(
+    started_run: SQLiteRunStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The containment call is the guard; the identifier pattern alone is not it.
+
+    ``validate_run_id`` already forbids a separator in the name, so today the two agree on
+    every input. The resolve is what keeps them agreeing if that pattern is ever loosened,
+    and nothing held it in place: replacing the call with a plain join left every suite
+    green, because each refusal this store raises for a bad NAME comes from the pattern.
+    """
+
+    def escape(_root: Path, _candidate: Path) -> Path:
+        raise ValueError("path is outside project root")
+
+    monkeypatch.setattr(sqlite_store_module, "resolve_project_path", escape)
+
+    with pytest.raises(UnsafeRunLocation, match="outside the project root"):
+        started_run.run_directory("run-storage")
+
+
+def test_a_run_directory_that_links_out_of_the_root_is_refused(
+    tmp_path: Path, run_manifest: RunManifest
+) -> None:
+    """The traversal shape: an ordinary name whose directory resolves outside the root.
+
+    The identifier pattern cannot see this case, because the escape lives in the
+    filesystem rather than in the text.
+    """
+    root = tmp_path / "root"
+    (root / sqlite_store_module.RUNS_DIRECTORY).mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = root / sqlite_store_module.RUNS_DIRECTORY / run_manifest.run_id
+    make_directory_link(link, outside)
+
+    store = SQLiteRunStore(root)
+
+    with pytest.raises(UnsafeRunLocation, match="outside the project root"):
+        store.run_directory(run_manifest.run_id)
+
+
+def test_a_document_this_store_could_never_read_back_is_refused_on_write(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    consumer_state: ConsumerState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The write bound is the other half of the read bound.
+
+    ``MAX_STORED_DOCUMENT_CHARS`` governs every document read back out of the database, so
+    a writer that did not apply it could durably store a checkpoint this build then refuses
+    for the rest of the run's life - the class already closed for events, and the reason the
+    constant is enforced where a document is RENDERED rather than only where one is read.
+    """
+    monkeypatch.setattr(sqlite_store_module, "MAX_STORED_DOCUMENT_CHARS", 64)
+
+    with pytest.raises(StorageError, match="exceeds"):
+        started_run.save_checkpoint(
+            RunCheckpoint(
+                run_id=run_manifest.run_id,
+                simulated_minute=0,
+                next_event_sequence=3,
+                states=(consumer_state,),
+            )
+        )
+
+
+def test_the_stored_document_bound_is_the_documented_value() -> None:
+    """A test that used the bound only relatively would pass at any value of it."""
+    assert MAX_STORED_DOCUMENT_CHARS == 4_194_304
+
+
+def test_a_cross_artifact_read_of_a_moving_run_is_refused_inside_the_family(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    """What is promised about a run another process is writing, stated as a test.
+
+    A load verifies the export against the database, so it is a consistent view only while
+    the run stands still: a tick landing between the two reads makes a healthy run look
+    divergent. The promise is therefore not that a cross-artifact read always succeeds, but
+    that when it cannot, it says so inside the family the port publishes - which is what the
+    live interface avoids by streaming instead.
+    """
+    export = started_run.events_jsonl_path(run_manifest.run_id)
+    export.write_bytes(export.read_bytes() + b"{}\n")
+
+    with pytest.raises(StorageError):
+        started_run.load_run(run_manifest.run_id)

@@ -11,7 +11,14 @@ the cost of losing the last few ticks of an interrupted run is bounded, while fs
 every one of a 7-day run's 672 ticks is not.
 
 WAL also buys the property the live interface needs: a reader can read a run while the
-engine writes it, without either blocking the other.
+engine writes it, without either blocking the other. That is a promise about LOCKING, not
+about a consistent view, and the difference matters here. A read that cross-checks several
+artifacts against each other - ``load_run`` verifies the export against the rows it just
+read - is a coherent picture only while the run stands still, because a tick landing
+between those two reads makes a healthy run look divergent. What is promised for that case
+is the TYPE of the refusal rather than that it cannot happen: it arrives inside the family
+the port publishes. The path the live interface uses is the streaming one, which does not
+cross-check and therefore does not have the problem at all.
 
 Foreign keys are enabled per connection - SQLite defaults them OFF, and ``PRAGMA
 foreign_keys`` is silently ignored inside a transaction - so they are set here, on a fresh

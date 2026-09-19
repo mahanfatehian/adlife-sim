@@ -542,3 +542,26 @@ def test_a_plain_line_needs_an_event() -> None:
 def test_a_jsonl_sink_needs_a_path() -> None:
     with pytest.raises(TypeError, match="Path"):
         JsonlEventSink("events.jsonl")  # type: ignore[arg-type]
+
+
+def test_the_jsonl_export_line_ending_is_a_bare_line_feed_on_every_platform(
+    event_factory: Callable[..., DomainEvent], tmp_path: Path
+) -> None:
+    """The export is a portable artifact, so its bytes are part of its contract.
+
+    The file is opened with an explicit newline. Without it the platform translates every
+    newline into a carriage return and a newline on Windows, so one run produced two
+    different exports on two operating systems - and the store's byte-length check, which
+    compares the export against the offsets it recorded, then refused the file this sink
+    had just written. A reader that splits on lines cannot see the difference; only the
+    bytes can, so only a byte-exact assertion pins it.
+    """
+    path = tmp_path / "events.jsonl"
+    with JsonlEventSink(path) as sink:
+        sink.append_many("run-storage", [event_factory(0), event_factory(1)])
+
+    written = path.read_bytes()
+
+    assert written.count(b"\n") == 2
+    assert b"\r\n" not in written
+    assert written.endswith(b"\n")
