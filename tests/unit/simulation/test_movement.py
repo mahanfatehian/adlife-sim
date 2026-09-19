@@ -705,6 +705,7 @@ def test_commit_tick_is_atomic_when_a_later_agent_intent_is_invalid(
         from_zone="home-north",
         to_zone="online",
         activity="phone-check",
+        route_id="office-online",
     )
     plan = movement.TickPlan(
         snapshot=original,
@@ -716,7 +717,7 @@ def test_commit_tick_is_atomic_when_a_later_agent_intent_is_invalid(
         "person-002",
     )
 
-    with pytest.raises(movement.InvalidMovement, match="no route"):
+    with pytest.raises(movement.InvalidMovement, match="unknown route"):
         model.commit_tick(plan, cognition={})
 
     after = model.snapshot()

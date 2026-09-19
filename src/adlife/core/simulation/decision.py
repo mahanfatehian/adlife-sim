@@ -9,6 +9,7 @@ from typing import Literal, get_args
 from adlife.core.domain.campaign import Campaign, Placement
 from adlife.core.domain.person import PersonProfile
 from adlife.core.domain.state import ConsumerState
+from adlife.core.ports.cognition import CognitionResult
 from adlife.core.simulation._validation import revalidate_model, revalidate_placement
 from adlife.core.simulation.policies import clamp
 from adlife.core.simulation.rng import RandomOracle
@@ -436,6 +437,39 @@ def apply_purchase(
     return StateTransition(previous=state, state=updated, caused_by_event_ids=causes)
 
 
+def compose_response(base: RuleResponse, result: CognitionResult) -> RuleResponse:
+    """Compose the bounded provider answer with the rule baseline into one response.
+
+    THE DOCUMENTED HYBRID RULE, stated here because no document states it yet:
+
+    * ``rule_modifier`` is the ONLY number a provider may add. It moves the agent's
+      REACTION - ``sentiment_delta`` and ``recall_delta``, each clamped back into its
+      documented band - and nothing else.
+    * ``purchase_intention`` stays the rule baseline's value. A language model never
+      supplies the purchase probability; the purchase proxy reads the intention the
+      documented formula produced.
+    * ``share_probability`` is the answer's value, because social planning takes the
+      cognition result's share probability: the rule value in rules mode, the provider
+      value in hybrid mode. In rules mode this function is the identity: the rule answer
+      restates the baseline numbers and its modifier is exactly zero, so composing it a
+      second time cannot apply the rule twice.
+    """
+    if not isinstance(base, RuleResponse):
+        raise TypeError("base must be a RuleResponse")
+    if not isinstance(result, CognitionResult):
+        raise TypeError("result must be a CognitionResult")
+    return RuleResponse(
+        campaign_id=base.campaign_id,
+        sentiment_delta=clamp(base.sentiment_delta + result.rule_modifier, -0.20, 0.20),
+        recall_delta=clamp(base.recall_delta + result.rule_modifier, 0.0, 0.30),
+        purchase_intention=base.purchase_intention,
+        share_probability=result.share_probability,
+        valence=result.valence,
+        relevance=result.relevance,
+        credibility=result.credibility,
+    )
+
+
 __all__ = [
     "AD_FATIGUE_PER_RESPONSE",
     "MAX_DAILY_REINFORCEMENT",
@@ -447,6 +481,7 @@ __all__ = [
     "apply_purchase",
     "apply_response",
     "channel_attention",
+    "compose_response",
     "evaluate_rule_response",
     "jaccard",
     "purchase_proxy",

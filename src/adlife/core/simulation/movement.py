@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic import Field
 
@@ -15,6 +15,10 @@ from adlife.core.domain.world import Route, World
 from adlife.core.simulation.engine import UnboundRun, canonical_sha256, stable_event_id
 
 AgentStatePair: TypeAlias = tuple[PersonProfile, ConsumerState]
+
+if TYPE_CHECKING:
+    from adlife.core.ports.cognition import CognitionRequest
+    from adlife.core.simulation.exposure import AttentionDecision
 
 _RUN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _ZONE_PATTERN = r"^[a-z0-9][a-z0-9-]{0,79}$"
@@ -119,6 +123,9 @@ class _MovementResolution:
 class TickPlan:
     snapshot: Snapshot
     intents: tuple[MovementIntent, ...]
+    movement_events: tuple[DomainEvent, ...] = ()
+    attention: tuple[AttentionDecision, ...] = ()
+    requests: tuple[CognitionRequest, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.snapshot, Snapshot):
@@ -136,15 +143,43 @@ class TickPlan:
             raise InvalidTickPlan("intent agent IDs must exactly match snapshot agent IDs")
         object.__setattr__(self, "intents", ordered)
 
+        movement_events = tuple(self.movement_events)
+        if any(not isinstance(event, DomainEvent) for event in movement_events):
+            raise TypeError("TickPlan.movement_events must contain only DomainEvent values")
+        object.__setattr__(
+            self,
+            "movement_events",
+            tuple(sorted(movement_events, key=lambda event: (event.sequence, event.event_id))),
+        )
+        # The exposure and cognition stages import this module, so their types are only
+        # checked lazily: a fully planned tick carries AttentionDecision and
+        # CognitionRequest values, and a movement-only plan carries empty tuples.
+        from adlife.core.ports.cognition import CognitionRequest as _CognitionRequest
+        from adlife.core.simulation.exposure import AttentionDecision as _AttentionDecision
+
+        attention = tuple(self.attention)
+        if any(not isinstance(item, _AttentionDecision) for item in attention):
+            raise TypeError("TickPlan.attention must contain only AttentionDecision values")
+        object.__setattr__(self, "attention", attention)
+        requests = tuple(self.requests)
+        if any(not isinstance(item, _CognitionRequest) for item in requests):
+            raise TypeError("TickPlan.requests must contain only CognitionRequest values")
+        object.__setattr__(self, "requests", requests)
+        if not attention and requests:
+            raise InvalidTickPlan("a plan cannot request cognition without attention decisions")
+
 
 @dataclass(frozen=True, slots=True)
 class TickOutcome:
     snapshot: Snapshot
     events: tuple[DomainEvent, ...]
+    ends_simulated_day: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.snapshot, Snapshot):
             raise TypeError("TickOutcome.snapshot must be a Snapshot")
+        if not isinstance(self.ends_simulated_day, bool):
+            raise TypeError("TickOutcome.ends_simulated_day must be a bool")
 
         events = tuple(self.events)
         if any(not isinstance(event, DomainEvent) for event in events):
@@ -154,6 +189,17 @@ class TickOutcome:
             "events",
             tuple(sorted(events, key=lambda event: (event.sequence, event.event_id))),
         )
+
+
+VIRTUAL_ZONES: frozenset[str] = frozenset({"online"})
+"""Zones an agent occupies without travelling a physical route.
+
+``online`` is where a phone-check happens: it is not a place, so a routine that moves an
+agent online names no route and needs none. The documented world lists it among its ten
+zones and its routes connect physical zones only - a phone-check that needed a highway
+route would never happen. A caller that DOES name a route into a virtual zone is
+honoured: the explicit route wins, and only the unrouted movement is virtual.
+"""
 
 
 def _route_zones(route: Route) -> frozenset[str]:
@@ -167,7 +213,13 @@ def _route_zones(route: Route) -> frozenset[str]:
 def _route_for_intent(
     intent: MovementIntent,
     routes_by_id: Mapping[str, Route],
+    *,
+    current_route: Route | None = None,
 ) -> Route | None:
+    if intent.from_zone in VIRTUAL_ZONES:
+        return None
+    if intent.to_zone in VIRTUAL_ZONES and intent.route_id is None:
+        return None
     if intent.from_zone == intent.to_zone:
         if intent.route_id is None:
             return None
@@ -191,6 +243,18 @@ def _route_for_intent(
         raise InvalidMovement(
             f"no route from {intent.from_zone} to {intent.to_zone} for {intent.agent_id}"
         )
+
+    # An agent standing on a route it is already travelling continues on that route
+    # before any other is considered: the built-in routines hop between the transit zone
+    # and their destination without naming a route, and the transit zone is shared by
+    # the morning and evening roads of the documented world.
+    if (
+        intent.route_id is None
+        and current_route is not None
+        and intent.from_zone != intent.to_zone
+        and {intent.from_zone, intent.to_zone} <= _route_zones(current_route)
+    ):
+        return current_route
 
     matches = tuple(
         route
@@ -245,7 +309,15 @@ def _resolve_movement(
                     f"not {intent.from_zone}"
                 )
 
-        route = _route_for_intent(intent, routes_by_id)
+        route = _route_for_intent(
+            intent,
+            routes_by_id,
+            current_route=(
+                routes_by_id.get(state.current_route_id)
+                if state is not None and state.current_route_id is not None
+                else None
+            ),
+        )
         transitions.append(
             _ResolvedMovement(
                 agent_id=intent.agent_id,
