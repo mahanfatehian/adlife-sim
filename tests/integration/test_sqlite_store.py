@@ -36,6 +36,7 @@ from adlife.adapters.storage.sqlite_store import (
     READ_CHUNK_CHARS,
     SQLiteRunStore,
     iter_export_lines,
+    rendered_document,
 )
 from adlife.core.domain.events import DomainEvent, EventType
 from adlife.core.domain.results import RunManifest, SimulationResult
@@ -1127,8 +1128,11 @@ def test_a_tick_whose_transaction_cannot_open_is_refused_as_a_typed_failure(
 ) -> None:
     """``BEGIN IMMEDIATE`` takes the write lock, so it is the statement that waits.
 
-    A lock held past the busy timeout fails exactly here, outside the try that translates
-    every other statement of the tick, and the run must not record it either way.
+    A lock held past the busy timeout fails on the first statement INSIDE the try that
+    translates the tick - it was moved there from outside it - and the run must not record
+    it either way. What the test is really pinning is that the waiting statement is a
+    translated one: an untranslated ``sqlite3.OperationalError`` here would reach the
+    caller as an unexpected defect rather than as a refused tick.
     """
     failing_connection(1)
 
@@ -2031,6 +2035,59 @@ def test_the_schema_refuses_a_second_row_for_one_run_and_sequence(
             )
     finally:
         connection.close()
+
+
+def test_a_document_that_fits_the_character_bound_but_not_the_byte_bound_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One bound cannot stand for both, because the two read paths measure different units.
+
+    A document is read back either as a database column, bounded in characters, or as a
+    file beside it, bounded in bytes. Every non-ASCII character is more than one byte, so a
+    Persian document can fit the character bound and breach the byte bound - written
+    successfully and then refused by every later read for the rest of the run's life.
+    """
+    monkeypatch.setattr(sqlite_store_module, "MAX_STORED_DOCUMENT_CHARS", 1_000)
+    monkeypatch.setattr(sqlite_store_module, "MAX_INPUT_DOCUMENT_BYTES", 100)
+    document = {"summary": PERSIAN_SUMMARY * 10}
+
+    assert len(document["summary"]) < 1_000
+    assert len(document["summary"].encode("utf-8")) > 100
+
+    with pytest.raises(StorageError, match="bytes"):
+        rendered_document(document, failure=StorageError)
+
+
+def test_a_device_failure_reading_the_export_names_only_the_error_type(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    event_factory: Callable[..., DomainEvent],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operating-system message and an absolute filename must not reach the refusal.
+
+    The append path already keeps this discipline by naming only the error's type; the
+    count path formatted the whole exception, so a device message that names the file it
+    failed on travelled into the refusal and into any traceback built from it. Reaching it
+    needs a real disagreement between the two artifacts, because the count only runs once
+    the constant-time length check has already failed.
+    """
+    export = started_run.events_jsonl_path(run_manifest.run_id)
+    export.write_bytes(export.read_bytes() + b"x\n")
+
+    def fail(_path: Path) -> object:
+        raise OSError(5, "Input/output error", "C:/somewhere/absolute/events.jsonl")
+
+    monkeypatch.setattr(sqlite_store_module, "iter_export_lines", fail)
+
+    with pytest.raises(CorruptRunArtifact) as raised:
+        started_run.append_events([event_factory(3)])
+
+    message = str(raised.value)
+
+    assert "OSError" in message
+    assert "C:/somewhere" not in message
+    assert "Input/output error" not in message
 
 
 def test_a_run_directory_the_root_would_not_contain_is_refused(

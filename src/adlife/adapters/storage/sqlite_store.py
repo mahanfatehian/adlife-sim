@@ -182,14 +182,20 @@ def rendered_document(
     :class:`~adlife.core.ports.run_store.StorageError` entirely, so the command line
     reports an unexpected defect instead of a refused artifact.
 
-    THE WRITE BOUND IS THE OTHER HALF OF THE READ BOUND. Every document read back out of
-    ``results.sqlite3`` is bounded by :data:`MAX_STORED_DOCUMENT_CHARS`, so a writer that
-    did not apply the same bound could durably store a result this build then refuses for
-    the rest of the run's life - the writer reporting success while every later read calls
-    the intact artifact corrupt. That is the defect class already closed for events, and
-    the domain models' own ``max_length`` values are not the control: ``model_construct``
-    is a real door, and the store answers whatever comes through it inside the family its
-    port publishes.
+    THE WRITE BOUND MIRRORS BOTH READ BOUNDS, AND THEY ARE MEASURED IN DIFFERENT UNITS.
+    One document is not read back one way. ``manifest_json``, ``result_json`` and
+    ``checkpoint_json`` come out of ``results.sqlite3`` through ``substr`` and are bounded
+    in CHARACTERS by :data:`MAX_STORED_DOCUMENT_CHARS`; ``run.json``, ``metrics.json``,
+    ``provider-usage.json`` and ``inputs/scenario.json`` are read off disk and are bounded
+    in BYTES by :data:`MAX_INPUT_DOCUMENT_BYTES`. A writer that applied only one of them
+    could store a document this build then refuses for the rest of the run's life - the
+    writer reporting success while every later read calls the intact artifact corrupt -
+    and the character bound alone does not cover the byte bound, because every non-ASCII
+    character is more than one byte. Both are applied here, so neither read path can be
+    the one that refuses a document this store accepted. That is the defect class already
+    closed for events, and the domain models' own ``max_length`` values are not the
+    control: ``model_construct`` is a real door, and the store answers whatever comes
+    through it inside the family its port publishes.
     """
     try:
         text = canonical_json(value)
@@ -199,6 +205,12 @@ def rendered_document(
         raise failure(
             f"a document of {len(text)} characters exceeds the "
             f"{MAX_STORED_DOCUMENT_CHARS} a stored document may hold"
+        )
+    stored_bytes = len(text.encode("utf-8"))
+    if stored_bytes > MAX_INPUT_DOCUMENT_BYTES:
+        raise failure(
+            f"a document of {stored_bytes} bytes exceeds the "
+            f"{MAX_INPUT_DOCUMENT_BYTES} an artifact document may hold"
         )
     return text
 
@@ -280,6 +292,20 @@ class SQLiteRunStore:
         the ``scenario_hash`` the manifest claims. A run directory whose inputs are not
         provably the inputs of its own manifest cannot be replayed, and a default would
         make that failure silent instead of loud.
+
+        THE DOCUMENTS INSIDE ARE WRITTEN WITHOUT AN FSYNC, AND THAT IS A DELIBERATE TRADE
+        rather than an oversight. ``publish_directory`` moves the finished directory into
+        place in one filesystem operation, so a reader never sees a half-built run; what is
+        not promised is that the file CONTENTS survive a power loss within the same window,
+        because these writes are not fsynced to the platter. Every LATER document this
+        store writes - a completed result, a checkpoint, a usage log - goes through
+        :func:`write_document_atomically`, which does fsync. The asymmetry is bounded by
+        what a lost run directory costs: ``run.json`` and ``inputs/scenario.json`` are
+        derived from a seed and an input file the caller still has, so the run is
+        reproducible by re-running it, while fsyncing four documents on every run creation
+        is paid on the path every run takes. This is recorded rather than tested on
+        purpose: nothing observable distinguishes an fsync from its absence, and a change
+        no test can distinguish is not worth claiming.
         """
         if not isinstance(manifest, RunManifest):
             raise TypeError("manifest must be a RunManifest")
@@ -465,9 +491,22 @@ class SQLiteRunStore:
             ) from None
 
     def _count_export_lines(self, run_id: str, export: Path) -> int:
+        """Count the export's lines, keeping a device message out of the refusal.
+
+        The two failures here are different in kind and must read differently. A
+        :class:`ValueError` is this repository's own diagnostic - a line past the reader's
+        bound, or an unterminated last line - and its text is the whole point of the
+        refusal. An :class:`OSError` is the operating system's, and formatting it would
+        carry a device message and an absolute filename into a message and a traceback,
+        which is the discipline the append path already keeps by naming only the type.
+        """
         try:
             return sum(1 for _ in iter_export_lines(export))
-        except (OSError, ValueError) as error:
+        except OSError as error:
+            raise CorruptRunArtifact(
+                f"events.jsonl for run {run_id} could not be read: {type(error).__name__}"
+            ) from None
+        except ValueError as error:
             raise CorruptRunArtifact(f"events.jsonl for run {run_id}: {error}") from None
 
     def _export_length(self, run_id: str, export: Path) -> int:
