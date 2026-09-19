@@ -65,6 +65,7 @@ include = [
 addopts = "--strict-markers --strict-config"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["."]
 
 [tool.coverage.run]
 branch = true

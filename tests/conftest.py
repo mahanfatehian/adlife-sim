@@ -346,3 +346,11 @@ def failing_connection(monkeypatch: pytest.MonkeyPatch) -> FailingConnection:
     arm.executed = executed  # type: ignore[attr-defined]
     monkeypatch.setattr(sqlite_store, "connect_to_database", connect)
     return cast(FailingConnection, arm)
+
+
+@pytest.fixture
+def small_scenario(valid_scenario: Scenario) -> Scenario:
+    """The contract scenario scaled to three agents over the documented ten-zone world."""
+    from tests.builders import small_three_agent_scenario
+
+    return small_three_agent_scenario(valid_scenario)
