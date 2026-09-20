@@ -1,0 +1,78 @@
+schema_version: 1
+profiles:
+  - agent_id: person-001
+    display_name: "Arman 001"
+    fictional: true
+    age: 34
+    occupation: office-worker
+    income_band: middle
+    household_type: family-home
+    home_zone: home-north
+    work_or_study_zone: office
+    interests: [technology, fitness, music]
+    traits:
+      price_sensitivity: 0.5
+      novelty_seeking: 0.6
+      social_susceptibility: 0.4
+      advertising_skepticism: 0.3
+      mobile_attention: 0.8
+      outdoor_attention: 0.5
+      brand_loyalty: 0.4
+      impulsivity: 0.3
+    initial_brand_sentiment: 0.05
+    routine_template: office-worker
+  - agent_id: person-002
+    display_name: "Sara 002"
+    fictional: true
+    age: 41
+    occupation: retail-worker
+    income_band: middle
+    household_type: shared-home
+    home_zone: home-center
+    work_or_study_zone: retail-center
+    interests: [cooking, reading, travel]
+    traits:
+      price_sensitivity: 0.6
+      novelty_seeking: 0.6
+      social_susceptibility: 0.5
+      advertising_skepticism: 0.3
+      mobile_attention: 0.6
+      outdoor_attention: 0.5
+      brand_loyalty: 0.4
+      impulsivity: 0.5
+    initial_brand_sentiment: -0.1
+    routine_template: retail-worker
+  - agent_id: person-003
+    display_name: "Nima 003"
+    fictional: true
+    age: 29
+    occupation: office-worker
+    income_band: low
+    household_type: solo-home
+    home_zone: home-north
+    work_or_study_zone: office
+    interests: [gaming, technology, sports]
+    traits:
+      price_sensitivity: 0.7
+      novelty_seeking: 0.6
+      social_susceptibility: 0.6
+      advertising_skepticism: 0.3
+      mobile_attention: 0.4
+      outdoor_attention: 0.5
+      brand_loyalty: 0.4
+      impulsivity: 0.7
+    initial_brand_sentiment: 0.0
+    routine_template: office-worker
+relationships:
+  - source_id: person-001
+    target_id: person-002
+    kind: friend
+    strength: 0.8
+  - source_id: person-002
+    target_id: person-003
+    kind: friend
+    strength: 0.7
+  - source_id: person-001
+    target_id: person-003
+    kind: colleague
+    strength: 0.5

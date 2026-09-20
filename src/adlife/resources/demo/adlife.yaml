@@ -1,0 +1,14 @@
+schema_version: 1
+simulation:
+  days: 1
+  tick_minutes: 15
+  population_size: 3
+  seed: 42
+  cognition_mode: rules
+  max_cognition_per_agent: 6
+  max_cognition_total: 180
+provider:
+  mode: mock
+  model: mock-v1
+  timeout_seconds: 60
+  retries: 2

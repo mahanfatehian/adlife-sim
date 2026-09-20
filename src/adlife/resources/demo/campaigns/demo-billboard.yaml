@@ -1,0 +1,27 @@
+campaign_id: demo-billboard
+name: "Highway Calm"
+product_name: "Fictional Phone"
+product_category: consumer-electronics
+message: "The same fictional phone, seen on the morning commute."
+call_to_action: "Explore the fictional product"
+price:
+  amount: 850.0
+  currency: USD
+category_reference_price: 1000.0
+target_interests: [technology, travel]
+start_minute: 0
+end_minute: 1440
+placements:
+  - channel: highway-billboard
+    route_id: highway-north
+    active_windows:
+      - start_minute_of_day: 360
+        end_minute_of_day: 1200
+    frequency_cap: 4
+    visibility: 0.65
+creative_features:
+  description: "A minimal fictional billboard with one short sentence."
+  visual_style: minimal-product
+  dominant_colors: [white, green]
+  visible_text: ["Fictional Phone"]
+  contains_people: false

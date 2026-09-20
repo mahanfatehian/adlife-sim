@@ -1,0 +1,26 @@
+campaign_id: demo-phone
+name: "Pocket Launch"
+product_name: "Fictional Phone"
+product_category: consumer-electronics
+message: "A fictional phone designed for a calmer daily routine."
+call_to_action: "Explore the fictional product"
+price:
+  amount: 850.0
+  currency: USD
+category_reference_price: 1000.0
+target_interests: [technology]
+start_minute: 0
+end_minute: 1440
+placements:
+  - channel: mobile-feed
+    active_windows:
+      - start_minute_of_day: 420
+        end_minute_of_day: 1320
+    frequency_cap: 3
+    visibility: 0.8
+creative_features:
+  description: "A fictional handset on a clean white background."
+  visual_style: minimal-product
+  dominant_colors: [white, green]
+  visible_text: ["Fictional Phone"]
+  contains_people: false
