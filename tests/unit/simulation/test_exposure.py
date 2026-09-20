@@ -293,6 +293,8 @@ def test_task_7_public_function_signatures_remain_exact() -> None:
             Parameter.empty,
         ),
         ("oracle", Parameter.POSITIONAL_OR_KEYWORD, RandomOracle, Parameter.empty),
+        # Task 13's attention parameter: keyword-only, documented default of 1.0.
+        ("notice_scale", Parameter.KEYWORD_ONLY, float, 1.0),
     )
     assert decision_hints["return"] is exposure.AttentionDecision
 

@@ -437,7 +437,13 @@ def apply_purchase(
     return StateTransition(previous=state, state=updated, caused_by_event_ids=causes)
 
 
-def compose_response(base: RuleResponse, result: CognitionResult) -> RuleResponse:
+def compose_response(
+    base: RuleResponse,
+    result: CognitionResult,
+    *,
+    sentiment_gain: float = 1.0,
+    recall_gain: float = 1.0,
+) -> RuleResponse:
     """Compose the bounded provider answer with the rule baseline into one response.
 
     THE DOCUMENTED HYBRID RULE, stated here because no document states it yet:
@@ -453,6 +459,10 @@ def compose_response(base: RuleResponse, result: CognitionResult) -> RuleRespons
       value in hybrid mode. In rules mode this function is the identity: the rule answer
       restates the baseline numbers and its modifier is exactly zero, so composing it a
       second time cannot apply the rule twice.
+
+    The gains are the run's persuasion parameters (see ``simulation.parameters``): the
+    composed reaction is scaled and re-clamped into its documented band. At 1.0 the
+    composition is exactly the documented rule.
     """
     if not isinstance(base, RuleResponse):
         raise TypeError("base must be a RuleResponse")
@@ -460,8 +470,16 @@ def compose_response(base: RuleResponse, result: CognitionResult) -> RuleRespons
         raise TypeError("result must be a CognitionResult")
     return RuleResponse(
         campaign_id=base.campaign_id,
-        sentiment_delta=clamp(base.sentiment_delta + result.rule_modifier, -0.20, 0.20),
-        recall_delta=clamp(base.recall_delta + result.rule_modifier, 0.0, 0.30),
+        sentiment_delta=clamp(
+            (base.sentiment_delta + result.rule_modifier) * sentiment_gain,
+            -0.20,
+            0.20,
+        ),
+        recall_delta=clamp(
+            (base.recall_delta + result.rule_modifier) * recall_gain,
+            0.0,
+            0.30,
+        ),
         purchase_intention=base.purchase_intention,
         share_probability=result.share_probability,
         valence=result.valence,

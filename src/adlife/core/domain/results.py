@@ -29,6 +29,23 @@ class RunManifest(DomainModel):
     prompt_version: str = Field(min_length=1, max_length=80)
     prompt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     platform: str = Field(min_length=1, max_length=200)
+    parameters: Mapping[str, float] | None = Field(default=None)
+    """The run's model parameters, when it was driven with a non-default set.
+
+    ``None`` means the documented defaults produced this run, which is what every
+    pre-experiments artifact records; a mapping means the named values were the run's
+    actual inputs (see ``simulation.parameters``). A sensitivity claim is auditable
+    against exactly this field.
+    """
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def validate_parameters_json(cls, value: object) -> Mapping[str, float] | None:
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise ValueError("parameters must be a mapping of parameter name to float")
+        return {str(name): float(number) for name, number in value.items()}
 
 
 class SimulationResult(DomainModel):

@@ -11,10 +11,15 @@ from adlife.core.domain.person import DomainModel, PersonProfile
 from adlife.core.domain.state import ConsumerState
 from adlife.core.domain.world import Relationship
 from adlife.core.simulation._validation import revalidate_model
-from adlife.core.simulation.decision import MAX_DAILY_REINFORCEMENT, StateTransition
+from adlife.core.simulation.decision import (
+    MAX_DAILY_REINFORCEMENT,
+    StateTransition,
+    jaccard,
+)
 from adlife.core.simulation.exposure import _project_movement_snapshot
 from adlife.core.simulation.memory import MINUTES_PER_DAY
 from adlife.core.simulation.movement import Snapshot
+from adlife.core.simulation.parameters import ModelParameters
 from adlife.core.simulation.policies import clamp
 from adlife.core.simulation.rng import RandomOracle
 
@@ -268,6 +273,7 @@ def plan_social_shares(
     traversed_edges: Collection[tuple[int, str, str, str]] | None = None,
     carried_messages: Collection[tuple[int, str, str]] | None = None,
     social_enabled: bool = True,
+    parameters: ModelParameters | None = None,
 ) -> tuple[SocialIntent, ...]:
     """Plan at most one edge per message, and at most one message per simulated day.
 
@@ -374,9 +380,22 @@ def plan_social_shares(
         )
         if not isinstance(choice, float) or not isfinite(choice) or not 0.0 <= choice < 1.0:
             raise ValueError("RandomOracle draw must be a finite float in [0, 1)")
-        receiver_id, relationship = eligible[min(int(choice * len(eligible)), len(eligible) - 1)]
+        weight = parameters.social_similarity_weight if parameters is not None else 0.0
+        if weight > 0.0:
+            receiver_id, relationship = _similarity_weighted_choice(
+                contact_snapshot,
+                sender_id,
+                eligible,
+                choice,
+                weight,
+            )
+        else:
+            receiver_id, relationship = eligible[
+                min(int(choice * len(eligible)), len(eligible) - 1)
+            ]
         cognition = signals[event.event_id]
-        probability = clamp(cognition * relationship.strength, 0.0, 1.0)
+        share_scale = parameters.share_probability_scale if parameters is not None else 1.0
+        probability = clamp(cognition * share_scale * relationship.strength, 0.0, 1.0)
         if probability <= 0.0:
             continue
         draw = oracle.uniform(
@@ -423,10 +442,43 @@ def plan_social_shares(
     return tuple(accepted)
 
 
+def _similarity_weighted_choice(
+    contact_snapshot: Snapshot,
+    sender_id: str,
+    eligible: list[tuple[str, Relationship]],
+    choice: float,
+    weight: float,
+) -> tuple[str, Relationship]:
+    """Pick one receiver, mixing the keyed uniform draw with interest similarity.
+
+    Each eligible receiver's weight is ``(1 - w) + w * similarity`` with ``w`` the run's
+    ``social_similarity_weight`` and ``similarity`` the Jaccard overlap of the two
+    agents' interests. At ``w = 0`` every weight is equal and the cumulative pick is the
+    uniform draw; the engine only ever takes this path with a positive weight, so the
+    documented default behaviour is untouched.
+    """
+    sender_profile = contact_snapshot.agents[sender_id][0]
+    weights = tuple(
+        (1.0 - weight)
+        + weight
+        * jaccard(sender_profile.interests, contact_snapshot.agents[receiver_id][0].interests)
+        for receiver_id, _relationship in eligible
+    )
+    total = sum(weights)
+    cumulative = 0.0
+    for position, receiver_weight in enumerate(weights):
+        cumulative += receiver_weight
+        if choice * total < cumulative:
+            return eligible[position]
+    return eligible[-1]
+
+
 def apply_social_intent(
     profile: PersonProfile,
     state: ConsumerState,
     intent: SocialIntent,
+    *,
+    parameters: ModelParameters | None = None,
 ) -> StateTransition:
     """Mark the receiver with social proof, reinforcement and awareness, never an exposure.
 
@@ -443,16 +495,18 @@ def apply_social_intent(
     if state.agent_id != intent.receiver_id:
         raise ValueError("state must belong to the message receiver")
 
+    proof_gain = parameters.social_proof_gain if parameters is not None else SOCIAL_PROOF_GAIN
+    recall_gain = parameters.social_recall_gain if parameters is not None else SOCIAL_RECALL_GAIN
     shift = (
         intent.valence
         * intent.relationship_strength
         * profile.traits.social_susceptibility
-        * SOCIAL_PROOF_GAIN
+        * proof_gain
     )
     headroom = max(0.0, MAX_DAILY_REINFORCEMENT - state.daily_reinforcement)
     projected_recall = clamp(state.recall_strength + state.daily_reinforcement, 0.0, 1.0)
     reinforcement = min(
-        SOCIAL_RECALL_GAIN
+        recall_gain
         * intent.relationship_strength
         * profile.traits.social_susceptibility
         * (1.0 - projected_recall),

@@ -62,6 +62,7 @@ from adlife.core.ports.run_store import RunCheckpoint, RunStore, StoredRun
 if TYPE_CHECKING:
     from adlife.core.simulation.engine import AdLifeModel
     from adlife.core.simulation.movement import TickPlan
+    from adlife.core.simulation.parameters import ModelParameters
 
 LOCKFILE_NAME = "uv.lock"
 GIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -168,9 +169,18 @@ class RunIdentity:
         seed: int,
         provider: str,
         model_id: str,
+        parameters: object | None = None,
     ) -> RunManifest:
         from adlife.core.simulation.engine import canonical_sha256
+        from adlife.core.simulation.parameters import ModelParameters
 
+        parameter_map: Mapping[str, float] | None
+        if parameters is None:
+            parameter_map = None
+        else:
+            if not isinstance(parameters, ModelParameters):
+                raise TypeError("parameters must be ModelParameters when given")
+            parameter_map = parameters.as_mapping()
         return RunManifest(
             run_id=run_id,
             scenario_id=scenario.scenario_id,
@@ -184,6 +194,7 @@ class RunIdentity:
             prompt_version=self.prompt_version,
             prompt_hash=self.prompt_hash,
             platform=self.platform_name,
+            parameters=parameter_map,
         )
 
 
@@ -288,11 +299,25 @@ class SimulationRunner:
         self._identity = identity
         self._model_factory = model_factory
 
-    def _new_model(self, scenario: Scenario, seed: int, run_id: str | None) -> AdLifeModel:
+    def _new_model(
+        self,
+        scenario: Scenario,
+        seed: int,
+        run_id: str | None,
+        parameters: object | None = None,
+    ) -> AdLifeModel:
         from adlife.core.simulation.engine import AdLifeModel
+        from adlife.core.simulation.parameters import ModelParameters
 
         factory = self._model_factory or AdLifeModel
-        model = factory(scenario=scenario, seed=seed, run_id=run_id)
+        if parameters is not None and not isinstance(parameters, ModelParameters):
+            raise TypeError("parameters must be ModelParameters when given")
+        model = factory(
+            scenario=scenario,
+            seed=seed,
+            run_id=run_id,
+            parameters=parameters,
+        )
         if not isinstance(model, AdLifeModel):
             raise RunnerRefused("the model factory did not produce an AdLifeModel")
         return model
@@ -318,6 +343,7 @@ class SimulationRunner:
         provider: object = None,
         provider_name: str | None = None,
         model_id: str | None = None,
+        parameters: object | None = None,
     ) -> SimulationResult:
         """Run one scenario from its first tick to ``run.completed``.
 
@@ -335,8 +361,9 @@ class SimulationRunner:
             seed=seed,
             provider=provider_name,
             model_id=model_id,
+            parameters=parameters,
         )
-        model = self._new_model(scenario, seed, None)
+        model = self._new_model(scenario, seed, None, parameters)
         store.create_run(manifest, scenario=scenario)
         self._publish(store, sinks, model.start_events(run_id))
         return await self._drive(model, provider, store, sinks, manifest)
@@ -351,6 +378,7 @@ class SimulationRunner:
         run_id: str,
         manifest: RunManifest | None = None,
         provider: object = None,
+        parameters: object | None = None,
     ) -> SimulationResult:
         """Continue a stored run from its latest day-boundary checkpoint.
 
@@ -368,14 +396,21 @@ class SimulationRunner:
         resolved_manifest = manifest or stored.manifest
 
         checkpoint = stored.checkpoints[-1] if stored.checkpoints else None
+        resolved_parameters = _parameters_of(resolved_manifest)
         if checkpoint is None:
             model = AdLifeModel.restore(
                 scenario=scenario,
                 seed=seed,
                 checkpoint=_start_checkpoint(stored, run_id),
+                parameters=resolved_parameters,
             )
         else:
-            model = AdLifeModel.restore(scenario=scenario, seed=seed, checkpoint=checkpoint)
+            model = AdLifeModel.restore(
+                scenario=scenario,
+                seed=seed,
+                checkpoint=checkpoint,
+                parameters=resolved_parameters,
+            )
         return await self._drive(model, provider, store, sinks, resolved_manifest)
 
     async def _drive(
@@ -525,6 +560,15 @@ class SimulationRunner:
 
     def checkpoint_for(self, model: AdLifeModel) -> RunCheckpoint:
         return model.checkpoint()
+
+
+def _parameters_of(manifest: RunManifest) -> ModelParameters | None:
+    """Rebuild the manifest's recorded parameter set, or ``None`` for the defaults."""
+    from adlife.core.simulation.parameters import ModelParameters as _ModelParameters
+
+    if manifest.parameters is None:
+        return None
+    return _ModelParameters.model_validate(dict(manifest.parameters))
 
 
 def _usage_of(port: RunCognitionPort) -> Sequence[ProviderUsage] | None:

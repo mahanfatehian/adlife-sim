@@ -17,7 +17,7 @@ from adlife.core.domain.state import ConsumerState
 from adlife.core.simulation._validation import revalidate_model
 from adlife.core.simulation.engine import UnboundRun, canonical_sha256, stable_event_id
 from adlife.core.simulation.movement import Snapshot
-from adlife.core.simulation.policies import notice_probability
+from adlife.core.simulation.policies import clamp, notice_probability
 from adlife.core.simulation.rng import RandomOracle
 
 _PLACEMENT_DIGEST_PATTERN = r"^[0-9a-f]{64}$"
@@ -96,6 +96,7 @@ class AttentionDecision(DomainModel):
 
     schema_version: Literal[1] = 1
     opportunity: ExposureOpportunity
+    notice_scale: float = Field(default=1.0, ge=0.0, le=2.0)
     notice_probability: float = Field(ge=0, le=1)
     random_draw: float = Field(ge=0, lt=1)
     noticed: bool
@@ -125,11 +126,16 @@ class AttentionDecision(DomainModel):
             raise ValueError("attention probability and draw must be finite")
         if self.noticed != (self.random_draw < self.notice_probability):
             raise ValueError("noticed must equal random_draw < notice_probability")
-        expected_probability = notice_probability(
-            self.opportunity.profile,
-            self.opportunity.state,
-            self.opportunity.campaign,
-            self.opportunity.placement,
+        expected_probability = clamp(
+            self.notice_scale
+            * notice_probability(
+                self.opportunity.profile,
+                self.opportunity.state,
+                self.opportunity.campaign,
+                self.opportunity.placement,
+            ),
+            0.0,
+            1.0,
         )
         if self.notice_probability != expected_probability:
             raise ValueError("notice_probability must match the attention policy")
@@ -726,6 +732,8 @@ def _event(
 def decide_attention(
     opportunity: ExposureOpportunity,
     oracle: RandomOracle,
+    *,
+    notice_scale: float = 1.0,
 ) -> AttentionDecision:
     opportunity = revalidate_model(
         opportunity,
@@ -735,11 +743,16 @@ def decide_attention(
     if not isinstance(oracle, RandomOracle):
         raise TypeError("oracle must be a RandomOracle")
 
-    probability = notice_probability(
-        opportunity.profile,
-        opportunity.state,
-        opportunity.campaign,
-        opportunity.placement,
+    probability = clamp(
+        notice_scale
+        * notice_probability(
+            opportunity.profile,
+            opportunity.state,
+            opportunity.campaign,
+            opportunity.placement,
+        ),
+        0.0,
+        1.0,
     )
     namespace = (
         f"campaign-attention:{opportunity.campaign_id}:{opportunity.channel}:"
@@ -785,6 +798,7 @@ def decide_attention(
     )
     return AttentionDecision(
         opportunity=opportunity,
+        notice_scale=notice_scale,
         notice_probability=probability,
         random_draw=draw,
         noticed=noticed,
@@ -795,12 +809,17 @@ def decide_attention(
 def decide_attention_batch(
     batch: ExposureBatch,
     oracle: RandomOracle,
+    *,
+    notice_scale: float = 1.0,
 ) -> tuple[AttentionDecision, ...]:
     """Evaluate a preallocated persisted exposure batch in canonical order."""
     batch = revalidate_model(batch, ExposureBatch, label="exposure batch")
     if not isinstance(oracle, RandomOracle):
         raise TypeError("oracle must be a RandomOracle")
-    return tuple(decide_attention(opportunity, oracle) for opportunity in batch.opportunities)
+    return tuple(
+        decide_attention(opportunity, oracle, notice_scale=notice_scale)
+        for opportunity in batch.opportunities
+    )
 
 
 __all__ = [

@@ -75,7 +75,12 @@ def encode_memory(state: ConsumerState, memory: Memory) -> ConsumerState:
     return state.model_copy(update={"memories": _retained((*state.memories, memory))})
 
 
-def decay_memories(state: ConsumerState, day_index: int) -> ConsumerState:
+def decay_memories(
+    state: ConsumerState,
+    day_index: int,
+    *,
+    parameters: object | None = None,
+) -> ConsumerState:
     """Apply the daily reflection: recall decay, fatigue relief, and salience decay.
 
     Recall follows the documented rule literally::
@@ -87,7 +92,25 @@ def decay_memories(state: ConsumerState, day_index: int) -> ConsumerState:
     ``MAX_DAILY_REINFORCEMENT`` per simulated day. Encoding banks reinforcement without
     touching ``recall_strength``, so a day's reinforcement reaches recall exactly once:
     here. With nothing banked the reflection can only decay.
+
+    The retention values are the run's memory-decay parameters (see
+    ``simulation.parameters``); ``None`` means the documented constants.
     """
+    from adlife.core.simulation.parameters import ModelParameters
+
+    if parameters is None:
+        recall_retention, fatigue_retention, salience_retention = (
+            RECALL_RETENTION,
+            AD_FATIGUE_RETENTION,
+            SALIENCE_RETENTION,
+        )
+    else:
+        if not isinstance(parameters, ModelParameters):
+            raise TypeError("parameters must be ModelParameters when given")
+        recall_retention = parameters.recall_retention
+        fatigue_retention = parameters.ad_fatigue_retention
+        salience_retention = parameters.salience_retention
+
     state = revalidate_model(state, ConsumerState, label="state")
     if type(day_index) is not int or day_index < 0:
         raise ValueError("day_index must be a nonnegative integer")
@@ -103,7 +126,7 @@ def decay_memories(state: ConsumerState, day_index: int) -> ConsumerState:
             continue
         decayed.append(
             memory.model_copy(
-                update={"salience": clamp(memory.salience * SALIENCE_RETENTION, 0.0, 1.0)}
+                update={"salience": clamp(memory.salience * salience_retention, 0.0, 1.0)}
             )
         )
 
@@ -112,11 +135,11 @@ def decay_memories(state: ConsumerState, day_index: int) -> ConsumerState:
         update={
             "memories": _retained(decayed),
             "recall_strength": clamp(
-                state.recall_strength * RECALL_RETENTION + reinforcement,
+                state.recall_strength * recall_retention + reinforcement,
                 0.0,
                 1.0,
             ),
-            "ad_fatigue": clamp(state.ad_fatigue * AD_FATIGUE_RETENTION, 0.0, 1.0),
+            "ad_fatigue": clamp(state.ad_fatigue * fatigue_retention, 0.0, 1.0),
             "daily_reinforcement": 0.0,
         }
     )

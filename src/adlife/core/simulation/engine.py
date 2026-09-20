@@ -27,6 +27,7 @@ from adlife.core.simulation.decision import (
     purchase_proxy,
 )
 from adlife.core.simulation.memory import decay_memories, encode_memory, purchase_proxy_memory
+from adlife.core.simulation.parameters import DEFAULT_PARAMETERS, ModelParameters
 from adlife.core.simulation.rng import RandomOracle
 
 if TYPE_CHECKING:
@@ -212,6 +213,7 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
         scenario: Scenario,
         seed: int,
         run_id: str | None = None,
+        parameters: ModelParameters | None = None,
     ) -> None:
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -225,6 +227,7 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
 
         self._domain_scenario = scenario
         self._seed = seed
+        self._parameters = DEFAULT_PARAMETERS if parameters is None else parameters
         self.clock = SimClock(scenario.days * 1440, scenario.tick_minutes)
         self.oracle = RandomOracle(seed)
         self._run_id: str | None = None
@@ -385,7 +388,11 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
                     self.clock.current_minute,
                     preceding_events=movement_events,
                 )
-                decisions = decide_attention_batch(batch, self.oracle)
+                decisions = decide_attention_batch(
+                    batch,
+                    self.oracle,
+                    notice_scale=self._parameters.notice_scale,
+                )
                 requests = tuple(
                     self._cognition_request(decision) for decision in decisions if decision.noticed
                 )
@@ -575,7 +582,12 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
                 opportunity.campaign,
                 opportunity.placement,
             )
-            response = compose_response(baseline, result)
+            response = compose_response(
+                baseline,
+                result,
+                sentiment_gain=self._parameters.sentiment_gain,
+                recall_gain=self._parameters.recall_gain,
+            )
             answer_event = mint(
                 EventType.COGNITION_FALLBACK if fallback else EventType.COGNITION_COMPLETED,
                 payload={
@@ -651,6 +663,7 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
             traversed_edges=self._traversed_edges,
             carried_messages=self._carried_messages,
             social_enabled=self._domain_scenario.social_enabled,
+            parameters=self._parameters,
         )
         new_edges: list[tuple[int, str, str, str]] = []
         new_messages: list[tuple[int, str, str]] = []
@@ -674,6 +687,7 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
                 self.agent_by_id[receiver_id].profile,
                 working[receiver_id],
                 intent,
+                parameters=self._parameters,
             )
             working[receiver_id] = transition.state
             received = mint(
@@ -764,7 +778,9 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
         if ends_day:
             day_index = (minute + self._domain_scenario.tick_minutes) // 1440 - 1
             for agent_id in sorted(working):
-                working[agent_id] = decay_memories(working[agent_id], day_index)
+                working[agent_id] = decay_memories(
+                    working[agent_id], day_index, parameters=self._parameters
+                )
                 cause = agent_cause.get(agent_id)
                 mint(
                     EventType.DAY_REFLECTED,
@@ -837,6 +853,7 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
         scenario: Scenario,
         seed: int,
         checkpoint: RunCheckpoint,
+        parameters: ModelParameters | None = None,
     ) -> AdLifeModel:
         """Rebuild a model exactly where a day-boundary checkpoint left it.
 
@@ -848,7 +865,7 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
         """
         if not isinstance(checkpoint, RunCheckpoint):
             raise TypeError("checkpoint must be a RunCheckpoint")
-        model = cls(scenario=scenario, seed=seed)
+        model = cls(scenario=scenario, seed=seed, parameters=parameters)
         population_ids = sorted(profile.agent_id for profile in scenario.population)
         checkpoint_ids = [state.agent_id for state in checkpoint.states]
         if checkpoint_ids != population_ids:

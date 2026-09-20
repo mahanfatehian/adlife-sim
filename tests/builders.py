@@ -132,3 +132,62 @@ def pair_scenario(scenario: Scenario) -> Scenario:
             ),
         }
     )
+
+
+# -- the rules-mode cognition harness shared by the experiment suites ---------------
+
+
+def rule_inputs_for(plan) -> dict:
+    """Wire the terminal rule fallback for every request a plan raises."""
+    from adlife.adapters.cognition.rules import RuleCognitionInputs
+
+    inputs: dict[str, RuleCognitionInputs] = {}
+    for decision in plan.attention:
+        if not decision.noticed:
+            continue
+        opportunity = decision.opportunity
+        inputs[decision.events[2].event_id] = RuleCognitionInputs(
+            profile=opportunity.profile,
+            state=opportunity.state,
+            campaign=opportunity.campaign,
+            placement=opportunity.placement,
+        )
+    return inputs
+
+
+def rule_fallback_for(plan):
+    """Build specification section 12's terminal fallback for one tick's requests."""
+    from adlife.adapters.cognition.rules import RuleCognitionProvider
+
+    return RuleCognitionProvider.for_requests(plan.requests, rule_inputs_for(plan))
+
+
+class RuleCognitionPort:
+    """The core-side cognition seam for whole-run tests, answering through the rules.
+
+    Every request is answered straight through the terminal fallback the runner builds
+    from the plan - which IS the documented rule formula - in-process, with no budget
+    and no retry. The runner sees only this port, never an adapter.
+    """
+
+    def __init__(self) -> None:
+        self.answered: list[object] = []
+
+    async def resolve(self, requests, *, fallback_provider):
+        answers = {}
+        for request in requests:
+            self.answered.append(request)
+            answers[request.request_id] = await fallback_provider.answer(request)
+        return answers
+
+    @property
+    def provider_metadata(self):
+        from adlife.adapters.cognition.rules import RULE_MODEL_ID
+        from adlife.core.ports.cognition import ProviderMetadata, SamplingSettings
+
+        return ProviderMetadata(
+            kind="rule",
+            model_id=RULE_MODEL_ID,
+            sampling=SamplingSettings(),
+            prompt_sha256="d" * 64,
+        )
