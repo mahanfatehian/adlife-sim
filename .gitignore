@@ -19,3 +19,5 @@ htmlcov/
 *.sqlite3
 runs/
 reports/
+
+.freebuff/
