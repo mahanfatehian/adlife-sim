@@ -20,4 +20,7 @@ htmlcov/
 runs/
 reports/
 
+# Local study folders are personal sandboxes, not part of the package
+demo-study/
+
 .freebuff/
