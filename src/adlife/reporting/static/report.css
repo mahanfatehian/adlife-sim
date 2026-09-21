@@ -1,0 +1,83 @@
+/* AdLife offline report: system fonts only, no remote resources. */
+:root {
+  color-scheme: light;
+  --ink: #1d2733;
+  --muted: #5b6b7b;
+  --line: #d5dde5;
+  --banner: #fff7e0;
+  --banner-ink: #5c4a12;
+  --accent: #0f5c8c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  margin: 0 auto;
+  padding: 1.5rem 2rem 4rem;
+  max-width: 60rem;
+  line-height: 1.55;
+  background: #ffffff;
+}
+
+.banner {
+  background: var(--banner);
+  color: var(--banner-ink);
+  border: 1px solid #e8d48a;
+  border-radius: 0.4rem;
+  padding: 0.8rem 1rem;
+  margin-bottom: 1.5rem;
+}
+
+h1 { font-size: 1.6rem; margin: 0 0 0.4rem; }
+h2 { font-size: 1.2rem; margin: 2rem 0 0.6rem; border-bottom: 1px solid var(--line); padding-bottom: 0.3rem; }
+h3 { font-size: 1rem; margin: 0.8rem 0 0.4rem; }
+
+.lead { font-size: 1.05rem; color: var(--muted); }
+.note { color: var(--muted); font-style: italic; }
+.muted { color: var(--muted); font-weight: normal; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6rem 0 1rem;
+  font-size: 0.95rem;
+}
+
+th, td {
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+}
+
+thead th { border-bottom-width: 2px; }
+tbody th { font-weight: 600; white-space: nowrap; width: 12rem; }
+
+code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85em;
+  background: #f2f5f8;
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.columns { display: flex; gap: 2rem; flex-wrap: wrap; }
+.columns > div { flex: 1 1 12rem; }
+
+ul { padding-left: 1.2rem; }
+
+.diary {
+  border-left: 3px solid var(--accent);
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  margin: 0.9rem 0;
+}
+
+.chart { min-height: 20rem; margin: 1rem 0; }
+
+@media print {
+  .chart { display: none; }
+  body { padding: 0; }
+}

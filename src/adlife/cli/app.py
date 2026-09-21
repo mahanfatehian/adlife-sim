@@ -17,10 +17,12 @@ import typer
 from adlife import __version__
 from adlife.cli.commands.campaign import app as campaign_app
 from adlife.cli.commands.compare import command as compare_command
+from adlife.cli.commands.demo import command as demo_command
 from adlife.cli.commands.doctor import command as doctor_command
 from adlife.cli.commands.init import command as init_command
 from adlife.cli.commands.population import app as population_app
 from adlife.cli.commands.replay import command as replay_command
+from adlife.cli.commands.report import command as report_command
 from adlife.cli.commands.run import command as run_command
 from adlife.cli.commands.validate import command as validate_command
 from adlife.cli.errors import set_output_format
@@ -39,6 +41,8 @@ app.command("run")(run_command)
 app.command("replay")(replay_command)
 app.command("compare")(compare_command)
 app.command("doctor")(doctor_command)
+app.command("report")(report_command)
+app.command("demo")(demo_command)
 
 
 def version_callback(value: bool) -> None:

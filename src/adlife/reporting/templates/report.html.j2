@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if comparison_mode %}Comparison {{ label }}{% else %}AdLife report {{ run_id }}{% endif %}</title>
+<style>
+{{ css }}
+</style>
+<script id="plotly-runtime">
+{{ plotly_js }}
+</script>
+</head>
+<body>
+<header class="banner" role="note">
+  <strong>Synthetic and exploratory.</strong> {{ disclosure }}
+</header>
+
+{% if comparison_mode %}
+<section id="comparison">
+  <h1>Paired comparison: {{ label }}</h1>
+  <p>Seeds: {{ seeds | join(", ") }}</p>
+  <table>
+    <thead>
+      <tr><th>Metric</th><th>n</th><th>Mean paired difference</th><th>Std</th><th>Median</th><th>95% CI</th><th>Effect size</th><th>Agreement</th><th>Direction</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.metric }}</td><td>{{ row.n }}</td>
+        <td>{{ "%.4f" | format(row.mean) }}</td>
+        <td>{{ "%.4f" | format(row.std) }}</td>
+        <td>{{ "%.4f" | format(row.median) }}</td>
+        <td>{{ "%.4f" | format(row.ci_low) }} .. {{ "%.4f" | format(row.ci_high) }}</td>
+        <td>{{ "%.4f" | format(row.effect) }}</td>
+        <td>{{ "%.0f%%" | format(row.agreement * 100) }}</td>
+        <td>{{ row.direction }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="chart-comparison" class="chart"></div>
+</section>
+{% else %}
+<section id="summary">
+  <h1>AdLife run report</h1>
+  <p class="lead">{{ executive_summary }}</p>
+</section>
+
+<section id="configuration">
+  <h2>Configuration and reproducibility</h2>
+  <table>
+    <tbody>
+      <tr><th>Run</th><td>{{ manifest.run_id }}</td></tr>
+      <tr><th>Scenario</th><td>{{ manifest.scenario_id }} <code>{{ manifest.scenario_hash }}</code></td></tr>
+      <tr><th>Seed</th><td>Seed: {{ manifest.seed }}</td></tr>
+      <tr><th>Package</th><td>{{ manifest.package_version }}</td></tr>
+      <tr><th>Git</th><td><code>{{ manifest.git_sha }}</code></td></tr>
+      <tr><th>Lockfile</th><td><code>{{ manifest.lockfile_sha256 }}</code></td></tr>
+      <tr><th>Provider</th><td>{{ manifest.provider }} / {{ manifest.model_id }}</td></tr>
+      <tr><th>Prompt</th><td>{{ manifest.prompt_version }}</td></tr>
+      <tr><th>Platform</th><td>{{ manifest.platform }}</td></tr>
+      <tr><th>Status</th><td>{{ manifest.status }} at minute {{ manifest.final_minute }}, {{ manifest.event_count }} events</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="population">
+  <h2>Population distribution</h2>
+  <p>{{ population.size }} fictional agents.</p>
+  <div class="columns">
+    <div><h3>Occupations</h3><ul>{% for item in population.occupations %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
+    <div><h3>Income bands</h3><ul>{% for item in population.income_bands %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
+  </div>
+</section>
+
+<section id="reach">
+  <h2>Reach and frequency</h2>
+  <table>
+    <thead><tr><th>Campaign</th><th>Eligible</th><th>Impressions</th><th>Reach</th><th>Frequency</th></tr></thead>
+    <tbody>
+      {% for campaign in campaigns %}
+      <tr>
+        <td>{{ campaign.name }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.eligible) }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.impressions) }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.reach) }}</td>
+        <td>{{ "%.2f" | format(campaign.metrics.frequency) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="chart-reach" class="chart"></div>
+</section>
+
+<section id="notice">
+  <h2>Notice and channel comparison</h2>
+  <table>
+    <thead><tr><th>Campaign</th><th>Noticed</th><th>Notice rate</th></tr></thead>
+    <tbody>
+      {% for campaign in campaigns %}
+      <tr><td>{{ campaign.name }}</td><td>{{ "%.0f" | format(campaign.metrics.noticed) }}</td><td>{{ "%.1f%%" | format(campaign.metrics.notice_rate * 100) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section id="metrics">
+  <h2>Full metrics by campaign</h2>
+  <table>
+    <thead><tr><th>Campaign</th><th>Sentiment</th><th>Recall</th><th>Fatigue</th><th>Direct awareness</th><th>Indirect awareness</th><th>Word of mouth</th><th>Intention</th><th>High intention</th><th>Purchases</th></tr></thead>
+    <tbody>
+      {% for campaign in campaigns %}
+      <tr>
+        <td>{{ campaign.name }}</td>
+        <td>{{ "%.3f" | format(campaign.metrics.sentiment) }}</td>
+        <td>{{ "%.3f" | format(campaign.metrics.recall) }}</td>
+        <td>{{ "%.3f" | format(campaign.metrics.fatigue) }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.direct_awareness) }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.indirect_awareness) }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.word_of_mouth_reach) }}</td>
+        <td>{{ "%+.3f" | format(campaign.metrics.intention_delta) }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.high_intention) }}</td>
+        <td>{{ "%.0f" | format(campaign.metrics.purchases) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if campaigns %}
+  <p class="note">Overall: reach {{ "%.0f" | format(overall.reach) }}, frequency {{ "%.2f" | format(overall.frequency) }}, notice rate {{ "%.1f%%" | format(overall.notice_rate * 100) }}, purchases {{ "%.0f" | format(overall.purchases) }}.</p>
+  {% endif %}
+</section>
+
+<section id="states">
+  <h2>Sentiment, recall, and intention distributions</h2>
+  <div class="columns">
+    <div><h3>Sentiment</h3><ul>{% for item in state_distributions.sentiment %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
+    <div><h3>Recall</h3><ul>{% for item in state_distributions.recall %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
+    <div><h3>Intention</h3><ul>{% for item in state_distributions.intention %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
+    <div><h3>Fatigue</h3><ul>{% for item in state_distributions.fatigue %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
+  </div>
+</section>
+
+<section id="word-of-mouth">
+  <h2>Word of mouth</h2>
+  <p>{{ word_of_mouth.shares }} shares, {{ word_of_mouth.received }} receptions.</p>
+  {% if word_of_mouth.edges %}
+  <ul>{% for edge in word_of_mouth.edges %}<li>{{ edge.sender }} shared {{ edge.campaign }} with {{ edge.receiver }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+
+<section id="diaries">
+  <h2>Selected fictional diaries</h2>
+  <p class="note">Every diary below belongs to a fictional, generated person. The names and reflections are invented.</p>
+  {% for diary in diaries %}
+  <article class="diary">
+    <h3>Day {{ diary.day }} &mdash; {{ diary.display_name }} <span class="muted">({{ diary.agent_id }})</span></h3>
+    <p>{{ diary.summary }}</p>
+  </article>
+  {% endfor %}
+  {% if not diaries %}<p>No day reflections were recorded in this run.</p>{% endif %}
+</section>
+
+<section id="usage">
+  <h2>Provider usage and fallbacks</h2>
+  <table>
+    <tbody>
+      <tr><th>Provider</th><td>{{ manifest.provider }} / {{ manifest.model_id }}</td></tr>
+      <tr><th>Requests</th><td>{{ provider_usage.requests }}</td></tr>
+      <tr><th>Cache hits</th><td>{{ provider_usage.cache_hits }}</td></tr>
+      <tr><th>Fallbacks</th><td>{{ provider_usage.failures }}</td></tr>
+      {% for reason, count in provider_usage.fallback_reasons.items() %}
+      <tr><th>Fallback: {{ reason }}</th><td>{{ count }}</td></tr>
+      {% endfor %}
+      <tr><th>Prompt tokens</th><td>{{ provider_usage.prompt_tokens }}</td></tr>
+      <tr><th>Completion tokens</th><td>{{ provider_usage.completion_tokens }}</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section id="limitations">
+  <h2>Limitations, formulas, and assumptions</h2>
+  <ul>
+    {% for item in limitations %}<li>{{ item }}</li>{% endfor %}
+  </ul>
+</section>
+
+{% if not comparison_mode %}
+<script>
+const REPORT_DATA = {{ chart_payload }};
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof Plotly === "undefined") { return; }
+  const reach = document.getElementById("chart-reach");
+  if (reach && REPORT_DATA.campaigns) {
+    Plotly.newPlot(reach, [{
+      type: "bar",
+      x: REPORT_DATA.campaigns.map((c) => c.campaign_id),
+      y: REPORT_DATA.campaigns.map((c) => c.metrics.reach),
+      name: "reach"
+    }], {title: "Reach by campaign", template: "none"});
+  }
+  const comparison = document.getElementById("chart-comparison");
+  if (comparison && REPORT_DATA.metrics) {
+    Plotly.newPlot(comparison, [{
+      type: "bar",
+      x: REPORT_DATA.metrics.map((m) => m.metric),
+      y: REPORT_DATA.metrics.map((m) => m.mean),
+      error_y: {
+        type: "data",
+        symmetric: false,
+        array: REPORT_DATA.metrics.map((m) => m.ci_high - m.mean),
+        arrayminus: REPORT_DATA.metrics.map((m) => m.mean - m.ci_low)
+      }
+    }], {title: "Mean paired difference with 95% CI", template: "none"});
+  }
+});
+</script>
+{% endif %}
+</body>
+</html>
