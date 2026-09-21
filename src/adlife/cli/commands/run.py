@@ -25,9 +25,11 @@ from adlife.cli.errors import CommandError, command_boundary, output_format
 from adlife.cli.output import emit_json, info
 from adlife.cli.project import Project, load_project
 from adlife.core.domain.events import DomainEvent
+from adlife.core.domain.results import SimulationResult
 from adlife.core.ports.cognition import CognitionProvider, ProviderMetadata, SamplingSettings
 from adlife.core.ports.event_sink import EventSink
-from adlife.core.simulation.runner import RunIdentity
+from adlife.core.ports.run_store import StorageError
+from adlife.core.simulation.runner import InterruptedRun, RunIdentity, SimulationRunner
 
 RUN_ID_PATTERN_HELP = "[a-z0-9][a-z0-9-]{0,39}"
 
@@ -120,6 +122,54 @@ def _replay_metadata(model_id: str) -> ProviderMetadata:
     )
 
 
+def _interrupted_result(root: Path, run_id: str) -> SimulationResult:
+    """The recorded result of an interrupted run, for the InterruptedRun envelope."""
+    from adlife.adapters.storage.sqlite_store import SQLiteRunStore as _Store
+
+    stored = _Store(root).load_run(run_id)
+    if stored.result is None:
+        raise StorageError(f"run {run_id} stopped without recording its result")
+    return stored.result
+
+
+def _terminal_available() -> bool:
+    """A live dashboard is only possible on an interactive terminal."""
+    import os
+
+    return sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
+
+
+async def _run_live(
+    runner: SimulationRunner,
+    project: Project,
+    seed: int,
+    run_id: str,
+) -> SimulationResult:
+    """Drive one run beneath the Textual dashboard; the artifact is identical."""
+    from adlife.tui.app import AdLifeTui
+    from adlife.tui.controller import LiveRunController
+    from adlife.tui.event_bus import TuiEventBus
+
+    bus = TuiEventBus()
+    controller = LiveRunController(
+        runner_factory=lambda: runner,
+        scenario=project.scenario,
+        seed=seed,
+        store=SQLiteRunStore(project.root),
+        run_id=run_id,
+        event_bus=bus,
+    )
+    app = AdLifeTui(controller, bus)
+    await app.run_async()
+    if controller.failure is not None:
+        raise controller.failure
+    if controller.result is not None:
+        return controller.result
+    # A quit via q/ctrl-c cancelled the task; the runner recorded the interrupted
+    # artifact before the cancellation surfaced here.
+    raise InterruptedRun(_interrupted_result(project.root, run_id))
+
+
 @command_boundary
 def command(
     project_path: Annotated[Path, typer.Argument(help="The study directory to run.")],
@@ -186,17 +236,21 @@ def command(
         project = _with_campaigns(project, [Path(item) for item in campaign])
 
     resolved_cache = cache_dir if cache_dir is not None else cache_directory(project.root)
-    if live and not no_headless_fallback and not sys.stdout.isatty():
-        info(
-            "the live dashboard requires a terminal (it arrives with the Textual "
-            "interface); falling back to a headless run"
-        )
-    elif live and no_headless_fallback and not sys.stdout.isatty():
-        raise CommandError(
-            "--live needs a terminal and --no-headless-fallback refuses the headless fallback",
-        )
-
     fmt = output_format()
+    if live and fmt == "jsonl":
+        raise CommandError(
+            "--live drives the terminal dashboard and cannot also stream jsonl events "
+            "on stdout; run without --format jsonl or without --live",
+        )
+    dashboard_requested = live and not headless and _terminal_available()
+    if live and not dashboard_requested and not headless:
+        if no_headless_fallback:
+            raise CommandError(
+                "--live needs an interactive terminal and --no-headless-fallback "
+                "refuses the headless fallback",
+            )
+        info("the live dashboard requires an interactive terminal; running headless instead")
+
     cognition, fallback = _cognition_seams(project, mode, resolved_seed, resolved_cache)
     identity = _identity(project, mode, project.config.provider.model)
     from adlife.core.simulation.runner import SimulationRunner
@@ -207,18 +261,22 @@ def command(
         identity=identity,
     )
     store = SQLiteRunStore(project.root)
-    sinks = _sinks(fmt)
-    result = asyncio.run(
-        runner.run(
-            project.scenario,
-            seed=resolved_seed,
-            store=store,
-            sinks=sinks,
-            run_id=resolved_run_id,
-            provider_name="rules" if mode == "rules" else "mock",
-            model_id=project.config.provider.model,
+
+    if dashboard_requested:
+        result = asyncio.run(_run_live(runner, project, resolved_seed, resolved_run_id))
+    else:
+        sinks = _sinks(fmt)
+        result = asyncio.run(
+            runner.run(
+                project.scenario,
+                seed=resolved_seed,
+                store=store,
+                sinks=sinks,
+                run_id=resolved_run_id,
+                provider_name="rules" if mode == "rules" else "mock",
+                model_id=project.config.provider.model,
+            )
         )
-    )
 
     document = {
         "run_id": result.run_id,

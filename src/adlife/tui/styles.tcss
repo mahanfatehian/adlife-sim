@@ -1,0 +1,50 @@
+/* The four-panel dashboard layout: header, 60/40 split, filter bar, strip. */
+#header-bar {
+    height: 1;
+}
+
+#clock {
+    dock: right;
+    width: auto;
+}
+
+#clock.paused {
+    text-style: reverse;
+}
+
+#main {
+    height: 1fr;
+}
+
+#agent-table {
+    width: 60%;
+    height: 100%;
+}
+
+#right {
+    width: 40%;
+    height: 100%;
+}
+
+#agent-detail {
+    height: 40%;
+    border: solid $secondary;
+    padding: 0 1;
+}
+
+#event-stream {
+    height: 60%;
+    border: solid $secondary;
+    padding: 0 1;
+}
+
+#filter-bar {
+    height: 1;
+    display: none;
+}
+
+#metrics-strip {
+    height: 1;
+    dock: bottom;
+    background: $panel;
+}

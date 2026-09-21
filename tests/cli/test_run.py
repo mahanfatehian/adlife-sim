@@ -124,6 +124,17 @@ def test_live_mode_falls_back_to_headless_by_default(tmp_path: Path) -> None:
     assert (project / "runs" / "run-live" / "run.json").is_file()
 
 
+def test_live_with_jsonl_stream_is_refused(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["--format", "jsonl", "run", str(project), "--live", "--mode", "rules"],
+    )
+    assert result.exit_code == 2
+    assert "jsonl" in result.output.lower()
+
+
 def test_replay_mode_without_a_cache_refuses(tmp_path: Path) -> None:
     project = make_project(tmp_path)
 

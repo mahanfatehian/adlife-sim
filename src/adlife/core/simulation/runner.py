@@ -42,7 +42,7 @@ import platform
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -61,7 +61,7 @@ from adlife.core.ports.run_store import RunCheckpoint, RunStore, StoredRun
 
 if TYPE_CHECKING:
     from adlife.core.simulation.engine import AdLifeModel
-    from adlife.core.simulation.movement import TickPlan
+    from adlife.core.simulation.movement import TickOutcome, TickPlan
     from adlife.core.simulation.parameters import ModelParameters
 
 LOCKFILE_NAME = "uv.lock"
@@ -344,6 +344,8 @@ class SimulationRunner:
         provider_name: str | None = None,
         model_id: str | None = None,
         parameters: object | None = None,
+        tick_observer: Callable[[TickPlan, TickOutcome, AdLifeModel], Awaitable[None]]
+        | None = None,
     ) -> SimulationResult:
         """Run one scenario from its first tick to ``run.completed``.
 
@@ -351,6 +353,9 @@ class SimulationRunner:
         configuration object travels to the cognition factory untouched, so a live
         provider adapter can read its endpoint and credentials from it; the manifest's
         ``provider`` and ``model_id`` fields come from ``provider_name``/``model_id``.
+        ``tick_observer`` is awaited after each tick is persisted and before the clock
+        advances - the live dashboard's turn to render and its pause point - and the
+        loop is otherwise exactly the headless one.
         """
         run_id = run_id or run_id_from(scenario, seed)
         provider_name = provider_name or _default_provider_name(provider)
@@ -366,7 +371,7 @@ class SimulationRunner:
         model = self._new_model(scenario, seed, None, parameters)
         store.create_run(manifest, scenario=scenario)
         self._publish(store, sinks, model.start_events(run_id))
-        return await self._drive(model, provider, store, sinks, manifest)
+        return await self._drive(model, provider, store, sinks, manifest, tick_observer)
 
     async def resume(
         self,
@@ -420,6 +425,8 @@ class SimulationRunner:
         store: RunStore,
         sinks: Sequence[EventSink],
         manifest: RunManifest,
+        tick_observer: Callable[[TickPlan, TickOutcome, AdLifeModel], Awaitable[None]]
+        | None = None,
     ) -> SimulationResult:
         port = self._cognition_port_for(model, provider)
         try:
@@ -430,6 +437,10 @@ class SimulationRunner:
                 store.append_events(outcome.events)
                 for sink in sinks:
                     sink.append_many(manifest.run_id, outcome.events)
+                if tick_observer is not None:
+                    # The observer's await is the live dashboard's turn to render and
+                    # its pause point; the loop itself is exactly the headless one.
+                    await tick_observer(plan, outcome, model)
                 model.clock.advance()
                 if outcome.ends_simulated_day:
                     # After the advance, so the clock stands exactly on the boundary the

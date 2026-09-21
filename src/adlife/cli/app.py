@@ -9,6 +9,7 @@ commands make lazily.
 
 from __future__ import annotations
 
+import sys
 from typing import Literal
 
 import typer
@@ -23,6 +24,7 @@ from adlife.cli.commands.replay import command as replay_command
 from adlife.cli.commands.run import command as run_command
 from adlife.cli.commands.validate import command as validate_command
 from adlife.cli.errors import set_output_format
+from adlife.core.simulation.runner import InterruptedRun
 
 app = typer.Typer(
     name="adlife",
@@ -76,4 +78,8 @@ def main() -> None:
     try:
         app()
     except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    except InterruptedRun as interrupted:
+        # The runner recorded the interrupted artifact; exit 130 as documented.
+        print(str(interrupted), file=sys.stderr)
         raise SystemExit(130) from None
