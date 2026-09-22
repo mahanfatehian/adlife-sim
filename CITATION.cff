@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, cite it using these metadata.
+title: AdLife Lab
+subtitle: >-
+  A local-first synthetic consumer society and advertising simulation CLI
+type: software
+version: 0.1.0
+date-released: "2026-09-22"
+license: AGPL-3.0-only
+repository-code: "https://github.com/mahanfatehian/adlife-sim"
+abstract: >-
+  A deterministic, event-sourced agent-based simulator of a small fictional
+  consumer society for studying advertising exposure, memory, and word of
+  mouth under fully reproducible conditions. All agents are fictional;
+  results are synthetic and exploratory.
+keywords:
+  - agent-based-modeling
+  - simulation
+  - synthetic-audience
+  - advertising
+  - reproducibility
+# NOTE: Fill in the author's name below before public citation. Per the
+# project's specification, the repository owner edits this file to add their
+# own name; the tooling deliberately does not guess it.
+authors:
+  - name: "(owner: fill in before publication)"

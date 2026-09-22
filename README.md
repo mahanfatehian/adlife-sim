@@ -22,8 +22,9 @@ to that change alone.
 ## Scientific scope
 
 > **Every agent in this simulator is fictional and generated from templates. No real person's data is
-> used, collected, or modelled.** Results describe behaviour *inside a synthetic model*. They are not a
-> statistically representative prediction about any real population, market, or country.
+> used, collected, or modelled.** Results are synthetic and exploratory: they describe behaviour *inside
+> a synthetic model* and are not a representative survey of, nor a statistically representative
+> prediction about, any real population, market, or country.
 
 This constraint is enforced in code, not merely documented. Persona fields reject national identifiers,
 phone numbers, email addresses, and free-form secrets; provider prompts are minimised and carry no
@@ -74,15 +75,15 @@ and presentation layers are in progress.
 | World routes and two-phase movement planning | Complete |
 | Campaign ingestion, exposure opportunity, impression, and attention | Complete |
 | Response dynamics, memory decay, social influence, and purchase proxy | Complete |
-| Cognition ports, mock provider, rules provider, and replay | In progress |
-| OpenAI-compatible provider with bounded fallback | Planned |
-| Event sinks, SQLite storage, and replayable run artifacts | Planned |
-| Full run orchestration | Planned |
-| Metrics and paired experiments | Planned |
-| Complete command-line interface | Planned |
-| Live terminal user interface | Planned |
-| JSON, CSV, and self-contained HTML reports | Planned |
-| Packaging, frozen binaries, and installers | Planned |
+| Cognition ports, mock provider, rules provider, and replay | Complete |
+| OpenAI-compatible provider with bounded fallback | Complete |
+| Event sinks, SQLite storage, and replayable run artifacts | Complete |
+| Full run orchestration | Complete |
+| Metrics and paired experiments | Complete |
+| Complete command-line interface | Complete |
+| Live terminal user interface | Complete |
+| Self-contained HTML reports | Complete |
+| Wheels, frozen binaries, and installers | Planned |
 
 ---
 
@@ -93,7 +94,11 @@ and presentation layers are in progress.
 
 ## Installation
 
-The package is not published to a package index. Install it from source:
+<!-- adlife-install:start -->
+uv tool install adlife-sim
+<!-- adlife-install:end -->
+
+Until a package index release exists (see the roadmap), install from source:
 
 ```bash
 git clone https://github.com/mahanfatehian/adlife-sim.git
@@ -109,19 +114,32 @@ uv run adlife --version
 
 ## Usage
 
+The fastest look is the offline demonstration — it builds a synthetic study, runs it on the mock
+provider, and needs no network, no API key, and no configuration:
+
 ```bash
-uv run adlife --help
+uv run adlife demo
 ```
 
-Campaign definitions are authored in YAML and validated before use. Campaign files are treated as
+A full walkthrough, from an empty directory to a self-contained HTML report, is in
+[docs/quickstart.md](docs/quickstart.md). The shape of a study:
+
+```bash
+uv run adlife init my-study              # create a study from the packaged demo project
+uv run adlife validate my-study          # gate: every input checks before anything runs
+uv run adlife run my-study --seed 42     # one deterministic whole run, fully persisted
+uv run adlife replay my-study <run-id>   # re-execute and verify byte-identical events
+uv run adlife report my-study <run-id>   # self-contained HTML report (works offline)
+uv run adlife compare control treatment  # paired A/B across seeds (common random numbers)
+uv run adlife run my-study --live        # the four-panel terminal dashboard
+uv run adlife doctor --offline           # installation readiness, zero network
+```
+
+Campaign and population documents are authored in YAML and validated before use. They are treated as
 untrusted input: YAML is parsed with a safe loader, and any referenced asset path is resolved and
-confirmed to lie beneath the project root before it is opened.
-
-```bash
-uv run adlife campaign --help
-```
-
-Additional commands are introduced as the orchestration, reporting, and interface layers land.
+confirmed to lie beneath the project root before it is opened. Every command honors the global
+`--format human|json|jsonl` output contract; see
+[docs/cli-reference.md](docs/cli-reference.md) for the complete surface.
 
 ---
 
@@ -132,11 +150,14 @@ src/adlife/
 ├── core/              # Simulation model — no adapters, no I/O frameworks
 │   ├── domain/        # Frozen, strictly validated contracts
 │   ├── simulation/    # Clock, random oracle, movement, exposure, response, memory, social
+│   ├── experiments/   # Metrics fold, paired comparisons, sensitivity sweeps
 │   └── ports/         # Interfaces the outside world implements
-├── adapters/          # Concrete implementations of the ports
+├── adapters/          # Concrete implementations of the ports (storage, cognition)
 ├── config/            # Strict settings, safe loading, path containment
-├── cli/               # Command-line surface
-└── resources/         # Packaged data (fictional name and routine templates)
+├── cli/               # Command-line surface and output contract
+├── tui/               # Live terminal dashboard (read-only adapter over the core)
+├── reporting/         # Self-contained HTML report rendering
+└── resources/         # Packaged data (fictional name and routine templates, demo project)
 
 tests/
 ├── contract/          # Contract and interface guarantees
@@ -168,6 +189,77 @@ To check for iteration-order dependence:
 PYTHONHASHSEED=0 uv run pytest -q
 PYTHONHASHSEED=12345 uv run pytest -q
 ```
+
+---
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [docs/quickstart.md](docs/quickstart.md) | Zero to HTML report in a handful of commands |
+| [docs/cli-reference.md](docs/cli-reference.md) | Every command, flag, exit code, and the output contract |
+| [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, event sourcing, the tick, artifacts |
+| [docs/reproducibility.md](docs/reproducibility.md) | What a seed guarantees and how to reproduce any run |
+| [docs/methodology/odd-protocol.md](docs/methodology/odd-protocol.md) | The ODD protocol: entities, scales, scheduling, submodels, formulas |
+| [docs/methodology/model-card.md](docs/methodology/model-card.md) | Intended and excluded use, risks, validity status |
+| [docs/methodology/experiment-protocol.md](docs/methodology/experiment-protocol.md) | The pre-registered comparison and sensitivity protocol |
+| [docs/methodology/limitations.md](docs/methodology/limitations.md) | What the model cannot support |
+| [docs/investor-demo.md](docs/investor-demo.md) | A five-minute demonstration script |
+
+---
+
+## Research method
+
+AdLife Lab is an agent-based model documented under the ODD (Overview, Design concepts, Details)
+protocol — see [docs/methodology/odd-protocol.md](docs/methodology/odd-protocol.md). Campaign effects
+are studied with paired comparisons under common random numbers: two arms share seed, initial
+population, world, and keyed random streams, so a paired difference is the declared treatment and
+nothing else. An A/A control (the same scenario twice) must return exactly zero before any treatment
+result is read, and a no-campaign control anchors what the campaigns themselves contribute. The full
+pre-registration, including the 80% directional-stability rule and sensitivity ranges, lives in
+[docs/methodology/experiment-protocol.md](docs/methodology/experiment-protocol.md).
+
+---
+
+## Reproducibility
+
+The same seed, scenario, and code produce byte-identical events. Every stochastic decision is drawn
+from a keyed random oracle scoped to its agent and purpose, so a change in evaluation order cannot
+change an outcome. Every run persists a manifest recording the code version, scenario fingerprint,
+provider, and seed, and `adlife replay` re-executes a stored run and verifies the event stream matches
+the recorded one. The recipe is in [docs/reproducibility.md](docs/reproducibility.md).
+
+---
+
+## Limitations
+
+Results are synthetic and exploratory. The society is small (1–30 agents) over short horizons (1–7
+simulated days) with two advertising channels; purchase is a rule-derived proxy, not a transaction
+model; nothing is calibrated against real-world data. Read
+[docs/methodology/limitations.md](docs/methodology/limitations.md) before citing any number this
+software produces.
+
+---
+
+## Roadmap
+
+1. **Wheels, frozen binaries, and installers** — the `uv tool install adlife-sim` line above becomes
+   real with a package-index release and prebuilt artifacts (tracking Task 18 of the implementation
+   plan).
+2. **Continuous integration and releases** — automated gates and tagged releases on GitHub.
+3. **A separate commercial product** — the local, AGPL-licensed engine is designed to stay reusable:
+   the model core is adapter-free, so a future, separately licensed SaaS offering can be built *on* it
+   while this repository remains the open, inspectable research instrument. No hosted service exists
+   today; any such product would be a distinct codebase and offering.
+
+---
+
+## Contributing, security, and citation
+
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) — fictional data only, tests required, DCO
+  sign-off.
+- Security: [SECURITY.md](SECURITY.md) — report vulnerabilities privately through GitHub.
+- Citation: [CITATION.cff](CITATION.cff) and [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
