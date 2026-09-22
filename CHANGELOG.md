@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Release-candidate certification** — metamorphic property suite (determinism across
+  cognition modes, hybrid replay equality, seed sensitivity, agent-order and
+  intent-order permutation invariance, causal-chain tracing, no-campaign control,
+  social-off ablation, counterfactual display names); a 30-agent × 7-day performance
+  gate with a 20-second CI ceiling and recorded peak memory; an adversarial security
+  suite (asset-path traversal, symlink escape, YAML object tags, hostile display names,
+  secret absence in artifacts, corrupt SQLite/JSONL detection, network ban on offline
+  runs); committed golden scenario evidence (`rule-small`, `mock-small`) byte-compared
+  on every run and movable only through `scripts/regenerate_golden.py`.
+- A routability invariant suite pinning every packaged routine against the packaged
+  world through the real movement resolver.
+
+### Fixed
+
+- **Weekend routine crash** — every packaged template's weekend return home boarded a
+  highway route from the cafe, a leg no world could route, so any run reaching a
+  weekend day (day 5–6) failed mid-tick. Weekend evenings now walk home directly, and
+  the invariant suite keeps every template routable.
+- **Performance** — snapshot fingerprints are now computed lazily (the per-tick
+  plan/commit guard compares object identity), and revalidation is memoized by object
+  identity, removing a whole-population hash and repeated deep validation walks from
+  every tick. The 30-agent × 7-day run fell from ~150 s to ~15 s on the reference
+  laptop.
+
 ## [0.1.0] — 2026-09-22
 
 Initial development release of the complete research instrument.

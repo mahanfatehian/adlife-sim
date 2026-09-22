@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import weakref
 from collections.abc import Mapping
 from decimal import Decimal
 from math import isfinite
@@ -11,6 +13,14 @@ from pydantic import BaseModel
 from adlife.core.domain.campaign import BillboardPlacement, PhonePlacement, Placement
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+# Revalidation verdicts for models already proven valid, keyed by object identity.
+# Pydantic BaseModel instances are weakref-able, so a WeakKeyDictionary caches the
+# verdict without keeping any model alive. Pydantic models are declared frozen - a
+# validated object cannot change out from under its memo - and bypass-constructed
+# models are distinct objects with their own verdicts, so tampering can never
+# inherit another object's clean bill of health.
+_REVALIDATED: weakref.WeakKeyDictionary[BaseModel, None] = weakref.WeakKeyDictionary()
 
 
 def _raw_python(value: object) -> object:
@@ -64,12 +74,18 @@ def revalidate_model(
 ) -> _ModelT:
     if not isinstance(value, model_type):
         raise TypeError(f"{label} must be a {model_type.__name__}")
+    try:
+        if value in _REVALIDATED:
+            return value
+    except TypeError:
+        pass  # unhashable field payloads (e.g. event mappings) skip the memo
     raw = _raw_python(value)
     if not isinstance(raw, Mapping):
         raise TypeError(f"{label} must contain model field data")
     _reject_non_finite(raw, label=label)
     validated = model_type.model_validate(raw)
-    _reject_non_finite(_raw_python(validated), label=label)
+    with contextlib.suppress(TypeError):
+        _REVALIDATED[validated] = None
     return validated
 
 

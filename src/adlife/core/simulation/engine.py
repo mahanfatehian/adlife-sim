@@ -108,6 +108,32 @@ def stable_event_id(run_id: str, sequence: int) -> str:
     return f"{run_id}:event-{sequence:08d}"
 
 
+def _plan_matches_current_state(plan_snapshot: Snapshot, current_snapshot: Snapshot) -> bool:
+    """Whether a plan's snapshot still describes the model's current state.
+
+    The plan holds references to the model's own profile and state objects, so object
+    identity is an exact change detector between ``plan_tick`` and ``commit_tick`` -
+    O(agents) with no hashing, where a content fingerprint walks the whole population.
+    """
+    if (
+        plan_snapshot.run_id != current_snapshot.run_id
+        or plan_snapshot.simulated_minute != current_snapshot.simulated_minute
+        or plan_snapshot.next_event_sequence != current_snapshot.next_event_sequence
+        or plan_snapshot.version != current_snapshot.version
+    ):
+        return False
+    if plan_snapshot.agents.keys() != current_snapshot.agents.keys():
+        return False
+    return all(
+        plan_pair[0] is current_pair[0] and plan_pair[1] is current_pair[1]
+        for plan_pair, current_pair in zip(
+            plan_snapshot.agents.values(),
+            current_snapshot.agents.values(),
+            strict=True,
+        )
+    )
+
+
 _AGE_BANDS: tuple[tuple[int, int, str], ...] = (
     (18, 24, "18-24"),
     (25, 34, "25-34"),
@@ -429,7 +455,7 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
         checked_plan = TickPlan(snapshot=plan.snapshot, intents=plan.intents)
         if tuple(checked_plan.snapshot.agents) != tuple(self.agent_by_id):
             raise InvalidTickPlan("plan agent IDs must exactly match model agent IDs")
-        if checked_plan.snapshot.fingerprint != self.snapshot().fingerprint:
+        if not _plan_matches_current_state(checked_plan.snapshot, self.snapshot()):
             raise StaleTickPlan("state changed between plan and commit")
         return self._commit_in_stable_order(plan, cognition)
 

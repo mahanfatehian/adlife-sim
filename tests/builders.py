@@ -108,6 +108,37 @@ def rescale_scenario(scenario: Scenario, *, days: int) -> Scenario:
     return Scenario.model_validate(scenario.model_dump() | {"days": days})
 
 
+def maximum_thirty_agent_scenario(valid_scenario: Scenario) -> Scenario:
+    """The performance gate's population: 30 agents over the routable ten-zone world.
+
+    Built exactly the way the CLI assembles a project - the packaged generator draws
+    profiles and a relationship graph, the routable-zone assignment keys every commute
+    onto the default world - on top of the small builder's ten-zone world (the contract
+    fixture's four zones plus the retail legs the routine templates name). The campaign
+    set is the small scenario's own. This is a builder, not a fixture, so the perf
+    suite can import it standalone.
+    """
+    from adlife.cli.project import _assign_routable_zones, _initial_state_for, default_world
+    from adlife.core.simulation.population import generate_population, generate_relationships
+
+    profiles = _assign_routable_zones(generate_population(30, 42, "fa-IR"), 42)
+    relationships = generate_relationships(profiles, 42)
+    return Scenario.model_validate(
+        valid_scenario.model_dump()
+        | {
+            "scenario_id": "scenario-maximum",
+            "name": "Maximum thirty-agent scenario",
+            "days": 7,
+            "world": default_world().model_dump(),
+            "population": tuple(profile.model_dump() for profile in profiles),
+            "initial_states": tuple(
+                _initial_state_for(profile).model_dump() for profile in profiles
+            ),
+            "relationships": tuple(edge.model_dump() for edge in relationships),
+        }
+    )
+
+
 def strip_campaigns(scenario: Scenario) -> Scenario:
     return Scenario.model_validate(scenario.model_dump() | {"campaigns": ()})
 

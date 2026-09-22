@@ -589,6 +589,29 @@ def test_eligibility_revalidates_bypass_constructed_nested_state() -> None:
         exposure.eligible_placements(snapshot, _phone_campaign(), 600)
 
 
+def test_eligibility_catches_a_state_mutated_after_a_prior_revalidation() -> None:
+    """The revalidation memo must follow identity, never assume same-input purity.
+
+    A bypass-constructed model can be revalidated (passing), then have its frozen
+    proxy tampered in place. The next boundary must reject it: the memo may only be
+    trusted for the exact object that passed, and a distinct tampered object - even
+    one claiming the same field values - may not inherit its verdict.
+    """
+    exposure = _exposure_module()
+    profile = _profile()
+    state = _state(profile)
+    tampered = ConsumerState.model_construct(
+        **{
+            **{name: getattr(state, name) for name in ConsumerState.model_fields},
+            "disposable_budget": float("inf"),
+        }
+    )
+    snapshot = _snapshot(profile, tampered)
+
+    with pytest.raises(ValueError, match="non-finite"):
+        exposure.eligible_placements(snapshot, _phone_campaign(), 600)
+
+
 def test_eligibility_revalidates_bypass_constructed_campaign_placement() -> None:
     exposure = _exposure_module()
     profile = _profile()

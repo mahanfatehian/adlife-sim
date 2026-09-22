@@ -1,0 +1,1216 @@
+{
+ "events": [
+  {
+   "agent_id": null,
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "run.started",
+   "payload": {
+    "scenario_id": "scenario-small",
+    "seed": 42
+   },
+   "sequence": 0,
+   "simulated_minute": 0
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "sleep",
+    "to_activity": "breakfast"
+   },
+   "sequence": 1,
+   "simulated_minute": 390
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "sleep",
+    "to_activity": "breakfast"
+   },
+   "sequence": 2,
+   "simulated_minute": 390
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "sleep",
+    "to_activity": "breakfast"
+   },
+   "sequence": 3,
+   "simulated_minute": 390
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "breakfast",
+    "to_activity": "phone-check"
+   },
+   "sequence": 4,
+   "simulated_minute": 420
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "breakfast",
+    "to_activity": "phone-check"
+   },
+   "sequence": 5,
+   "simulated_minute": 420
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "breakfast",
+    "to_activity": "phone-check"
+   },
+   "sequence": 6,
+   "simulated_minute": 420
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "home-north",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "online"
+   },
+   "sequence": 7,
+   "simulated_minute": 420
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "home-north",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "online"
+   },
+   "sequence": 8,
+   "simulated_minute": 420
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "home-north",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "online"
+   },
+   "sequence": 9,
+   "simulated_minute": 420
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "phone-check",
+    "to_activity": "commute"
+   },
+   "sequence": 10,
+   "simulated_minute": 450
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "phone-check",
+    "to_activity": "commute"
+   },
+   "sequence": 11,
+   "simulated_minute": 450
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "phone-check",
+    "to_activity": "commute"
+   },
+   "sequence": 12,
+   "simulated_minute": 450
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "online",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "highway-north"
+   },
+   "sequence": 13,
+   "simulated_minute": 450
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "online",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "highway-north"
+   },
+   "sequence": 14,
+   "simulated_minute": 450
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "online",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "highway-north"
+   },
+   "sequence": 15,
+   "simulated_minute": 450
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "highway-north",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "highway-north"
+   },
+   "sequence": 16,
+   "simulated_minute": 465
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "highway-north",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "highway-north"
+   },
+   "sequence": 17,
+   "simulated_minute": 465
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "highway-north",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "highway-north"
+   },
+   "sequence": 18,
+   "simulated_minute": 465
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "commute",
+    "to_activity": "work"
+   },
+   "sequence": 19,
+   "simulated_minute": 495
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "highway-north",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "office"
+   },
+   "sequence": 20,
+   "simulated_minute": 495
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "commute",
+    "to_activity": "work"
+   },
+   "sequence": 21,
+   "simulated_minute": 510
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "highway-north",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "office"
+   },
+   "sequence": 22,
+   "simulated_minute": 510
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "office",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "office"
+   },
+   "sequence": 23,
+   "simulated_minute": 510
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "office",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "office"
+   },
+   "sequence": 24,
+   "simulated_minute": 525
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "commute",
+    "to_activity": "work"
+   },
+   "sequence": 25,
+   "simulated_minute": 540
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "highway-north",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "office"
+   },
+   "sequence": 26,
+   "simulated_minute": 540
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "office",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "office"
+   },
+   "sequence": 27,
+   "simulated_minute": 555
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "work",
+    "to_activity": "phone-check"
+   },
+   "sequence": 28,
+   "simulated_minute": 750
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "work",
+    "to_activity": "phone-check"
+   },
+   "sequence": 29,
+   "simulated_minute": 750
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "work",
+    "to_activity": "phone-check"
+   },
+   "sequence": 30,
+   "simulated_minute": 750
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "office",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "online"
+   },
+   "sequence": 31,
+   "simulated_minute": 750
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "office",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "online"
+   },
+   "sequence": 32,
+   "simulated_minute": 750
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "office",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "online"
+   },
+   "sequence": 33,
+   "simulated_minute": 750
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "phone-check",
+    "to_activity": "work"
+   },
+   "sequence": 34,
+   "simulated_minute": 780
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "phone-check",
+    "to_activity": "work"
+   },
+   "sequence": 35,
+   "simulated_minute": 780
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "phone-check",
+    "to_activity": "work"
+   },
+   "sequence": 36,
+   "simulated_minute": 780
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "online",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "office"
+   },
+   "sequence": 37,
+   "simulated_minute": 780
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "online",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "office"
+   },
+   "sequence": 38,
+   "simulated_minute": 780
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "online",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "office"
+   },
+   "sequence": 39,
+   "simulated_minute": 780
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "work",
+    "to_activity": "commute"
+   },
+   "sequence": 40,
+   "simulated_minute": 1020
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "work",
+    "to_activity": "commute"
+   },
+   "sequence": 41,
+   "simulated_minute": 1020
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "work",
+    "to_activity": "commute"
+   },
+   "sequence": 42,
+   "simulated_minute": 1020
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "office",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "highway-north"
+   },
+   "sequence": 43,
+   "simulated_minute": 1020
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "office",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "highway-north"
+   },
+   "sequence": 44,
+   "simulated_minute": 1020
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "office",
+    "route_id": "highway-north",
+    "to_route_id": "highway-north",
+    "to_zone": "highway-north"
+   },
+   "sequence": 45,
+   "simulated_minute": 1020
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "commute",
+    "to_activity": "shopping"
+   },
+   "sequence": 46,
+   "simulated_minute": 1095
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "commute",
+    "to_activity": "shopping"
+   },
+   "sequence": 47,
+   "simulated_minute": 1095
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "highway-north",
+    "route_id": "retail-commute",
+    "to_route_id": "retail-commute",
+    "to_zone": "retail-center"
+   },
+   "sequence": 48,
+   "simulated_minute": 1095
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "highway-north",
+    "route_id": "retail-commute",
+    "to_route_id": "retail-commute",
+    "to_zone": "retail-center"
+   },
+   "sequence": 49,
+   "simulated_minute": 1095
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "commute",
+    "to_activity": "shopping"
+   },
+   "sequence": 50,
+   "simulated_minute": 1110
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "highway-north",
+    "from_zone": "highway-north",
+    "route_id": "retail-commute",
+    "to_route_id": "retail-commute",
+    "to_zone": "retail-center"
+   },
+   "sequence": 51,
+   "simulated_minute": 1110
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "retail-commute",
+    "from_zone": "retail-center",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "retail-center"
+   },
+   "sequence": 52,
+   "simulated_minute": 1110
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "retail-commute",
+    "from_zone": "retail-center",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "retail-center"
+   },
+   "sequence": 53,
+   "simulated_minute": 1110
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "retail-commute",
+    "from_zone": "retail-center",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "retail-center"
+   },
+   "sequence": 54,
+   "simulated_minute": 1125
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "shopping",
+    "to_activity": "socializing"
+   },
+   "sequence": 55,
+   "simulated_minute": 1170
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "shopping",
+    "to_activity": "socializing"
+   },
+   "sequence": 56,
+   "simulated_minute": 1170
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "shopping",
+    "to_activity": "socializing"
+   },
+   "sequence": 57,
+   "simulated_minute": 1170
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "retail-center",
+    "route_id": "retail-social",
+    "to_route_id": "retail-social",
+    "to_zone": "cafe"
+   },
+   "sequence": 58,
+   "simulated_minute": 1170
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "retail-center",
+    "route_id": "retail-social",
+    "to_route_id": "retail-social",
+    "to_zone": "cafe"
+   },
+   "sequence": 59,
+   "simulated_minute": 1170
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "retail-center",
+    "route_id": "retail-social",
+    "to_route_id": "retail-social",
+    "to_zone": "cafe"
+   },
+   "sequence": 60,
+   "simulated_minute": 1170
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "retail-social",
+    "from_zone": "cafe",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "cafe"
+   },
+   "sequence": 61,
+   "simulated_minute": 1185
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "retail-social",
+    "from_zone": "cafe",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "cafe"
+   },
+   "sequence": 62,
+   "simulated_minute": 1185
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "retail-social",
+    "from_zone": "cafe",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "cafe"
+   },
+   "sequence": 63,
+   "simulated_minute": 1185
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "socializing",
+    "to_activity": "leisure"
+   },
+   "sequence": 64,
+   "simulated_minute": 1260
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "socializing",
+    "to_activity": "leisure"
+   },
+   "sequence": 65,
+   "simulated_minute": 1260
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "socializing",
+    "to_activity": "leisure"
+   },
+   "sequence": 66,
+   "simulated_minute": 1260
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "cafe",
+    "route_id": "cafe-home",
+    "to_route_id": "cafe-home",
+    "to_zone": "home-north"
+   },
+   "sequence": 67,
+   "simulated_minute": 1260
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "cafe",
+    "route_id": "cafe-home",
+    "to_route_id": "cafe-home",
+    "to_zone": "home-north"
+   },
+   "sequence": 68,
+   "simulated_minute": 1260
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": null,
+    "from_zone": "cafe",
+    "route_id": "cafe-home",
+    "to_route_id": "cafe-home",
+    "to_zone": "home-north"
+   },
+   "sequence": 69,
+   "simulated_minute": 1260
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "cafe-home",
+    "from_zone": "home-north",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "home-north"
+   },
+   "sequence": 70,
+   "simulated_minute": 1275
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "cafe-home",
+    "from_zone": "home-north",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "home-north"
+   },
+   "sequence": 71,
+   "simulated_minute": 1275
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.location_changed",
+   "payload": {
+    "from_route_id": "cafe-home",
+    "from_zone": "home-north",
+    "route_id": null,
+    "to_route_id": null,
+    "to_zone": "home-north"
+   },
+   "sequence": 72,
+   "simulated_minute": 1275
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "leisure",
+    "to_activity": "reflection"
+   },
+   "sequence": 73,
+   "simulated_minute": 1320
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "leisure",
+    "to_activity": "reflection"
+   },
+   "sequence": 74,
+   "simulated_minute": 1320
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "leisure",
+    "to_activity": "reflection"
+   },
+   "sequence": 75,
+   "simulated_minute": 1320
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "reflection",
+    "to_activity": "sleep"
+   },
+   "sequence": 76,
+   "simulated_minute": 1380
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "reflection",
+    "to_activity": "sleep"
+   },
+   "sequence": 77,
+   "simulated_minute": 1380
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "agent.activity_changed",
+   "payload": {
+    "from_activity": "reflection",
+    "to_activity": "sleep"
+   },
+   "sequence": 78,
+   "simulated_minute": 1380
+  },
+  {
+   "agent_id": "person-001",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "day.reflected",
+   "payload": {
+    "day_index": 0
+   },
+   "sequence": 79,
+   "simulated_minute": 1425
+  },
+  {
+   "agent_id": "person-002",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "day.reflected",
+   "payload": {
+    "day_index": 0
+   },
+   "sequence": 80,
+   "simulated_minute": 1425
+  },
+  {
+   "agent_id": "person-003",
+   "campaign_id": null,
+   "caused_by": [],
+   "channel": null,
+   "event_type": "day.reflected",
+   "payload": {
+    "day_index": 0
+   },
+   "sequence": 81,
+   "simulated_minute": 1425
+  },
+  {
+   "agent_id": null,
+   "campaign_id": null,
+   "caused_by": [
+    "run-golden:event-00000081"
+   ],
+   "channel": null,
+   "event_type": "run.completed",
+   "payload": {
+    "final_minute": 1440
+   },
+   "sequence": 82,
+   "simulated_minute": 1425
+  }
+ ],
+ "metrics": {
+  "event_count": 83,
+  "failure_reason": null,
+  "final_minute": 1440,
+  "metrics": {},
+  "run_id": "run-golden",
+  "schema_version": 1,
+  "status": "completed"
+ }
+}

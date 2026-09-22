@@ -24,8 +24,7 @@ templates:
       - {start: 750, end: 840, activity: shopping, zone_id: retail-center}
       - {start: 840, end: 930, activity: leisure, zone_id: cafe}
       - {start: 930, end: 1020, activity: socializing, zone_id: cafe}
-      - {start: 1020, end: 1080, activity: commute, zone_id: commute, route_id: commute}
-      - {start: 1080, end: 1110, activity: reflection, zone_id: home}
+      - {start: 1020, end: 1110, activity: reflection, zone_id: home}
       - {start: 1110, end: 1440, activity: sleep, zone_id: home}
   office-worker:
     weekday:
@@ -51,8 +50,7 @@ templates:
       - {start: 780, end: 870, activity: shopping, zone_id: retail-center}
       - {start: 870, end: 960, activity: leisure, zone_id: cafe}
       - {start: 960, end: 1050, activity: socializing, zone_id: cafe}
-      - {start: 1050, end: 1110, activity: commute, zone_id: commute, route_id: commute}
-      - {start: 1110, end: 1140, activity: reflection, zone_id: home}
+      - {start: 1050, end: 1140, activity: reflection, zone_id: home}
       - {start: 1140, end: 1440, activity: sleep, zone_id: home}
   retail-worker:
     weekday:
@@ -78,8 +76,7 @@ templates:
       - {start: 810, end: 900, activity: shopping, zone_id: retail-center}
       - {start: 900, end: 990, activity: leisure, zone_id: cafe}
       - {start: 990, end: 1080, activity: socializing, zone_id: cafe}
-      - {start: 1080, end: 1140, activity: commute, zone_id: commute, route_id: commute}
-      - {start: 1140, end: 1170, activity: reflection, zone_id: home}
+      - {start: 1080, end: 1170, activity: reflection, zone_id: home}
       - {start: 1170, end: 1440, activity: sleep, zone_id: home}
   freelancer:
     weekday:
@@ -105,8 +102,7 @@ templates:
       - {start: 780, end: 870, activity: shopping, zone_id: retail-center}
       - {start: 870, end: 960, activity: leisure, zone_id: cafe}
       - {start: 960, end: 1050, activity: socializing, zone_id: cafe}
-      - {start: 1050, end: 1110, activity: commute, zone_id: commute, route_id: commute}
-      - {start: 1110, end: 1140, activity: reflection, zone_id: home}
+      - {start: 1050, end: 1140, activity: reflection, zone_id: home}
       - {start: 1140, end: 1440, activity: sleep, zone_id: home}
   unemployed:
     weekday:
@@ -131,7 +127,7 @@ templates:
       - {start: 630, end: 750, activity: shopping, zone_id: retail-center}
       - {start: 750, end: 870, activity: leisure, zone_id: cafe}
       - {start: 870, end: 1020, activity: socializing, zone_id: cafe}
-      - {start: 1020, end: 1080, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 1020, end: 1080, activity: commute, zone_id: home}
       - {start: 1080, end: 1170, activity: study, zone_id: home}
       - {start: 1170, end: 1200, activity: reflection, zone_id: home}
       - {start: 1200, end: 1440, activity: sleep, zone_id: home}

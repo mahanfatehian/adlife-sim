@@ -39,7 +39,7 @@ class Snapshot:
     run_id: str | None = None
     next_event_sequence: int = 0
     version: int = 0
-    fingerprint: str = field(init=False)
+    _fingerprint: str | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -67,20 +67,33 @@ class Snapshot:
             ordered[agent_id] = (profile, state)
 
         object.__setattr__(self, "agents", MappingProxyType(ordered))
-        fingerprint_input: Mapping[str, object] = {
-            "agents": {
-                agent_id: {
-                    "profile": profile,
-                    "state": state,
-                }
-                for agent_id, (profile, state) in ordered.items()
-            },
-            "simulated_minute": self.simulated_minute,
-            "run_id": self.run_id,
-            "next_event_sequence": self.next_event_sequence,
-            "version": self.version,
-        }
-        object.__setattr__(self, "fingerprint", canonical_sha256(fingerprint_input))
+
+    @property
+    def fingerprint(self) -> str:
+        """The canonical content hash, computed on first read and cached.
+
+        Deliberately lazy: the hash walks every profile and state in the population,
+        and the engine's per-tick plan/commit guard compares object identity instead,
+        so an unobserved snapshot never pays for the walk.
+        """
+        if self._fingerprint is None:
+            fingerprint_input: Mapping[str, object] = {
+                "agents": {
+                    agent_id: {
+                        "profile": profile,
+                        "state": state,
+                    }
+                    for agent_id, (profile, state) in self.agents.items()
+                },
+                "simulated_minute": self.simulated_minute,
+                "run_id": self.run_id,
+                "next_event_sequence": self.next_event_sequence,
+                "version": self.version,
+            }
+            object.__setattr__(self, "_fingerprint", canonical_sha256(fingerprint_input))
+        fingerprint = self._fingerprint
+        assert fingerprint is not None  # narrowed: assigned immediately above
+        return fingerprint
 
 
 class MovementIntent(DomainModel):
