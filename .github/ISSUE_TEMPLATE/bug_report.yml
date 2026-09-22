@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a defect in AdLife Lab. Security issues: use private vulnerability reporting instead.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to file a bug. Please do not report security
+        vulnerabilities here — use GitHub's private vulnerability reporting
+        (Security → Report a vulnerability).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `adlife --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: The exact command you ran and the full output (redact anything private).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Attach the run manifest (run.json) if the bug concerns a stored run.

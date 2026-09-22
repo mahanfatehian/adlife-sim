@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose an enhancement. Please check the roadmap and limitations documents first.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AdLife Lab is a research instrument with a documented scope — read
+        `docs/methodology/limitations.md` and the README roadmap before proposing
+        features. Requests that would require real-person data or unsupported claims
+        are out of scope by design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What research question or workflow is blocked today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This feature works entirely on fictional/synthetic data.
+          required: true
+        - label: I have checked that this is not already possible with existing commands.

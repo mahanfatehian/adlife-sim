@@ -38,6 +38,9 @@ dev = [
     { name = "ruff" },
     { name = "types-pyyaml" },
 ]
+packaging = [
+    { name = "pyinstaller" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -66,6 +69,7 @@ dev = [
     { name = "ruff", specifier = ">=0.7" },
     { name = "types-pyyaml", specifier = ">=6.0" },
 ]
+packaging = [{ name = "pyinstaller", specifier = ">=6.10" }]
 
 [[package]]
 name = "altgraph"

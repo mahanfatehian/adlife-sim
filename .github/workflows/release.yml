@@ -1,0 +1,184 @@
+name: Release
+
+# Protected release pipeline. Trigger: signed annotated tags matching vX.Y.Z only.
+# Every step verifies before anything is published; the public GitHub release is
+# published only after all artifacts, checksums, SBOM, and PyPI publication succeed.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-tag:
+    name: verify signed tag == project version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Require an annotated, signed tag
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          TYPE="$(git cat-file -t "${GITHUB_REF_NAME}")"
+          [ "$TYPE" = "tag" ] || { echo "refusing: ${GITHUB_REF_NAME} is not an annotated tag ($TYPE)"; exit 1; }
+          git verify-tag "${GITHUB_REF_NAME}" || { echo "refusing: tag is not signed (configure a trusted key on GitHub or in the runner)"; exit 1; }
+      - name: Compare tag with project version
+        id: version
+        run: |
+          PROJECT_VERSION="$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PROJECT_VERSION" != "$TAG_VERSION" ]; then
+            echo "refusing: tag v$TAG_VERSION != project version $PROJECT_VERSION"
+            exit 1
+          fi
+          echo "version=$PROJECT_VERSION" >> "$GITHUB_OUTPUT"
+
+  build-native:
+    name: frozen binary (${{ matrix.asset }})
+    needs: verify-tag
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: linux-x86_64
+            archive: tar.gz
+          - os: macos-15-intel
+            asset: macos-x86_64
+            archive: tar.gz
+          - os: macos-latest
+            asset: macos-aarch64
+            archive: tar.gz
+          - os: windows-latest
+            asset: windows-x86_64
+            archive: zip
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: Install locked dependencies (packaging group included)
+        run: uv sync --locked --all-groups
+      - name: Build the frozen application
+        run: uv run pyinstaller packaging/adlife.spec --clean --noconfirm
+      - name: Smoke-test the exact frozen artifact on its builder
+        shell: bash
+        run: |
+          EXE="dist/adlife/adlife"
+          [ -x "$EXE" ] || EXE="dist/adlife/adlife.exe"
+          "$EXE" --version
+          "$EXE" doctor --offline
+          "$EXE" init frozen-smoke
+          "$EXE" run frozen-smoke --run-id frozen --mode rules --days 1 --population-size 2 --headless
+          "$EXE" report frozen-smoke frozen
+          test -s frozen-smoke/reports/frozen.html
+      - name: Package the release asset
+        shell: bash
+        run: |
+          VERSION="${{ needs.verify-tag.outputs.version }}"
+          NAME="adlife-v${VERSION}-${{ matrix.asset }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd dist && 7z a -tzip "${NAME}.zip" adlife)
+          else
+            tar -czf "dist/${NAME}.tar.gz" -C dist adlife
+          fi
+          echo "ASSET=dist/adlife-v${VERSION}-${{ matrix.asset }}.${{ matrix.archive }}" >> "$GITHUB_ENV"
+      # actions/upload-artifact v6.0.0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: frozen-${{ matrix.asset }}
+          path: ${{ env.ASSET }}
+          retention-days: 7
+          if-no-files-found: error
+
+  assemble-release:
+    name: checksums, SBOM, license report, draft release
+    needs: [verify-tag, build-native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # draft release creation only
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      # actions/download-artifact v6.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          pattern: frozen-*
+          path: assets
+          merge-multiple: true
+      - name: Build wheel and sdist
+        run: uv build --no-sources
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          cd assets
+          sha256sum --binary * > SHA256SUMS
+          cat SHA256SUMS
+      - name: SBOM and third-party license report
+        run: |
+          uv sync --locked --all-groups
+          uv tool run cyclonedx-py requirements --output-file sbom.cdx.json --format json
+          uv tool run pip-licenses --format=json --output-file=third-party-licenses.json || \
+            uv run pip install pip-licenses && uv run pip-licenses --format=json --output-file=third-party-licenses.json
+      # actions/upload-artifact v6.0.0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: release-manifests
+          path: |
+            sbom.cdx.json
+            third-party-licenses.json
+      - name: Create the draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify-tag.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --draft --title "AdLife Lab v${VERSION}" \
+            --notes "See CHANGELOG.md for the release notes. Verify downloads against SHA256SUMS." \
+            assets/* dist/adlife_sim-*.whl dist/adlife_sim-*.tar.gz
+
+  publish-pypi:
+    name: PyPI (Trusted Publishing)
+    needs: [verify-tag, build-native]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # Trusted Publishing: OIDC, no stored PyPI token
+    environment:
+      name: pypi
+      url: https://pypi.org/p/adlife-sim
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: Build distributions
+        run: uv build --no-sources
+      # pypa/gh-action-pypi-publish v1.13.0
+      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e
+
+  publish-release:
+    name: publish the GitHub release
+    needs: [verify-tag, assemble-release, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify-tag.outputs.version }}
+        run: gh release edit "v${VERSION}" --draft=false

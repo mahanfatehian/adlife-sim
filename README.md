@@ -197,6 +197,7 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | Document | Contents |
 | --- | --- |
 | [docs/quickstart.md](docs/quickstart.md) | Zero to HTML report in a handful of commands |
+| [docs/installation.md](docs/installation.md) | Every installation path, frozen binaries, verification |
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command, flag, exit code, and the output contract |
 | [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, event sourcing, the tick, artifacts |
 | [docs/reproducibility.md](docs/reproducibility.md) | What a seed guarantees and how to reproduce any run |

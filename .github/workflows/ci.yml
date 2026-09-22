@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Fail the coverage floor the same way the local suite does.
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Ruff format check
+        run: uv run ruff format --check src tests
+      - name: Ruff lint
+        run: uv run ruff check src tests
+      - name: Mypy strict
+        run: uv run mypy src
+      - name: Test suite with branch coverage (85% floor)
+        run: uv run pytest -q --cov=adlife --cov-branch
+      - name: Offline deterministic integration runs
+        run: |
+          uv run pytest -q tests/integration/test_rule_run.py tests/integration/test_demo.py
+      - name: Textual application smoke (pilot-driven run_test)
+        run: uv run pytest -q tests/tui
+
+  shell-quality:
+    name: shell script quality
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          find scripts -name '*.sh' -print0 | xargs -0 -n1 shellcheck --severity=style
+      - name: PowerShell Script Analyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force
+          Invoke-ScriptAnalyzer -Path scripts -Recurse -EnableExit -Severity Warning
+
+  build:
+    name: wheel build + clean-room smoke
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: Build wheel and sdist
+        run: uv build --no-sources
+      - name: Clean-room smoke of the exact wheel
+        run: uv run python scripts/smoke_release.py dist/adlife_sim-*.whl
+      # actions/upload-artifact v6.0.0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: distributions
+          path: dist/
+          retention-days: 7
+
+  security:
+    name: dependency + secret scan
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: Dependency audit
+        run: |
+          uv sync --locked --all-groups
+          uv tool run pip-audit
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf4290518d70f6b95a # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

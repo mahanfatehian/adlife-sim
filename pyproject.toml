@@ -48,6 +48,9 @@ dev = [
   "ruff>=0.7",
   "types-pyyaml>=6.0",
 ]
+packaging = [
+  "pyinstaller>=6.10",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/adlife"]
