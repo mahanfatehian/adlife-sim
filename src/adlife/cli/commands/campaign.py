@@ -66,11 +66,18 @@ def _adapt_yaml_sequences(document: Mapping[object, object]) -> dict[object, obj
 
 
 def _windows_open_file_path(descriptor: int) -> Path:
+    # Windows-only modules, imported inside the branch that only Windows reaches, so
+    # non-Windows checkers and runtimes never see them; the win32 Verifier typing is
+    # declared for every platform and the attribute access is guarded at runtime.
     import ctypes
     import msvcrt
+
+    if sys.platform != "win32":  # pragma: no cover - platform guard, unreachable off Windows
+        raise OSError("Windows handle verification requires a Windows interpreter")
     from ctypes import wintypes
 
-    get_final_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_final_path = kernel32.GetFinalPathNameByHandleW
     get_final_path.argtypes = (
         wintypes.HANDLE,
         wintypes.LPWSTR,
