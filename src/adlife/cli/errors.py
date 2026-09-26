@@ -41,12 +41,27 @@ def output_format() -> str:
     return _CURRENT_FORMAT
 
 
-def _report(message: str, exit_code: int, error_type: str) -> None:
+def _debug_requested() -> bool:
+    """Whether the operator explicitly asked for diagnostic detail (``ADLIFE_DEBUG=1``)."""
+    import os
+
+    return os.environ.get("ADLIFE_DEBUG", "") == "1"
+
+
+def _report(
+    message: str,
+    exit_code: int,
+    error_type: str,
+    *,
+    debug: bool = False,
+) -> None:
     """Report a boundary failure in the active output mode.
 
-    JSON mode prints ONE machine-readable error object on stdout and the diagnostic
-    trace on stderr; human mode prints the concise message on stderr, where it cannot
-    corrupt a pipe.
+    JSON mode prints ONE machine-readable error object on stdout and the diagnostic on
+    stderr; human mode prints the concise message on stderr, where it cannot corrupt a
+    pipe. A Python traceback accompanies the diagnostic only when the failure is an
+    unexpected internal defect or the operator set ``ADLIFE_DEBUG=1``: an expected
+    failure is a normal conversation with the user, not a stack walk.
     """
     import traceback
 
@@ -60,10 +75,14 @@ def _report(message: str, exit_code: int, error_type: str) -> None:
                 "message": message,
             }
         }
+        # ONE machine-readable object on stdout; the human diagnostic goes to stderr.
         print(json.dumps(document, ensure_ascii=False), flush=True)
-        traceback.print_exc(file=sys.stderr)
+        print(f"error: {message}", file=sys.stderr)
     else:
         print(f"error: {message}", file=sys.stderr)
+    # The stack walk is the only conditional part: it serves an unexpected defect or an
+    # explicit ADLIFE_DEBUG=1 request, never ordinary usage of a working tool.
+    if debug:
         traceback.print_exc(file=sys.stderr)
 
 
@@ -87,6 +106,7 @@ def command_boundary(fn: Callable[..., Any]) -> Callable[..., Any]:
         from adlife.core.ports.cognition import CognitionError
         from adlife.core.ports.run_store import StorageError
 
+        debug = _debug_requested()
         try:
             return fn(*args, **kwargs)
         except KeyboardInterrupt:
@@ -94,19 +114,22 @@ def command_boundary(fn: Callable[..., Any]) -> Callable[..., Any]:
         except (typer.Exit, SystemExit):
             raise
         except CommandError as error:
-            _report(str(error), error.exit_code, type(error).__name__)
+            _report(str(error), error.exit_code, type(error).__name__, debug=debug)
             raise SystemExit(error.exit_code) from None
         except (ValidationError, ValueError, yaml.YAMLError) as error:
-            _report(str(error), ExitCode.INPUT_ERROR, type(error).__name__)
+            _report(str(error), ExitCode.INPUT_ERROR, type(error).__name__, debug=debug)
             raise SystemExit(ExitCode.INPUT_ERROR) from None
         except (CognitionError, CacheMiss, ProviderConfigurationError) as error:
-            _report(str(error), ExitCode.PROVIDER_ERROR, type(error).__name__)
+            _report(str(error), ExitCode.PROVIDER_ERROR, type(error).__name__, debug=debug)
             raise SystemExit(ExitCode.PROVIDER_ERROR) from None
         except StorageError as error:
-            _report(str(error), ExitCode.ARTIFACT_ERROR, type(error).__name__)
+            _report(str(error), ExitCode.ARTIFACT_ERROR, type(error).__name__, debug=debug)
             raise SystemExit(ExitCode.ARTIFACT_ERROR) from None
         except Exception as error:
-            _report(str(error), ExitCode.UNEXPECTED, type(error).__name__)
+            # An unexpected defect is the one failure a traceback always serves: it is
+            # a bug, and the stack is the bug report. ADLIFE_DEBUG=1 adds the same
+            # detail to expected failures.
+            _report(str(error), ExitCode.UNEXPECTED, type(error).__name__, debug=True)
             raise SystemExit(ExitCode.UNEXPECTED) from None
 
     return wrapper

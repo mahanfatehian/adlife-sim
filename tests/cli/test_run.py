@@ -59,7 +59,8 @@ def test_run_refuses_an_existing_run_identifier(tmp_path: Path) -> None:
     second = runner.invoke(
         app, ["--format", "json", "run", str(project), "--run-id", "run-twice", "--mode", "rules"]
     )
-    assert second.exit_code == 2
+    # A run conflict is a provider/run conflict, not an invalid input: exit 3.
+    assert second.exit_code == 3
     assert "run-twice" in second.stdout
 
 
