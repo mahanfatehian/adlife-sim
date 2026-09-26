@@ -41,8 +41,10 @@ results are synthetic and exploratory.
 | `budget` | ≥ 0 | remaining purchase budget |
 | `memories` | ≤ 5 retained | strongest-first episodic memory set |
 
-**Scales.** One tick is one simulated minute; a day is 1,440 minutes (`1440`). Runs cover 1–7
-simulated days with 1–30 agents. Population size, day count, and seed are run inputs.
+**Scales.** One tick is 15 simulated minutes; a day is 1,440 simulated minutes (`1440`),
+driven as 96 ticks. Timestamps are absolute simulated minutes, so day 1 ends at minute
+1,440. Runs cover 1–7 simulated days with 1–30 agents. Population size, day count, and
+seed are run inputs.
 
 ## 3. Process overview and scheduling
 

@@ -11,7 +11,8 @@ AdLife Lab simulates a small fictional society of 1–30 synthetic consumers ove
 simulated days. Each agent follows a daily routine, moves between zones and along routes, maintains
 memories and relationships, encounters advertising through a mobile feed or a highway billboard, discusses
 what it saw with people it knows, and updates its recall, brand sentiment, and purchase intention
-accordingly.
+accordingly. The engine advances in fixed 15-simulated-minute ticks — 96 ticks per simulated day; a
+timestamp is an absolute simulated minute, so day 1 ends at minute 1,440.
 
 It is a research and teaching instrument: a controlled environment where you can change one variable in a
 campaign, re-run an identical population under an identical seed, and attribute the difference in outcome
@@ -37,8 +38,8 @@ any advertising network.
 
 ## Design principles
 
-**Determinism is a hard requirement.** The same seed and the same scenario produce byte-identical events
-and byte-identical final state. Every stochastic decision is drawn from a keyed random oracle rather than
+**Determinism is a hard requirement.** The same seed, scenario, and code produce the same events, event
+for event, and the same final state. Every stochastic decision is drawn from a keyed random oracle rather than
 a global generator, so a change in evaluation order cannot change an outcome. The test suite is run under
 varying `PYTHONHASHSEED` values to catch iteration-order leaks.
 
@@ -63,8 +64,11 @@ API.
 
 ## Status
 
-Under active development. The behavioural core is complete and tested; the orchestration, persistence,
-and presentation layers are in progress.
+AdLife Lab is a complete, working research instrument: every capability in the table below is
+implemented, tested, and shipped in this repository today. What remains is release logistics — a
+package-index publication, continuous integration on hosted runners, and tagged releases — not
+simulation features. It is an open-source research instrument, not a hosted product: nothing here
+makes decisions for real people, and nothing is calibrated against real-world data.
 
 | Capability | Status |
 | --- | --- |
@@ -83,7 +87,9 @@ and presentation layers are in progress.
 | Complete command-line interface | Complete |
 | Live terminal user interface | Complete |
 | Self-contained HTML reports | Complete |
-| Wheels, frozen binaries, and installers | Planned |
+| Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
+| Package-index publication (PyPI), frozen binaries, and installers | Planned |
+| Continuous integration and tagged releases on GitHub | Planned |
 
 ---
 
@@ -98,7 +104,7 @@ and presentation layers are in progress.
 uv tool install adlife-sim
 <!-- adlife-install:end -->
 
-Until a package index release exists (see the roadmap), install from source:
+Until the package-index release exists (see the roadmap), install from source:
 
 ```bash
 git clone https://github.com/mahanfatehian/adlife-sim.git
@@ -128,7 +134,7 @@ A full walkthrough, from an empty directory to a self-contained HTML report, is 
 uv run adlife init my-study              # create a study from the packaged demo project
 uv run adlife validate my-study          # gate: every input checks before anything runs
 uv run adlife run my-study --seed 42     # one deterministic whole run, fully persisted
-uv run adlife replay my-study <run-id>   # re-execute and verify byte-identical events
+uv run adlife replay my-study <run-id>   # re-execute and verify the stream, event for event
 uv run adlife report my-study <run-id>   # self-contained HTML report (works offline)
 uv run adlife compare control treatment  # paired A/B across seeds (common random numbers)
 uv run adlife run my-study --live        # the four-panel terminal dashboard
@@ -224,7 +230,7 @@ pre-registration, including the 80% directional-stability rule and sensitivity r
 
 ## Reproducibility
 
-The same seed, scenario, and code produce byte-identical events. Every stochastic decision is drawn
+The same seed, scenario, and code produce the same events, event for event. Every stochastic decision is drawn
 from a keyed random oracle scoped to its agent and purpose, so a change in evaluation order cannot
 change an outcome. Every run persists a manifest recording the code version, scenario fingerprint,
 provider, and seed, and `adlife replay` re-executes a stored run and verifies the event stream matches
@@ -244,10 +250,10 @@ software produces.
 
 ## Roadmap
 
-1. **Wheels, frozen binaries, and installers** — the `uv tool install adlife-sim` line above becomes
-   real with a package-index release and prebuilt artifacts (tracking Task 18 of the implementation
-   plan).
-2. **Continuous integration and releases** — automated gates and tagged releases on GitHub.
+1. **Package-index release** — publish `adlife-sim` to PyPI so the `uv tool install adlife-sim`
+   command above works everywhere; the wheel build and its release smoke test already run locally.
+2. **Continuous integration and releases** — automated gates and tagged releases on GitHub-hosted
+   runners.
 3. **A separate commercial product** — the local, AGPL-licensed engine is designed to stay reusable:
    the model core is adapter-free, so a future, separately licensed SaaS offering can be built *on* it
    while this repository remains the open, inspectable research instrument. No hosted service exists

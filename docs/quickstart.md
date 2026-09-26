@@ -51,7 +51,9 @@ uv run adlife run demo-study
 # run run-project-…-42: completed at minute 1440, 161 events, artifacts in demo-study/runs/run-project-…-42
 ```
 
-One simulated day is 1,440 ticks of one simulated minute. Overrides: `--seed`, `--days`
+One simulated day is 1,440 simulated minutes, driven as 96 ticks of 15 simulated minutes.
+A tick is the engine's atomic commit unit; a timestamp is an absolute simulated minute,
+so day 1 ends at minute 1,440. Overrides: `--seed`, `--days`
 (1–7), `--population-size` (1–30), `--run-id`, `--campaign`.
 
 What lands in `demo-study/runs/<run-id>/`:

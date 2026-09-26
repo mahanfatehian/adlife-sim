@@ -1,8 +1,11 @@
 # Reproducibility
 
 Reproducibility is a tested property of this software, not a hope. The same seed, the same
-scenario, and the same code produce byte-identical events and byte-identical final state —
-and `adlife replay` verifies it on demand.
+scenario, and the same code produce the same events, event for event, and the same final
+state — and `adlife replay` verifies it on demand. (A run re-executed under a derived
+identifier carries that identifier in its event ids; the comparison normalizes it away,
+and every other byte must match. Re-executing under the *same* run id leaves
+byte-identical artifact files.)
 
 ## What a seed guarantees
 
@@ -12,8 +15,9 @@ A seed fixes every stochastic decision in the run:
   movement draws, attention draws, share draws, purchase draws — come from a random
   oracle keyed by run, agent, and purpose. Adding an agent or changing an unrelated
   subsystem cannot shift another agent's stream.
-- **Deterministic scheduling.** The clock advances one simulated minute per tick; stage
-  and event ordering are total orders, not iteration orders.
+- **Deterministic scheduling.** The clock advances in fixed ticks of 15 simulated minutes
+  (96 ticks per simulated day); stage and event ordering are total orders, not iteration
+  orders.
 - **Recorded inputs.** The run's `inputs/` directory freezes the exact scenario — world,
   population, routines, campaigns, model parameters — the run was driven with, not the
   files it was *later edited into*.
@@ -69,10 +73,9 @@ cat my-study/runs/<run-id>/run.json
 
 # re-execute and verify
 uv run adlife replay my-study <run-id>
-
-# or re-run fresh with the same overrides
-uv run adlife run my-study --seed <seed> --run-id <new-id>
 ```
 
-The fresh run's `events.jsonl` is byte-identical to the recorded one. If it is not, that
-is a bug, and the pair of artifacts is the bug report.
+Replay re-executes the run and compares the fresh stream to the recorded one with the run
+identifier normalized away (a derived run carries its own identifier, so the raw files
+cannot be byte-identical; everything else must be). If the comparison fails, that is a
+bug, and the pair of artifacts is the bug report.

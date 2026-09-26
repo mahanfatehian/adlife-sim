@@ -54,13 +54,16 @@ secrets. An invalid state cannot be constructed even by bypassing the intended A
 
 There is no global random generator. Every stochastic decision is drawn from a keyed
 random oracle — a stream keyed by run, agent, and purpose — so evaluation order cannot
-change an outcome. Combined with a deterministic minute-by-minute clock, the same seed
-and scenario produce byte-identical events, which the replay command verifies rather than
-assumes. The test suite is additionally run under varying `PYTHONHASHSEED` values.
+change an outcome. Combined with a deterministic clock that advances in fixed ticks of
+15 simulated minutes (96 ticks per simulated day), the same seed
+and scenario produce the same events, event for event — which the replay command verifies
+rather than assumes (the derived replay run carries its own identifier; every other byte
+must match). The test suite is additionally run under varying `PYTHONHASHSEED` values.
 
 ## The nine-stage tick
 
-The engine commits one simulated minute per tick through a fixed atomic stage order:
+The engine commits one tick of 15 simulated minutes through a fixed atomic stage order
+(96 ticks per simulated day; a timestamp is an absolute simulated minute):
 
 1. **Movement** — two-phase planning and resolution along world routes.
 2. **Advertising eligibility and attention** (planned) — exposure opportunities render

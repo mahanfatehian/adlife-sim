@@ -29,6 +29,11 @@ adlife --format human|json|jsonl --no-color <command> …
 | 4 | Artifact corruption: a stored run failed validation when read. |
 | 130 | Interrupt: the run recorded an interrupted artifact before exiting. |
 
+A Python traceback is printed only for internal defects (exit 1) — expected failures such
+as invalid input, run conflicts, provider misconfiguration, or corrupted artifacts print a
+concise diagnostic on stderr and nothing more. Set `ADLIFE_DEBUG=1` to request the full
+traceback for any failure.
+
 ## `adlife init NAME [--parent DIR]`
 
 Create a new study directory from the packaged demo project. Refuses to touch a non-empty
@@ -76,7 +81,9 @@ stdout.
 Re-execute a stored run from its recorded inputs and verify the fresh event stream against
 the recorded one. `--provider-mode` is `rules` (default), `hybrid`, or `mock`. Emits
 `"replay-identical": true` on success. Corrupted artifacts exit 4; a mismatch is reported
-as a failure, never repaired.
+as a failure, never repaired. A replay destination (`replay-<run-id>`) that already exists
+is refused with exit 3: replay never deletes or overwrites run artifacts, and the stored
+source run is never modified.
 
 ## `adlife compare CONTROL TREATMENT [--seeds N] [--treatment-path PATH]`
 

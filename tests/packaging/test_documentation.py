@@ -228,3 +228,37 @@ def test_no_unsupported_accuracy_or_adoption_claims() -> None:
         lowered = text.lower()
         for claim in forbidden:
             assert claim not in lowered, f"{path.name} claims: {claim}"
+
+
+def test_tick_duration_documentation_matches_the_implementation() -> None:
+    """The engine advances 15 simulated minutes per tick; docs must say exactly that.
+
+    The clock is authoritative (``SimClock`` refuses any ``tick_minutes`` other than 15
+    and the configuration pins ``Literal[15]``), so 96 ticks drive a 1,440-minute
+    simulated day. A timestamp, however, remains an absolute simulated minute - which
+    is why "minute 1440" is correct while "one minute per tick" is not. The forbidden
+    phrasings below are the ways this contradiction has actually drifted before.
+    """
+    forbidden = [
+        "one simulated minute per tick",
+        "1,440 ticks",
+        "1440 ticks",
+        "minute-by-minute clock",
+        "one tick is one simulated minute",
+        "one minute per tick",
+    ]
+    for path, text in _all_docs().items():
+        lowered = text.lower()
+        for phrase in forbidden:
+            assert phrase not in lowered, f"{path.name} states: {phrase}"
+
+    for name in (
+        "README.md",
+        "docs/quickstart.md",
+        "docs/architecture.md",
+        "docs/reproducibility.md",
+        "docs/methodology/odd-protocol.md",
+    ):
+        text = _read(name).lower()
+        assert "15" in text and "96" in text, f"{name} must state the 15-minute tick scale"
+        assert "simulated minute" in text, f"{name} must distinguish ticks from minutes"

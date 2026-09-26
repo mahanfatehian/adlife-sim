@@ -80,8 +80,8 @@ report; it cannot exfiltrate data or alter the model's rules.
 
 ## Reproducibility limits
 
-Rules and mock modes are exactly reproducible (byte-identical events; `adlife replay`
-verifies). Hybrid mode's live provider is nondeterministic; the artifact remains
+Rules and mock modes are exactly reproducible (the same stream, event for event;
+`adlife replay` verifies). Hybrid mode's live provider is nondeterministic; the artifact remains
 auditable because provider answers never touch numeric outcomes and every fallback is
 recorded. Replay answers from the recorded cache. Two runs on different code versions are
 different models — the manifest records the version, and cross-version comparisons should
