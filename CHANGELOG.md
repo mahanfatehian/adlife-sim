@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Announcement-readiness hardening** — regression coverage for hybrid provider
+  identity, non-destructive replay, the cognition fallback across ticks, the CLI
+  error boundary, and documentation consistency (tick scale pinned by a doc test).
+- `ADLIFE_DEBUG=1` requests a full traceback for any command failure; expected
+  failures now print a concise diagnostic only (see Fixed).
+
+### Fixed
+
+- **Provider identity in run manifests** — a hybrid run answering through a real
+  configured local or remote OpenAI-compatible provider was persisted with manifest
+  provider `mock`, and a replay was recorded as its source's provider rather than
+  `replay`. The manifest now records the cognition the run was wired to
+  (`rules | mock | local | remote | replay`), consistently across headless runs, live
+  dashboard runs, replays, and demo runs; rules and mock runs are unchanged.
+- **Cognition fallback across ticks** — a hybrid run whose provider fails after the
+  first tick could abort with `UnknownCognitionRequest`, because the cached cognition
+  service kept tick 1's rule inputs. The service now adopts each tick's fallback while
+  keeping the run's budget books, so a failing provider falls back for the whole run
+  as documented.
+- **Replay is non-destructive** — `adlife replay` deleted an existing
+  `replay-<run-id>` directory before re-running. It now refuses the conflicting
+  destination with exit 3 and leaves every stored artifact untouched; the source run
+  is never modified.
+- **Duplicate-run exit code** — refusing an existing run identifier exited 2; the
+  documented run-conflict code is 3, and the CLI now follows the documentation.
+- **CLI error boundary** — expected failures (invalid input, run conflicts, provider
+  misconfiguration, corrupted artifacts) printed full Python tracebacks. They now
+  print one concise diagnostic on stderr (with the clean JSON error object on stdout
+  in JSON modes); tracebacks remain for unexpected internal defects and for
+  `ADLIFE_DEBUG=1`.
+- **Documentation consistency** — quickstart, architecture, reproducibility, and the
+  ODD protocol described a one-minute tick / 1,440 ticks per day; the engine advances
+  in 15-simulated-minute ticks (96 per simulated day; timestamps remain absolute
+  simulated minutes). The README status section no longer contradicts its own
+  capability table, reproducibility claims distinguish event-for-event equality from
+  byte-level file equality, and the `--run-id` help text renders correctly in
+  rich-based terminals.
+- **Live dashboard robustness** — an agent-row highlight processed while the layout
+  was still mounting could crash the live dashboard with `NoMatches`. The detail
+  panel update is now best-effort and re-projected on the next committed tick; a
+  read-only dashboard never dies on a transient query.
+- Removed internal implementation-plan task references from user-facing help text,
+  error messages, and module docstrings.
+
+### Prior unreleased work
+
 - **Release-candidate certification** — metamorphic property suite (determinism across
   cognition modes, hybrid replay equality, seed sensitivity, agent-order and
   intent-order permutation invariance, causal-chain tracing, no-campaign control,
@@ -40,7 +86,8 @@ Initial development release of the complete research instrument.
 ### Added
 
 - **Core model** — frozen, strictly validated domain contracts; deterministic
-  minute-by-minute clock; keyed random oracle; ten-zone routable world; two-phase
+  clock advancing in 15-simulated-minute ticks (96 per day); keyed random oracle;
+  ten-zone routable world; two-phase
   movement planning; fictional population, routine, and relationship-graph generation
   from packaged templates.
 - **Behaviour** — campaign ingestion with safe YAML and path containment; exposure
