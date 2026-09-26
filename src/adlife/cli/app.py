@@ -3,7 +3,7 @@
 Every command consumes the core through explicit factories wired in its own module;
 this file only registers the tree and carries the global ``--format human|json|jsonl``
 and ``--no-color`` options the output contract is built on. The eager ``--version``
-from Task 1 is retained verbatim: help and version must not pay for imports the
+callback is retained verbatim: help and version must not pay for imports the
 commands make lazily.
 """
 

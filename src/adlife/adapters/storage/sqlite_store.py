@@ -31,8 +31,8 @@ the metrics table against the stored result, and the status against the result i
 A corrupt, truncated, tampered or version-mismatched artifact raises
 :class:`~adlife.core.ports.run_store.CorruptRunArtifact`; none of it is guessed at.
 
-Failures are translated with ``from None`` throughout, on the discipline Task 10 settled
-at the cognition boundary: a chained ``__cause__`` is printed by every formatted traceback,
+Failures are translated with ``from None`` throughout, on the discipline the cognition
+boundary settled: a chained ``__cause__`` is printed by every formatted traceback,
 and the exceptions translated here were built from campaign text, provider paraphrase and
 stored documents. The message names the run and the artifact; the content stays on disk.
 """

@@ -433,7 +433,7 @@ def _project_movement_snapshot(
 ) -> Snapshot:
     keys = tuple(_movement_event_key(event) for event in events)
     if keys != tuple(sorted(keys)):
-        raise ValueError("movement events are not in canonical Task 6 order")
+        raise ValueError("movement events are not in canonical order by agent and minute")
     if len(keys) != len(set(keys)):
         raise ValueError("movement events contain a duplicate agent update")
 
@@ -623,8 +623,9 @@ def allocate_exposure_batch(
 ) -> ExposureBatch:
     """Project canonical movement from a pre-tick snapshot, then allocate exposure.
 
-    The start cursor belongs to the supplied pre-tick snapshot. Task 12 can pass its
-    planned movement events directly; opportunities contain the projected post-movement
+    The start cursor belongs to the supplied pre-tick snapshot. The commit pipeline can
+    pass its planned movement events directly; opportunities contain the projected
+    post-movement
     state and begin after every movement sequence.
     """
     snapshot = _revalidate_snapshot(snapshot)

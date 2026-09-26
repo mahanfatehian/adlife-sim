@@ -230,8 +230,9 @@ def _projected_snapshot(
 ) -> Snapshot:
     """Project the movement of this tick, the frame the noticed events belong to.
 
-    Task 7 allocates exposure against the post-movement state, so a noticed event at this
-    minute already reflects the move. Reusing the Task 7 canonical projection keeps social
+    Exposure allocation runs against the post-movement state, so a noticed event at this
+    minute already reflects the move. Reusing the exposure stage's canonical projection
+    keeps social
     contact in the same frame instead of one movement behind it.
     """
     if movement_events is None:

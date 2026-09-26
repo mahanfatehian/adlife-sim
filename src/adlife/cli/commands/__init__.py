@@ -1,1 +1,1 @@
-"""Command adapters registered by the complete CLI in Task 14."""
+"""Command adapters registered by the complete CLI in :mod:`adlife.cli.app`."""

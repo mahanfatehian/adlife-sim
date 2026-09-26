@@ -1,6 +1,6 @@
 """The run orchestrator: a whole scenario, driven through the ports, to an artifact.
 
-Task 12's plan step is this loop. :mod:`adlife.core.simulation.engine` owns the nine-stage
+The drive loop below is the run. :mod:`adlife.core.simulation.engine` owns the nine-stage
 tick - what one commit may change and in what order - and this module owns the run: which
 ticks happen, what a run must persist before anyone observes it, when a checkpoint is
 taken, and what is recorded when the run cannot continue.
@@ -28,7 +28,7 @@ WHAT A REFUSAL IS WORTH. A port that raises, or a commit that refuses, records t
 ``failed`` - with the exception CLASS, never its message, because a message may carry
 campaign text or provider paraphrase - and re-raises, so the caller still sees the defect.
 A ``KeyboardInterrupt`` or a cancelled task is recorded ``interrupted`` and raised as
-:class:`InterruptedRun`, whose exit code belongs to Task 14's CLI.
+:class:`InterruptedRun`, whose exit code belongs to the CLI boundary.
 
 DETERMINISM. The runner never draws, never shuffles and never reads a clock into the
 simulation: the clock it advances is the model's own, and wall time appears only in the
@@ -82,7 +82,7 @@ class RunnerRefused(RuntimeError):
 class InterruptedRun(RuntimeError):
     """Raised when a run was stopped before it finished, with what was kept.
 
-    ``result`` carries the ``interrupted`` status the store recorded. Task 14's CLI maps
+    ``result`` carries the ``interrupted`` status the store recorded. The CLI maps
     this class to exit code 130; the runner does not.
     """
 

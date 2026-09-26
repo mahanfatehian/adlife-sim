@@ -1,6 +1,6 @@
 """The run-level model parameters and the one object that carries them.
 
-Task 13's sensitivity analysis must be able to ask "what if attention were 20 percent
+The sensitivity analysis must be able to ask "what if attention were 20 percent
 weaker?" and get an honest answer, which means the engine's behavioural constants must
 become run inputs rather than baked-in module numbers. This module is that input: one
 frozen, bounded, serialisable record of every knob a run may turn, with the documented

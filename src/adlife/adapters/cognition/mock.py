@@ -181,7 +181,7 @@ class MockCognitionProvider:
 
         The counts are zero because they are true: no model was called, so no tokens were
         spent, and an offline provider may not read a clock to time itself. Reporting an
-        invented estimate would let Task 14 and Task 16 present a fabricated cost.
+        invented estimate would let the CLI and the reports present a fabricated cost.
         """
         return CognitionAnswer(
             result=await self.evaluate(request),
