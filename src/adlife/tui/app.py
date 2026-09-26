@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widgets import DataTable, Footer, Input, Static
 
 from adlife.core.domain.events import DomainEvent
@@ -76,8 +77,23 @@ class AdLifeTui(App[None]):
             stream.append_event(event)
         if self._selected_agent is None and snapshot.agents:
             self._selected_agent = next(iter(snapshot.agents))
-            self.query_one("#agent-detail", AgentDetail).show_agent(self._selected_agent, self.bus)
+            self._show_selected_agent()
         self._refresh_header()
+
+    def _show_selected_agent(self) -> None:
+        """Best-effort detail update; a read-only dashboard never dies on a query.
+
+        A row can be highlighted while the DOM is still mounting - the highlight is a
+        posted message, and under load it can be processed mid-compose, before the
+        right-hand panel is findable. The panel is re-projected on the next committed
+        tick, so a highlight that cannot be shown this instant is simply deferred.
+        """
+        if self._selected_agent is None:
+            return
+        try:
+            self.query_one("#agent-detail", AgentDetail).show_agent(self._selected_agent, self.bus)
+        except NoMatches:
+            return
 
     def _refresh_header(self) -> None:
         minute = self.bus.latest.simulated_minute
@@ -134,4 +150,4 @@ class AdLifeTui(App[None]):
             return
         if event.row_key is not None and event.row_key.value is not None:
             self._selected_agent = event.row_key.value
-            self.query_one("#agent-detail", AgentDetail).show_agent(self._selected_agent, self.bus)
+            self._show_selected_agent()
