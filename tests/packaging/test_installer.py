@@ -36,8 +36,14 @@ def _run(
     home: Path,
     env_extra: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    # The fake uv must SHADOW the real one, not replace the whole PATH: the runner
+    # also needs the system directories to find `sh` itself (and, off the sandbox,
+    # everything the script invokes). Prepending keeps the fake uv first.
+    path = str(fake_uv_dir) if fake_uv_dir else os.environ.get("PATH", "/usr/bin:/bin")
+    if fake_uv_dir:
+        path = os.pathsep.join([str(fake_uv_dir), os.environ.get("PATH", "/usr/bin:/bin")])
     env = {
-        "PATH": str(fake_uv_dir) if fake_uv_dir else "/usr/bin:/bin",
+        "PATH": path,
         "HOME": str(home),
         "UV_CALL_LOG": str(home / "uv-calls.log"),
     }
@@ -67,7 +73,8 @@ def test_installer_rejects_missing_uv_without_chaining_another_installer() -> No
     if not IS_POSIX:
         pytest.skip("POSIX shell behaviour")
     home = Path("/tmp") / "adlife-inst-home"
-    result = _run(None, home)
+    # A PATH with no uv anywhere: the installer must print the official URL and stop.
+    result = _run(None, home, env_extra={"PATH": "/usr/bin:/bin"})
     assert result.returncode == 2
     output = result.stdout + result.stderr
     assert "docs.astral.sh/uv" in output, "must print the official uv installation URL"
