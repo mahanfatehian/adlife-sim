@@ -25,7 +25,7 @@ from adlife.cli.cognition import (
     RuleCognitionPort,
     rule_fallback_for,
 )
-from adlife.cli.errors import CommandError, command_boundary
+from adlife.cli.errors import CommandError, ExitCode, command_boundary
 from adlife.cli.output import emit_json, info
 from adlife.core.domain.events import DomainEvent
 from adlife.core.ports.run_store import StoredRun
@@ -86,13 +86,16 @@ def command(
     resolved_cache = cache_dir if cache_dir is not None else root / "cache"
     replay_id = f"replay-{run_id}"[:40]
     if (root / "runs" / replay_id).exists():
-        import shutil
-
-        shutil.rmtree(root / "runs" / replay_id)
+        raise CommandError(
+            f"replay destination {replay_id} already exists in {root / 'runs'}; "
+            "the CLI refuses to overwrite run artifacts - replaying is deterministic, "
+            "so the stored replay already holds this exact comparison",
+            exit_code=ExitCode.PROVIDER_ERROR,
+        )
 
     identity = RunIdentity.for_project(
         project_root=root,
-        provider=stored.manifest.provider,
+        provider="replay",
         model_id=stored.manifest.model_id,
         overrides={
             "package_version": stored.manifest.package_version,
@@ -116,7 +119,7 @@ def command(
             store=store,
             sinks=(),
             run_id=replay_id,
-            provider_name=stored.manifest.provider,
+            provider_name="replay",
             model_id=stored.manifest.model_id,
         )
     )
