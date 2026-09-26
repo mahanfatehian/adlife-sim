@@ -333,6 +333,22 @@ class CognitionService:
         self._spent: dict[str, int] = {}
         self._spent_total = 0
 
+    def replace_fallback(self, fallback: CognitionProvider) -> None:
+        """Swap the terminal rule fallback, keeping every budget already spent.
+
+        A run wires its service once and hands the service the terminal rule provider
+        for each tick, because the rule formula can only answer requests whose inputs
+        that tick's plan actually contains. Replacing the service per tick would reset
+        the budget counters and let later ticks re-spend cognition the run no longer
+        has, so the fallback travels to the service instead and the service keeps the
+        run's books. A service mid-``evaluate_many`` is not required to switch cleanly;
+        callers replace the fallback between batches, which is where the runner and the
+        CLI ports call this.
+        """
+        if not isinstance(fallback, CognitionProvider):
+            raise TypeError("fallback must implement the cognition provider port")
+        self._fallback = fallback
+
     @property
     def retries(self) -> int:
         """How many retries after the initial attempt this service is configured for."""

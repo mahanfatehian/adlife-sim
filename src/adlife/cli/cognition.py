@@ -16,6 +16,7 @@ from adlife.adapters.cognition.cache import CognitionCache
 from adlife.adapters.cognition.rules import RuleCognitionProvider
 from adlife.core.ports.cognition import (
     CognitionAnswer,
+    CognitionProvider,
     CognitionRequest,
     ProviderMetadata,
 )
@@ -100,8 +101,12 @@ class ServiceCognitionPort:
 
     The dispatched provider is constructed once per run; ``service_factory`` receives
     the terminal rule provider for the tick and returns a configured service, so retry
-    counts, budgets and cache wiring stay the caller's decisions. A service defect that
-    survives its own fallback is a provider error.
+    counts, budgets and cache wiring stay the caller's decisions. Each ``resolve`` also
+    hands the service that tick's fallback: the rule formula can only answer requests
+    whose inputs this tick's plan contains, and a run's budget books live in the one
+    service, so the fallback travels to the service rather than the service being
+    rebuilt per tick. A service defect that survives its own fallback is a provider
+    error.
     """
 
     def __init__(
@@ -127,6 +132,11 @@ class ServiceCognitionPort:
             if not isinstance(service, CognitionService):
                 raise RuntimeError("the cognition factory did not produce a CognitionService")
             self._service = service
+        # Every tick: a fallback is only valid for the requests its plan contains, so
+        # the service must never answer tick N from tick 1's rule inputs.
+        if not isinstance(fallback_provider, CognitionProvider):
+            raise RuntimeError("the cognition fallback did not implement the provider port")
+        service.replace_fallback(fallback_provider)
         resolutions = await service.evaluate_many(requests, self._provider)
         return {
             request_id: CognitionAnswer(result=resolution.result, usage=resolution.usage)

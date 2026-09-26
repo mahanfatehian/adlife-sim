@@ -522,6 +522,40 @@ async def test_only_one_repair_is_attempted(
     assert resolution.source == "fallback"
 
 
+async def test_replace_fallback_serves_each_tick_from_its_own_rule_inputs(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    """A persisted service answers tick 2 from tick 2's inputs, with budgets intact.
+
+    The CLI wires its cognition service once per run and hands each tick's plan its own
+    terminal rule provider; the service must adopt the new fallback instead of answering
+    from the previous tick's inputs (a stale fallback raises UnknownCognitionRequest),
+    and replacing the fallback must not reset the budget books.
+    """
+    provider, _ = _scripted([ECHO, httpx.Response(401, json={"error": {"message": "denied"}})])
+    first_fallback = _fallback([cognition_request], valid_profile, consumer_state, valid_campaign)
+    service = _service(first_fallback)
+
+    first = await service.evaluate_one(cognition_request, provider)
+    assert first.source == "remote-llm"
+
+    # Tick 2's plan contains only a different request id; the provider fails outright,
+    # so the only way to answer is the freshly supplied fallback.
+    later_request = cognition_request.model_copy(
+        update={"request_id": "run-demo:event-00000008", "agent_id": "person-002"}
+    )
+    later_fallback = _fallback([later_request], valid_profile, consumer_state, valid_campaign)
+    service.replace_fallback(later_fallback)
+
+    later = await service.evaluate_one(later_request, provider)
+    assert later.source == "fallback"
+    assert later.result == await later_fallback.evaluate(later_request)
+    assert service.spent_total == 2, "the budget books must survive the fallback swap"
+
+
 async def test_the_fallback_answer_is_the_rule_providers_own_answer(
     cognition_request: CognitionRequest,
     valid_profile: PersonProfile,
