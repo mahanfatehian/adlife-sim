@@ -1,0 +1,11 @@
+# Byte-exact evidence must survive every platform's checkout unchanged: the golden
+# records are compared byte for byte against freshly generated output, and a Windows
+# checkout with autocrlf would otherwise rewrite their LF line endings to CRLF and
+# fail every comparison. Binaries are marked so no diff/merge machinery touches them.
+tests/golden/scenarios/**/record.json text eol=lf
+*.jsonl text eol=lf
+*.sqlite3 binary
+*.whl binary
+*.tar.gz binary
+*.png binary
+*.ico binary

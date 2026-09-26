@@ -138,6 +138,9 @@ async def test_rule_small_matches_committed_evidence(
         evidence.parent.mkdir(parents=True, exist_ok=True)
         evidence.write_bytes(actual)
     expected = evidence.read_bytes()
+    # .gitattributes pins the record to LF, but a checkout made before that pin may
+    # still hold CRLF; the comparison is about BEHAVIOUR, not a checkout artifact.
+    expected = expected.replace(b"\r\n", b"\n")
     assert actual == expected, (
         "the rule-small golden record changed; if this change is intended, run "
         "`uv run python scripts/regenerate_golden.py` and review the diff"
@@ -156,6 +159,7 @@ async def test_mock_small_matches_committed_evidence(
         evidence.parent.mkdir(parents=True, exist_ok=True)
         evidence.write_bytes(actual)
     expected = evidence.read_bytes()
+    expected = expected.replace(b"\r\n", b"\n")
     assert actual == expected, (
         "the mock-small golden record changed; if this change is intended, run "
         "`uv run python scripts/regenerate_golden.py` and review the diff"
