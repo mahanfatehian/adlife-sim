@@ -117,7 +117,11 @@ def _posix_open_file_path(descriptor: int) -> Path:
     elif sys.platform == "darwin":
         import fcntl
 
-        result = fcntl.fcntl(descriptor, getattr(fcntl, "F_GETPATH", 50), b"\0" * 4096)
+        # F_GETPATH takes a buffer of exactly MAXPATHLEN (1024) bytes; a longer
+        # string is refused with "fcntl string arg too long", so the buffer is
+        # sized to the value the system call documents, not generously larger.
+        max_path_len = getattr(fcntl, "MAXPATHLEN", 1024)
+        result = fcntl.fcntl(descriptor, getattr(fcntl, "F_GETPATH", 50), b"\0" * max_path_len)
         if not isinstance(result, bytes):
             raise OSError("macOS handle path lookup returned no path")
         raw_path = os.fsdecode(result.split(b"\0", 1)[0])
