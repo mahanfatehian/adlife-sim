@@ -162,6 +162,11 @@ def iter_export_lines(path: Path) -> Iterator[str]:
             chunk = handle.read(READ_CHUNK_CHARS)
             if not chunk:
                 break
+            # Refuse BEFORE appending when this chunk already dooms the line: the
+            # peak memory is then the refused buffer plus one chunk, never an
+            # unbounded accumulation, whatever the platform's codec temporaries are.
+            if len(buffer) + len(chunk) > MAX_EVENT_LINE_CHARS and "\n" not in chunk:
+                raise ValueError(f"an export line exceeds {MAX_EVENT_LINE_CHARS} characters")
             buffer += chunk
             while (break_at := buffer.find("\n")) >= 0:
                 yield buffer[:break_at]
