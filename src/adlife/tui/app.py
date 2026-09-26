@@ -96,9 +96,19 @@ class AdLifeTui(App[None]):
             return
 
     def _refresh_header(self) -> None:
+        """Refresh the header labels; skipped if the layout is gone.
+
+        The refresh timer can fire while the app is shutting down and its widgets are
+        already unmounting - a read-only dashboard must not die on a cosmetic update
+        that nobody can see.
+        """
+        try:
+            clock = self.query_one("#clock", Static)
+            run_info = self.query_one("#run-info", Static)
+        except NoMatches:
+            return
         minute = self.bus.latest.simulated_minute
         day, time_of_day = divmod(minute, 1440)
-        clock = self.query_one("#clock", Static)
         clock.update(f"Day {day + 1} {time_of_day // 60:02d}:{time_of_day % 60:02d}")
         paused = self.controller.is_paused()
         clock.set_class(paused, "paused")
@@ -106,7 +116,7 @@ class AdLifeTui(App[None]):
         provider = self.controller.provider_label()
         seed = self.controller.seed_label()
         run_id = self.controller.run_id_label()
-        self.query_one("#run-info", Static).update(
+        run_info.update(
             f"run {run_id} | {provider} | seed {seed} | speed x{speed:g} | "
             + ("PAUSED" if paused else "running")
         )
