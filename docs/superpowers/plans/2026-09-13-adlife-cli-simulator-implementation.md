@@ -685,9 +685,7 @@ class PersonProfile(DomainModel):
     display_name: str = Field(min_length=1, max_length=80)
     fictional: Literal[True] = True
     age: int = Field(ge=18, le=65)
-    occupation: Literal[
-        "student", "office-worker", "retail-worker", "freelancer", "unemployed"
-    ]
+    occupation: Literal["student", "office-worker", "retail-worker", "freelancer", "unemployed"]
     income_band: Literal["low", "middle", "high"]
     household_type: str = Field(min_length=1, max_length=80)
     home_zone: str
@@ -1062,8 +1060,7 @@ class AdLifeModel(mesa.Model):
     def plan_tick(self) -> TickPlan:
         snapshot = self.snapshot()
         intents = tuple(
-            self.agent_by_id[agent_id].plan(snapshot)
-            for agent_id in sorted(self.agent_by_id)
+            self.agent_by_id[agent_id].plan(snapshot) for agent_id in sorted(self.agent_by_id)
         )
         return TickPlan(snapshot=snapshot, intents=intents)
 
@@ -1229,9 +1226,7 @@ git commit -m "feat(core): model mobile and billboard exposure"
 def test_price_sensitivity_reduces_intention_for_expensive_product(
     valid_profile, consumer_state, cheap_campaign, expensive_campaign, phone_placement
 ) -> None:
-    cheap = evaluate_rule_response(
-        valid_profile, consumer_state, cheap_campaign, phone_placement
-    )
+    cheap = evaluate_rule_response(valid_profile, consumer_state, cheap_campaign, phone_placement)
     expensive = evaluate_rule_response(
         valid_profile, consumer_state, expensive_campaign, phone_placement
     )
@@ -1284,13 +1279,10 @@ def evaluate_rule_response(profile, state, campaign, placement) -> RuleResponse:
     affordability = clamp(1.25 - normalized_price * profile.traits.price_sensitivity, 0, 1)
     frequency_fatigue = min(
         1.0,
-        state.exposure_count(campaign.campaign_id, placement.channel)
-        / placement.frequency_cap,
+        state.exposure_count(campaign.campaign_id, placement.channel) / placement.frequency_cap,
     )
     value_match = (
-        0.55 * interest_match
-        + 0.25 * profile.traits.novelty_seeking
-        + 0.20 * affordability
+        0.55 * interest_match + 0.25 * profile.traits.novelty_seeking + 0.20 * affordability
     )
     sentiment_delta = clamp(
         0.18 * value_match
@@ -2059,9 +2051,7 @@ app.command("doctor")(doctor.command)
 @app.callback()
 def root(
     ctx: typer.Context,
-    output_format: Literal["human", "json", "jsonl"] = typer.Option(
-        "human", "--format"
-    ),
+    output_format: Literal["human", "json", "jsonl"] = typer.Option("human", "--format"),
     no_color: bool = typer.Option(False, "--no-color"),
 ) -> None:
     ctx.ensure_object(dict)
@@ -2592,10 +2582,7 @@ def parse_github_slug(remote: str) -> str:
 
 
 def installation_block(slug: str, version: str) -> str:
-    url = (
-        "https://raw.githubusercontent.com/"
-        f"{slug}/v{version}/scripts/install.sh"
-    )
+    url = f"https://raw.githubusercontent.com/{slug}/v{version}/scripts/install.sh"
     return f"{START}\ncurl -fsSL {url} | sh\n{END}"
 ~~~
 
