@@ -44,7 +44,7 @@ from collections.abc import Mapping, Sequence
 from pydantic import BaseModel
 
 from adlife.core.domain.events import DomainEvent
-from adlife.core.domain.json_values import thaw_json_mapping
+from adlife.core.domain.json_values import MAX_JSON_DEPTH, thaw_json_mapping
 from adlife.core.domain.person import (
     contains_labelled_secret_member,
     contains_secret_or_email_text,
@@ -84,14 +84,40 @@ class DocumentNotSerialisable(ValueError):
     """
 
 
+def _refuse_overdeep(payload: object) -> None:
+    """Refuse a document nesting deeper than the domain's own shape bound.
+
+    The depth bound lives in :mod:`adlife.core.domain.json_values`, but a document built
+    through ``model_construct`` bypasses validation, so the serializer is the last door
+    it passes through and must enforce the bound itself. The check is EXPLICIT rather
+    than delegated to pydantic-core's serializer, whose refusal is adaptive to the C
+    stack it runs on: a small-stack interpreter refuses a document that a large-stack
+    one renders, which would make this contract platform-dependent. The walk is
+    iterative, so checking never raises the recursion error it guards against.
+    """
+    pending: list[tuple[object, int]] = [(payload, 0)]
+    while pending:
+        node, depth = pending.pop()
+        if isinstance(node, Mapping):
+            if depth >= MAX_JSON_DEPTH:
+                raise DocumentNotSerialisable("a document could not be rendered as JSON")
+            pending.extend((item, depth + 1) for item in node.values())
+        elif isinstance(node, (list, tuple)):
+            if depth >= MAX_JSON_DEPTH:
+                raise DocumentNotSerialisable("a document could not be rendered as JSON")
+            pending.extend((item, depth + 1) for item in node)
+
+
 def json_document(value: BaseModel) -> dict[str, object]:
     """``model_dump(mode="json")``, with the serializer's own refusal given a type."""
     try:
-        return value.model_dump(mode="json")
+        dumped = value.model_dump(mode="json")
     except (ValueError, RecursionError):
         raise DocumentNotSerialisable(
             f"a {type(value).__name__} document could not be rendered as JSON"
         ) from None
+    _refuse_overdeep(dumped)
+    return dumped
 
 
 def canonical_json(value: BaseModel | Mapping[str, object]) -> str:
@@ -100,6 +126,7 @@ def canonical_json(value: BaseModel | Mapping[str, object]) -> str:
         payload: object = json_document(value)
     elif isinstance(value, Mapping):
         payload = thaw_json_mapping(value)
+        _refuse_overdeep(payload)
     else:
         raise TypeError("canonical_json needs a pydantic model or a mapping")
     try:
