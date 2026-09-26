@@ -2,7 +2,7 @@
 # AdLife installer for Linux and macOS.
 #
 # Installs the published package with uv's tool facility. The contract:
-#   * no privilege escalation (never sudo), no shell startup files edited;
+#   * no privilege escalation (never superuser), no shell startup files edited;
 #   * uv is a requirement, not something this script installs for you — when it is
 #     missing, the official installation URL is printed and the script exits, so no
 #     second remote installer is ever chained from here;

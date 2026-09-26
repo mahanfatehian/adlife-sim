@@ -151,29 +151,41 @@ def append_export_lines(path: Path, text: str) -> None:
 def iter_export_lines(path: Path) -> Iterator[str]:
     """Yield the export's lines without ever holding more than one bounded line.
 
-    The file is read in fixed chunks, so a corrupt export carrying one enormous "line"
-    is refused after :data:`MAX_EVENT_LINE_CHARS` characters rather than after all of
-    them. A file whose last line has no newline - the exact shape an append interrupted
-    by a kill leaves - is refused rather than treated as a complete record.
+    The file is read in fixed BYTE chunks and split on newlines at the byte level, so a
+    corrupt export carrying one enormous "line" is refused after
+    :data:`MAX_EVENT_LINE_CHARS` characters rather than after all of them. The pending
+    line is held as a LIST of chunks joined only when a newline arrives: repeated
+    ``buffer += chunk`` on a bytes object briefly holds both the old and the new copy,
+    which doubles the peak on exactly the corrupt file this guard exists for - and it
+    doubles it identically on every platform, so the bound is a bound everywhere. The
+    early refusal (before appending a chunk that dooms the line) keeps the pending
+    total at or under one line plus one chunk. Bytes are decoded only after a complete
+    bounded line has been isolated. A file whose last line has no newline - the exact
+    shape an append interrupted by a kill leaves - is refused rather than treated as a
+    complete record.
     """
-    buffer = ""
-    with path.open("r", encoding="utf-8", newline="\n") as handle:
+    parts: list[bytes] = []
+    pending = 0
+    with path.open("rb") as handle:
         while True:
             chunk = handle.read(READ_CHUNK_CHARS)
             if not chunk:
                 break
-            # Refuse BEFORE appending when this chunk already dooms the line: the
-            # peak memory is then the refused buffer plus one chunk, never an
-            # unbounded accumulation, whatever the platform's codec temporaries are.
-            if len(buffer) + len(chunk) > MAX_EVENT_LINE_CHARS and "\n" not in chunk:
+            if b"\n" not in chunk and pending + len(chunk) > MAX_EVENT_LINE_CHARS:
+                # Refuse before appending: the peak stays at one line plus one chunk.
                 raise ValueError(f"an export line exceeds {MAX_EVENT_LINE_CHARS} characters")
-            buffer += chunk
-            while (break_at := buffer.find("\n")) >= 0:
-                yield buffer[:break_at]
-                buffer = buffer[break_at + 1 :]
-            if len(buffer) > MAX_EVENT_LINE_CHARS:
+            parts.append(chunk)
+            pending += len(chunk)
+            if pending > MAX_EVENT_LINE_CHARS:
                 raise ValueError(f"an export line exceeds {MAX_EVENT_LINE_CHARS} characters")
-    if buffer:
+            if b"\n" in chunk:
+                joined = b"".join(parts)
+                while (cut := joined.find(b"\n")) >= 0:
+                    yield joined[:cut].decode("utf-8")
+                    joined = joined[cut + 1 :]
+                parts = [joined]
+                pending = len(joined)
+    if pending:
         raise ValueError("the export ends with an unterminated line")
 
 

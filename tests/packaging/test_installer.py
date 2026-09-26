@@ -31,6 +31,20 @@ def _write_fake_uv(directory: Path, *, fail: bool = False) -> Path:
     return fake
 
 
+def _write_fake_adlife(directory: Path) -> Path:
+    """A sandboxed `adlife` recording the health-check calls the installer must run.
+
+    The real CLI is never invoked: the harness pins the SEQUENCE (install, then
+    `adlife --version`, then `adlife doctor --offline`) without touching a real
+    environment, and the log distinguishes the two executables by prefix.
+    """
+    body = '#!/bin/sh\necho "adlife:$@" >> "$UV_CALL_LOG"\nexit 0\n'
+    fake = directory / "adlife"
+    fake.write_text(body, encoding="utf-8")
+    fake.chmod(0o755)
+    return fake
+
+
 def _run(
     fake_uv_dir: Path | None,
     home: Path,
@@ -90,6 +104,7 @@ def test_installer_installs_exact_package_and_runs_health_checks(
     fake_dir = tmp_path / "bin"
     fake_dir.mkdir()
     _write_fake_uv(fake_dir)
+    _write_fake_adlife(fake_dir)
     env_extra = {"ADLIFE_VERSION": version} if version else None
     result = _run(fake_dir, tmp_path, env_extra)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -101,7 +116,7 @@ def test_installer_installs_exact_package_and_runs_health_checks(
     assert expected in log.replace("\n", " ")
     # The recorded calls must be exactly install, then the two health checks.
     calls = [line.strip() for line in log.strip().splitlines() if line.strip()]
-    assert calls[-2:] == ["--version", "doctor --offline"]
+    assert calls[-2:] == ["adlife:--version", "adlife:doctor --offline"]
 
 
 def test_installer_never_escalates_or_edits_startup_files(tmp_path: Path) -> None:
@@ -110,6 +125,7 @@ def test_installer_never_escalates_or_edits_startup_files(tmp_path: Path) -> Non
     fake_dir = tmp_path / "bin"
     fake_dir.mkdir()
     _write_fake_uv(fake_dir)
+    _write_fake_adlife(fake_dir)
     assert _run(fake_dir, tmp_path).returncode == 0
     log = (tmp_path / "uv-calls.log").read_text(encoding="utf-8")
     script_text = SCRIPT.read_text(encoding="utf-8")
