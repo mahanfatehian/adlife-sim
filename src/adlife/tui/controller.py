@@ -69,6 +69,8 @@ class LiveRunController:
         run_id: str,
         event_bus: TuiEventBus,
         tick_delay: float = BASE_TICK_DELAY_SECONDS,
+        provider_name: str = "rules",
+        model_id: str = "rule-v1",
     ) -> None:
         self._runner_factory = runner_factory
         self._scenario = scenario
@@ -76,6 +78,8 @@ class LiveRunController:
         self._store = store
         self._run_id = run_id
         self._bus = event_bus
+        self._provider_name = provider_name
+        self._model_id = model_id
         self._tick_delay = tick_delay
         self._speed = tick_delay
         self._paused = asyncio.Event()
@@ -120,7 +124,7 @@ class LiveRunController:
         return self._run_id
 
     def provider_label(self) -> str:
-        return "rules"
+        return self._provider_name
 
     def seed_label(self) -> str:
         return str(self._seed)
@@ -160,6 +164,8 @@ class LiveRunController:
                 store=self._store,
                 sinks=(),
                 run_id=self._run_id,
+                provider_name=self._provider_name,
+                model_id=self._model_id,
                 tick_observer=self._observe_tick,
             )
             self.result = result

@@ -62,7 +62,16 @@ def command(
     if dashboard_wanted:
         from adlife.cli.commands.run import _run_live
 
-        result = asyncio.run(_run_live(runner, project, seed, run_id))
+        result = asyncio.run(
+            _run_live(
+                runner,
+                project,
+                seed,
+                run_id,
+                provider_name="mock",
+                model_id=project.config.provider.model,
+            )
+        )
     else:
         result = asyncio.run(_drive(runner, project, seed, run_id))
 

@@ -21,7 +21,7 @@ from adlife.cli.cognition import (
     cache_directory,
     rule_fallback_for,
 )
-from adlife.cli.errors import CommandError, command_boundary, output_format
+from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
 from adlife.cli.output import emit_json, info
 from adlife.cli.project import Project, load_project
 from adlife.core.domain.events import DomainEvent
@@ -56,10 +56,27 @@ def _sinks(fmt: str) -> tuple[EventSink, ...]:
     return (StdoutJsonlSink(),) if fmt == "jsonl" else ()
 
 
+def _manifest_provider(mode: str, provider_mode: str) -> str:
+    """The manifest's ``provider`` literal for a CLI mode and configured provider.
+
+    The manifest records the cognition the run was WIRED to, not the provider that
+    happened to answer: a hybrid run through a real configured local or remote endpoint
+    must never collapse to ``mock`` just because the endpoint fell back to the rules,
+    and a replay must never be recorded as the source run's provider. Rules and mock
+    keep their deterministic names.
+    """
+    if mode == "rules":
+        return "rules"
+    if mode == "replay":
+        return "replay"
+    return provider_mode
+
+
 def _identity(project: Project, mode: str, model_id: str) -> RunIdentity:
+    provider = _manifest_provider(mode, project.config.provider.mode)
     return RunIdentity.for_project(
         project_root=project.root,
-        provider="rules" if mode == "rules" else "mock",
+        provider=provider,
         model_id=model_id,
     )
 
@@ -144,6 +161,9 @@ async def _run_live(
     project: Project,
     seed: int,
     run_id: str,
+    *,
+    provider_name: str = "rules",
+    model_id: str = "rule-v1",
 ) -> SimulationResult:
     """Drive one run beneath the Textual dashboard; the artifact is identical."""
     from adlife.tui.app import AdLifeTui
@@ -158,6 +178,8 @@ async def _run_live(
         store=SQLiteRunStore(project.root),
         run_id=run_id,
         event_bus=bus,
+        provider_name=provider_name,
+        model_id=model_id,
     )
     app = AdLifeTui(controller, bus)
     await app.run_async()
@@ -182,7 +204,13 @@ def command(
     ] = None,
     run_id: Annotated[
         str | None,
-        typer.Option("--run-id", help=f"Run identifier, {RUN_ID_PATTERN_HELP}."),
+        typer.Option(
+            "--run-id",
+            help=(
+                "Run identifier: lowercase letters, digits and hyphens, starting "
+                "with a letter or digit (max 40 characters)."
+            ),
+        ),
     ] = None,
     mode: Annotated[
         Literal["rules", "hybrid", "replay"],
@@ -198,9 +226,7 @@ def command(
     seed: Annotated[
         int | None, typer.Option("--seed", min=0, help="Override the run seed.")
     ] = None,
-    live: Annotated[
-        bool, typer.Option("--live", help="Run the live Textual dashboard (Task 15).")
-    ] = False,
+    live: Annotated[bool, typer.Option("--live", help="Run the live Textual dashboard.")] = False,
     headless: Annotated[
         bool, typer.Option("--headless", help="Run without any terminal dashboard (the default).")
     ] = False,
@@ -230,6 +256,7 @@ def command(
         raise CommandError(
             f"run {resolved_run_id} already exists in {runs_dir}; "
             "the CLI refuses to overwrite run artifacts",
+            exit_code=ExitCode.PROVIDER_ERROR,
         )
 
     if campaign is not None:
@@ -252,7 +279,9 @@ def command(
         info("the live dashboard requires an interactive terminal; running headless instead")
 
     cognition, fallback = _cognition_seams(project, mode, resolved_seed, resolved_cache)
-    identity = _identity(project, mode, project.config.provider.model)
+    provider_mode = project.config.provider.mode
+    manifest_provider = _manifest_provider(mode, provider_mode)
+    identity = _identity(project, manifest_provider, project.config.provider.model)
     from adlife.core.simulation.runner import SimulationRunner
 
     runner = SimulationRunner(
@@ -263,7 +292,16 @@ def command(
     store = SQLiteRunStore(project.root)
 
     if dashboard_requested:
-        result = asyncio.run(_run_live(runner, project, resolved_seed, resolved_run_id))
+        result = asyncio.run(
+            _run_live(
+                runner,
+                project,
+                resolved_seed,
+                resolved_run_id,
+                provider_name=manifest_provider,
+                model_id=project.config.provider.model,
+            )
+        )
     else:
         sinks = _sinks(fmt)
         result = asyncio.run(
@@ -273,7 +311,7 @@ def command(
                 store=store,
                 sinks=sinks,
                 run_id=resolved_run_id,
-                provider_name="rules" if mode == "rules" else "mock",
+                provider_name=manifest_provider,
                 model_id=project.config.provider.model,
             )
         )
