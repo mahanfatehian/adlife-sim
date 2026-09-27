@@ -456,7 +456,8 @@ def _similarity_weighted_choice(
     ``social_similarity_weight`` and ``similarity`` the Jaccard overlap of the two
     agents' interests. At ``w = 0`` every weight is equal and the cumulative pick is the
     uniform draw; the engine only ever takes this path with a positive weight, so the
-    documented default behaviour is untouched.
+    documented default behaviour is untouched. If every similarity weight is zero,
+    reuse the same draw uniformly: no neighbor has a supported preference.
     """
     sender_profile = contact_snapshot.agents[sender_id][0]
     weights = tuple(
@@ -466,6 +467,8 @@ def _similarity_weighted_choice(
         for receiver_id, _relationship in eligible
     )
     total = sum(weights)
+    if total == 0.0:
+        return eligible[min(int(choice * len(eligible)), len(eligible) - 1)]
     cumulative = 0.0
     for position, receiver_weight in enumerate(weights):
         cumulative += receiver_weight

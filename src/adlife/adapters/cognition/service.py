@@ -503,6 +503,7 @@ class CognitionService:
             attempts = attempt
             try:
                 call = await self._invoke(provider, request)
+                self._validate_call_identity(call, request)
             except ProviderCallError as error:
                 last_error = error
                 raw_response = error.raw_response or raw_response
@@ -537,6 +538,7 @@ class CognitionService:
                     invalid_content=last_error.raw_response or NO_BODY_PLACEHOLDER,
                     error=str(last_error),
                 )
+                self._validate_call_identity(call, request)
             except ProviderCallError as error:
                 last_error = error
                 raw_response = error.raw_response or raw_response
@@ -563,6 +565,14 @@ class CognitionService:
             error=last_error,
             reason=_reason_for(last_error),
         )
+
+    @staticmethod
+    def _validate_call_identity(call: ProviderCall, request: CognitionRequest) -> None:
+        if call.answer.result.request_id != request.request_id:
+            raise InvalidProviderResponse(
+                "the provider answered a different cognition request",
+                raw_response=call.raw_response,
+            )
 
     async def _invoke(
         self,

@@ -65,9 +65,9 @@ class ExperimentRunner:
     ) -> ComparisonResult:
         """Run both arms per seed and pair their metrics by seed.
 
-        The seeds must be distinct nonnegative integers; they are used as-is, because a
-        paired difference across different seeds would measure the seed, not the
-        treatment. Each run's identifier is ``<prefix>-a|b-<seed>`` under the design
+        The seeds must be distinct nonnegative integers. They are sorted so input order
+        cannot change floating-point reductions or bootstrap resampling. Each arm uses
+        the same seed. Each run's identifier is ``<prefix>-a|b-<seed>`` under the design
         label's slug, so every arm of every comparison is auditable in the store.
         """
         from adlife.core.domain.scenario import Scenario
@@ -163,7 +163,7 @@ def _validated_seeds(seeds: Sequence[int]) -> tuple[int, ...]:
             raise ExperimentDesignError(f"seed {seed!r} must be a nonnegative integer")
     if len(set(seed_tuple)) != len(seed_tuple):
         raise ExperimentDesignError("seeds must be distinct for a paired comparison")
-    return seed_tuple
+    return tuple(sorted(seed_tuple))
 
 
 __all__ = ["DEFAULT_DESIGN", "ExperimentRunner", "fold_stored_run"]

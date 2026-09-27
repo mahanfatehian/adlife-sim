@@ -156,8 +156,8 @@ class RunIdentity:
             git_sha=overrides.get("git_sha", _git_sha_of(project_root)),
             lockfile_sha256=overrides.get("lockfile_sha256", _lockfile_sha256_of(project_root)),
             platform_name=overrides.get("platform", _platform_name()),
-            prompt_version=prompt_version,
-            prompt_hash=prompt_hash,
+            prompt_version=overrides.get("prompt_version", prompt_version),
+            prompt_hash=overrides.get("prompt_hash", prompt_hash),
         )
         return identity
 
@@ -219,6 +219,7 @@ def _git_sha_of(project_root: Path) -> str:
             capture_output=True,
             text=True,
             timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
     except (OSError, subprocess.SubprocessError):
         return "uncommitted"
@@ -237,12 +238,11 @@ def _lockfile_sha256_of(project_root: Path) -> str:
 
 
 def _prompt_identity() -> tuple[str, str]:
-    """The prompt contract's version and digest, read off the adapter that owns it.
+    """The adapter-free default: contract version and a digest of that version.
 
-    Reading the real template digest pulls the prompt module (an adapter) in at run
-    time, which the import boundary forbids for anything statically imported here. The
-    version is the documented contract constant; the hash is the canonical digest of
-    that version string, a stable stand-in that changes exactly when the version does.
+    This is not the prompt template fingerprint. CLI callers supply the actual
+    template fingerprint through identity overrides; replay supplies the recorded
+    fingerprint. Direct core callers without overrides use this version digest.
     """
     from adlife.core.ports.cognition import PROMPT_VERSION
     from adlife.core.simulation.engine import canonical_sha256
@@ -270,9 +270,12 @@ def scenario_manifest(
 
 def run_id_from(scenario: Scenario, seed: int) -> str:
     """The deterministic run identifier: ``run-<scenario>-<seed>`` bounded to the slug."""
+    from hashlib import sha256
+
     candidate = f"run-{scenario.scenario_id}-{seed}"
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", candidate):
-        candidate = candidate[:40].rstrip("-")
+        digest = sha256(candidate.encode("utf-8")).hexdigest()[:12]
+        candidate = f"{candidate[:27].rstrip('-')}-{digest}"
     return candidate
 
 
@@ -353,8 +356,8 @@ class SimulationRunner:
         configuration object travels to the cognition factory untouched, so a live
         provider adapter can read its endpoint and credentials from it; the manifest's
         ``provider`` and ``model_id`` fields come from ``provider_name``/``model_id``.
-        ``tick_observer`` is awaited after each tick is persisted and before the clock
-        advances - the live dashboard's turn to render and its pause point - and the
+        ``tick_observer`` is awaited after each tick is persisted, the clock advances,
+        and any day checkpoint is saved - the dashboard's pause point - and the
         loop is otherwise exactly the headless one.
         """
         run_id = run_id or run_id_from(scenario, seed)
@@ -370,7 +373,10 @@ class SimulationRunner:
         )
         model = self._new_model(scenario, seed, None, parameters)
         store.create_run(manifest, scenario=scenario)
-        self._publish(store, sinks, model.start_events(run_id))
+        try:
+            self._publish(store, sinks, model.start_events(run_id))
+        except BaseException as error:
+            return self._record_stop(model, store, sinks, manifest, error)
         return await self._drive(model, provider, store, sinks, manifest, tick_observer)
 
     async def resume(
@@ -387,21 +393,36 @@ class SimulationRunner:
     ) -> SimulationResult:
         """Continue a stored run from its latest day-boundary checkpoint.
 
-        The stored run must be resumable - it exists and is not finished - and the seed
-        must be the seed the manifest records. The model is rebuilt from the checkpoint,
-        so no tick is re-committed and no draw is replayed.
+        Only running rules/mock artifacts exactly at a durable checkpoint (or just
+        their start event) are resumable. Closed artifacts and uncheckpointed tails
+        are immutable; remote-service budget state is not a resumable checkpoint.
+        Frozen scenario, manifest, seed and parameters must agree before any write.
         """
-        from adlife.core.simulation.engine import AdLifeModel
+        from adlife.core.simulation.engine import AdLifeModel, canonical_sha256
+        from adlife.core.simulation.parameters import ModelParameters
 
         stored = store.load_run(run_id)
-        if stored.status not in {"running", "interrupted", "failed"}:
+        if stored.status == "completed":
             raise InterruptedRun(_finished_result(stored))
+        if stored.status != "running":
+            raise RunnerRefused("closed runs are immutable; replay to a new destination")
         if stored.manifest.seed != seed:
             raise RunnerRefused(f"run {run_id} was seeded with {stored.manifest.seed}")
-        resolved_manifest = manifest or stored.manifest
+        if canonical_sha256(scenario) != stored.manifest.scenario_hash:
+            raise RunnerRefused("resume requires the frozen scenario")
+        if manifest is not None and manifest != stored.manifest:
+            raise RunnerRefused("resume requires the frozen manifest")
+        if stored.manifest.provider not in {"rules", "mock"}:
+            raise RunnerRefused("resume supports only stateless rules/mock cognition")
+        resolved_manifest = stored.manifest
 
         checkpoint = stored.checkpoints[-1] if stored.checkpoints else None
         resolved_parameters = _parameters_of(resolved_manifest)
+        if parameters is not None and parameters != (resolved_parameters or ModelParameters()):
+            raise RunnerRefused("resume requires the frozen model parameters")
+        durable_sequence = checkpoint.next_event_sequence if checkpoint is not None else 1
+        if durable_sequence != len(stored.events):
+            raise RunnerRefused("uncheckpointed events cannot be resumed in place")
         if checkpoint is None:
             model = AdLifeModel.restore(
                 scenario=scenario,
@@ -428,8 +449,8 @@ class SimulationRunner:
         tick_observer: Callable[[TickPlan, TickOutcome, AdLifeModel], Awaitable[None]]
         | None = None,
     ) -> SimulationResult:
-        port = self._cognition_port_for(model, provider)
         try:
+            port = self._cognition_port_for(model, provider)
             while not model.clock.finished:
                 plan = model.plan_tick()
                 answers = await self._resolve(plan, port, provider)
@@ -437,15 +458,23 @@ class SimulationRunner:
                 store.append_events(outcome.events)
                 for sink in sinks:
                     sink.append_many(manifest.run_id, outcome.events)
-                if tick_observer is not None:
-                    # The observer's await is the live dashboard's turn to render and
-                    # its pause point; the loop itself is exactly the headless one.
-                    await tick_observer(plan, outcome, model)
                 model.clock.advance()
                 if outcome.ends_simulated_day:
                     # After the advance, so the clock stands exactly on the boundary the
                     # engine requires a checkpoint to carry.
                     store.save_checkpoint(model.checkpoint())
+                if tick_observer is not None:
+                    # Presentation follows the entire durable tick, including its
+                    # boundary checkpoint. Cancellation still interrupts the run;
+                    # a broken view is detached and cannot change the model outcome.
+                    try:
+                        await tick_observer(plan, outcome, model)
+                    except Exception as error:
+                        print(
+                            f"adlife: tick observer disabled ({type(error).__name__})",
+                            file=sys.stderr,
+                        )
+                        tick_observer = None
         except InterruptedRun:
             raise
         except BaseException as error:
@@ -527,7 +556,9 @@ class SimulationRunner:
         except RunnerRefused:
             raise
         except BaseException:
-            return result
+            # The stop record may itself fail on a full/broken device. Never turn
+            # that into a normal return, which would hide the original failure.
+            raise error from None
         if interrupted:
             raise InterruptedRun(result) from error
         raise error
@@ -561,9 +592,9 @@ class SimulationRunner:
         )
         try:
             store.append_events((event,))
+            model._next_event_sequence = sequence + 1
             for sink in sinks:
                 sink.append_many(manifest.run_id, (event,))
-            model._next_event_sequence = sequence + 1
         except BaseException:
             return
 

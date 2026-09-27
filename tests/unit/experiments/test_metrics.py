@@ -9,6 +9,7 @@ the arithmetic itself is under test.
 
 from __future__ import annotations
 
+from itertools import permutations
 from typing import Any
 
 import pytest
@@ -21,6 +22,27 @@ from adlife.core.ports.run_store import ProviderUsageLog
 from adlife.core.simulation.engine import stable_event_id
 
 RUN_ID = "run-metrics"
+
+
+def test_permuting_input_records_preserves_every_metric_and_receipt() -> None:
+    events = tuple(
+        event(EventType.COGNITION_COMPLETED, index, payload={"sentiment_delta": delta})
+        for index, delta in enumerate((0.1, 0.2, -0.3))
+    )
+    states = tuple(
+        state(f"person-{index:03d}", recall=value, fatigue=value, intention=value)
+        for index, value in enumerate((1.0, 1e-16, 1e-16), start=1)
+    )
+    calculator = MetricsCalculator()
+    expected = calculator.calculate(events, initial_states=states, final_states=states)
+    for ordering in permutations(range(3)):
+        actual = calculator.calculate(
+            tuple(events[index] for index in ordering),
+            initial_states=tuple(states[index] for index in ordering),
+            final_states=tuple(states[index] for index in ordering),
+        )
+        assert actual.as_mapping() == expected.as_mapping()
+        assert actual.details == expected.details
 
 
 def event(

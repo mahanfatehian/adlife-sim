@@ -130,6 +130,8 @@ class CognitionCache:
             text = path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return None
+        except UnicodeError:
+            raise CorruptCacheRecord(f"cognition cache record {key} is not valid UTF-8") from None
         try:
             record = CognitionRecord.model_validate_json(text)
         except ValueError:

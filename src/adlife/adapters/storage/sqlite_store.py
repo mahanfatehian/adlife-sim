@@ -283,22 +283,31 @@ class SQLiteRunStore:
             raise UnsafeRunLocation(f"{run_id!r} resolves outside the project root") from None
 
     def run_json_path(self, run_id: str) -> Path:
-        return self.run_directory(run_id) / RUN_DOCUMENT
+        return self._artifact_path(run_id, RUN_DOCUMENT)
 
     def scenario_json_path(self, run_id: str) -> Path:
-        return self.run_directory(run_id) / INPUTS_DIRECTORY / SCENARIO_DOCUMENT
+        return self._artifact_path(run_id, INPUTS_DIRECTORY, SCENARIO_DOCUMENT)
 
     def database_path(self, run_id: str) -> Path:
-        return self.run_directory(run_id) / DATABASE_FILE
+        return self._artifact_path(run_id, DATABASE_FILE)
 
     def events_jsonl_path(self, run_id: str) -> Path:
-        return self.run_directory(run_id) / EVENTS_EXPORT
+        return self._artifact_path(run_id, EVENTS_EXPORT)
 
     def metrics_json_path(self, run_id: str) -> Path:
-        return self.run_directory(run_id) / METRICS_DOCUMENT
+        return self._artifact_path(run_id, METRICS_DOCUMENT)
 
     def provider_usage_json_path(self, run_id: str) -> Path:
-        return self.run_directory(run_id) / PROVIDER_USAGE_DOCUMENT
+        return self._artifact_path(run_id, PROVIDER_USAGE_DOCUMENT)
+
+    def _artifact_path(self, run_id: str, *parts: str) -> Path:
+        directory = self.run_directory(run_id)
+        try:
+            return resolve_project_path(directory, Path(*parts))
+        except ValueError:
+            raise UnsafeRunLocation(
+                f"an artifact of run {run_id} resolves outside its run"
+            ) from None
 
     # --- writing ----------------------------------------------------------------------
 
@@ -744,7 +753,7 @@ class SQLiteRunStore:
             manifest = self._read_manifest(run_id, manifest_json)
             result = self._read_result(run_id, status, result_json)
             events = self._read_events(connection, run_id, max_events)
-            checkpoints = self._read_checkpoints(connection, run_id)
+            checkpoints = self._read_checkpoints(connection, run_id, event_count=len(events))
             self._verify_metrics_table(connection, run_id, result)
         except sqlite3.Error as error:
             raise CorruptRunArtifact(
@@ -1009,10 +1018,17 @@ class SQLiteRunStore:
                 f"the event document at sequence {sequence} of run {run_id} disagrees with "
                 "its own row"
             )
+        try:
+            validate_event_batch((event,), next_sequence=event.sequence)
+        except InvalidEventBatch:
+            raise CorruptRunArtifact(
+                f"the event document at sequence {sequence} of run {run_id} has invalid "
+                "identity, causality, or persisted content"
+            ) from None
         return event
 
     def _read_checkpoints(
-        self, connection: sqlite3.Connection, run_id: str
+        self, connection: sqlite3.Connection, run_id: str, *, event_count: int
     ) -> tuple[RunCheckpoint, ...]:
         """Read the checkpoints, bounding the READ and not only what it returns.
 
@@ -1050,6 +1066,11 @@ class SQLiteRunStore:
                 raise CorruptRunArtifact(
                     f"the checkpoint at minute {simulated_minute} of run {run_id} disagrees "
                     "with its own row"
+                )
+            if checkpoint.next_event_sequence > event_count:
+                raise CorruptRunArtifact(
+                    f"the checkpoint at minute {simulated_minute} of run {run_id} claims "
+                    "events that are not durably stored"
                 )
             checkpoints.append(checkpoint)
         return tuple(checkpoints)

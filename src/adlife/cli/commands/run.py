@@ -15,7 +15,6 @@ from adlife.adapters.cognition.cache import CognitionCache
 from adlife.adapters.storage.sqlite_store import SQLiteRunStore
 from adlife.cli.cognition import (
     MockCognitionPort,
-    ReplayCognitionPort,
     RuleCognitionPort,
     ServiceCognitionPort,
     cache_directory,
@@ -26,7 +25,7 @@ from adlife.cli.output import emit_json, info
 from adlife.cli.project import Project, load_project
 from adlife.core.domain.events import DomainEvent
 from adlife.core.domain.results import SimulationResult
-from adlife.core.ports.cognition import CognitionProvider, ProviderMetadata, SamplingSettings
+from adlife.core.ports.cognition import CognitionProvider
 from adlife.core.ports.event_sink import EventSink
 from adlife.core.ports.run_store import StorageError
 from adlife.core.simulation.runner import InterruptedRun, RunIdentity, SimulationRunner
@@ -49,6 +48,15 @@ def _validate_run_id(run_id: str) -> str:
         raise CommandError(
             f"run id {run_id!r} must match {RUN_ID_PATTERN_HELP}",
         )
+    if run_id in {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{i}" for i in range(1, 10)),
+        *(f"lpt{i}" for i in range(1, 10)),
+    }:
+        raise CommandError("run id is a reserved Windows device name")
     return run_id
 
 
@@ -73,11 +81,15 @@ def _manifest_provider(mode: str, provider_mode: str) -> str:
 
 
 def _identity(project: Project, mode: str, model_id: str) -> RunIdentity:
+    from adlife.adapters.cognition.prompts import prompt_template_sha256
+    from adlife.core.ports.cognition import PROMPT_VERSION
+
     provider = _manifest_provider(mode, project.config.provider.mode)
     return RunIdentity.for_project(
         project_root=project.root,
         provider=provider,
         model_id=model_id,
+        overrides={"prompt_version": PROMPT_VERSION, "prompt_hash": prompt_template_sha256()},
     )
 
 
@@ -92,10 +104,6 @@ def _cognition_seams(
 
     if mode == "rules":
         return RuleCognitionPort(), rule_fallback_for
-
-    if mode == "replay":
-        metadata = _replay_metadata(provider.model)
-        return ReplayCognitionPort(CognitionCache(cache_dir), metadata), rule_fallback_for
 
     # hybrid: the configured provider behind the real service.
     if provider.mode == "mock":
@@ -128,15 +136,6 @@ def _cognition_seams(
         )
 
     return ServiceCognitionPort(provider_object, service_factory), rule_fallback_for
-
-
-def _replay_metadata(model_id: str) -> ProviderMetadata:
-    return ProviderMetadata(
-        kind="replay",
-        model_id=model_id,
-        sampling=SamplingSettings(),
-        prompt_sha256="d" * 64,
-    )
 
 
 def _interrupted_result(root: Path, run_id: str) -> SimulationResult:
@@ -243,31 +242,42 @@ def command(
     ] = None,
 ) -> None:
     """Run one study from its first tick to run.completed, persisting every artifact."""
+    if mode == "replay":
+        raise CommandError(
+            "--mode replay requires frozen source artifacts; use adlife replay PROJECT RUN_ID"
+        )
     project = load_project(project_path, days=days, population_size=population_size, seed=seed)
     resolved_seed = seed if seed is not None else project.config.simulation.seed
     resolved_run_id = _validate_run_id(run_id) if run_id is not None else None
 
-    if resolved_run_id is None:
-        from adlife.core.simulation.runner import run_id_from as _default_run_id
+    if campaign is not None:
+        project = _with_campaigns(project, [Path(item) for item in campaign])
 
-        resolved_run_id = _default_run_id(project.scenario, resolved_seed)
+    if resolved_run_id is None:
+        from adlife.core.simulation.engine import canonical_sha256
+
+        digest = canonical_sha256(
+            {
+                "scenario": project.scenario.model_dump(mode="json"),
+                "seed": resolved_seed,
+                "mode": mode,
+            }
+        )
+        resolved_run_id = f"run-{digest[:24]}"
     runs_dir = project.root / "runs"
     if (runs_dir / resolved_run_id).exists():
         raise CommandError(
             f"run {resolved_run_id} already exists in {runs_dir}; "
             "the CLI refuses to overwrite run artifacts",
-            exit_code=ExitCode.PROVIDER_ERROR,
+            exit_code=ExitCode.CONFLICT,
         )
-
-    if campaign is not None:
-        project = _with_campaigns(project, [Path(item) for item in campaign])
 
     resolved_cache = cache_dir if cache_dir is not None else cache_directory(project.root)
     fmt = output_format()
-    if live and fmt == "jsonl":
+    if live and fmt in {"json", "jsonl"}:
         raise CommandError(
-            "--live drives the terminal dashboard and cannot also stream jsonl events "
-            "on stdout; run without --format jsonl or without --live",
+            "--live cannot share stdout with --format json or jsonl; "
+            "choose human output or headless mode",
         )
     dashboard_requested = live and not headless and _terminal_available()
     if live and not dashboard_requested and not headless:
@@ -343,10 +353,12 @@ def _with_campaigns(project: Project, campaign_paths: list[Path]) -> Project:
 
     campaigns = []
     for path in campaign_paths:
-        resolved = path if path.is_absolute() else project.root / path
+        from adlife.config.paths import resolve_project_path
+
+        resolved = resolve_project_path(project.root, path)
         if not resolved.is_file():
             raise CommandError(f"campaign file {path} does not exist in the project")
-        campaigns.append(_load_campaign_file(resolved))
+        campaigns.append(_load_campaign_file(resolved, project_root=project.root))
     scenario = project.scenario.model_copy(update={"campaigns": tuple(campaigns)})
     return Project(root=project.root, config=project.config, scenario=scenario)
 

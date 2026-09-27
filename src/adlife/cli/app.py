@@ -10,9 +10,12 @@ commands make lazily.
 from __future__ import annotations
 
 import sys
-from typing import Literal
+from collections.abc import Sequence
+from typing import Any, Literal
 
 import typer
+from typer import _click as click
+from typer.core import TyperGroup
 
 from adlife import __version__
 from adlife.cli.commands.campaign import app as campaign_app
@@ -25,10 +28,53 @@ from adlife.cli.commands.replay import command as replay_command
 from adlife.cli.commands.report import command as report_command
 from adlife.cli.commands.run import command as run_command
 from adlife.cli.commands.validate import command as validate_command
-from adlife.cli.errors import set_output_format
+from adlife.cli.errors import _report, set_output_format
 from adlife.core.simulation.runner import InterruptedRun
 
+
+class OutputGroup(TyperGroup):
+    """Keep parser failures inside the same machine-output boundary as commands."""
+
+    def main(
+        self,
+        args: Sequence[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        arguments = list(sys.argv[1:] if args is None else args)
+        fmt = "human"
+        for index, argument in enumerate(arguments):
+            if argument == "--format" and index + 1 < len(arguments):
+                fmt = arguments[index + 1]
+                break
+            if argument.startswith("--format="):
+                fmt = argument.partition("=")[2]
+                break
+        set_output_format(fmt)
+        try:
+            return super().main(
+                args=arguments,
+                prog_name=prog_name,
+                complete_var=complete_var,
+                standalone_mode=False,
+                windows_expand_args=windows_expand_args,
+                **kwargs,
+            )
+        except click.ClickException as error:
+            if fmt not in {"json", "jsonl"}:
+                error.show()
+            else:
+                _report(error.format_message(), error.exit_code, type(error).__name__)
+            if standalone_mode:
+                raise SystemExit(error.exit_code) from None
+            raise
+
+
 app = typer.Typer(
+    cls=OutputGroup,
     name="adlife",
     help="AdLife Lab — synthetic consumer society and campaign simulator.",
     no_args_is_help=True,

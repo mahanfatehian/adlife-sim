@@ -345,6 +345,6 @@ async def test_an_interrupted_run_is_recorded_and_can_be_abandoned(
         await task
 
     stored = store.load_run("run-interrupted")
-    assert stored.status in {"failed", "interrupted"}
+    assert stored.status == "interrupted"
     assert stored.result is not None
     assert stored.completed_at is not None

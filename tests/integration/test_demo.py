@@ -32,7 +32,7 @@ def test_demo_headless_completes_offline_and_prints_the_artifact(tmp_path: Path)
     store = SQLiteRunStore(study)
     stored = store.load_run(run_dirs[0].name)
     assert stored.status == "completed"
-    assert stored.manifest.provider in {"mock", "rules"}
+    assert stored.manifest.provider == "mock"
     assert stored.scenario.population
 
     document = json.loads(result.stdout)

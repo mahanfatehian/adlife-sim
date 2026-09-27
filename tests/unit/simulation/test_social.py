@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from itertools import permutations
 from types import ModuleType
 from typing import Any
 
@@ -2077,6 +2078,96 @@ def test_the_receiver_is_drawn_from_the_relationship_graph_not_the_alphabet() ->
         receivers.update(intent.receiver_id for intent in intents)
 
     assert receivers == {"person-002", "person-003", "person-004", "person-005"}
+
+
+@pytest.mark.parametrize(
+    "choice,expected_receiver",
+    [(0.0, "person-002"), (0.5, "person-003"), (0.999999, "person-004")],
+)
+@pytest.mark.parametrize(
+    "neighbor_order", tuple(permutations(("person-002", "person-003", "person-004")))
+)
+def test_zero_similarity_mass_uses_the_existing_uniform_receiver_draw(
+    monkeypatch: pytest.MonkeyPatch,
+    choice: float,
+    expected_receiver: str,
+    neighbor_order: tuple[str, ...],
+) -> None:
+    from adlife.core.simulation.parameters import ModelParameters
+    from adlife.core.simulation.social import plan_social_shares
+
+    pairs = [_pair("person-001")]
+    for agent_id in neighbor_order:
+        profile = _profile(agent_id).model_copy(update={"interests": frozenset({"cooking"})})
+        pairs.append((profile, _state(agent_id)))
+    event = _noticed_event("person-001")
+    calls: list[tuple[str, str, int, int]] = []
+
+    def uniform(
+        self: RandomOracle, namespace: str, agent_id: str, tick: int, decision_index: int
+    ) -> float:
+        calls.append((namespace, agent_id, tick, decision_index))
+        return choice if namespace == "social-receiver:campaign-phone" else 0.0
+
+    monkeypatch.setattr(RandomOracle, "uniform", uniform)
+    intents = plan_social_shares(
+        _snapshot(*pairs),
+        (event,),
+        RandomOracle(42),
+        relationships=tuple(_friendship("person-001", agent_id) for agent_id in neighbor_order),
+        share_signals=_signals(event),
+        movement_events=(),
+        traversed_edges=(),
+        carried_messages=(),
+        parameters=ModelParameters(social_similarity_weight=1.0),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].receiver_id == expected_receiver
+    assert calls == [
+        ("social-receiver:campaign-phone", "person-001", 600, 0),
+        (f"social-share:campaign-phone:{expected_receiver}", "person-001", 600, 0),
+    ]
+
+
+@pytest.mark.parametrize("choice", [0.0, 0.5, 0.999999])
+def test_positive_similarity_mass_preserves_the_weighted_receiver_choice(
+    monkeypatch: pytest.MonkeyPatch, choice: float
+) -> None:
+    from adlife.core.simulation.parameters import ModelParameters
+    from adlife.core.simulation.social import plan_social_shares
+
+    pairs = [_pair("person-001")]
+    for agent_id in ("person-002", "person-003", "person-004"):
+        profile = _profile(agent_id)
+        if agent_id != "person-003":
+            profile = profile.model_copy(update={"interests": frozenset({"cooking"})})
+        pairs.append((profile, _state(agent_id)))
+    event = _noticed_event("person-001")
+
+    def uniform(
+        self: RandomOracle, namespace: str, agent_id: str, tick: int, decision_index: int
+    ) -> float:
+        return choice if namespace == "social-receiver:campaign-phone" else 0.0
+
+    monkeypatch.setattr(RandomOracle, "uniform", uniform)
+    intents = plan_social_shares(
+        _snapshot(*pairs),
+        (event,),
+        RandomOracle(42),
+        relationships=tuple(
+            _friendship("person-001", agent_id)
+            for agent_id in ("person-002", "person-003", "person-004")
+        ),
+        share_signals=_signals(event),
+        movement_events=(),
+        traversed_edges=(),
+        carried_messages=(),
+        parameters=ModelParameters(social_similarity_weight=1.0),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].receiver_id == "person-003"
 
 
 def test_the_drawn_receiver_is_always_a_relationship_neighbor() -> None:

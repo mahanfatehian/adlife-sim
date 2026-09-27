@@ -44,20 +44,18 @@ def _providers_available() -> tuple[bool, str]:
 
 def _probe_provider(base_url: str) -> tuple[bool, str]:
     """A two-second health probe of a configured endpoint, with the URL redacted."""
-    from urllib.parse import urlsplit, urlunsplit
+    from urllib.parse import urlsplit
 
     import httpx
 
     parts = urlsplit(base_url)
-    redacted = urlunsplit(
-        (
-            parts.scheme,
-            "redacted@" + parts.netloc if "@" in parts.netloc else parts.netloc,
-            parts.path,
-            "",
-            "",
-        )
-    )
+    if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        return False, "provider URL must not contain credentials, query strings or fragments"
+    if parts.scheme != "https" and not (
+        parts.scheme == "http" and parts.hostname in {"localhost", "127.0.0.1", "::1"}
+    ):
+        return False, "provider URL requires HTTPS except for loopback endpoints"
+    redacted = base_url
     try:
         response = httpx.get(base_url, timeout=2.0)
         return response.status_code < 500, f"probe of {redacted} returned {response.status_code}"

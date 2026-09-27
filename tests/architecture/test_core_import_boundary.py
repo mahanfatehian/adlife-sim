@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterator
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,8 @@ FORBIDDEN_ROOTS: frozenset[str] = frozenset(
         "adlife.adapters",
         "adlife.cli",
         "adlife.tui",
+        "adlife.reporting",
+        "importlib.import_module",
         # CLI, TUI, storage, plotting and transport.
         "typer",
         "click",
@@ -67,20 +70,41 @@ def _core_modules() -> list[Path]:
     return sorted(path for path in CORE.rglob("*.py") if "__pycache__" not in path.parts)
 
 
-def _imported_names(tree: ast.AST) -> Iterator[tuple[str, int]]:
+def _imported_names(tree: ast.AST, *, package: str = "adlife.core") -> Iterator[tuple[str, int]]:
     """Yield every module name an import statement in this tree binds."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 yield alias.name, node.lineno
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            yield node.module, node.lineno
+        elif isinstance(node, ast.ImportFrom):
+            module = resolve_name("." * node.level + (node.module or ""), package)
+            yield module, node.lineno
             for alias in node.names:
-                yield f"{node.module}.{alias.name}", node.lineno
+                yield f"{module}.{alias.name}", node.lineno
 
 
 def _is_forbidden(module: str) -> bool:
     return any(module == root or module.startswith(f"{root}.") for root in FORBIDDEN_ROOTS)
+
+
+@pytest.mark.parametrize(
+    "source,offender",
+    [
+        ("from adlife.reporting import html", "adlife.reporting"),
+        ("from ...adapters.cognition import mock", "adlife.adapters.cognition"),
+        ("from ... import cli", "adlife.cli"),
+        ("from importlib import import_module as load", "importlib.import_module"),
+    ],
+)
+def test_boundary_detector_covers_outer_layers_and_import_aliases(
+    source: str, offender: str
+) -> None:
+    found = {
+        name
+        for name, _ in _imported_names(ast.parse(source), package="adlife.core.simulation")
+        if _is_forbidden(name)
+    }
+    assert offender in found
 
 
 def test_the_core_package_is_present_and_non_trivial() -> None:
@@ -93,9 +117,10 @@ def test_the_core_package_is_present_and_non_trivial() -> None:
 @pytest.mark.parametrize("module_path", _core_modules(), ids=lambda path: path.name)
 def test_a_core_module_imports_nothing_outside_the_simulation_core(module_path: Path) -> None:
     tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+    package = ".".join(("adlife", *module_path.parent.relative_to(CORE.parent).parts))
     offenders = [
         f"{module_path.name}:{line} imports {name}"
-        for name, line in _imported_names(tree)
+        for name, line in _imported_names(tree, package=package)
         if _is_forbidden(name)
     ]
     assert not offenders, "the simulation core reached outside its boundary: " + "; ".join(

@@ -446,7 +446,7 @@ def compose_response(
 ) -> RuleResponse:
     """Compose the bounded provider answer with the rule baseline into one response.
 
-    THE DOCUMENTED HYBRID RULE, stated here because no document states it yet:
+    The hybrid composition documented in the model card:
 
     * ``rule_modifier`` is the ONLY number a provider may add. It moves the agent's
       REACTION - ``sentiment_delta`` and ``recall_delta``, each clamped back into its
@@ -459,6 +459,10 @@ def compose_response(
       value in hybrid mode. In rules mode this function is the identity: the rule answer
       restates the baseline numbers and its modifier is exactly zero, so composing it a
       second time cannot apply the rule twice.
+    * ``valence``, ``relevance`` and ``credibility`` pass through for memory and social
+      dynamics. These provider-influenced changes can affect later rule-derived
+      intention. Reason text and provider-reported sentiment/recall deltas are unused
+      in this composition.
 
     The gains are the run's persuasion parameters (see ``simulation.parameters``): the
     composed reaction is scaled and re-clamped into its documented band. At 1.0 the

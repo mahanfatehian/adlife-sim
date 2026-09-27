@@ -17,9 +17,11 @@ guardrail that makes that true before a single tick runs:
 * :func:`paired_statistics` turns per-seed paired differences into
   :class:`PairedStatistic` records - mean, standard deviation, median, a bootstrap 95
   percent interval drawn from :data:`BOOTSTRAP_SEED` (fixed, so a comparison is
-  reproducible), a standardized effect size, and the fraction of seeds agreeing with
-  the mean's direction. The direction is declared ``stable`` only when at least
-  :data:`STABLE_DIRECTION_THRESHOLD` of the seeds agree; otherwise it is ``unstable``.
+  reproducible), a standardized effect size, and the largest positive/negative sign
+  fraction over all seeds. The direction is declared ``stable`` only when at least
+  :data:`STABLE_DIRECTION_THRESHOLD` of the seeds have the same nonzero sign; otherwise
+  it is ``unstable``. All-zero differences retain ``stable`` with agreement 1.0 as an
+  explicit null-consistency exception, not support for a directional effect.
 
 Seed-count conventions: :data:`FULL_SEED_COUNT` for the full academic experiment,
 :data:`QUICK_SEED_COUNT` for continuous integration.
@@ -50,7 +52,7 @@ BOOTSTRAP_SEED = 0x51EED_2026
 """The bootstrap's generator seed: fixed so an interval is reproducible byte for byte."""
 
 STABLE_DIRECTION_THRESHOLD = 0.8
-"""A direction is stable only when at least this fraction of seeds agree with the mean."""
+"""A direction is stable when at least this fraction of all seeds share a nonzero sign."""
 
 
 class ExperimentDesignError(RuntimeError):
@@ -232,6 +234,7 @@ def validate_paired_manifests(manifest_a: RunManifest, manifest_b: RunManifest) 
         ("prompt_version", manifest_a.prompt_version, manifest_b.prompt_version),
         ("prompt_hash", manifest_a.prompt_hash, manifest_b.prompt_hash),
         ("seed", manifest_a.seed, manifest_b.seed),
+        ("parameters", manifest_a.parameters, manifest_b.parameters),
     )
     for name, value_a, value_b in checks:
         _refuse(value_a != value_b, f"{name} differs between the paired runs")
@@ -266,9 +269,12 @@ def paired_statistics(
         else:
             ci_low, ci_high = 0.0, 0.0
         effect = mean / std if std > 0.0 else 0.0
-        mean_sign = (mean > 0.0) - (mean < 0.0)
-        agreeing = sum(1 for value in values if (value > 0.0) - (value < 0.0) == mean_sign)
-        agreement = agreeing / count
+        positive = sum(value > 0.0 for value in values)
+        negative = sum(value < 0.0 for value in values)
+        # Zeros remain in the denominator, but never support a nonzero direction.
+        # All-zero A/A consistency is the sole exception; magnitudes and the mean's
+        # sign do not decide whether individual seed signs meet the registered rule.
+        agreement = max(positive, negative) / count if positive or negative else 1.0
         summary[name] = PairedStatistic(
             metric=name,
             n_seeds=count,

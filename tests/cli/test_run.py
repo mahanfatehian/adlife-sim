@@ -59,7 +59,7 @@ def test_run_refuses_an_existing_run_identifier(tmp_path: Path) -> None:
     second = runner.invoke(
         app, ["--format", "json", "run", str(project), "--run-id", "run-twice", "--mode", "rules"]
     )
-    # A run conflict is a provider/run conflict, not an invalid input: exit 3.
+    # An existing run is an artifact conflict, not invalid input: exit 3.
     assert second.exit_code == 3
     assert "run-twice" in second.stdout
 
@@ -142,7 +142,9 @@ def test_replay_mode_without_a_cache_refuses(tmp_path: Path) -> None:
     result = runner.invoke(
         app, ["--format", "json", "run", str(project), "--run-id", "run-replay", "--mode", "replay"]
     )
-    assert result.exit_code == 3
+    assert result.exit_code == 2
+    assert "adlife replay" in result.stdout
+    assert not (project / "runs" / "run-replay").exists()
 
 
 def test_replay_reproduces_a_rules_run(tmp_path: Path) -> None:
@@ -217,3 +219,11 @@ def test_compare_wraps_the_experiment_runner(tmp_path: Path) -> None:
 
     document = json.loads(result.stdout)
     assert document["metrics"]["recall"]["mean_paired_difference"] == 0
+    from adlife.adapters.cognition.prompts import prompt_template_sha256
+
+    manifests = list((project / "runs").glob("*/run.json"))
+    assert manifests
+    assert all(
+        json.loads(path.read_text("utf-8"))["prompt_hash"] == prompt_template_sha256()
+        for path in manifests
+    )

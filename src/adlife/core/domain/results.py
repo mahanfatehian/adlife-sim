@@ -40,12 +40,19 @@ class RunManifest(DomainModel):
 
     @field_validator("parameters", mode="before")
     @classmethod
-    def validate_parameters_json(cls, value: object) -> Mapping[str, float] | None:
+    def validate_parameters_json(cls, value: object) -> FrozenJsonMapping | None:
         if value is None:
             return None
-        if not isinstance(value, Mapping):
-            raise ValueError("parameters must be a mapping of parameter name to float")
-        return {str(name): float(number) for name, number in value.items()}
+        return freeze_json_mapping(value)
+
+    @field_validator("parameters")
+    @classmethod
+    def freeze_parameters(cls, value: Mapping[str, float] | None) -> Mapping[str, float] | None:
+        return None if value is None else cast(Mapping[str, float], freeze_json_mapping(value))
+
+    @field_serializer("parameters")
+    def serialize_parameters(self, value: Mapping[str, float] | None) -> dict[str, float] | None:
+        return None if value is None else cast(dict[str, float], thaw_json_mapping(value))
 
 
 class SimulationResult(DomainModel):

@@ -114,7 +114,7 @@ templates:
       - {start: 720, end: 810, activity: leisure, zone_id: cafe}
       - {start: 810, end: 840, activity: phone-check, zone_id: online}
       - {start: 840, end: 990, activity: socializing, zone_id: cafe}
-      - {start: 990, end: 1050, activity: commute, zone_id: commute, route_id: commute}
+      - {start: 990, end: 1050, activity: commute, zone_id: home}
       - {start: 1050, end: 1140, activity: study, zone_id: home}
       - {start: 1140, end: 1230, activity: leisure, zone_id: home}
       - {start: 1230, end: 1260, activity: reflection, zone_id: home}

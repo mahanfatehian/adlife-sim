@@ -60,6 +60,7 @@ from adlife.core.domain.campaign import Campaign
 from adlife.core.domain.person import PersonProfile
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import (
+    CognitionAnswer,
     CognitionError,
     CognitionProvider,
     CognitionRecord,
@@ -295,6 +296,98 @@ def _cached_record(
 
 
 # --- the cache ------------------------------------------------------------------------
+
+
+async def test_known_credential_echo_never_reaches_repair_resolution_or_cache(
+    tmp_path: Path,
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "opaqueCredentialForAuditXYZ"
+    posted: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request.content.decode())
+        return httpx.Response(
+            200, json=_completion(_content(cognition_request.request_id, interpretation=secret))
+        )
+
+    cache = CognitionCache(tmp_path)
+    fallback = _fallback((cognition_request,), valid_profile, consumer_state, valid_campaign)
+    async with OpenAICompatibleProvider(
+        base_url=REMOTE_BASE_URL,
+        model="test-model",
+        api_key=secret,
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    ) as provider:
+        resolution = await _service(fallback, cache=cache).evaluate_one(cognition_request, provider)
+    assert resolution.fallback_reason == "invalid-response"
+    assert resolution.attempts == 2
+    assert len(posted) == 2
+    assert all(secret not in body for body in posted)
+    assert secret not in resolution.model_dump_json()
+    assert secret not in caplog.text
+    assert not list(tmp_path.glob("*.json"))
+
+
+@pytest.mark.parametrize("repair", [False, True])
+async def test_a_provider_answer_for_another_request_falls_back(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+    repair: bool,
+) -> None:
+    fallback = _fallback((cognition_request,), valid_profile, consumer_state, valid_campaign)
+
+    class WrongRequestProvider(MockCognitionProvider):
+        async def answer(self, request: CognitionRequest) -> CognitionAnswer:
+            answer = await super().answer(request)
+            return answer.model_copy(
+                update={
+                    "result": answer.result.model_copy(
+                        update={"request_id": "run-demo:event-00000099"}
+                    )
+                }
+            )
+
+    class RepairingWrongRequestProvider(WrongRequestProvider):
+        async def call(self, request: CognitionRequest) -> ProviderCall:
+            raise InvalidProviderResponse("invalid response")
+
+        async def repair_call(
+            self, request: CognitionRequest, *, invalid_content: str, error: str
+        ) -> ProviderCall:
+            return ProviderCall(answer=await self.answer(request), raw_response=None)
+
+    provider = RepairingWrongRequestProvider() if repair else WrongRequestProvider()
+    resolution = await _service(fallback).evaluate_one(cognition_request, provider)
+    assert resolution.fallback_reason == "invalid-response"
+    assert resolution.attempts == (2 if repair else 1)
+    assert resolution.result == await fallback.evaluate(cognition_request)
+
+
+async def test_terminal_fallback_can_answer_a_numeric_campaign_identifier(
+    cognition_request: CognitionRequest,
+    valid_profile: PersonProfile,
+    consumer_state: ConsumerState,
+    valid_campaign: Campaign,
+) -> None:
+    request = cognition_request.model_copy(
+        update={"campaign": dict(cognition_request.campaign) | {"campaign_id": "1234567890"}}
+    )
+    campaign = valid_campaign.model_copy(update={"campaign_id": "1234567890"})
+    fallback = _fallback((request,), valid_profile, consumer_state, campaign)
+    service = _service(fallback, budget=CognitionBudget(per_agent=0, total=0))
+    resolution = await service.evaluate_one(request, MockCognitionProvider())
+    assert resolution.fallback_reason == "budget-exhausted"
+    assert resolution.result.rule_modifier == 0.0
+    assert "1234567890" not in resolution.result.memory_summary
+    assert resolution.result == await fallback.evaluate(request)
 
 
 async def test_a_cache_hit_answers_without_a_provider_call(

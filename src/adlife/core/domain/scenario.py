@@ -72,6 +72,17 @@ class Scenario(DomainModel):
         for state in self.initial_states:
             if state.location not in zone_id_set:
                 raise ValueError(f"unknown state location: {state.location}")
+            state_campaigns = (
+                set(state.aware_campaign_ids)
+                | {exposure.campaign_id for exposure in state.exposure_counts}
+                | {
+                    memory.campaign_id
+                    for memory in state.memories
+                    if memory.campaign_id is not None
+                }
+            )
+            if state_campaigns - set(campaign_ids):
+                raise ValueError("initial state references an unknown campaign")
 
         for route in self.world.routes:
             referenced_zones = {route.source_zone, route.target_zone}

@@ -350,7 +350,7 @@ def failing_connection(monkeypatch: pytest.MonkeyPatch) -> FailingConnection:
 
 @pytest.fixture
 def small_scenario(valid_scenario: Scenario) -> Scenario:
-    """The contract scenario scaled to three agents over the documented ten-zone world."""
+    """The contract scenario scaled to three agents over a six-zone test world."""
     from tests.builders import small_three_agent_scenario
 
     return small_three_agent_scenario(valid_scenario)

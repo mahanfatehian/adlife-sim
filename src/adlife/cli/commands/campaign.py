@@ -10,10 +10,10 @@ from stat import S_ISREG
 from typing import Annotated
 
 import typer
-import yaml
 from pydantic import ValidationError
 
-from adlife.cli.errors import ExitCode
+from adlife.cli.errors import command_boundary
+from adlife.config.loader import load_yaml_document
 from adlife.core.domain.campaign import Campaign
 
 _HASH_CHUNK_SIZE = 1024 * 1024
@@ -237,22 +237,21 @@ def import_campaign(path: Path, project_root: Path) -> Campaign:
     try:
         if not path.is_file():
             raise CampaignImportError(f"campaign is not a regular file: {path}")
-        with path.open("r", encoding="utf-8") as campaign_file:
-            document = yaml.safe_load(campaign_file)
-    except yaml.YAMLError as error:
-        raise CampaignImportError(f"{path}: campaign could not be parsed: {error}") from error
+        document = load_yaml_document(path)
     except UnicodeError as error:
         raise CampaignImportError(f"{path}: campaign is not valid UTF-8") from error
     except OSError as error:
         raise CampaignImportError(f"campaign could not be read: {path}") from error
+    except ValueError as error:
+        raise CampaignImportError(str(error)) from None
 
     if not isinstance(document, Mapping):
         raise CampaignImportError(f"{path}: campaign must contain a mapping")
 
     try:
         data = _adapt_yaml_sequences(document)
-    except (TypeError, ValueError) as error:
-        raise CampaignImportError(f"{path}: invalid campaign: {error}") from error
+    except (TypeError, ValueError):
+        raise CampaignImportError(f"{path}: invalid campaign collections") from None
     raw_asset_path = data.get("asset_path")
     supplied_digest = data.get("asset_sha256")
     if raw_asset_path is None:
@@ -265,11 +264,12 @@ def import_campaign(path: Path, project_root: Path) -> Campaign:
 
     try:
         return Campaign.model_validate(data)
-    except ValidationError as error:
-        raise CampaignImportError(f"{path}: invalid campaign: {error}") from error
+    except ValidationError:
+        raise CampaignImportError(f"{path}: invalid campaign fields") from None
 
 
 @app.command("import")
+@command_boundary
 def import_command(
     path: Annotated[
         Path,
@@ -286,11 +286,7 @@ def import_command(
         ),
     ] = Path("."),
 ) -> None:
-    try:
-        campaign = import_campaign(path, project_root)
-    except ValueError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=int(ExitCode.INPUT_ERROR)) from error
+    campaign = import_campaign(path, project_root)
     typer.echo(campaign.model_dump_json())
 
 

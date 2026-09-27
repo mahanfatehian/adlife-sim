@@ -26,11 +26,10 @@ from hashlib import sha256
 from importlib import resources
 from pathlib import Path
 
-import yaml
 from pydantic import ValidationError
 
 from adlife.cli.errors import CommandError
-from adlife.config.loader import load_app_config
+from adlife.config.loader import load_app_config, load_yaml_document
 from adlife.config.models import AppConfig
 from adlife.core.domain.campaign import Campaign
 from adlife.core.domain.person import PersonProfile
@@ -68,7 +67,7 @@ def load_app_resource(name: str) -> str:
 def init_project(destination: Path) -> Path:
     """Create one study directory from the packaged demo, refusing to overwrite."""
     root = destination
-    if root.exists() and any(root.iterdir()):
+    if root.exists() and (not root.is_dir() or any(root.iterdir())):
         raise CommandError(
             f"target {root} already exists and is not empty; init never overwrites a study",
         )
@@ -88,7 +87,7 @@ def init_project(destination: Path) -> Path:
 
 
 def default_world() -> World:
-    """The documented ten-zone world the built-in routines and commute routes assume."""
+    """The documented eight-zone world the built-in routines and commute routes assume."""
     return World(
         world_id="world-default",
         zones=(
@@ -165,11 +164,11 @@ def _assign_routable_zones(
     generated population is always runnable without changing what the generator
     invented about the person.
 
-    One documented adaptation beyond the zone pair: the packaged unemployed routine
-    commutes FROM the cafe to the highway transit, a leg no world can route because a
-    named route cannot also cover the cafe. An unemployed generated profile therefore
-    follows the office-worker routine - the profile's occupation, traits and identity
-    are untouched, and the routine's activities are the same documented set.
+    Preserve the historical generated-population mapping of unemployed profiles to the
+    office-worker schedule; changing that mapping would change existing study inputs.
+    Their occupation, traits and identity remain untouched. The separate unemployed
+    template is routable and remains available to explicitly supplied populations.
+    This schedule proxy is a disclosed modeling limitation, not an employment forecast.
     """
     from adlife.core.simulation.rng import RandomOracle
 
@@ -215,23 +214,33 @@ def _load_population_document(
     path: Path,
 ) -> tuple[tuple[PersonProfile, ...], tuple[Relationship, ...]]:
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise CommandError(f"population.yaml could not be parsed: {exc}") from None
-    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        document = load_yaml_document(path)
+    except ValueError as exc:
+        raise CommandError(str(exc)) from None
+    if (
+        not isinstance(document, dict)
+        or type(document.get("schema_version")) is not int
+        or document["schema_version"] != 1
+    ):
         raise CommandError("population.yaml must define schema_version: 1")
 
     profiles: list[PersonProfile] = []
+    if not isinstance(document.get("profiles"), list) or not isinstance(
+        document.get("relationships", []), list
+    ):
+        raise CommandError("population.yaml profiles and relationships must be lists")
     for raw in document.get("profiles", ()):
         if not isinstance(raw, dict):
             raise CommandError("population.yaml profiles must be mappings")
         data = dict(raw)
         if isinstance(data.get("interests"), list):
+            if not all(isinstance(item, str) for item in data["interests"]):
+                raise CommandError("population.yaml interests must contain strings")
             data["interests"] = frozenset(data["interests"])
         try:
             profiles.append(PersonProfile.model_validate(data))
-        except ValidationError as exc:
-            raise CommandError(f"population.yaml: invalid profile: {exc}") from None
+        except ValidationError:
+            raise CommandError("population.yaml: invalid profile fields") from None
 
     relationships: list[Relationship] = []
     for raw in document.get("relationships", ()):
@@ -239,24 +248,18 @@ def _load_population_document(
             raise CommandError("population.yaml relationships must be mappings")
         try:
             relationships.append(Relationship.model_validate(raw))
-        except ValidationError as exc:
-            raise CommandError(f"population.yaml: invalid relationship: {exc}") from None
+        except ValidationError:
+            raise CommandError("population.yaml: invalid relationship fields") from None
     return tuple(profiles), tuple(relationships)
 
 
-def _load_campaign_file(path: Path) -> Campaign:
-    from adlife.cli.commands.campaign import _adapt_yaml_sequences
+def _load_campaign_file(path: Path, *, project_root: Path | None = None) -> Campaign:
+    from adlife.cli.commands.campaign import import_campaign
 
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise CommandError(f"{path.name} could not be parsed: {exc}") from None
-    if not isinstance(document, dict):
-        raise CommandError(f"{path.name} must contain a campaign mapping")
-    try:
-        return Campaign.model_validate(_adapt_yaml_sequences(document))
-    except ValidationError as exc:
-        raise CommandError(f"{path.name}: invalid campaign: {exc}") from None
+        return import_campaign(path, project_root or path.parent.parent)
+    except ValueError as error:
+        raise CommandError(str(error)) from None
 
 
 def load_project(

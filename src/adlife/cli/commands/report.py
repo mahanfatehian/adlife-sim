@@ -13,7 +13,7 @@ from typing import Annotated
 
 import typer
 
-from adlife.cli.errors import CommandError, command_boundary, output_format
+from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
 from adlife.cli.output import emit_json, info
 
 
@@ -30,6 +30,7 @@ def command(
 ) -> None:
     """Write one self-contained HTML report for a stored run."""
     from adlife.adapters.storage.sqlite_store import SQLiteRunStore
+    from adlife.config.paths import resolve_project_path
     from adlife.reporting.html import render_report
 
     root = project_path.resolve()
@@ -39,7 +40,17 @@ def command(
     stored = store.load_run(run_id)
     usage = store.load_provider_usage(run_id)
 
-    destination = output if output is not None else root / "reports" / f"{run_id}.html"
+    destination = (
+        output
+        if output is not None
+        else resolve_project_path(root, Path("reports") / f"{run_id}.html")
+    )
+    if destination.resolve().is_relative_to((root / "runs").resolve()):
+        raise CommandError("report destination must not overwrite run artifacts", ExitCode.CONFLICT)
+    if destination.exists() and destination.resolve().suffix.lower() != ".html":
+        raise CommandError(
+            "report destination already contains a non-report file", ExitCode.CONFLICT
+        )
     path = render_report(stored, destination, usage=usage)
 
     if output_format() in {"json", "jsonl"}:

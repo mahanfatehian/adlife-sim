@@ -9,11 +9,12 @@ import typer
 
 from adlife.adapters.storage.sqlite_store import SQLiteRunStore
 from adlife.cli.cognition import RuleCognitionPort, rule_fallback_for
+from adlife.cli.commands.run import _identity
 from adlife.cli.errors import command_boundary
 from adlife.cli.project import load_project
 from adlife.core.experiments.comparison import ExperimentRunner
-from adlife.core.experiments.design import QUICK_SEED_COUNT, ExperimentDesign, _slug
-from adlife.core.simulation.runner import RunIdentity
+from adlife.core.experiments.design import QUICK_SEED_COUNT, ExperimentDesign
+from adlife.core.simulation.engine import canonical_sha256
 
 
 @command_boundary
@@ -35,16 +36,20 @@ def command(
     """Run both arms per seed through the experiment runner and pair the differences."""
     control = load_project(control_path)
     treatment = load_project(treatment_path)
+    # Project assembly derives these labels from directory paths. They identify the
+    # source folders, not a scientific treatment; all model inputs remain untouched.
+    treatment_scenario = treatment.scenario.model_copy(
+        update={
+            "scenario_id": control.scenario.scenario_id,
+            "name": control.scenario.name,
+        }
+    )
 
     design = ExperimentDesign(
         label=f"{control.root.name}-vs-{treatment.root.name}",
         treatment_paths=(treatment_path_option,),
     )
-    identity = RunIdentity.for_project(
-        project_root=control.root,
-        provider="rules",
-        model_id="rule-baseline",
-    )
+    identity = _identity(control, "rules", "rule-baseline")
     runner = ExperimentRunner(
         store_factory=lambda: SQLiteRunStore(control.root),
         cognition_factory=lambda model: RuleCognitionPort(),
@@ -54,13 +59,22 @@ def command(
     import asyncio
 
     seed_tuple = tuple(range(seeds))
+    comparison_digest = canonical_sha256(
+        {
+            "label": design.label,
+            "control_sha256": canonical_sha256(control.scenario),
+            "treatment_sha256": canonical_sha256(treatment_scenario),
+            "treatment_paths": list(design.treatment_paths),
+            "seeds": list(seed_tuple),
+        }
+    )
     result = asyncio.run(
         runner.compare(
             control.scenario,
-            treatment.scenario,
+            treatment_scenario,
             seeds=seed_tuple,
             design=design,
-            run_id_prefix=f"cmp-{_slug(design.label)[:20]}",
+            run_id_prefix=f"cmp-{comparison_digest[:24]}",
         )
     )
     document = {

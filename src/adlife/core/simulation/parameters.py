@@ -22,6 +22,7 @@ same way: attention, persuasion, memory decay, homophily, word of mouth.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import isfinite
 from typing import Literal, Self
 
 from pydantic import Field
@@ -113,6 +114,12 @@ class ModelParameters(DomainModel):
         """
         if name not in _PARAMETER_FIELDS:
             raise ValueError(f"unknown model parameter: {name}")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or (isinstance(value, float) and not isfinite(value))
+        ):
+            raise ValueError(f"{name} must be a finite number")
         lower, upper = _PARAMETER_BOUNDS[name]
         return type(self).model_validate({**self.as_mapping(), name: min(upper, max(lower, value))})
 

@@ -66,7 +66,7 @@ def test_corrupted_artifact_maps_to_artifact_error(tmp_path: Path) -> None:
     assert json.loads(result.stdout)["error"]["exit_code"] == ExitCode.ARTIFACT_ERROR
 
 
-def test_replay_cache_miss_maps_to_provider_error(tmp_path: Path) -> None:
+def test_replay_cache_miss_maps_to_artifact_error(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     rules = runner.invoke(app, ["run", str(project), "--run-id", "run-hybrid", "--mode", "rules"])
     assert rules.exit_code == 0, rules.output
@@ -87,7 +87,7 @@ def test_replay_cache_miss_maps_to_provider_error(tmp_path: Path) -> None:
             str(empty_cache),
         ],
     )
-    assert result.exit_code == ExitCode.PROVIDER_ERROR
+    assert result.exit_code == 4
 
 
 def test_command_boundary_maps_keyboard_interrupt_to_130() -> None:
@@ -95,8 +95,9 @@ def test_command_boundary_maps_keyboard_interrupt_to_130() -> None:
     def interrupted() -> str:
         raise KeyboardInterrupt
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(SystemExit) as excinfo:
         interrupted()
+    assert excinfo.value.code == 130
 
 
 def test_command_boundary_maps_unexpected_defects_to_1() -> None:

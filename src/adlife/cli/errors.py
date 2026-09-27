@@ -9,7 +9,7 @@ class ExitCode(IntEnum):
     SUCCESS = 0
     UNEXPECTED = 1
     INPUT_ERROR = 2
-    PROVIDER_ERROR = 3
+    CONFLICT = 3
     ARTIFACT_ERROR = 4
     INTERRUPTED = 130
 
@@ -63,7 +63,18 @@ def _report(
     unexpected internal defect or the operator set ``ADLIFE_DEBUG=1``: an expected
     failure is a normal conversation with the user, not a stack walk.
     """
+    import os
     import traceback
+
+    from adlife.core.ports.cognition import redact_provider_body
+
+    def safe(text: str) -> str:
+        credential = os.environ.get("ADLIFE_API_KEY")
+        if credential:
+            text = text.replace(credential, "[redacted]")
+        return redact_provider_body(text)
+
+    message = safe(message)
 
     if output_format() in {"json", "jsonl"}:
         import json
@@ -83,16 +94,14 @@ def _report(
     # The stack walk is the only conditional part: it serves an unexpected defect or an
     # explicit ADLIFE_DEBUG=1 request, never ordinary usage of a working tool.
     if debug:
-        traceback.print_exc(file=sys.stderr)
+        print(safe(traceback.format_exc()), file=sys.stderr)
 
 
 def command_boundary(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Map the documented domain exceptions to the documented exit codes.
 
-    Validation and input errors exit 2, provider configuration errors 3, corrupted
-    artifacts 4, interruption 130, and anything unrecognized 1. ``typer.Exit`` and
-    ``click``'s own control flow pass through untouched, and ``KeyboardInterrupt`` is
-    re-raised so the process can report 130 through ``main``.
+    Validation and provider configuration errors exit 2, conflicts 3, corrupted
+    artifacts/cache 4, interruption 130, and anything unrecognized 1.
     """
 
     @functools.wraps(fn)
@@ -101,30 +110,39 @@ def command_boundary(fn: Callable[..., Any]) -> Callable[..., Any]:
         import yaml
         from pydantic import ValidationError
 
-        from adlife.adapters.cognition.cache import CacheMiss
+        from adlife.adapters.cognition.cache import CacheMiss, CorruptCacheRecord
         from adlife.adapters.cognition.openai_compatible import ProviderConfigurationError
+        from adlife.core.experiments.design import ExperimentDesignError
         from adlife.core.ports.cognition import CognitionError
-        from adlife.core.ports.run_store import StorageError
+        from adlife.core.ports.run_store import DuplicateRun, StorageError
+        from adlife.core.simulation.runner import InterruptedRun
 
         debug = _debug_requested()
         try:
             return fn(*args, **kwargs)
-        except KeyboardInterrupt:
-            raise
+        except (KeyboardInterrupt, InterruptedRun) as error:
+            _report("run interrupted", ExitCode.INTERRUPTED, type(error).__name__)
+            raise SystemExit(ExitCode.INTERRUPTED) from None
         except (typer.Exit, SystemExit):
             raise
         except CommandError as error:
             _report(str(error), error.exit_code, type(error).__name__, debug=debug)
             raise SystemExit(error.exit_code) from None
-        except (ValidationError, ValueError, yaml.YAMLError) as error:
+        except (ValidationError, ValueError, yaml.YAMLError, ExperimentDesignError) as error:
             _report(str(error), ExitCode.INPUT_ERROR, type(error).__name__, debug=debug)
             raise SystemExit(ExitCode.INPUT_ERROR) from None
-        except (CognitionError, CacheMiss, ProviderConfigurationError) as error:
-            _report(str(error), ExitCode.PROVIDER_ERROR, type(error).__name__, debug=debug)
-            raise SystemExit(ExitCode.PROVIDER_ERROR) from None
-        except StorageError as error:
+        except ProviderConfigurationError as error:
+            _report(str(error), ExitCode.INPUT_ERROR, type(error).__name__, debug=debug)
+            raise SystemExit(ExitCode.INPUT_ERROR) from None
+        except DuplicateRun as error:
+            _report(str(error), ExitCode.CONFLICT, type(error).__name__, debug=debug)
+            raise SystemExit(ExitCode.CONFLICT) from None
+        except (StorageError, CacheMiss, CorruptCacheRecord) as error:
             _report(str(error), ExitCode.ARTIFACT_ERROR, type(error).__name__, debug=debug)
             raise SystemExit(ExitCode.ARTIFACT_ERROR) from None
+        except CognitionError as error:
+            _report(str(error), ExitCode.UNEXPECTED, type(error).__name__, debug=True)
+            raise SystemExit(ExitCode.UNEXPECTED) from None
         except Exception as error:
             # An unexpected defect is the one failure a traceback always serves: it is
             # a bug, and the stack is the bug report. ADLIFE_DEBUG=1 adds the same

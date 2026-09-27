@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from math import isfinite
 
 from adlife.core.experiments.comparison import fold_stored_run
 from adlife.core.experiments.metrics import MetricsCalculator, RunMetrics
@@ -102,9 +103,8 @@ class SensitivityRunner:
 
         The baseline arm runs the caller's parameter set unchanged; every run it drives
         records that set in its manifest. Each perturbation arm scales one target by
-        one delta and revalidates the result against the parameter bounds, so a delta
-        that walks a parameter out of its documented range is refused before a run
-        starts, naming the parameter.
+        one finite numeric delta and clamps the result to the parameter's physical
+        bounds. Invalid numeric inputs are refused before any run starts.
         """
         from adlife.core.domain.scenario import Scenario
 
@@ -113,10 +113,23 @@ class SensitivityRunner:
         if not isinstance(parameters, ModelParameters):
             raise TypeError("parameters must be a ModelParameters")
         _validate_targets(targets, parameters)
-        delta_tuple = tuple(float(delta) for delta in deltas)
+        delta_tuple = _validated_deltas(deltas)
         if not delta_tuple:
             raise ValueError("a sensitivity sweep needs at least one delta")
         seed_tuple = _validated_seeds(seeds)
+        perturbations = tuple(
+            (target, delta, parameters.with_(target, getattr(parameters, target) * (1.0 + delta)))
+            for target in targets
+            for delta in delta_tuple
+        )
+        run_ids = [_run_id(run_id_prefix, None, None, seed) for seed in seed_tuple]
+        run_ids.extend(
+            _run_id(run_id_prefix, target, delta, seed)
+            for target, delta, _ in perturbations
+            for seed in seed_tuple
+        )
+        if len(set(run_ids)) != len(run_ids):
+            raise ValueError("sensitivity arms must produce distinct run identifiers")
 
         baseline = await self._arm(
             scenario,
@@ -128,21 +141,18 @@ class SensitivityRunner:
             baseline_rankings=None,
         )
         arms: list[SensitivityArm] = []
-        for target in targets:
-            base_value = getattr(parameters, target)
-            for delta in delta_tuple:
-                perturbed = parameters.with_(target, base_value * (1.0 + delta))
-                arms.append(
-                    await self._arm(
-                        scenario,
-                        perturbed,
-                        parameter=target,
-                        delta=delta,
-                        seeds=seed_tuple,
-                        run_id_prefix=run_id_prefix,
-                        baseline_rankings=baseline.per_seed_rankings,
-                    )
+        for target, delta, perturbed in perturbations:
+            arms.append(
+                await self._arm(
+                    scenario,
+                    perturbed,
+                    parameter=target,
+                    delta=delta,
+                    seeds=seed_tuple,
+                    run_id_prefix=run_id_prefix,
+                    baseline_rankings=baseline.per_seed_rankings,
                 )
+            )
         return SensitivityResult(baseline=baseline, arms=tuple(arms))
 
     async def _arm(
@@ -231,7 +241,22 @@ def _validated_seeds(seeds: Sequence[int]) -> tuple[int, ...]:
             raise ValueError(f"seed {seed!r} must be a nonnegative integer")
     if len(set(seed_tuple)) != len(seed_tuple):
         raise ValueError("seeds must be distinct for a sensitivity sweep")
-    return seed_tuple
+    return tuple(sorted(seed_tuple))
+
+
+def _validated_deltas(deltas: Sequence[float]) -> tuple[float, ...]:
+    validated: list[float] = []
+    for delta in deltas:
+        if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+            raise ValueError("a sensitivity delta must be a finite number")
+        try:
+            numeric = float(delta)
+        except OverflowError:
+            raise ValueError("a sensitivity delta must be a finite number") from None
+        if not isfinite(numeric):
+            raise ValueError("a sensitivity delta must be a finite number")
+        validated.append(numeric)
+    return tuple(validated)
 
 
 def _run_id(prefix: str, parameter: str | None, delta: float | None, seed: int) -> str:

@@ -65,6 +65,105 @@ from adlife.core.simulation.engine import canonical_sha256
 PERSIAN_SUMMARY = "آگهی بیلبورد را در بزرگراه شمالی دیدم"
 
 
+@pytest.mark.parametrize(
+    "path_method",
+    [
+        "run_json_path",
+        "scenario_json_path",
+        "database_path",
+        "events_jsonl_path",
+        "metrics_json_path",
+        "provider_usage_json_path",
+    ],
+)
+def test_artifact_file_links_cannot_escape_the_run(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, path_method: str
+) -> None:
+    artifact = getattr(started_run, path_method)(run_manifest.run_id)
+    outside = started_run.root / "outside-artifact"
+    outside.write_bytes(artifact.read_bytes())
+    original = outside.read_bytes()
+    artifact.unlink()
+    try:
+        artifact.symlink_to(outside)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows denied the file symlink privilege")
+        raise
+    with pytest.raises(UnsafeRunLocation):
+        getattr(started_run, path_method)(run_manifest.run_id)
+    assert outside.read_bytes() == original
+
+
+def test_input_directory_link_cannot_escape_the_run(
+    started_run: SQLiteRunStore, run_manifest: RunManifest
+) -> None:
+    inputs = started_run.run_directory(run_manifest.run_id) / "inputs"
+    outside = started_run.root / "outside-inputs"
+    inputs.rename(outside)
+    make_directory_link(inputs, outside)
+    with pytest.raises(UnsafeRunLocation):
+        started_run.load_run(run_manifest.run_id)
+
+
+@pytest.mark.parametrize("reader", ["load", "iterate", "rebuild"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"event_id": "arbitrary-id"},
+        {"caused_by_event_ids": ("run-other:event-00000000",)},
+        {"caused_by_event_ids": ("run-storage:event-00000002",)},
+        {"caused_by_event_ids": ("not-an-event",)},
+    ],
+)
+def test_matching_database_and_export_cannot_hide_invalid_event_identity_or_causality(
+    started_run: SQLiteRunStore,
+    run_manifest: RunManifest,
+    change: dict[str, object],
+    reader: str,
+) -> None:
+    events = list(started_run.iter_events(run_manifest.run_id))
+    events[1] = events[1].model_copy(update=change)
+    lines = [canonical_event_line(event) for event in events]
+    offset = 0
+    with raw(started_run, run_manifest.run_id) as connection:
+        for event, line in zip(events, lines, strict=True):
+            offset += len(line.encode("utf-8")) + 1
+            connection.execute(
+                "UPDATE events SET event_id = ?, event_json = ?, export_offset = ? "
+                "WHERE sequence = ?",
+                (event.event_id, line, offset, event.sequence),
+            )
+    export = started_run.events_jsonl_path(run_manifest.run_id)
+    forged_export = "".join(f"{line}\n" for line in lines).encode("utf-8")
+    export.write_bytes(forged_export)
+    with pytest.raises(CorruptRunArtifact):
+        if reader == "load":
+            started_run.load_run(run_manifest.run_id)
+        elif reader == "iterate":
+            tuple(started_run.iter_events(run_manifest.run_id))
+        else:
+            started_run.rebuild_export(run_manifest.run_id)
+    assert export.read_bytes() == forged_export
+
+
+def test_loaded_checkpoint_cannot_claim_events_not_durably_stored(
+    started_run: SQLiteRunStore, run_manifest: RunManifest, consumer_state: ConsumerState
+) -> None:
+    checkpoint = RunCheckpoint(
+        run_id=run_manifest.run_id,
+        simulated_minute=1440,
+        next_event_sequence=3,
+        states=(consumer_state,),
+    )
+    started_run.save_checkpoint(checkpoint)
+    forged = checkpoint.model_copy(update={"next_event_sequence": 4})
+    with raw(started_run, run_manifest.run_id) as connection:
+        connection.execute("UPDATE checkpoints SET checkpoint_json = ?", (canonical_json(forged),))
+    with pytest.raises(CorruptRunArtifact, match="checkpoint"):
+        started_run.load_run(run_manifest.run_id)
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> SQLiteRunStore:
     return SQLiteRunStore(tmp_path)

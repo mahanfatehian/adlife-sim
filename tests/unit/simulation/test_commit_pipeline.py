@@ -180,6 +180,25 @@ def test_one_rule_tick_runs_the_documented_stages_in_order(
     assert terminal < cognition < state < memory
 
 
+def test_mismatched_cognition_identity_refuses_the_whole_tick(valid_scenario: Scenario) -> None:
+    model = AdLifeModel(scenario=_full_world(valid_scenario), seed=42, run_id="run-boundary")
+    plan = model.plan_tick()
+    while not plan.requests and not model.clock.finished:
+        model.clock.advance()
+        plan = model.plan_tick()
+    assert plan.requests
+    before = model.snapshot()
+    answers = _rule_answers(plan)
+    request_id = plan.requests[0].request_id
+    answer = answers[request_id]
+    answers[request_id] = answer.model_copy(
+        update={"result": answer.result.model_copy(update={"request_id": "other:event-00000000"})}
+    )
+    with pytest.raises(MissingCognitionAnswer, match="request"):
+        model.commit_tick(plan, cognition=answers)
+    assert model.snapshot() == before
+
+
 def test_every_event_names_only_earlier_causes_of_its_own_run(
     valid_scenario: Scenario,
 ) -> None:

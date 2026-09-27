@@ -7,7 +7,8 @@ from typing import Annotated, Literal
 import typer
 import yaml
 
-from adlife.cli.errors import CommandError, command_boundary
+from adlife.cli.errors import CommandError, ExitCode, command_boundary
+from adlife.cli.errors import output_format as global_output_format
 from adlife.cli.output import emit_json
 from adlife.core.simulation.population import generate_population, generate_relationships
 
@@ -56,12 +57,15 @@ def generate(
     if out is not None:
         from pathlib import Path
 
-        Path(out).write_text(
-            yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
+        try:
+            with Path(out).open("x", encoding="utf-8") as stream:
+                stream.write(yaml.safe_dump(document, allow_unicode=True, sort_keys=False))
+        except FileExistsError:
+            raise CommandError("output file already exists", ExitCode.CONFLICT) from None
+        if global_output_format() in {"json", "jsonl"}:
+            emit_json({"output": out, "profiles": len(profiles)})
         return
-    if output_format == "json":
+    if output_format == "json" or global_output_format() in {"json", "jsonl"}:
         emit_json(document)
         return
     print(yaml.safe_dump(document, allow_unicode=True, sort_keys=False), end="")

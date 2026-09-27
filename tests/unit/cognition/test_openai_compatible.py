@@ -171,6 +171,79 @@ def _data_block(user_content: str) -> str:
 # --- the prompt boundary --------------------------------------------------------------
 
 
+@pytest.mark.parametrize("encoded", [False, True])
+async def test_the_configured_opaque_key_is_removed_from_http_error_diagnostics(
+    cognition_request: CognitionRequest, encoded: bool
+) -> None:
+    secret = "opaqueCredentialForAuditXYZ"
+    body = json.dumps({"detail": secret})
+    if encoded:
+        body = body.replace(secret, "".join(f"\\u{ord(char):04x}" for char in secret))
+    async with _provider(lambda _: httpx.Response(500, text=body), api_key=secret) as provider:
+        with pytest.raises(ProviderHttpError) as caught:
+            await provider.call(cognition_request)
+    assert secret not in str(caught.value)
+    assert "opaque" not in str(caught.value)
+    assert "\\u006f" not in str(caught.value)
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+@pytest.mark.parametrize("secret", ["opaqueCredentialForAuditXYZ", 'opaque/For"Audit\\XYZ'])
+async def test_valid_narrative_echo_of_the_configured_key_is_refused(
+    cognition_request: CognitionRequest, encoded: bool, secret: str
+) -> None:
+    content = _content(cognition_request.request_id, interpretation=secret)
+    if encoded:
+        content = content.replace(
+            json.dumps(secret)[1:-1], "".join(f"\\u{ord(char):04x}" for char in secret)
+        )
+    async with _provider(
+        lambda _: httpx.Response(200, json=_completion(content)), api_key=secret
+    ) as provider:
+        with pytest.raises(InvalidProviderResponse) as caught:
+            await provider.call(cognition_request)
+    assert secret not in str(caught.value)
+    assert secret not in (caught.value.raw_response or "")
+    assert "\\u006f" not in (caught.value.raw_response or "")
+
+
+async def test_malformed_envelope_does_not_persist_the_configured_opaque_key(
+    cognition_request: CognitionRequest,
+) -> None:
+    secret = "opaqueCredentialForAuditXYZ"
+    async with _provider(lambda _: httpx.Response(200, text=secret), api_key=secret) as provider:
+        with pytest.raises(InvalidProviderResponse) as caught:
+            await provider.call(cognition_request)
+    assert secret not in (caught.value.raw_response or "")
+
+
+@pytest.mark.parametrize("shape", ["malformed", "duplicate-error", "duplicate-answer"])
+async def test_escaped_configured_key_cannot_hide_in_discarded_json_tokens(
+    cognition_request: CognitionRequest, shape: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret = "opaqueCredentialForAuditXYZ"
+    escaped = "".join(f"\\u{ord(char):04x}" for char in secret)
+    if shape == "malformed":
+        body = '{"detail":"' + escaped + '",'
+        response = httpx.Response(200, text=body)
+        error_type = InvalidProviderResponse
+    elif shape == "duplicate-error":
+        body = '{"detail":"' + escaped + '","detail":"ordinary message"}'
+        response = httpx.Response(500, text=body)
+        error_type = ProviderHttpError
+    else:
+        body = _content(cognition_request.request_id)[:-1]
+        body += ',"extra":"' + escaped + '","extra":"ordinary message"}'
+        response = httpx.Response(200, json=_completion(body))
+        error_type = InvalidProviderResponse
+    async with _provider(lambda _: response, api_key=secret) as provider:
+        with pytest.raises(error_type) as caught:
+            await provider.call(cognition_request)
+    recorded = str(caught.value) + (caught.value.raw_response or "") + caplog.text
+    assert secret not in recorded
+    assert escaped not in recorded
+
+
 def test_the_system_instruction_declares_simulation_data_untrusted(
     cognition_request: CognitionRequest,
 ) -> None:

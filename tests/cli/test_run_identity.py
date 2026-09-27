@@ -34,9 +34,16 @@ def manifest_provider(project: Path, run_id: str) -> str:
 def write_local_provider_config(project: Path, model: str = "test-model") -> None:
     """Point the study's provider at a loopback OpenAI-compatible endpoint."""
     config_path = project / "adlife.yaml"
-    text = config_path.read_text("utf-8")
-    text += f"provider:\n  mode: local\n  model: {model}\n  base_url: http://127.0.0.1:11434/v1\n"
-    config_path.write_text(text, encoding="utf-8")
+    import yaml
+
+    document = yaml.safe_load(config_path.read_text("utf-8"))
+    document["provider"] = {
+        "mode": "local",
+        "model": model,
+        "base_url": "http://127.0.0.1:11434/v1",
+        "retries": 0,
+    }
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
 
 def test_rules_run_records_rules(tmp_path: Path) -> None:
@@ -89,3 +96,79 @@ def test_replay_run_records_replay(tmp_path: Path) -> None:
     document = json.loads(result.stdout)
     assert document["replay-identical"] is True
     assert manifest_provider(project, str(document["replay_run_id"])) == "replay"
+
+
+def test_default_run_id_is_stable_across_python_hash_seeds(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+    from hashlib import sha256
+
+    project = make_project(tmp_path)
+    command = [sys.executable, "-m", "adlife", "--format", "json", "run", str(project)]
+    first = subprocess.run(
+        command,
+        env={**os.environ, "PYTHONHASHSEED": "0"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+    run_id = json.loads(first.stdout)["run_id"]
+    original = {
+        path.relative_to(project): sha256(path.read_bytes()).hexdigest()
+        for path in (project / "runs").rglob("*")
+        if path.is_file()
+    }
+
+    repeated = subprocess.run(
+        command,
+        env={**os.environ, "PYTHONHASHSEED": "12345"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert repeated.returncode == 3, repeated.stdout + repeated.stderr
+    error = json.loads(repeated.stdout)["error"]
+    assert run_id in error["message"]
+    assert [path.name for path in (project / "runs").iterdir()] == [run_id]
+    assert all(
+        sha256((project / path).read_bytes()).hexdigest() == digest
+        for path, digest in original.items()
+    )
+
+
+def test_demo_same_seed_is_identical_in_fresh_locations(tmp_path: Path) -> None:
+    def demo(name: str, seed: int) -> tuple[str, Path]:
+        project = tmp_path / name
+        result = runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "demo",
+                "--headless",
+                "--dir",
+                str(project),
+                "--seed",
+                str(seed),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        run_id = json.loads(result.stdout)["run_id"]
+        return run_id, project / "runs" / run_id
+
+    first_id, first = demo("first", 42)
+    repeated_id, repeated = demo("different-location", 42)
+
+    assert repeated_id == first_id
+    for filename in ("inputs/scenario.json", "events.jsonl", "metrics.json"):
+        assert (repeated / filename).read_bytes() == (first / filename).read_bytes(), filename
+
+    other_id, other = demo("different-seed", 43)
+    assert other_id != first_id
+    first_scenario = json.loads((first / "inputs/scenario.json").read_text("utf-8"))
+    other_scenario = json.loads((other / "inputs/scenario.json").read_text("utf-8"))
+    assert first_scenario["population"] != other_scenario["population"]
+    assert (first / "events.jsonl").read_bytes() != (other / "events.jsonl").read_bytes()

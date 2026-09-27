@@ -157,6 +157,31 @@ def test_manifest_validation_rejects_seed_pairing_mismatch(
         validate_paired_manifests(run_manifest, other)
 
 
+def test_manifest_validation_rejects_parameter_confounding(run_manifest: RunManifest) -> None:
+    from adlife.core.simulation.parameters import DEFAULT_PARAMETERS
+
+    run_manifest = run_manifest.model_copy(update={"parameters": DEFAULT_PARAMETERS.as_mapping()})
+    other = run_manifest.model_copy(
+        update={"parameters": dict(run_manifest.parameters) | {"notice_scale": 1.4}}
+    )
+    with pytest.raises(ExperimentDesignError, match="parameters"):
+        validate_paired_manifests(run_manifest, other)
+
+
+async def test_seed_permutation_does_not_change_a_paired_comparison(
+    valid_scenario: Scenario, tmp_path: Path
+) -> None:
+    runner, _ = build_experiment_runner(tmp_path)
+    scenario = base_scenario(valid_scenario)
+    control = strip_campaigns(scenario)
+    forward = await runner.compare(control, scenario, seeds=(1, 2, 3), run_id_prefix="forward")
+    reverse = await runner.compare(control, scenario, seeds=(3, 2, 1), run_id_prefix="reverse")
+    assert reverse.seeds == (1, 2, 3)
+    assert reverse.metrics == forward.metrics
+    assert reverse.control_runs == forward.control_runs
+    assert reverse.treatment_runs == forward.treatment_runs
+
+
 async def test_per_seed_metrics_agree_with_the_stored_artifact(
     valid_scenario: Scenario, tmp_path: Path
 ) -> None:

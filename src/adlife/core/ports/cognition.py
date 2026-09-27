@@ -12,10 +12,11 @@ contract additionally requires ``emotion``, ``sentiment_delta``, ``recall_delta`
 ``purchase_reason`` and ``share_probability``. Both sets are required, so both are
 present and bounded here.
 
-A language model never supplies purchase probability. ``rule_modifier`` is the only
-numeric influence a provider has over intention, it is bounded to +/-0.10, and
-``purchase_reason`` is qualitative text. Purchase intention stays rule-derived in
-:mod:`adlife.core.simulation.decision`.
+A language model never supplies purchase probability directly. ``rule_modifier`` is
+bounded to +/-0.10 and adjusts rule sentiment and recall deltas. Valence, relevance,
+credibility and share probability feed memory and social dynamics. These state changes
+can affect later rule-derived intention; ``purchase_reason`` is qualitative text and
+does not enter numeric formulas in :mod:`adlife.core.simulation.decision`.
 """
 
 from __future__ import annotations
@@ -558,17 +559,10 @@ class CognitionResult(CognitionModel):
     Nothing about credentials, vendor key shapes, contact addresses or filesystem paths
     is relaxed on any of the six fields.
 
-    DOCUMENTED CONSEQUENCE OF KEEPING ``memory_summary`` STRICT (finding S8). A campaign
-    slug is a validated domain identifier that may legally be all digits
-    (``^[a-z0-9][a-z0-9-]{0,79}$``), and the rule fallback names the campaign in its
-    summary. A slug such as ``1234567890`` therefore still composes a summary the strict
-    screen refuses. The refusal is real and it is not silently swallowed - it surfaces as
-    a ``CognitionError`` from :mod:`adlife.adapters.cognition.rules`, never as a bare
-    ``pydantic.ValidationError``, so a service honouring section 12 can handle it.
-    Slugs that merely CONTINUE a hyphenated digit run - ``spring-1234567890``,
-    ``sale-0800-123-4567`` - are admitted, because
-    :mod:`adlife.core.domain.person` no longer treats a hyphen-continued digit run as an
-    identifier.
+    A campaign slug may legally be all digits. The rule fallback substitutes a neutral
+    campaign label in generated memory prose when that identifier would trip the strict
+    screen. The structured campaign identity remains intact, and provider-authored
+    memories still meet the unchanged strict screen.
     """
 
     schema_version: Literal[1] = 1

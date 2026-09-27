@@ -24,7 +24,7 @@ def _chain(ids: tuple[str, ...]) -> tuple[Relationship, ...]:
 
 
 def small_three_agent_scenario(valid_scenario: Scenario) -> Scenario:
-    """The contract scenario scaled to three agents over the documented ten-zone world.
+    """The contract scenario scaled to three agents over a six-zone test world.
 
     ``retail-center`` and ``cafe`` are the two zones the built-in office-worker routine
     names beyond the contract fixture's four, and the three routes close the day loop
@@ -109,13 +109,12 @@ def rescale_scenario(scenario: Scenario, *, days: int) -> Scenario:
 
 
 def maximum_thirty_agent_scenario(valid_scenario: Scenario) -> Scenario:
-    """The performance gate's population: 30 agents over the routable ten-zone world.
+    """The performance gate's population: 30 agents over the routable eight-zone world.
 
     Built exactly the way the CLI assembles a project - the packaged generator draws
     profiles and a relationship graph, the routable-zone assignment keys every commute
-    onto the default world - on top of the small builder's ten-zone world (the contract
-    fixture's four zones plus the retail legs the routine templates name). The campaign
-    set is the small scenario's own. This is a builder, not a fixture, so the perf
+    onto the default CLI world. The campaign set comes from the contract scenario.
+    This is a builder, not a fixture, so the perf
     suite can import it standalone.
     """
     from adlife.cli.project import _assign_routable_zones, _initial_state_for, default_world

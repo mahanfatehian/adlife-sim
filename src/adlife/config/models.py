@@ -1,10 +1,12 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import Field, HttpUrl, model_validator
+
+from adlife.core.domain.person import DomainModel
 
 
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class StrictModel(DomainModel):
+    """Configuration shares the domain's strict, revalidating value semantics."""
 
 
 class SimulationSettings(StrictModel):

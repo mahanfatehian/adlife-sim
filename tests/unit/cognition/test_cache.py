@@ -29,6 +29,13 @@ from adlife.core.ports.cognition import (
 _KEY_HEX = 64
 
 
+def test_invalid_utf8_is_a_corrupt_cache_record(tmp_path: Path) -> None:
+    key = "a" * 64
+    (tmp_path / f"{key}.json").write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(CorruptCacheRecord, match=key):
+        CognitionCache(tmp_path).get(key)
+
+
 def _canonical(value: object) -> str:
     return json.dumps(
         value,

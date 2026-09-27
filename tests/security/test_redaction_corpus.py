@@ -575,25 +575,22 @@ def test_the_terminal_fallback_answers_an_ordinary_campaign_slug(
     assert campaign_id in result.memory_summary
 
 
-def test_a_rule_result_that_cannot_be_represented_raises_a_cognition_error(
+def test_numeric_campaign_identifiers_keep_rule_memories_safe(
     cognition_request: CognitionRequest,
     cognition_campaign: dict[str, object],
 ) -> None:
-    """Specification section 12: a provider failure may never abort a run.
-
-    ``1234567890`` is a legal campaign slug and a bare national-identifier shape, so the
-    composed ``memory_summary`` cannot pass the strict persona screen. The refusal must
-    still arrive as a ``CognitionError``, because a service catching that base class is
-    what section 12's "never abort a run" is implemented with.
-    """
+    """A legal structured ID must not turn the terminal fallback into a run failure."""
     campaign = dict(cognition_campaign) | {"campaign_id": "1234567890"}
     request = cognition_request.model_copy(update={"campaign": campaign})
-    with pytest.raises(CognitionError) as error:
-        rule_cognition_result(request, _rule_response("1234567890"))
-    assert not isinstance(error.value, ValidationError)
+    result = rule_cognition_result(request, _rule_response("1234567890"))
+    assert "1234567890" not in result.memory_summary
+    assert not contains_sensitive_text(result.memory_summary)
+    assert result.rule_modifier == 0.0
+    with pytest.raises(ValidationError):
+        result.model_copy(update={"memory_summary": "Noticed 1234567890"})
 
 
-async def test_the_rule_provider_surfaces_the_same_failure_as_a_cognition_error(
+async def test_the_rule_provider_answers_numeric_identifiers_deterministically(
     cognition_request: CognitionRequest,
     cognition_campaign: dict[str, object],
     valid_profile: PersonProfile,
@@ -613,10 +610,10 @@ async def test_the_rule_provider_surfaces_the_same_failure_as_a_cognition_error(
             )
         }
     )
-    with pytest.raises(CognitionError):
-        await provider.evaluate(request)
-    with pytest.raises(CognitionError):
-        await provider.answer(request)
+    first = await provider.evaluate(request)
+    assert (await provider.answer(request)).result == first
+    assert "1234567890" not in first.memory_summary
+    assert not contains_sensitive_text(first.memory_summary)
 
 
 # --- S10: the documented side effect of the non-word-boundary label anchor ------------
@@ -1374,6 +1371,7 @@ def test_a_corrupt_cache_record_does_not_chain_the_value_it_rejected(
 def test_the_rule_fallback_does_not_chain_the_value_it_rejected(
     cognition_request: CognitionRequest,
     cognition_campaign: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The terminal fallback carried the same defect as the provider it backs up.
 
@@ -1389,6 +1387,17 @@ def test_the_rule_fallback_does_not_chain_the_value_it_rejected(
     campaign_id = "1234567890"
     campaign = dict(cognition_campaign) | {"campaign_id": campaign_id}
     request = cognition_request.model_copy(update={"campaign": campaign})
+    # Exercise the error translator with a real schema rejection; valid IDs now get
+    # safe generated prose and no longer supply an error for this security invariant.
+    from adlife.adapters.cognition import rules
+
+    original = rules._compose_rule_result
+
+    def invalid_memory(*args: object) -> object:
+        result = original(*args)  # type: ignore[arg-type]
+        return result.model_copy(update={"memory_summary": campaign_id})
+
+    monkeypatch.setattr(rules, "_compose_rule_result", invalid_memory)
     with pytest.raises(CognitionError) as caught:
         rule_cognition_result(request, _rule_response(campaign_id))
     rendered = "".join(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from adlife.cli.app import app
@@ -66,3 +67,27 @@ def test_doctor_human_mode_names_the_checks(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "package" in result.stdout.lower()
     assert "sqlite" in result.stdout.lower()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://operator:secret@example.test/v1",
+        "https://example.test/v1?api_key=secret",
+        "http://example.test/v1",
+    ],
+)
+def test_doctor_refuses_unsafe_endpoint_before_network(monkeypatch, url):
+    from adlife.cli.commands.doctor import _probe_provider
+
+    calls = []
+
+    def observe(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("unsafe endpoint was contacted")
+
+    monkeypatch.setattr("httpx.get", observe)
+    ok, detail = _probe_provider(url)
+    assert not ok
+    assert calls == []
+    assert "secret" not in detail

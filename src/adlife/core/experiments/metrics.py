@@ -158,6 +158,7 @@ class MetricsCalculator:
         records = [
             event for event in events if campaign_id is None or event.campaign_id == campaign_id
         ]
+        records.sort(key=lambda event: (event.run_id, event.sequence, event.event_id))
         types = [event.event_type for event in records]
 
         eligible = types.count(EventType.CAMPAIGN_ELIGIBLE)
@@ -214,8 +215,9 @@ class MetricsCalculator:
         final_by_id = {state.agent_id: state for state in final_states}
         initial_by_id = {state.agent_id: state for state in initial_states}
         paired_ids = [agent_id for agent_id in sorted(final_by_id) if agent_id in initial_by_id]
-        recall_values = [state.recall_strength for state in final_by_id.values()]
-        fatigue_values = [state.ad_fatigue for state in final_by_id.values()]
+        final_ids = sorted(final_by_id)
+        recall_values = [final_by_id[agent_id].recall_strength for agent_id in final_ids]
+        fatigue_values = [final_by_id[agent_id].ad_fatigue for agent_id in final_ids]
         intention_deltas = [
             final_by_id[agent_id].purchase_intention - initial_by_id[agent_id].purchase_intention
             for agent_id in paired_ids

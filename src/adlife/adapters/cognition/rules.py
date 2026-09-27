@@ -9,7 +9,7 @@ from types import MappingProxyType
 from pydantic import ValidationError
 
 from adlife.core.domain.campaign import Campaign, Placement
-from adlife.core.domain.person import PersonProfile
+from adlife.core.domain.person import PersonProfile, contains_sensitive_text
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import (
     CognitionAnswer,
@@ -40,20 +40,10 @@ class UnknownCognitionRequest(CognitionError):
 class UnrepresentableRuleResult(CognitionError):
     """Raised when a rule answer cannot be expressed as a valid :class:`CognitionResult`.
 
-    This exists because of the one thing specification section 12 forbids absolutely:
-    "provider failures must never abort a run". A service implements that by catching
-    :class:`CognitionError` around the terminal fallback, so the fallback may not raise
-    anything else - and it used to raise a bare ``pydantic.ValidationError`` whenever the
-    answer boundary refused the text it composed.
-
-    The live cause was an asymmetry between two screens. A campaign identifier is
-    admitted into the prompt under the NARROW rule, and ``memory_summary`` names that
-    identifier while keeping the STRICT persona rule. An all-digit campaign slug such as
-    ``1234567890`` is legal under the domain rule ``^[a-z0-9][a-z0-9-]{0,79}$`` and is a
-    bare national-identifier shape, so the composed summary is refused. The common case -
-    a slug whose digits merely continue a hyphenated token, ``spring-1234567890`` - was
-    closed in :mod:`adlife.core.domain.person`; what survives is closed here, by making
-    the refusal a :class:`CognitionError` a caller can actually handle.
+    The terminal fallback cannot itself fall back: an invalid generated answer is a
+    defect and propagates. Translate schema errors without carrying their rejected text
+    into diagnostics. Valid campaign identifiers that look like sensitive text are
+    omitted from generated memory prose so they do not trigger this failure.
     """
 
 
@@ -99,13 +89,10 @@ def rule_cognition_result(request: CognitionRequest, response: RuleResponse) -> 
     duplicated here. ``rule_modifier`` is exactly zero because the rule response already
     IS the baseline - a rule provider that modified it would apply the rule twice.
 
-    Every refusal this function makes is a :class:`CognitionError`. The answer boundary
-    can still object to text composed from a legal campaign slug, and when it does the
-    ``pydantic.ValidationError`` is translated into :class:`UnrepresentableRuleResult`
-    rather than escaping: this is the terminal fallback, and specification section 12
-    requires that a caller catching :class:`CognitionError` cannot have its run aborted
-    by it. ``TypeError`` for a wrongly typed argument is deliberately NOT translated - a
-    caller passing the wrong type has a defect, not a provider failure.
+    Unexpected schema refusals become :class:`UnrepresentableRuleResult` without
+    exposing rejected values. Sensitive-shaped campaign identifiers use a neutral label
+    in memory prose. ``TypeError`` for a wrongly typed argument is not translated:
+    a caller passing the wrong type has a defect, not a provider failure.
     """
     if not isinstance(request, CognitionRequest):
         raise TypeError("request must be a CognitionRequest")
@@ -140,6 +127,9 @@ def _compose_rule_result(
 ) -> CognitionResult:
     """Compose the answer text and numbers; the caller owns the failure translation."""
     campaign_id = request.campaign_id
+    # Identifiers are structured data, but memories meet the stricter persona screen.
+    # Keep that screen intact and omit only an identifier it cannot represent as prose.
+    memory_campaign = "the campaign" if contains_sensitive_text(campaign_id) else campaign_id
     return CognitionResult(
         request_id=request.request_id,
         interpretation=_fit(
@@ -169,7 +159,7 @@ def _compose_rule_result(
             _fit(f"recall delta {response.recall_delta:.2f}", 200),
         ),
         memory_summary=_fit(
-            f"Noticed {campaign_id} on {request.channel} at exposure "
+            f"Noticed {memory_campaign} on {request.channel} at exposure "
             f"{request.exposure_count}; sentiment {response.sentiment_delta:+.3f}, "
             f"recall {response.recall_delta:.3f}.",
             280,

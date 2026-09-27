@@ -181,3 +181,63 @@ def test_parameters_round_trip_through_the_mapping() -> None:
     assert floored.notice_scale == 0.0
     with pytest.raises(ValueError, match="no-such-parameter"):
         DEFAULT_PARAMETERS.with_("no-such-parameter", 0.5)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, "0.5"])
+def test_parameter_perturbation_rejects_invalid_numbers(value: object) -> None:
+    with pytest.raises(ValueError, match="finite number"):
+        DEFAULT_PARAMETERS.with_("notice_scale", value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("delta", [float("nan"), float("inf"), -float("inf"), True, "0.5"])
+async def test_invalid_sensitivity_delta_is_refused_before_writing_runs(
+    valid_scenario: Scenario, tmp_path: Path, delta: object
+) -> None:
+    runner, _ = build_sensitivity_runner(tmp_path)
+    with pytest.raises(ValueError, match="finite number"):
+        await runner.run(
+            base_scenario(valid_scenario),
+            targets=("notice_scale",),
+            deltas=(delta,),
+            seeds=(1,),  # type: ignore[arg-type]
+        )
+    assert not list((tmp_path / "sensitivity-store").rglob("run.json"))
+
+
+async def test_sensitivity_seed_order_is_canonical(
+    valid_scenario: Scenario, tmp_path: Path
+) -> None:
+    runner, _ = build_sensitivity_runner(tmp_path)
+    result = await runner.run(
+        base_scenario(valid_scenario),
+        targets=("notice_scale",),
+        deltas=(0.1,),
+        seeds=(2, 1),
+    )
+    assert tuple(result.baseline.per_seed_rankings) == (1, 2)
+    assert tuple(result.arms[0].per_seed_rankings) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    "targets,deltas",
+    [
+        (("notice_scale",), (0.1, 0.1)),
+        (("notice_scale",), (0.101, 0.104)),
+        (("notice_scale", "notice_scale"), (0.1,)),
+    ],
+)
+async def test_colliding_sensitivity_arms_are_refused_before_any_run(
+    valid_scenario: Scenario,
+    tmp_path: Path,
+    targets: tuple[str, ...],
+    deltas: tuple[float, ...],
+) -> None:
+    runner, _ = build_sensitivity_runner(tmp_path)
+    with pytest.raises(ValueError, match="distinct run identifiers"):
+        await runner.run(
+            base_scenario(valid_scenario),
+            targets=targets,  # type: ignore[arg-type]
+            deltas=deltas,
+            seeds=(1,),
+        )
+    assert not list((tmp_path / "sensitivity-store").rglob("run.json"))

@@ -38,7 +38,14 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 ShortText = Annotated[str, Field(min_length=1, max_length=80)]
 Slug = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")]
@@ -526,6 +533,15 @@ class DomainModel(BaseModel):
         frozen=True,
         strict=True,
     )
+
+    @field_validator("schema_version", mode="before", check_fields=False)
+    @classmethod
+    def require_integer_schema_version(cls, value: object) -> int:
+        # Literal equality admits True and 1.0 even in strict mode; artifact version
+        # gates require the integer token, before any literal normalization occurs.
+        if type(value) is not int:
+            raise ValueError("schema_version must be an integer")
+        return value
 
     def model_copy(
         self,

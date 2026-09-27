@@ -19,7 +19,8 @@ from adlife.cli.errors import CommandError, command_boundary, output_format
 from adlife.cli.output import emit_json, info
 from adlife.cli.project import Project
 from adlife.core.domain.results import SimulationResult
-from adlife.core.simulation.runner import RunIdentity, SimulationRunner, run_id_from
+from adlife.core.simulation.engine import canonical_sha256
+from adlife.core.simulation.runner import RunIdentity, SimulationRunner
 
 
 @command_boundary
@@ -51,14 +52,24 @@ def command(
     from adlife.cli.project import load_project
 
     project = load_project(study_root, days=3, population_size=20, seed=seed)
-    run_id = f"demo-{run_id_from(project.scenario, seed)}"
+    # The demo's destination is storage provenance, not an experimental input. Mock
+    # fixtures include request IDs, so a path-derived identity would change outcomes.
+    project = Project(
+        root=project.root,
+        config=project.config,
+        scenario=project.scenario.model_copy(
+            update={"scenario_id": "adlife-demo", "name": "AdLife offline demo"}
+        ),
+    )
+    digest = canonical_sha256({"scenario_sha256": canonical_sha256(project.scenario), "seed": seed})
+    run_id = f"demo-{digest[:24]}"
     runner = SimulationRunner(
         cognition_factory=lambda *args, **kwargs: MockCognitionPort(seed=seed),
         fallback_provider_factory=rule_fallback_for,
         identity=_identity(project),
     )
 
-    dashboard_wanted = not headless and _terminal_available()
+    dashboard_wanted = not headless and output_format() == "human" and _terminal_available()
     if dashboard_wanted:
         from adlife.cli.commands.run import _run_live
 
@@ -85,7 +96,7 @@ def command(
         "artifact": str(artifact),
         "offline": True,
     }
-    if output_format() == "json":
+    if output_format() in {"json", "jsonl"}:
         emit_json(document)
     else:
         info(
@@ -97,11 +108,9 @@ def command(
 
 
 def _identity(project: Project) -> RunIdentity:
-    return RunIdentity.for_project(
-        project_root=project.root,
-        provider="mock",
-        model_id=project.config.provider.model,
-    )
+    from adlife.cli.commands.run import _identity as run_identity
+
+    return run_identity(project, "hybrid", project.config.provider.model)
 
 
 def _terminal_available() -> bool:

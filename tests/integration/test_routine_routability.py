@@ -47,12 +47,6 @@ _TEMPLATE_PAIRS: dict[str, tuple[tuple[str, str], ...]] = {
     "unemployed": _ROUTABLE_PAIRS,
 }
 
-# The packaged unemployed weekday commutes from the cafe to the highway transit - a
-# leg no world can route (see ``_assign_routable_zones`` in adlife.cli.project).
-# Generated profiles therefore follow the office-worker routine, and that one
-# (template, day) combination is the documented exception.
-_DOCUMENTED_EXCEPTION: frozenset[tuple[str, str]] = frozenset({("unemployed", "weekday")})
-
 
 def _profile(template_id: str, home_zone: str, work_zone: str) -> PersonProfile:
     return PersonProfile(
@@ -145,9 +139,6 @@ def test_packaged_routines_are_routable_in_the_default_world(
     day_start: int,
     day_name: str,
 ) -> None:
-    if (template_id, day_name) in _DOCUMENTED_EXCEPTION:
-        pytest.skip("documented exception: generated unemployed follow the office-worker routine")
-
     world = default_world()
     for home_zone, work_zone in _TEMPLATE_PAIRS[template_id]:
         _walk_one_day(template_id, day_start, home_zone, work_zone, world)

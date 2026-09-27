@@ -102,6 +102,25 @@ def test_population_generate_writes_loadable_yaml(tmp_path: Path) -> None:
     ]
 
 
+def test_cli_initial_states_explicitly_leave_purchase_proxy_disabled(tmp_path: Path) -> None:
+    """Document current modelling scope; do not invent budget or need sampling."""
+    from adlife.cli.project import _initial_state_for, load_project
+    from adlife.core.simulation.population import generate_population
+
+    scenario = load_project(init_project(tmp_path)).scenario
+    for profile, state in zip(scenario.population, scenario.initial_states, strict=True):
+        assert state.agent_id == profile.agent_id
+        assert state.brand_sentiment == profile.initial_brand_sentiment
+        assert state.active_need is False
+        assert state.disposable_budget == 0.0
+
+    for profile in generate_population(size=30, seed=42, locale="en-US"):
+        state = _initial_state_for(profile)
+        assert state.brand_sentiment == profile.initial_brand_sentiment
+        assert state.active_need is False
+        assert state.disposable_budget == 0.0
+
+
 def test_population_generate_to_stdout_is_yaml(tmp_path: Path) -> None:
     result = runner.invoke(
         app,

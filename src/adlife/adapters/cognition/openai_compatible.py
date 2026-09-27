@@ -52,7 +52,10 @@ property that follows, and the only one asserted here, is the repository-wide on
     A MESSAGE, A LOG RECORD OR A STORED RECORD THIS MODULE PRODUCES.
 
 It is NOT "a credential cannot leak". An opaque token under an unlabelled field in a
-provider's error body is indistinguishable from an order number. The named shapes are
+provider's error body is indistinguishable from an order number unless it is the
+configured transport credential. That known value is checked separately, including
+decoded JSON strings, before diagnostics, raw-body persistence, or answer validation;
+an echoed body is dropped and an echoed answer refused. The named shapes are
 the tables in :mod:`adlife.core.domain.person`, and the one surface deliberately left
 unscreened is :attr:`ProviderCallError.raw_response`, which is kept exactly as received
 so that whatever stores it can redact it once. ``tests/security/`` pins the rest: each
@@ -143,6 +146,18 @@ and removes the guesswork about which half of such a value was meant.
 The screen is about the CHARACTER SET only. It says nothing about whether a credential is
 valid, current or authorized - only the endpoint can answer that.
 """
+
+_JSON_STRING_ESCAPE: Final = re.compile(r'\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])')
+_JSON_SIMPLE_ESCAPES: Final = {
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+}
 
 DEFAULT_LOCAL_BASE_URL: Final = "http://127.0.0.1:11434/v1"
 """Specification section 6.3's default local endpoint."""
@@ -907,9 +922,14 @@ class OpenAICompatibleProvider:
             # :func:`coerce_cognition_result`.
             raise InvalidProviderResponse(
                 "the provider answer was not JSON",
-                raw_response=response.text,
+                raw_response=self._screen_known_credential(response.text),
             ) from None
         content = extract_message_content(envelope)
+        if self._screen_known_credential(content) != content:
+            raise InvalidProviderResponse(
+                "the provider answer echoed the configured credential",
+                raw_response=REDACTION_PLACEHOLDER,
+            )
         result = coerce_cognition_result(content, request_id=request.request_id)
         prompt_tokens, completion_tokens = extract_token_usage(envelope)
         return ProviderCall(
@@ -1011,6 +1031,28 @@ class OpenAICompatibleProvider:
             chunks.append(chunk)
         return b"".join(chunks)
 
+    def _screen_known_credential(self, text: str) -> str:
+        """Drop an exact credential echo, including JSON-escaped keys and values.
+
+        The transport already knows this value: it need not resemble a vendor key or
+        sit beside a secret label. Unknown secrets still use the published heuristic
+        screen. Decode escapes without parsing the container: malformed objects and
+        duplicate fields must not discard tokens before their contents are screened.
+        """
+        credential = self._client.headers["Authorization"].removeprefix("Bearer ")
+        if credential in text:
+            return REDACTION_PLACEHOLDER
+
+        def decode_escape(match: re.Match[str]) -> str:
+            escaped = match.group(0)[1:]
+            if escaped.startswith("u"):
+                return chr(int(escaped[1:], 16))
+            return _JSON_SIMPLE_ESCAPES[escaped]
+
+        if credential in _JSON_STRING_ESCAPE.sub(decode_escape, text):
+            return REDACTION_PLACEHOLDER
+        return text
+
     def _raise_for_status(self, response: httpx.Response) -> None:
         """Translate an error status, keeping the failed request out of the chain.
 
@@ -1023,7 +1065,7 @@ class OpenAICompatibleProvider:
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
             status = error.response.status_code
-            body = _excerpt(error.response.text)
+            body = _excerpt(self._screen_known_credential(error.response.text))
         else:
             return
         endpoint = self._metadata.base_url

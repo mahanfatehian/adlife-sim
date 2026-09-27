@@ -499,6 +499,10 @@ class AdLifeModel(mesa.Model):  # type: ignore[misc]
                 raise MissingCognitionAnswer(
                     f"cognition request {request.request_id} has no resolved answer"
                 )
+            if answer.result.request_id != request.request_id:
+                raise MissingCognitionAnswer(
+                    f"cognition request {request.request_id} has an answer for another request"
+                )
             answers[request.request_id] = answer
 
         # STAGE 1: the projected post-movement states, applied to nothing yet - the

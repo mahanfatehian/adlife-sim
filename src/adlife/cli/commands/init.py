@@ -7,8 +7,8 @@ from typing import Annotated
 
 import typer
 
-from adlife.cli.errors import command_boundary
-from adlife.cli.output import info
+from adlife.cli.errors import command_boundary, output_format
+from adlife.cli.output import emit_json, info
 from adlife.cli.project import init_project
 
 
@@ -22,5 +22,7 @@ def command(
 ) -> None:
     """Create a new study directory from the packaged demo project."""
     root = init_project(parent / name)
+    if output_format() in {"json", "jsonl"}:
+        emit_json({"study": str(root)})
     info(f"created study at {root}")
     info("next: adlife validate " + str(root))
