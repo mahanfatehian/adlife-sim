@@ -1,31 +1,42 @@
 # Reproducibility
 
-Reproducibility is a tested property of this software, not a hope. The same seed, the same
-scenario, and the same code produce the same events, event for event, and the same final
-state — and `adlife replay` verifies it on demand. (A run re-executed under a derived
-identifier carries that identifier in its event ids; the comparison normalizes it away,
-and every other byte must match. Re-executing under the *same* run id leaves
-byte-identical artifact files.)
+In rules mode, the same seed, frozen scenario, model parameters and code produce the
+same normalized events and final state. Mock cognition additionally uses the original
+request identity and complete request JSON to select its deterministic fixture; replay
+preserves those inputs. Live-provider replay requires recorded validated cognition.
+
+The offline `demo` command fixes its scenario identity independently of the destination
+folder and derives its run identity from canonical frozen inputs and the seed. Repeating
+the same packaged demo inputs, seed and code in a fresh folder therefore preserves mock
+request identities, scenario, event and metric exports. Ordinary study identities still
+record their source directory; use recorded replay to reproduce those runs.
+
+Replay normalizes only structured run/event references for its new destination; it
+does not erase differences in arbitrary narrative text. Wall-clock timestamps, platform
+metadata and SQLite file layout are not reproducibility targets. Entire artifact
+directories are **not** promised byte-identical. The JSONL export rebuilt from the same
+authoritative database is byte-identical to its canonical event export.
 
 ## What a seed guarantees
 
-A seed fixes every stochastic decision in the run:
+A seed fixes the model's keyed random draws for fixed inputs:
 
 - **Keyed random streams.** There is no global random generator. Each agent's decisions —
   movement draws, attention draws, share draws, purchase draws — come from a random
-  oracle keyed by run, agent, and purpose. Adding an agent or changing an unrelated
-  subsystem cannot shift another agent's stream.
+  oracle keyed by seed, purpose, agent, simulated tick and draw index. Adding an agent
+  does not consume another agent's draws, but changing social interactions can still
+  change outcomes.
 - **Deterministic scheduling.** The clock advances in fixed ticks of 15 simulated minutes
   (96 ticks per simulated day); stage and event ordering are total orders, not iteration
   orders.
-- **Recorded inputs.** The run's `inputs/` directory freezes the exact scenario — world,
-  population, routines, campaigns, model parameters — the run was driven with, not the
-  files it was *later edited into*.
+- **Recorded inputs.** The run's `inputs/` directory freezes its scenario — world,
+  population, routines and campaigns. Model parameters live in the manifest (a null
+  mapping means the recorded package's defaults), not in later-edited project files.
 
-Consequently: re-running with the same seed and inputs reproduces the run exactly;
-changing *only* the seed changes draws and nothing else; changing *only* a campaign file
-changes exactly the campaign-related behaviour. That last property is what makes paired
-comparisons honest.
+For a fixed scenario, changing the model seed changes draws; changing a campaign can
+propagate into later memory, social state and purchasing rules. CLI population generation
+also uses the supplied seed unless a population document is supplied. Paired experiments
+hold the already-loaded initial population and all non-treatment inputs fixed.
 
 ## The manifest
 
@@ -40,6 +51,10 @@ Every run persists `runs/<run-id>/run.json` recording:
 A result is auditable against its own manifest, not against anyone's memory of the
 configuration.
 
+Git and lockfile metadata use explicit unavailable placeholders when a study is outside
+a checkout or has no lockfile. Preserve the exact wheel/source revision and dependency
+lock alongside a reported study; placeholders are not proof of an identical environment.
+
 ## Replay: the guarantee, checked
 
 ```bash
@@ -53,6 +68,12 @@ reported as a failure, never repaired. This is also how the live dashboard is ke
 a run driven under the TUI is verified to leave an event stream equal, event for event, to
 a headless run of the same scenario and seed.
 
+Interrupted runs verify their recorded committed prefix, including a stop before the
+first tick. Running or failed artifacts without a trustworthy interrupted boundary are
+refused. Replay never writes to the source directory. Core-only in-place recovery is
+limited to still-running rules/mock artifacts exactly at a stored checkpoint (or their
+start event); closed artifacts and uncheckpointed tails are not resumed in place.
+
 ## Environment hygiene
 
 Two sources of nondeterminism outside the model are handled:
@@ -60,10 +81,12 @@ Two sources of nondeterminism outside the model are handled:
 - **Hash iteration order.** The test suite runs under varying `PYTHONHASHSEED` values to
   catch any iteration-order leak. If you hack on the core, do the same
   (`PYTHONHASHSEED=0 …` then `PYTHONHASHSEED=12345 …`).
-- **Language-model providers.** In hybrid mode a live provider is nondeterministic. The
-  boundary is explicit: provider answers never touch purchase probability; every fallback
-  is recorded as a `cognition.fallback` event; and replay of a hybrid run answers from the
-  recorded cache, so the *artifact* remains reproducible even when the provider was not.
+- **Language-model providers.** Fresh live answers can vary despite identical seeds.
+  Bounded modifiers and social/memory inputs affect numeric state; later rule-derived
+  intention and purchase outcomes can change too. The provider never supplies purchase
+  probability directly, and reason text does not drive numeric formulas. Exact hybrid
+  reproduction requires recorded validated cognition and fallback provenance; fresh
+  provider calls are not a reproducibility check.
 
 ## Recipe: reproduce any run
 
@@ -76,6 +99,7 @@ uv run adlife replay my-study <run-id>
 ```
 
 Replay re-executes the run and compares the fresh stream to the recorded one with the run
-identifier normalized away (a derived run carries its own identifier, so the raw files
-cannot be byte-identical; everything else must be). If the comparison fails, that is a
-bug, and the pair of artifacts is the bug report.
+identifier references normalized away. A mismatch indicates changed code, missing or
+corrupt recorded inputs/cognition, or a defect; it is never silently repaired. Integrity
+checks detect inconsistent artifacts, not a coordinated rewrite of every file: runs are
+not cryptographically signed or claimed to be tamper-proof against a malicious owner.

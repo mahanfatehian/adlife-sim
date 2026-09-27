@@ -1,6 +1,7 @@
 # Quickstart: zero to self-contained report
 
-Everything below runs offline in rules or mock mode: no API key, no account, no network.
+After installing dependencies, the study workflows below run offline in rules or mock
+mode: no API key, no account, no provider network access.
 
 ## 0. Install
 
@@ -26,7 +27,7 @@ uv run adlife init demo-study
 
 A study is a directory holding `adlife.yaml` (the run configuration), `population.yaml`,
 and `campaigns/*.yaml`. The packaged demo project pairs a three-agent population with the
-default ten-zone world and two campaigns: a mobile-feed phone placement and a highway
+default eight-zone world and two campaigns: a mobile-feed phone placement and a highway
 billboard.
 
 Create studies outside the repository if you do not want them in your checkout:
@@ -41,14 +42,13 @@ uv run adlife init demo-study --parent "$TEMP"
 uv run adlife validate demo-study
 ```
 
-A valid project exits 0 quietly. Every broken input exits 2 with an error naming the file
-and the defect — this is the gate every other command runs first.
+A valid project exits 0 with `{"valid": true, "errors": []}`. Invalid study input exits 2
+with a concise diagnostic — this is the input gate the study commands run first.
 
 ## 3. Run
 
 ```bash
-uv run adlife run demo-study
-# run run-project-…-42: completed at minute 1440, 161 events, artifacts in demo-study/runs/run-project-…-42
+uv run adlife run demo-study --run-id first
 ```
 
 One simulated day is 1,440 simulated minutes, driven as 96 ticks of 15 simulated minutes.
@@ -70,7 +70,7 @@ What lands in `demo-study/runs/<run-id>/`:
 ## 4. Replay it
 
 ```bash
-uv run adlife replay demo-study <run-id>
+uv run adlife replay demo-study first
 ```
 
 Replay re-executes the stored run from its recorded inputs and verifies the fresh event
@@ -80,7 +80,7 @@ not assumed.
 ## 5. Read the report
 
 ```bash
-uv run adlife report demo-study <run-id>
+uv run adlife report demo-study first
 ```
 
 Writes `demo-study/reports/<run-id>.html`: a self-contained file (Plotly inlined, system
@@ -108,8 +108,10 @@ dashboard and a machine stream cannot share stdout.
 uv run adlife compare control-study treatment-study --seeds 20
 ```
 
-Both arms run per seed with identical populations, worlds, and keyed random streams, so a
-paired difference is the treatment effect and nothing else. The A/A control — comparing a
+Both arms run per seed with identical populations, worlds, and keyed random streams.
+The paired differences describe the declared treatment inside this synthetic model,
+not real-market effects. Phone and billboard placements can have different opportunity
+counts; their comparison does not isolate a pure channel effect. The A/A control — comparing a
 study with itself — must return exactly zero before any treatment result means anything.
 
 ## 8. The offline demonstration

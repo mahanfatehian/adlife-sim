@@ -7,8 +7,9 @@ scientific posture, and four rules keep it trustworthy.
 
 Every persona, name, routine, interest, and campaign in this repository — and in any
 contribution — must be **fictional and generated from templates**. The domain validators
-enforce this in code: persona fields reject national identifiers, phone numbers, email
-addresses, and free-form secrets. Do not add real people, real datasets, scraped
+reject recognized national identifiers, phone numbers, email addresses, and secret
+patterns. This best-effort screening cannot prove that a persona is fictional or detect
+every opaque secret. Do not add real people, real datasets, scraped
 content, or any data that could identify a real person. If your contribution needs a
 "realistic" population, generate one with the packaged templates.
 

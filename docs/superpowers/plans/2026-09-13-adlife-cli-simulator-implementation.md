@@ -1,5 +1,13 @@
 # AdLife Lab Repository Implementation Plan
 
+> **Historical plan; reconciled 2026-09-27.** Examples below record implementation
+> intentions, not the current public contract. The current CLI reference and
+> architecture supersede obsolete examples: exit 3 is `CONFLICT`, configuration
+> refusals use 2, corrupt/missing replay artifacts use 4, and replay uses the dedicated
+> `adlife replay` command. Outputs are JSON/JSONL and self-contained HTML; CSV is
+> de-scoped. The defense-readiness audit records subsequent corrections without
+> silently rewriting the historical plan or its model assumptions.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
 **Goal:** Build a polished, local-first Python CLI/TUI that simulates 1 to 30 fictional consumers with routines, memory, social relationships, mobile and billboard advertising exposure, deterministic experiments, bounded hybrid LLM cognition, replayable runs, and investor-ready reports.
@@ -2760,7 +2768,7 @@ uv run adlife compare university-study/runs/phone university-study/runs/billboar
 For the live defense, run:
 
 ~~~bash
-uv run adlife demo --live
+uv run adlife demo  # automatically opens the dashboard on an interactive terminal
 ~~~
 
 The repository is accepted only when the offline demo, complete test suite, clean-wheel smoke, report generation, and clean Git checks all pass. Live LLM availability is an optional demonstration enhancement, not a completion dependency.

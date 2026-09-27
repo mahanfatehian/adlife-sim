@@ -29,8 +29,8 @@ In scope:
 - The CLI and every packaged command (`adlife …`), including untrusted-input handling
   for campaign and population YAML (safe loading, schema validation, asset-path
   containment beneath the project root).
-- Prompt construction and secret handling in provider modes (minimised prompts, no
-  filesystem paths or secrets in prompt text, log redaction).
+- Prompt construction and secret handling in provider modes (minimised prompts,
+  screening for filesystem paths and recognized secret patterns, log redaction).
 - The report generator (script-tag safety of chart payloads, escaping of
   user-provided strings, absence of remote resources).
 - The SQLite store and run-artifact integrity checks.
@@ -52,6 +52,9 @@ Out of scope:
 - API keys are read only from environment variables or hidden prompts — never from
   committed files, never echoed to output.
 - Logs redact authorization headers and likely secret patterns.
+- Provider responses are also screened for the exact configured transport credential,
+  including JSON-escaped echoes. Pattern screening alone cannot identify every opaque
+  secret; never put credentials or real-person data in study inputs.
 - Generated reports escape user-provided text and embed charts without remote scripts;
   chart JSON is escaped so no data value can close its own script tag.
 - Every report carries the synthetic-data disclosure; the generator itself is offline.

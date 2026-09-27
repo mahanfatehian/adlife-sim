@@ -33,15 +33,17 @@ this document is the human-side checklist.
    - `build-native` — four native frozen builds (never cross-compiled), each one
      smoke-testing **its own exact artifact**: `--version`, `doctor --offline`, a real
      run, and a report;
-   - `assemble-release` — gathers assets, writes `SHA256SUMS`, generates the SBOM and
-     third-party license report, and creates the **draft** GitHub release with the
-     wheel, sdist, and frozen assets attached;
-   - `publish-pypi` — Trusted Publishing upload through the protected environment;
+   - `assemble-release` — gathers assets, builds and smoke-tests the wheel, generates
+     the SBOM and third-party license report from the locked build environment, and
+     checksums every release file. The **draft** GitHub release contains the wheel,
+     sdist, frozen assets, both provenance reports, and `SHA256SUMS`;
+   - `publish-pypi` — waits for assembly to succeed, then uploads those same built
+     distributions through Trusted Publishing and the protected environment;
    - `publish-release` — only after PyPI succeeds is the draft published.
 4. **Flip the README install block.** After the release is public:
 
    ```bash
-   ADLIFE_VERSION=0.1.0 python scripts/configure_repository.py
+   ADLIFE_VERSION=0.1.0 uv run python scripts/configure_repository.py
    git add README.md && git commit -m "docs: pin the installer URL to v0.1.0" && git push
    ```
 
@@ -59,6 +61,12 @@ this document is the human-side checklist.
 - Frozen artifacts that fail their own smoke on the builder — a broken build never
   becomes an asset.
 - Publication before every artifact exists.
+
+The provenance reports describe the locked Python build environment, including
+development tools; they are not a per-platform inventory of bundled native libraries.
+The ordinary packaging tests force uv offline and require cached build/install
+dependencies. Run the explicit build and clean-wheel smoke gate after dependency
+setup to populate that cache; CI retains that separate gate.
 
 ## Hotfix releases
 

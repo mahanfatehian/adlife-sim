@@ -1,5 +1,15 @@
 # AdLife Lab CLI Simulator Design
 
+> **Implementation reconciliation — 2026-09-27.** This is the original design,
+> not a claim that every proposed detail shipped. The accepted local research scope
+> exports JSON/JSONL artifacts and self-contained HTML; CSV was de-scoped and is not
+> a required or implemented deliverable. Current command behavior is documented in
+> `docs/cli-reference.md`, and bounded cognition in `docs/architecture.md`.
+> Exit 3 means an artifact/destination conflict; provider configuration is input
+> error 2, corrupt or missing replay data is artifact error 4. Provider failures
+> within the bounded service use deterministic fallback; corrupt artifacts and
+> implementation defects are refused, not silently converted into successful runs.
+
 ## 1. Document purpose
 
 This specification defines a standalone, open-source university project that can also act as a technical proof of concept for a future commercial synthetic-audience SaaS. The university project is deliberately local-first and terminal-first. It does not contain accounts, subscriptions, payment processing, multi-tenancy, or a hosted control plane.
@@ -21,7 +31,7 @@ The product must be impressive in a live university demonstration while remainin
 5. Support a local Ollama endpoint and a configurable OpenAI-compatible API.
 6. Preserve every important event so a run can be replayed and audited.
 7. Compare two campaign runs using the same population and seed.
-8. Produce JSON, CSV, and self-contained HTML reports.
+8. Produce JSON/JSONL artifacts and self-contained HTML reports (CSV de-scoped).
 9. Install as a command-line tool with uv and later through a one-line shell installer.
 10. Keep the simulation core independent enough to reuse in the future SaaS.
 
@@ -295,7 +305,7 @@ The provider must return:
 - memory_summary: 1 to 280 characters;
 - safety_flags: list of strings.
 
-Pydantic validation clamps numeric values only after logging a validation warning. Invalid JSON is repaired once by a schema-repair prompt. A second invalid response triggers the deterministic rule fallback. Provider failures must never abort a run.
+The OpenAI-compatible adapter clamps finite, representable numeric values into the declared bands after logging a warning, then applies strict domain validation. Booleans, non-finite/unrepresentable numbers, wrong request IDs and structural errors are not repaired by clamping. Unknown wire fields are dropped with a warning and cannot enter the domain model. Invalid JSON may receive one schema-repair attempt; another invalid response triggers deterministic rule fallback. Bounded provider transport/response failures use fallback, while corrupt artifacts and internal implementation defects fail explicitly.
 
 ## 13. Event system
 
@@ -380,7 +390,7 @@ Required commands:
 - adlife compare
 - adlife demo
 
-Commands return exit code 0 on success, 2 for user input or validation errors, 3 for provider configuration errors, and 4 for corrupted run artifacts. Unexpected defects use exit code 1.
+Commands return exit code 0 on success, 2 for user input, validation, or provider configuration errors, 3 for artifact/destination conflicts, and 4 for corrupt, incompatible, or missing run artifacts. Unexpected defects use exit code 1; interruption uses 130.
 
 The demo command creates a temporary sample project, runs 20 mock agents for three days, and opens the TUI without requiring a model or API key.
 

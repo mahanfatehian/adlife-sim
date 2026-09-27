@@ -39,47 +39,63 @@ retry, cache, and a terminal rule fallback. Four modes ship:
 | `hybrid` | A real OpenAI-compatible provider answers bounded channels; failures fall back to rules and are recorded as `cognition.fallback` events. |
 | `replay` | Answers come from the recorded cache; re-execution must reproduce the run. |
 
-Language-model cognition never supplies purchase probability — that stays rule-derived so
-results remain reproducible and explainable. A failed provider never aborts a run; it
-falls back, and the fallback is visible in the artifact.
+Language-model cognition never supplies purchase probability directly. The bounded
+`rule_modifier` changes rule sentiment and recall deltas; `relevance` sets advertising
+memory salience and `share_probability` feeds social sharing. Provider `valence` and
+`credibility` are recorded, but not directly consumed by current numeric state updates;
+social valence comes from the sender's pre-response sentiment. Narrative reason text
+and provider-reported sentiment/recall deltas do not enter the numeric composition.
+Retained memory summaries may be context for later remote cognition.
+The current response keeps its rule-derived intention, while later rule calculations may
+reflect earlier provider-influenced state. Engine code owns movement, event creation,
+identities, time, and budget changes. Provider failures fall back with visible provenance;
+fresh hybrid calls can vary and require recorded cognition for exact reproduction.
 
 ## Domain contracts
 
-Everything crossing a boundary is a frozen, strictly validated model: `schema_version`
-literals, bounded numeric fields, rejected non-finite numbers, revalidation on copy.
-Persona fields reject national identifiers, phone numbers, email addresses, and free-form
-secrets. An invalid state cannot be constructed even by bypassing the intended API.
+Domain boundaries use frozen, strictly validated models: exact integer `schema_version`
+values, bounded numeric fields, rejected non-finite numbers, and revalidation on copy.
+Persona screens reject recognized national identifiers, phone numbers, email addresses
+and secret patterns; they do not prove fictional identity or detect every secret.
+Core entry points revalidate inputs rather than trusting low-level construction bypasses.
 
 ## Determinism
 
 There is no global random generator. Every stochastic decision is drawn from a keyed
-random oracle — a stream keyed by run, agent, and purpose — so evaluation order cannot
-change an outcome. Combined with a deterministic clock that advances in fixed ticks of
+random oracle keyed by root seed, namespace, agent/pair identifier, tick and decision
+index; run ID is not a key component. Tick decisions use absolute simulated minutes.
+Draws do not consume shared generator state. With a clock that advances in fixed ticks of
 15 simulated minutes (96 ticks per simulated day), the same seed
-and scenario produce the same events, event for event — which the replay command verifies
+and frozen scenario/cognition answers produce the same events — which replay verifies
 rather than assumes (the derived replay run carries its own identifier; every other byte
-must match). The test suite is additionally run under varying `PYTHONHASHSEED` values.
+must match). Fresh remote calls are not guaranteed to reproduce those answers. The test
+suite is additionally run under varying `PYTHONHASHSEED` values.
 
-## The nine-stage tick
+## Tick scheduling and commit boundaries
 
-The engine commits one tick of 15 simulated minutes through a fixed atomic stage order
+The runner and engine process each tick of 15 simulated minutes in a fixed order
 (96 ticks per simulated day; a timestamp is an absolute simulated minute):
 
 1. **Movement** — two-phase planning and resolution along world routes.
 2. **Advertising eligibility and attention** (planned) — exposure opportunities render
    impressions; the attention policy decides noticed/ignored.
 3. **Cognition resolution** — every planned request must have its resolved answer before
-   any byte is written.
+   the engine commits the tick.
 4. **Response and memory** — the rule-bounded state change with its episodic memory.
 5. **Social propagation** — word-of-mouth planning and application over relationship
    edges.
 6. **Purchase proxy** — the rule-only purchase decision.
 7. **Daily reflection** — on a day boundary.
-8. **Checkpoint persistence** — boundary states committed before anyone observes them.
-9. **Completion** — `run.completed` on the last tick.
+8. **Completion event** — `run.completed` on the last tick, within the engine commit.
+9. **Persistence** — the runner appends committed events to the authoritative store,
+   publishes to sinks, advances the clock, then saves a day-boundary checkpoint before
+   invoking the tick observer.
 
-Nothing is applied to an agent or the sequence counter until every stage has minted: a
-refusal anywhere leaves the tick entirely uncommitted. The stage arithmetic is pinned by
+The engine constructs and validates the whole in-memory tick before changing agent
+states, event sequence or social accumulators. A refusal inside that commit leaves them
+unchanged. Subsequent store, sink and checkpoint operations are separate failure
+boundaries, not one distributed transaction: failure is reported, but does not roll back
+the already committed model or a durable event tail. The stage arithmetic is pinned by
 unit suites; whole runs are pinned by integration and golden suites.
 
 ## Runs, artifacts, and observability
@@ -98,9 +114,11 @@ runs/<run-id>/
 └── inputs/               # the frozen scenario the run was driven with
 ```
 
-Every event carries stable identifiers and explicit `caused_by` links, so any reported
-number can be traced back to the events that produced it. State is a fold over the
-stream. The live TUI is a **read-only adapter**: it subscribes to committed ticks through
+Events carry stable identifiers and causal links where applicable. Metrics identify
+their event and/or state sources. The stream is auditable, but is not a complete
+event-sourced state encoding: state-update events name changed fields, not their values.
+Final state comes from stored results/checkpoints or re-execution with frozen inputs and
+required cognition answers. The live TUI is a **read-only adapter**: it subscribes to committed ticks through
 a `tick_observer` hook on the runner — the same drive loop headless runs use — so a
 run driven under the dashboard is event-for-event identical to a headless run of the
 same scenario and seed.

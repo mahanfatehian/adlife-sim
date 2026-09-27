@@ -13,13 +13,13 @@ adlife doctor --offline
 `uv tool install` puts the `adlife` executable on your PATH in uv's tool directory —
 no virtualenv activation, no shell startup files edited, no administrator rights. Until
 the first index release exists, install from source (below); the README's marked
-installation block is rewritten to this form by `scripts/configure_repository.py` after
-the first release.
+installation block is rewritten to a tag-pinned installer URL by
+`scripts/configure_repository.py` after the first release.
 
 A specific version:
 
 ```bash
-ADLIFE_VERSION=0.1.0 uv tool install adlife-sim==0.1.0
+uv tool install adlife-sim==0.1.0
 ```
 
 ## From source
@@ -57,7 +57,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 Installer contract: no `sudo`/admin, no shell-profile edits, uv is a **requirement**
 (the installer prints the official [uv installation](https://docs.astral.sh/uv/)
-command and exits rather than chaining a second remote script), `ADLIFE_VERSION`
+URL and exits rather than chaining a second remote script), `ADLIFE_VERSION`
 selects a version, and both installers fail clearly if the package has not been
 published yet.
 

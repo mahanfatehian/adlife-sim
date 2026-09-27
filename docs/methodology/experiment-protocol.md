@@ -1,5 +1,8 @@
 # Experiment protocol (pre-registered)
 
+> The dated reconciliation below corrects discrepancies between this original
+> registration and the implemented instrument. Read it before interpreting results.
+
 This document pre-registers, inside the repository, the comparison protocol the
 experiment tooling implements. Changing it after running studies should be done by adding
 a dated addendum, not by editing the registration.
@@ -86,3 +89,51 @@ the same study in both positions and must return all-zero differences.
 Any published result from this software states: the seed count, the decision rule
 outcome, the A/A result, the sensitivity-flip summary, and the synthetic-and-exploratory
 disclosure. The self-contained HTML report embeds all of these automatically.
+
+## Implementation reconciliation — 2026-09-27
+
+This addendum records implementation facts, not empirical validation or a
+retroactive claim that a study followed every proposed reporting step.
+
+- Notice rate is **noticed / impressions**, not noticed / eligible opportunities.
+  Eligibility, impressions, reach and frequency are separately reported. The
+  phone/billboard opportunity confounding warning above still applies.
+- Standard CLI/demo initial states have no active purchase need and zero disposable
+  budget. Their purchase count is structurally zero, not an advertising-effect result.
+  Purchase-enabled core studies must declare explicit need/budget initial states.
+- `high_intention` is a count, not a population share. `sentiment` is the mean
+  recorded cognition sentiment delta; it is not the mean final brand sentiment or
+  the realized net state change. Recall, fatigue, intention delta and high-intention
+  count derive from global agent state, shared across campaigns. They cannot be
+  attributed separately to each campaign in a multi-campaign run.
+- The default sensitivity targets are `notice_scale`, `sentiment_gain`,
+  `recall_retention`, `social_similarity_weight`, and `social_proof_gain`. Additional
+  supported parameters may be selected explicitly. Each arm changes one parameter
+  only, at the registered relative deltas. A zero baseline (including default
+  `social_similarity_weight`) remains zero under multiplicative perturbation;
+  this is a no-op, not evidence of insensitivity to nonzero homophily.
+- Implemented ranking is purchases descending, notice rate descending, then
+  campaign identifier ascending as a deterministic tie-break. It is not the
+  intention/share-weighted ranking proposed above.
+- A comparison validates matched non-treatment inputs and model parameters and
+  uses the same keyed random streams. Its differences are effects **within this
+  specified model**, not identified causal effects in a real population. Seed
+  order is canonicalized; duplicate seeds are refused.
+- The 80% rule uses `max(positive_count, negative_count) / seed_count` against **all**
+  seeds; zero differences do not support either direction. Large outliers can make
+  the mean disagree with the majority sign: `stable` describes sign frequency, not
+  the sign or magnitude of the mean. All-zero A/A differences are separately assigned
+  agreement 1 and `stable` as a null-consistency check, not a directional effect.
+  Bootstrap intervals quantify simulator-seed variability, not confidence about real
+  consumers. The standardized effect is mean paired difference / sample standard
+  deviation; the implementation returns 0 when that denominator is zero (including
+  a single seed). That convention is not evidence that a constant nonzero difference
+  has no effect; read the mean and interval alongside it.
+- The comparison command does not automatically execute a separate A/A control or
+  sensitivity study. A single-run HTML report does not automatically include those
+  studies. The author must run and report the A/A check, chosen seed count,
+  sensitivity results and limitations alongside a claimed experiment. A comparison
+  report includes only its own paired statistics, seeds and disclosure.
+- Reports show persisted fictional episodic memory summaries, not free-form
+  end-of-day reflections or human observations. Optional human ranking remains an
+  unimplemented research exercise, not an existing validation result.

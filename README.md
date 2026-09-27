@@ -38,14 +38,16 @@ any advertising network.
 
 ## Design principles
 
-**Determinism is a hard requirement.** The same seed, scenario, and code produce the same events, event
-for event, and the same final state. Every stochastic decision is drawn from a keyed random oracle rather than
+**Determinism is a hard requirement.** With the same seed, frozen inputs, model parameters,
+code and request identities, rules/mock execution produces the same normalized events
+and final state. Every stochastic decision is drawn from a keyed random oracle rather than
 a global generator, so a change in evaluation order cannot change an outcome. The test suite is run under
 varying `PYTHONHASHSEED` values to catch iteration-order leaks.
 
 **Runs are event-sourced and auditable.** The simulation emits an ordered, causally linked stream of
-immutable events with stable identifiers. Final state is a fold over that stream, so any reported number
-can be traced back to the events that produced it, and a completed run can be replayed.
+immutable events with stable identifiers. Reports derive their numbers from persisted events,
+boundary-state checkpoints and provider-usage records, with explicit metric provenance.
+A completed run can be replayed; live-provider replay requires its validated cognition cache.
 
 **The core is free of adapters.** `adlife.core` contains the world, agent, campaign, and behaviour model
 and imports no CLI framework, no terminal UI, no database driver, no plotting library, and no model
@@ -57,18 +59,15 @@ external service. Language-model cognition is optional, bounded, and never suppl
 that stays rule-derived so results remain reproducible and explainable.
 
 **Contracts are strict and immutable.** Domain models are frozen, strictly validated, reject non-finite
-numbers, and revalidate on copy, so an invalid state cannot be constructed even by bypassing the intended
-API.
+numbers, and revalidate on copy through the supported model API.
 
 ---
 
 ## Status
 
-AdLife Lab is a complete, working research instrument: every capability in the table below is
-implemented, tested, and shipped in this repository today. What remains is release logistics — a
-package-index publication, continuous integration on hosted runners, and tagged releases — not
-simulation features. It is an open-source research instrument, not a hosted product: nothing here
-makes decisions for real people, and nothing is calibrated against real-world data.
+AdLife Lab is a local research instrument. The table distinguishes implemented repository
+capabilities from external publication; it does not claim a public package or release exists.
+Nothing here makes decisions for real people or is calibrated against real-world data.
 
 | Capability | Status |
 | --- | --- |
@@ -88,8 +87,8 @@ makes decisions for real people, and nothing is calibrated against real-world da
 | Live terminal user interface | Complete |
 | Self-contained HTML reports | Complete |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
-| Package-index publication (PyPI), frozen binaries, and installers | Planned |
-| Continuous integration and tagged releases on GitHub | Planned |
+| Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
+| Package-index publication (PyPI) and public tagged releases | Not performed by this audit |
 
 ---
 
@@ -205,8 +204,9 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | [docs/quickstart.md](docs/quickstart.md) | Zero to HTML report in a handful of commands |
 | [docs/installation.md](docs/installation.md) | Every installation path, frozen binaries, verification |
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command, flag, exit code, and the output contract |
-| [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, event sourcing, the tick, artifacts |
+| [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, auditable events, the tick, artifacts |
 | [docs/reproducibility.md](docs/reproducibility.md) | What a seed guarantees and how to reproduce any run |
+| [docs/defense-readiness.md](docs/defense-readiness.md) | Audited defense contracts, regressions, and verification evidence |
 | [docs/methodology/odd-protocol.md](docs/methodology/odd-protocol.md) | The ODD protocol: entities, scales, scheduling, submodels, formulas |
 | [docs/methodology/model-card.md](docs/methodology/model-card.md) | Intended and excluded use, risks, validity status |
 | [docs/methodology/experiment-protocol.md](docs/methodology/experiment-protocol.md) | The pre-registered comparison and sensitivity protocol |
@@ -220,8 +220,9 @@ PYTHONHASHSEED=12345 uv run pytest -q
 AdLife Lab is an agent-based model documented under the ODD (Overview, Design concepts, Details)
 protocol — see [docs/methodology/odd-protocol.md](docs/methodology/odd-protocol.md). Campaign effects
 are studied with paired comparisons under common random numbers: two arms share seed, initial
-population, world, and keyed random streams, so a paired difference is the declared treatment and
-nothing else. An A/A control (the same scenario twice) must return exactly zero before any treatment
+population, world, and keyed random streams, so paired differences describe the declared treatment
+inside this model, not causal effects in real populations. An A/A control (the same scenario twice)
+must return exactly zero before any treatment
 result is read, and a no-campaign control anchors what the campaigns themselves contribute. The full
 pre-registration, including the 80% directional-stability rule and sensitivity ranges, lives in
 [docs/methodology/experiment-protocol.md](docs/methodology/experiment-protocol.md).
@@ -230,11 +231,14 @@ pre-registration, including the 80% directional-stability rule and sensitivity r
 
 ## Reproducibility
 
-The same seed, scenario, and code produce the same events, event for event. Every stochastic decision is drawn
+With the same frozen inputs, parameters and original request identities, rules/mock
+execution is reproducible event for event. Every stochastic decision is drawn
 from a keyed random oracle scoped to its agent and purpose, so a change in evaluation order cannot
 change an outcome. Every run persists a manifest recording the code version, scenario fingerprint,
 provider, and seed, and `adlife replay` re-executes a stored run and verifies the event stream matches
-the recorded one. The recipe is in [docs/reproducibility.md](docs/reproducibility.md).
+the recorded one. Live API responses are not inherently reproducible: replay requires the
+recorded validated cognition. Wall-clock metadata is not part of event equality.
+The recipe is in [docs/reproducibility.md](docs/reproducibility.md).
 
 ---
 
@@ -242,7 +246,11 @@ the recorded one. The recipe is in [docs/reproducibility.md](docs/reproducibilit
 
 Results are synthetic and exploratory. The society is small (1–30 agents) over short horizons (1–7
 simulated days) with two advertising channels; purchase is a rule-derived proxy, not a transaction
-model; nothing is calibrated against real-world data. Read
+model; nothing is calibrated against real-world data.
+Standard CLI/demo initial states have no active purchase need and zero disposable budget,
+so their purchase count is structurally zero. Purchase-enabled core studies require explicit
+initial states. Sentiment, recall and intention are shared per-person state, not campaign-specific.
+Read
 [docs/methodology/limitations.md](docs/methodology/limitations.md) before citing any number this
 software produces.
 
@@ -273,7 +281,8 @@ software produces.
 ## Privacy, ethics, and data handling
 
 - Personas are fictional and generated from templates; no real individual is represented.
-- Persona inputs reject national identifiers, phone numbers, email addresses, and free-form secrets.
+- Persona inputs screen recognized identifier and secret patterns; screening is best effort and
+  cannot prove fictional identity. Users must supply fictional data only.
 - Campaign files are untrusted input: safe YAML loading, and asset paths confined to the project root.
 - API keys are read only from environment variables or hidden prompts, never from committed files.
 - Logs redact authorization headers and likely secret patterns.
