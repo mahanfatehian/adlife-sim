@@ -27,6 +27,7 @@ def _run(command: list[str], *, cwd: Path | None = None) -> subprocess.Completed
         capture_output=True,
         text=True,
         timeout=300,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
     if completed.returncode != 0:
         detail = completed.stdout + completed.stderr
@@ -57,15 +58,16 @@ def _uv_executable() -> str | None:
 def _create_interpreter(workspace: Path) -> tuple[Path, str | None]:
     """Create a venv with a supported interpreter; prefer uv when available.
 
-    The package requires Python >=3.11,<3.14, so the interpreter is pinned to 3.13
-    (the newest supported minor) rather than whatever ``python`` happens to be on
-    PATH. uv-created venvs carry no pip, so installation goes through
-    ``uv pip install --python`` in that case.
+    Reuse the executing Python when supported so CI tests its selected Python
+    version and offline checks need no additional interpreter download. For an
+    unsupported host interpreter, uv selects 3.13. uv-created venvs carry no pip,
+    so installation goes through ``uv pip install --python`` in that case.
     """
     venv = workspace / "venv"
     uv = _uv_executable()
     if uv is not None:
-        _run([uv, "venv", "--python", "3.13", str(venv)])
+        interpreter = sys.executable if (3, 11) <= sys.version_info[:2] < (3, 14) else "3.13"
+        _run([uv, "venv", "--python", interpreter, str(venv)])
         scripts = "Scripts" if sys.platform == "win32" else "bin"
         return (
             venv / scripts / "python.exe" if sys.platform == "win32" else venv / scripts / "python",
@@ -86,7 +88,8 @@ def _install_wheel(python: Path, uv: str | None, wheel: Path) -> None:
         _run([str(python), "-m", "pip", "install", "--quiet", str(wheel)])
 
 
-def smoke(wheel: Path) -> Path:
+def smoke(wheel: Path) -> None:
+    """Verify the wheel, then remove all temporary artifacts before returning."""
     workspace = Path(tempfile.mkdtemp(prefix="adlife-smoke-"))
     try:
         scratch = workspace / "scratch"
@@ -139,7 +142,6 @@ def smoke(wheel: Path) -> Path:
             raise SystemExit(1)
         _ = doctor_document  # parsed: the JSON contract held
         print(f"smoke ok: report at {html.stat().st_size} bytes")
-        return scratch
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

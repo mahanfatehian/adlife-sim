@@ -8,6 +8,7 @@ virtual environment outside the checkout and drives the whole workflow offline.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import zipfile
@@ -27,6 +28,7 @@ def built_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, "UV_OFFLINE": "1"},
     )
     wheels = sorted(out_dir.glob("adlife_sim-*.whl"))
     assert wheels, "uv build produced no wheel"
@@ -61,6 +63,7 @@ def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path
         text=True,
         timeout=600,
         cwd=tmp_path,
+        env={**os.environ, "UV_OFFLINE": "1"},
     )
     report.write_text(completed.stdout + completed.stderr, encoding="utf-8")
     assert completed.returncode == 0, report.read_text(encoding="utf-8")

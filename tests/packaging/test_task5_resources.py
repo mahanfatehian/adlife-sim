@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 from zipfile import ZipFile
@@ -13,6 +14,7 @@ def test_built_wheel_contains_fictional_name_resource(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "UV_OFFLINE": "1"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
     wheels = tuple(tmp_path.glob("*.whl"))

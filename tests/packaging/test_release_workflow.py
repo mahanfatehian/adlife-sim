@@ -1,0 +1,80 @@
+"""Validate publication gates using the parsed workflow dependency graph."""
+
+import shlex
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).parents[2]
+
+
+@pytest.mark.parametrize("publisher", ["publish-pypi", "publish-release"])
+def test_publication_waits_for_completed_asset_assembly(publisher: str) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    jobs = workflow["jobs"]
+    pending = [publisher]
+    ancestors: set[str] = set()
+    while pending:
+        current = pending.pop()
+        needs = jobs[current].get("needs", [])
+        for dependency in [needs] if isinstance(needs, str) else needs:
+            assert dependency in jobs, f"unknown dependency: {dependency}"
+            if dependency not in ancestors:
+                ancestors.add(dependency)
+                pending.append(dependency)
+    assert {"verify-tag", "build-native", "assemble-release"} <= ancestors
+
+
+def test_pypi_consumes_the_distributions_uploaded_by_assembly() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    jobs = workflow["jobs"]
+    uploads = {
+        step["with"]["name"]: step["with"]
+        for step in jobs["assemble-release"]["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    }
+    publisher_steps = jobs["publish-pypi"]["steps"]
+    downloads = [
+        step["with"]
+        for step in publisher_steps
+        if step.get("uses", "").startswith("actions/download-artifact@")
+    ]
+    assert len(downloads) == 1, "publish must consume assembled distributions"
+    downloaded = downloads[0]
+    assert downloaded["name"] in uploads
+    assert uploads[downloaded["name"]]["path"].rstrip("/") == "dist"
+    assert uploads[downloaded["name"]]["if-no-files-found"] == "error"
+    assert downloaded["path"].rstrip("/") == "dist"
+    # No intervening shell build may replace the verified distributions.
+    assert all("run" not in step for step in publisher_steps)
+
+
+def test_dependency_audit_targets_locked_project_requirements(tmp_path: Path) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    commands = [
+        shlex.split(line)
+        for step in workflow["jobs"]["security"]["steps"]
+        for line in step.get("run", "").splitlines()
+        if line.strip()
+    ]
+    audit = next(command for command in commands if "pip-audit" in command)
+    assert "--requirement" in audit, "isolated audit tool must consume project requirements"
+    target = audit[audit.index("--requirement") + 1]
+    export = next(command for command in commands if command[:2] == ["uv", "export"])
+    assert export[export.index("--output-file") + 1] == target
+    assert commands.index(export) < commands.index(audit)
+    assert "--locked" in export
+    assert "--no-deps" in audit
+    # Exercise the actual exporter, keeping vulnerability-service access out of tests.
+    exported = tmp_path / "requirements.txt"
+    export[export.index("--output-file") + 1] = str(exported)
+    completed = subprocess.run(
+        [*export, "--offline", "--quiet"], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    requirements = exported.read_text(encoding="utf-8")
+    assert "mesa==" in requirements and "httpx==" in requirements
+    assert "pytest==" not in requirements
+    assert "-e ." not in requirements

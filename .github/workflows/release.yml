@@ -120,25 +120,26 @@ jobs:
           merge-multiple: true
       - name: Build wheel and sdist
         run: uv build --no-sources
-      - name: Generate SHA256SUMS
-        shell: bash
-        run: |
-          cd assets
-          sha256sum --binary * > SHA256SUMS
-          cat SHA256SUMS
+      - name: Smoke-test the exact wheel
+        run: uv run python scripts/smoke_release.py dist/adlife_sim-*.whl
       - name: SBOM and third-party license report
         run: |
           uv sync --locked --all-groups
-          uv tool run cyclonedx-py requirements --output-file sbom.cdx.json --format json
-          uv tool run pip-licenses --format=json --output-file=third-party-licenses.json || \
-            uv run pip install pip-licenses && uv run pip-licenses --format=json --output-file=third-party-licenses.json
+          uv tool run --from cyclonedx-bom cyclonedx-py environment .venv/bin/python --output-file assets/sbom.cdx.json --output-format JSON
+          uv tool run pip-licenses --python .venv/bin/python --format=json --output-file=assets/third-party-licenses.json
+      - name: Generate SHA256SUMS for every release file
+        shell: bash
+        run: |
+          cp dist/adlife_sim-*.whl dist/adlife_sim-*.tar.gz assets/
+          cd assets
+          sha256sum --binary * > SHA256SUMS
+          sha256sum --check SHA256SUMS
       # actions/upload-artifact v6.0.0
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: release-manifests
-          path: |
-            sbom.cdx.json
-            third-party-licenses.json
+          name: verified-distributions
+          path: dist/
+          if-no-files-found: error
       - name: Create the draft GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,24 +148,24 @@ jobs:
           gh release create "v${VERSION}" \
             --draft --title "AdLife Lab v${VERSION}" \
             --notes "See CHANGELOG.md for the release notes. Verify downloads against SHA256SUMS." \
-            assets/* dist/adlife_sim-*.whl dist/adlife_sim-*.tar.gz
+            assets/*
 
   publish-pypi:
     name: PyPI (Trusted Publishing)
-    needs: [verify-tag, build-native]
+    needs: [verify-tag, assemble-release]
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write   # Trusted Publishing: OIDC, no stored PyPI token
     environment:
       name: pypi
       url: https://pypi.org/p/adlife-sim
     steps:
-      # actions/checkout v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # astral-sh/setup-uv v10.2.0
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
-      - name: Build distributions
-        run: uv build --no-sources
+      # actions/download-artifact v6.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: verified-distributions
+          path: dist/
       # pypa/gh-action-pypi-publish v1.13.0
       - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e
 

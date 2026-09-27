@@ -12,6 +12,7 @@ POSIX paths are skipped.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -63,8 +64,16 @@ def _run(
     }
     if env_extra:
         env.update(env_extra)
+    shell = shutil.which("sh")
+    if shell is None and sys.platform == "win32":
+        git = shutil.which("git")
+        if git is not None:
+            git_shell = Path(git).resolve().parents[1] / "bin" / "sh.exe"
+            if git_shell.is_file():
+                shell = str(git_shell)
+    assert shell is not None, "installer tests require a POSIX shell (Git for Windows includes one)"
     return subprocess.run(
-        ["sh", str(SCRIPT)],
+        [shell, str(SCRIPT)],
         capture_output=True,
         text=True,
         env=env,
@@ -72,23 +81,20 @@ def _run(
     )
 
 
-def test_installer_refuses_unsupported_platform() -> None:
+def test_installer_refuses_unsupported_platform(tmp_path: Path) -> None:
     """On Windows the real uname is neither Linux nor Darwin: the gate must fire."""
     if sys.platform in {"linux", "darwin"}:
         pytest.skip("this machine uname is a supported platform")
-    home = Path(os.environ.get("TEMP", "/tmp")) / "adlife-inst-home"
-    home.mkdir(parents=True, exist_ok=True)
-    result = _run(None, home)
+    result = _run(None, tmp_path)
     assert result.returncode == 2
     assert "Linux and macOS" in (result.stderr + result.stdout)
 
 
-def test_installer_rejects_missing_uv_without_chaining_another_installer() -> None:
+def test_installer_rejects_missing_uv_without_chaining_another_installer(tmp_path: Path) -> None:
     if not IS_POSIX:
         pytest.skip("POSIX shell behaviour")
-    home = Path("/tmp") / "adlife-inst-home"
     # A PATH with no uv anywhere: the installer must print the official URL and stop.
-    result = _run(None, home, env_extra={"PATH": "/usr/bin:/bin"})
+    result = _run(None, tmp_path, env_extra={"PATH": "/usr/bin:/bin"})
     assert result.returncode == 2
     output = result.stdout + result.stderr
     assert "docs.astral.sh/uv" in output, "must print the official uv installation URL"

@@ -104,8 +104,8 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
       - name: Dependency audit
         run: |
-          uv sync --locked --all-groups
-          uv tool run pip-audit
+          uv export --locked --no-dev --no-emit-project --format requirements-txt --output-file requirements-audit.txt
+          uv tool run pip-audit --requirement requirements-audit.txt --no-deps --disable-pip
       - name: Secret scan
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
