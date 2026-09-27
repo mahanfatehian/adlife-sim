@@ -39,6 +39,7 @@ class TuiProjections:
     snapshot: Snapshot | None = None
     campaigns: Mapping[str, CampaignProjection] = field(default_factory=dict)
     memories: Mapping[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict)
+    reach: int = 0
 
     @property
     def simulated_minute(self) -> int:
@@ -59,6 +60,7 @@ class TuiEventBus:
         self._display: deque[DomainEvent] = deque(maxlen=DISPLAY_LIMIT)
         self._snapshot: Snapshot | None = None
         self._campaigns: dict[str, CampaignProjection] = {}
+        self._reached: set[tuple[str, str]] = set()
         self._memories: dict[str, tuple[Mapping[str, object], ...]] = {}
         self._subscribers: list[Subscriber] = []
 
@@ -77,7 +79,7 @@ class TuiEventBus:
             except Exception as error:
                 print(
                     f"adlife.tui: subscriber {type(subscriber).__name__} failed: "
-                    f"{type(error).__name__}: {error}",
+                    f"{type(error).__name__}",
                     file=sys.stderr,
                 )
 
@@ -90,18 +92,23 @@ class TuiEventBus:
             snapshot=self._snapshot,
             campaigns=dict(self._campaigns),
             memories=dict(self._memories),
+            reach=len({agent_id for _campaign_id, agent_id in self._reached}),
         )
 
     def _project(self, event: DomainEvent) -> None:
         if event.event_type is EventType.CAMPAIGN_IMPRESSION:
-            self._bump(event.campaign_id, "reach")
+            if event.campaign_id is not None and event.agent_id is not None:
+                key = (event.campaign_id, event.agent_id)
+                if key not in self._reached:
+                    self._reached.add(key)
+                    self._bump(event.campaign_id, "reach")
         elif event.event_type is EventType.CAMPAIGN_NOTICED:
             self._bump(event.campaign_id, "notices")
         elif event.event_type is EventType.SOCIAL_SHARED:
             self._bump(event.campaign_id, "shares")
         elif event.event_type is EventType.MEMORY_CREATED and event.agent_id is not None:
             memories = self._memories.get(event.agent_id, ())
-            self._memories[event.agent_id] = (*memories, event.payload)
+            self._memories[event.agent_id] = (*memories, event.payload)[-5:]
 
     def _bump(self, campaign_id: str | None, name: str) -> None:
         if campaign_id is None:

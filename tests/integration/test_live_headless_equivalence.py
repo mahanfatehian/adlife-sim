@@ -162,6 +162,6 @@ async def test_quit_mid_run_leaves_a_replayable_interrupted_artifact(
         await controller.stop()
 
     stored = live_store.load_run("run-interrupted")
-    assert stored.status in {"failed", "interrupted"}
+    assert stored.status == "interrupted"
     assert len(stored.events) > 0
     assert stored.completed_at is not None

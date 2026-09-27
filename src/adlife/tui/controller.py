@@ -100,16 +100,19 @@ class LiveRunController:
         """Toggle the pause state."""
         if self._paused.is_set():
             self._paused.clear()
+            self._resume.set()
         else:
             self._paused.set()
+            self._resume.clear()
 
     def is_paused(self) -> bool:
         return self._paused.is_set()
 
     async def step(self) -> None:
         """Advance exactly one tick, parking again if the run is paused."""
-        self._step_requests += 1
-        self._resume.set()
+        if self._paused.is_set():
+            self._step_requests += 1
+            self._resume.set()
 
     async def set_speed(self, multiplier: float) -> None:
         clamped = max(MIN_SPEED, min(MAX_SPEED, multiplier))
@@ -146,7 +149,7 @@ class LiveRunController:
         if self._step_requests > 0:
             # This tick was stepped: consume the request and re-park if paused.
             self._step_requests -= 1
-            if self._paused.is_set():
+            if self._paused.is_set() and self._step_requests == 0:
                 self._resume.clear()
         if self._paused.is_set():
             await self._resume.wait()

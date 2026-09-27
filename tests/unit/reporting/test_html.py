@@ -158,6 +158,8 @@ def test_report_contains_disclosure_and_reproducibility(stored_run, tmp_path) ->
     assert stored_run.manifest.package_version in text
     assert stored_run.manifest.git_sha in text
     assert stored_run.manifest.platform in text
+    assert stored_run.manifest.prompt_hash in text
+    assert "Model parameters" in text
 
 
 def test_report_escapes_campaign_text(stored_run_with_script_tag, tmp_path) -> None:
@@ -166,6 +168,90 @@ def test_report_escapes_campaign_text(stored_run_with_script_tag, tmp_path) -> N
 
     assert "<script>alert(" not in text
     assert "&lt;script&gt;" in text
+
+
+def test_rendered_chart_payload_is_valid_json_and_runtime_is_executable_source(
+    stored_run, tmp_path
+) -> None:
+    import hashlib
+    import json
+
+    from adlife.reporting.resources import plotly_runtime
+
+    text = render_report(stored_run, tmp_path / "charts.html").read_text(encoding="utf-8")
+    runtime = text.split('<script id="plotly-runtime">', 1)[1].split("</script>", 1)[0].strip()
+    assert (
+        hashlib.sha256(runtime.encode()).hexdigest()
+        == hashlib.sha256(plotly_runtime().strip().encode()).hexdigest()
+    )
+    payload = text.split("const REPORT_DATA = ", 1)[1].split(";\n", 1)[0]
+    assert json.loads(payload)["overall"]["reach"] >= 0
+
+
+def test_comparison_report_contains_parseable_chart_data(tmp_path) -> None:
+    import json
+
+    from adlife.core.experiments.design import ComparisonResult, paired_statistics
+    from adlife.core.experiments.metrics import METRIC_NAMES
+    from adlife.reporting.html import render_comparison
+
+    result = ComparisonResult(
+        label="Fictional paired study",
+        seeds=(0, 1),
+        metrics=paired_statistics({name: (0.0, 0.0) for name in METRIC_NAMES}),
+    )
+    text = render_comparison(result, tmp_path / "paired.html").read_text(encoding="utf-8")
+    assert "const REPORT_DATA = " in text
+    payload = text.split("const REPORT_DATA = ", 1)[1].split(";\n", 1)[0]
+    assert len(json.loads(payload)["metrics"]) == len(METRIC_NAMES)
+
+
+def test_sentiment_histogram_preserves_negative_and_positive_bands(stored_run) -> None:
+    from adlife.reporting.html import ReportBuilder
+
+    state = stored_run.scenario.initial_states[0]
+    states = tuple(
+        state.model_copy(update={"brand_sentiment": value}) for value in (-1.0, -0.5, 0.0, 0.5, 1.0)
+    )
+    buckets = ReportBuilder(stored_run)._state_blocks(states)["sentiment"]
+    assert [item["count"] for item in buckets] == [1, 1, 1, 1, 1]
+    assert buckets[0]["bucket"].startswith("-1.0")
+
+
+def test_report_diaries_are_actual_persisted_memory_summaries(stored_run) -> None:
+    from adlife.reporting.html import ReportBuilder
+
+    summaries = {
+        event.payload["summary"]
+        for event in stored_run.events
+        if event.event_type.value == "memory.created"
+    }
+    diaries = ReportBuilder(stored_run).build()["diaries"]
+    assert diaries
+    assert all(diary["summary"] in summaries for diary in diaries)
+
+
+def test_non_finite_chart_values_are_refused() -> None:
+    with pytest.raises(ValueError):
+        _safe_json({"value": float("nan")})
+
+
+def test_failed_report_replacement_preserves_previous_report(
+    stored_run, tmp_path, monkeypatch
+) -> None:
+    import os
+
+    destination = tmp_path / "report.html"
+    destination.write_text("previous complete report", encoding="utf-8")
+
+    def fail_replace(source, target):
+        raise OSError("injected replacement failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises(OSError):
+        render_report(stored_run, destination)
+    assert destination.read_text(encoding="utf-8") == "previous complete report"
+    assert list(tmp_path.iterdir()) == [destination]
 
 
 def test_report_renders_all_required_metrics(stored_run, tmp_path) -> None:
@@ -186,6 +272,20 @@ def test_report_renders_all_required_metrics(stored_run, tmp_path) -> None:
         "Purchases",
     ):
         assert label in text, label
+
+
+def test_global_state_metrics_are_not_attributed_to_individual_campaigns(stored_run, tmp_path):
+    from adlife.reporting.html import ReportBuilder
+
+    for campaign in ReportBuilder(stored_run).build()["campaigns"]:
+        assert "recall" not in campaign["metrics"]
+        assert "cognition_cache_hits" not in campaign["metrics"]
+    text = render_report(stored_run, tmp_path / "report.html").read_text(encoding="utf-8")
+    campaign_section = text.split('<section id="metrics">')[1].split("</section>")[0]
+    assert "<th>Recall</th>" not in campaign_section
+    assert "<th>Fatigue</th>" not in campaign_section
+    assert "<th>Intention</th>" not in campaign_section
+    assert "shared across campaigns" in text
 
 
 def test_report_has_no_remote_resources(stored_run, tmp_path) -> None:

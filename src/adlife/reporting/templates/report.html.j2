@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% if comparison_mode %}Comparison {{ label }}{% else %}AdLife report {{ run_id }}{% endif %}</title>
 <style>
-{{ css }}
+{{ css | safe }}
 </style>
 <script id="plotly-runtime">
-{{ plotly_js }}
+{{ plotly_js | safe }}
 </script>
 </head>
 <body>
@@ -58,7 +58,8 @@
       <tr><th>Git</th><td><code>{{ manifest.git_sha }}</code></td></tr>
       <tr><th>Lockfile</th><td><code>{{ manifest.lockfile_sha256 }}</code></td></tr>
       <tr><th>Provider</th><td>{{ manifest.provider }} / {{ manifest.model_id }}</td></tr>
-      <tr><th>Prompt</th><td>{{ manifest.prompt_version }}</td></tr>
+      <tr><th>Prompt</th><td>{{ manifest.prompt_version }} <code>{{ manifest.prompt_hash }}</code></td></tr>
+      <tr><th>Model parameters</th><td>{% if manifest.parameters %}{% for name, value in manifest.parameters.items() %}{{ name }}={{ value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}Package defaults for {{ manifest.package_version }}{% endif %}</td></tr>
       <tr><th>Platform</th><td>{{ manifest.platform }}</td></tr>
       <tr><th>Status</th><td>{{ manifest.status }} at minute {{ manifest.final_minute }}, {{ manifest.event_count }} events</td></tr>
     </tbody>
@@ -106,21 +107,17 @@
 </section>
 
 <section id="metrics">
-  <h2>Full metrics by campaign</h2>
+  <h2>Event-derived metrics by campaign</h2>
   <table>
-    <thead><tr><th>Campaign</th><th>Sentiment</th><th>Recall</th><th>Fatigue</th><th>Direct awareness</th><th>Indirect awareness</th><th>Word of mouth</th><th>Intention</th><th>High intention</th><th>Purchases</th></tr></thead>
+    <thead><tr><th>Campaign</th><th>Sentiment delta</th><th>Direct awareness</th><th>Indirect awareness</th><th>Word of mouth</th><th>Purchases</th></tr></thead>
     <tbody>
       {% for campaign in campaigns %}
       <tr>
         <td>{{ campaign.name }}</td>
         <td>{{ "%.3f" | format(campaign.metrics.sentiment) }}</td>
-        <td>{{ "%.3f" | format(campaign.metrics.recall) }}</td>
-        <td>{{ "%.3f" | format(campaign.metrics.fatigue) }}</td>
         <td>{{ "%.0f" | format(campaign.metrics.direct_awareness) }}</td>
         <td>{{ "%.0f" | format(campaign.metrics.indirect_awareness) }}</td>
         <td>{{ "%.0f" | format(campaign.metrics.word_of_mouth_reach) }}</td>
-        <td>{{ "%+.3f" | format(campaign.metrics.intention_delta) }}</td>
-        <td>{{ "%.0f" | format(campaign.metrics.high_intention) }}</td>
         <td>{{ "%.0f" | format(campaign.metrics.purchases) }}</td>
       </tr>
       {% endfor %}
@@ -133,6 +130,8 @@
 
 <section id="states">
   <h2>Sentiment, recall, and intention distributions</h2>
+  <p class="note">Agent state is shared across campaigns; these run-level values cannot be attributed to an individual campaign.</p>
+  <p>Recall {{ "%.3f" | format(overall.recall) }}, Fatigue {{ "%.3f" | format(overall.fatigue) }}, Intention delta {{ "%+.3f" | format(overall.intention_delta) }}, High intention {{ "%.0f" | format(overall.high_intention) }}.</p>
   <div class="columns">
     <div><h3>Sentiment</h3><ul>{% for item in state_distributions.sentiment %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
     <div><h3>Recall</h3><ul>{% for item in state_distributions.recall %}<li>{{ item.bucket }}: {{ item.count }}</li>{% endfor %}</ul></div>
@@ -151,14 +150,14 @@
 
 <section id="diaries">
   <h2>Selected fictional diaries</h2>
-  <p class="note">Every diary below belongs to a fictional, generated person. The names and reflections are invented.</p>
+  <p class="note">Every diary below belongs to a fictional, generated person. These are recorded episodic memory summaries, not observations of real people.</p>
   {% for diary in diaries %}
   <article class="diary">
     <h3>Day {{ diary.day }} &mdash; {{ diary.display_name }} <span class="muted">({{ diary.agent_id }})</span></h3>
     <p>{{ diary.summary }}</p>
   </article>
   {% endfor %}
-  {% if not diaries %}<p>No day reflections were recorded in this run.</p>{% endif %}
+  {% if not diaries %}<p>No memory summaries were recorded in this run.</p>{% endif %}
 </section>
 
 <section id="usage">
@@ -186,9 +185,8 @@
   </ul>
 </section>
 
-{% if not comparison_mode %}
 <script>
-const REPORT_DATA = {{ chart_payload }};
+const REPORT_DATA = {{ chart_payload | safe }};
 
 document.addEventListener("DOMContentLoaded", () => {
   if (typeof Plotly === "undefined") { return; }
@@ -217,6 +215,5 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 </script>
-{% endif %}
 </body>
 </html>

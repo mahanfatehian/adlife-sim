@@ -140,9 +140,19 @@ def test_campaign_projections_fold_committed_events() -> None:
     bus.publish(
         _snapshot(),
         (
-            _event(EventType.CAMPAIGN_IMPRESSION, sequence=1, campaign_id="campaign-alpha"),
+            _event(
+                EventType.CAMPAIGN_IMPRESSION,
+                sequence=1,
+                campaign_id="campaign-alpha",
+                agent_id="person-001",
+            ),
             _event(EventType.CAMPAIGN_NOTICED, sequence=2, campaign_id="campaign-alpha"),
-            _event(EventType.CAMPAIGN_IMPRESSION, sequence=3, campaign_id="campaign-alpha"),
+            _event(
+                EventType.CAMPAIGN_IMPRESSION,
+                sequence=3,
+                campaign_id="campaign-alpha",
+                agent_id="person-002",
+            ),
             _event(EventType.SOCIAL_SHARED, sequence=4, campaign_id="campaign-alpha"),
         ),
     )
@@ -201,7 +211,8 @@ def test_subscriber_exception_is_logged_and_skipped() -> None:
     finally:
         sys.stderr = original
 
-    assert "subscriber exploded" in buffer.getvalue()
+    assert "RuntimeError" in buffer.getvalue()
+    assert "subscriber exploded" not in buffer.getvalue()
     assert len(seen) == 1
 
 
@@ -240,3 +251,75 @@ def test_memory_payloads_missing_keys_are_projected_as_they_are(payload: dict[st
     )
 
     assert bus.latest.memories["person-001"][0] == payload
+
+
+def test_subscriber_exception_does_not_echo_untrusted_text(capsys) -> None:
+    bus = TuiEventBus()
+
+    def broken(snapshot, events):
+        raise RuntimeError("opaque-private-value")
+
+    bus.subscribe(broken)
+    bus.publish(_snapshot(), ())
+    assert "opaque-private-value" not in capsys.readouterr().err
+
+
+def test_repeated_impressions_do_not_inflate_distinct_reach() -> None:
+    bus = TuiEventBus()
+    bus.publish(
+        _snapshot(),
+        tuple(
+            _event(
+                EventType.CAMPAIGN_IMPRESSION,
+                sequence=n,
+                agent_id="person-001",
+                campaign_id="campaign-phone",
+            )
+            for n in range(3)
+        ),
+    )
+    assert bus.latest.campaigns["campaign-phone"].reach == 1
+
+
+def test_observer_memory_buffer_is_bounded() -> None:
+    bus = TuiEventBus()
+    bus.publish(
+        _snapshot(),
+        tuple(
+            _event(
+                EventType.MEMORY_CREATED,
+                sequence=n,
+                agent_id="person-001",
+                payload={"summary": f"Fictional memory {n}"},
+            )
+            for n in range(100)
+        ),
+    )
+    assert len(bus.latest.memories["person-001"]) == 5
+    assert bus.latest.memories["person-001"][-1]["summary"] == "Fictional memory 99"
+
+
+def test_metrics_strip_reach_is_distinct_across_campaigns() -> None:
+    from adlife.tui.widgets import MetricsStrip
+
+    bus = TuiEventBus()
+    bus.publish(
+        _snapshot(),
+        (
+            _event(
+                EventType.CAMPAIGN_IMPRESSION,
+                sequence=1,
+                campaign_id="first",
+                agent_id="person-001",
+            ),
+            _event(
+                EventType.CAMPAIGN_IMPRESSION,
+                sequence=2,
+                campaign_id="second",
+                agent_id="person-001",
+            ),
+        ),
+    )
+    strip = MetricsStrip()
+    strip.project(bus)
+    assert "Reach 1 |" in str(strip.render())

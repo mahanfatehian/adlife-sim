@@ -135,7 +135,7 @@ class MetricsStrip(Static):
             sentiment = recall = 0.0
             high_intent = 0
         campaigns = latest.campaigns
-        reach = sum(item.reach for item in campaigns.values())
+        reach = latest.reach
         notices = sum(item.notices for item in campaigns.values())
         shares = sum(item.shares for item in campaigns.values())
         self.update(

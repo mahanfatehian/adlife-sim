@@ -162,3 +162,10 @@ async def test_maximum_run_30_agents_7_days_within_the_performance_ceiling(
     stored = store.load_run("max-run")
     assert stored.status == "completed"
     assert stored.events[-1].event_type.value == "run.completed"
+    from adlife.reporting.html import render_report
+
+    report = render_report(stored, tmp_path / "maximum-report.html")
+    print(
+        f"maximum artifacts: database {store.database_path('max-run').stat().st_size} bytes, "
+        f"report {report.stat().st_size} bytes"
+    )

@@ -13,6 +13,8 @@ No model is called; every narrative string is a deterministic template.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
@@ -50,21 +52,32 @@ LIMITATIONS: tuple[str, ...] = (
 def _safe_json(payload: Any) -> str:
     """Serialize a chart payload so it cannot close its own script element."""
     return (
-        json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
         .replace("<", "\\u003c")
         .replace(">", "\\u003e")
     )
 
 
-def _distribution(values: Sequence[float], buckets: int = 5) -> list[dict[str, object]]:
-    """Histogram a bounded [0, 1] metric into ``buckets`` labeled bins."""
+def _distribution(
+    values: Sequence[float], buckets: int = 5, *, signed: bool = False
+) -> list[dict[str, object]]:
+    """Histogram a [0, 1] metric, or signed sentiment on [-1, 1]."""
     if not values:
         return []
-    width = 1.0 / buckets
-    labels = [f"{index * width:.0%}-{(index + 1) * width:.0%}" for index in range(buckets)]
+    lower = -1.0 if signed else 0.0
+    span = 2.0 if signed else 1.0
+    width = span / buckets
+    labels = (
+        [
+            f"{lower + index * width:.1f} to {lower + (index + 1) * width:.1f}"
+            for index in range(buckets)
+        ]
+        if signed
+        else [f"{index * width:.0%}-{(index + 1) * width:.0%}" for index in range(buckets)]
+    )
     counts: list[int] = [0] * buckets
     for value in values:
-        index = min(buckets - 1, max(0, int(value * buckets)))
+        index = min(buckets - 1, max(0, int((value - lower) / span * buckets)))
         counts[index] += 1
     return [{"bucket": label, "count": count} for label, count in zip(labels, counts, strict=True)]
 
@@ -101,7 +114,11 @@ class ReportBuilder:
                 {
                     "campaign_id": campaign_id,
                     "name": campaign_names.get(campaign_id, campaign_id),
-                    "metrics": metrics.as_mapping(),
+                    "metrics": {
+                        name: value
+                        for name, value in metrics.as_mapping().items()
+                        if not {"state", "usage"}.intersection(metrics.details[name].sources)
+                    },
                     "details": {
                         name: {
                             "numerator": value.numerator,
@@ -109,6 +126,7 @@ class ReportBuilder:
                             "sources": list(value.sources),
                         }
                         for name, value in metrics.details.items()
+                        if not {"state", "usage"}.intersection(value.sources)
                     },
                 }
                 for campaign_id, metrics in per_campaign.items()
@@ -136,6 +154,8 @@ class ReportBuilder:
             "provider": manifest.provider,
             "model_id": manifest.model_id,
             "prompt_version": manifest.prompt_version,
+            "prompt_hash": manifest.prompt_hash,
+            "parameters": dict(manifest.parameters) if manifest.parameters is not None else {},
             "platform": manifest.platform,
             "created_at": self._stored.created_at,
             "status": self._stored.status,
@@ -186,7 +206,9 @@ class ReportBuilder:
         if not final_states:
             return {}
         return {
-            "sentiment": _distribution([state.brand_sentiment for state in final_states]),
+            "sentiment": _distribution(
+                [state.brand_sentiment for state in final_states], signed=True
+            ),
             "recall": _distribution([state.recall_strength for state in final_states]),
             "intention": _distribution([state.purchase_intention for state in final_states]),
             "fatigue": _distribution([state.ad_fatigue for state in final_states]),
@@ -213,10 +235,10 @@ class ReportBuilder:
         }
 
     def _diaries(self) -> list[dict[str, Any]]:
-        """Selected end-of-day reflections, explicitly fictional."""
+        """Selected recorded episodic memory summaries, explicitly fictional."""
         diaries: list[dict[str, Any]] = []
         for event in self._stored.events:
-            if event.event_type.value != "day.reflected" or event.agent_id is None:
+            if event.event_type.value != "memory.created" or event.agent_id is None:
                 continue
             profile = next(
                 (
@@ -252,12 +274,33 @@ class ReportBuilder:
         }
 
 
-class _SafeLoader(BaseLoader):
-    """A Jinja2 loader that serves the packaged template source."""
-
-
 def _environment() -> Environment:
     return Environment(autoescape=True, loader=BaseLoader())
+
+
+def _write_report(destination: Path, html: str) -> Path:
+    """Replace a derived report only after its complete UTF-8 file is durable."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(html)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        return destination
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def render_report(
@@ -285,9 +328,7 @@ def render_report(
         plotly_js=plotly_runtime(),
         chart_json=_safe_json,
     )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(html, encoding="utf-8")
-    return destination
+    return _write_report(destination, html)
 
 
 def render_comparison(comparison: ComparisonResult, destination: Path) -> Path:
@@ -333,6 +374,4 @@ def render_comparison(comparison: ComparisonResult, destination: Path) -> Path:
         plotly_js=plotly_runtime(),
         chart_json=_safe_json,
     )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(html, encoding="utf-8")
-    return destination
+    return _write_report(destination, html)
