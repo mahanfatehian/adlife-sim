@@ -99,14 +99,14 @@ refuse; old `adlife city` and zone replay still pass.
 
 **Package A verification (2026-09-28, Windows/Python 3.12.11):** Final full suite
 `3193 passed, 12 skipped`; branch coverage `91.40%` (85% floor); Ruff format/lint
-and strict mypy passed. Full `PYTHONHASHSEED=0` and `12345` suites passed before the
-final narrow storage/UI corrections (`3188 passed, 12 skipped` each); the corrected
-city path passed both seeds (`125 passed, 1 skipped` each) and the final full suite
-and branch-coverage suite passed afterward. Final wheel built and passed clean-room
-smoke; installed city-run/city-replay reproduced a packaged fictional pack outside
-the checkout. Headless browser checks confirmed saved identity and minute scrub at
-desktop width and identity visibility at 700px. The 30-agent/7-day lifecycle on the
-bundled pack completed in 5.877s create, 3.376s load/verify and 3.333s replay.
+and strict mypy passed. On the final checkout, the full `PYTHONHASHSEED=0` suite
+passed (`3193 passed, 12 skipped` in 377.87s), and the full `PYTHONHASHSEED=12345`
+suite passed (`3193 passed, 12 skipped` in 393.29s). Final wheel built and passed
+clean-room smoke; installed city-run/city-replay reproduced a packaged fictional
+pack outside the checkout. Headless browser checks confirmed saved identity and
+minute scrub at desktop width and identity visibility at 700px. The 30-agent/7-day
+lifecycle on the bundled pack completed in 5.877s create, 3.376s load/verify and
+3.333s replay.
 One symlink regression test is skipped on this Windows account because it lacks
 directory-symlink privilege; production code still rejects symlink targets and
 existing path-boundary tests pass.

@@ -187,12 +187,11 @@ files before/after, and browser/API tests prove a view does not change them.
 Final full suite: `3193 passed, 12 skipped` in 418.70s. Full branch coverage:
 `3193 passed, 12 skipped`, 91.40% (85% floor) in 960.90s. Ruff format/lint,
 strict mypy, `uv build --no-sources`, clean-room wheel smoke, and installed-wheel
-city run/replay passed. Full suites under `PYTHONHASHSEED=0` and `12345` passed
-before the final storage/UI corrections (`3188 passed, 12 skipped` each); corrected
-city paths passed both seeds (`125 passed, 1 skipped` each), then final full and
-coverage suites passed. One new directory-symlink test is skipped on this Windows
-account without symlink privilege; refusal is implemented and other containment
-checks run.
+city run/replay passed. On the final checkout, the full `PYTHONHASHSEED=0` suite
+passed (`3193 passed, 12 skipped` in 377.87s), as did `PYTHONHASHSEED=12345`
+(`3193 passed, 12 skipped` in 393.29s). One new directory-symlink test is skipped
+on this Windows account without symlink privilege; refusal is implemented and
+other containment checks run.
 
 The streaming 30-agent/7-day digest took 12.986s with tracemalloc and 224,629
 bytes peak traced Python allocation; it covered 10,080 frames/302,400 positions.
