@@ -60,6 +60,26 @@ This command does not run or persist the advertising engine. Its minute-addressa
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
+## `adlife city-run PACK --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
+
+Save a deterministic **mobility-only** city run under `ROOT/city-runs/ID`. The pack is
+frozen into the artifact; `--agents` accepts 1–30 (default 20), `--days` 1–7 (default 7),
+and `--seed` defaults to 42. Creating an existing ID exits 3 without overwriting it.
+The command hashes every minute frame and the generated fictional assignments. A
+completed artifact contains `run.json`, `inputs/city.json`, and `inputs/agents.json`.
+Interrupted or failed publication may leave an incomplete, reserved directory; use a
+new run ID after examining it. JSON mode emits one result document on stdout.
+
+## `adlife city-replay ROOT ID`
+
+Load the frozen pack and assignments, regenerate every minute frame, and compare the
+full trace hash and counts. Success emits `"identical": true`; missing, damaged,
+partial, or incompatible artifacts exit 4 without modifying the source files. This
+proves replay against the saved artifact on a compatible implementation/runtime; it
+is not cryptographic authentication against an owner rewriting all artifact files.
+Saved city runs are not zone advertising runs and do not claim measured traffic,
+real-person behavior, or geographic campaign effects.
+
 ## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--largest-component]`
 
 Convert a locally supplied, complete OpenStreetMap Overpass JSON street extract into
