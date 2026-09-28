@@ -1,10 +1,10 @@
-"""The AdLife Lab command tree: eight commands, one output contract.
+"""The AdLife Lab command tree and shared output contract.
 
 Every command consumes the core through explicit factories wired in its own module;
 this file only registers the tree and carries the global ``--format human|json|jsonl``
-and ``--no-color`` options the output contract is built on. The eager ``--version``
-callback is retained verbatim: help and version must not pay for imports the
-commands make lazily.
+and ``--no-color`` options the output contract is built on. The geographic city
+viewer is interactive and accepts human mode only. The eager ``--version`` callback
+returns before a command is executed.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typer.core import TyperGroup
 
 from adlife import __version__
 from adlife.cli.commands.campaign import app as campaign_app
+from adlife.cli.commands.city import command as city_command
 from adlife.cli.commands.compare import command as compare_command
 from adlife.cli.commands.demo import command as demo_command
 from adlife.cli.commands.doctor import command as doctor_command
@@ -89,6 +90,7 @@ app.command("compare")(compare_command)
 app.command("doctor")(doctor_command)
 app.command("report")(report_command)
 app.command("demo")(demo_command)
+app.command("city")(city_command)
 
 
 def version_callback(value: bool) -> None:

@@ -5,6 +5,11 @@ trusted. Read this before quoting any number the simulator produces.
 
 ## Intended use
 
+The opt-in city mobility viewer is a separate prototype, not a spatial extension of
+the advertising results. A licensed street pack can provide real geography, but the
+agents, schedules and speeds remain synthetic and uncalibrated. No campaign or
+provider result is plotted on that map in this release.
+
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
   society.

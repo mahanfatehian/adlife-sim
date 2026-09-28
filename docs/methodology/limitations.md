@@ -3,7 +3,7 @@
 What this model cannot support. Read alongside the
 [model card](model-card.md) and the [experiment protocol](experiment-protocol.md).
 
-## Scale
+## Scale of the campaign engine
 
 - **1–30 agents.** Social dynamics at this scale are conversation networks, not
   markets or epidemics. Network-level phenomena (cascade thresholds, opinion leaders)
@@ -56,6 +56,15 @@ What this model cannot support. Read alongside the
   channel effects.
 
 ## Engineering caveats
+
+- **Geographic mobility is a separate pilot.** `adlife city` can show up to 250
+  fictional agents for up to 31 days on a local directed road graph. It is not joined
+  to campaign exposures, purchases, social influence, the run store, or replay. Its
+  minute-addressable trace is reproducible from the same city-pack bytes, seed, and
+  parameters, but it is not a persisted campaign artifact. Its home/work/leisure
+  assignments and travel speeds are illustrative, not demographic, traffic, or
+  behavioral measurements. The bundled grid is fictional; a real street extract
+  supplies geography, not real residents or validated effects.
 
 - **Fresh hybrid calls are not reproducible.** Bounded provider modifiers and social/
   memory inputs can change numeric outcomes, including later rule-derived intention.

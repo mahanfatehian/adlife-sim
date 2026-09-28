@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b141d">
+  <title>AdLife City Lab</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div class="identity">
+        <span class="mark" aria-hidden="true"><span></span></span>
+        <div><span class="eyebrow">ADLIFE LAB / CITY SYSTEMS</span><h1>Mobility observatory</h1></div>
+      </div>
+      <div class="masthead-right"><span class="status-dot" aria-hidden="true"></span><span>LOCAL SIMULATION</span><span class="division">/</span><span id="city-name">Loading city…</span></div>
+    </header>
+
+    <main class="workspace">
+      <section class="map-panel" aria-label="Simulated city road map">
+        <div class="map-topline">
+          <div><span class="eyebrow">STREET NETWORK / LIVE FRAME</span><h2 id="map-title">City trace</h2></div>
+          <div class="map-meta"><span id="day-label">DAY 01</span><span id="clock-label">00:00</span><span id="light-label">NIGHT</span></div>
+        </div>
+        <div class="map-stage" id="map-stage">
+          <canvas id="city-map" aria-label="Road map and simulated agent positions"></canvas>
+          <div class="map-compass" aria-hidden="true"><span>N</span><span class="compass-needle"></span></div>
+          <div class="map-help">Drag to pan <span>·</span> Scroll to zoom</div>
+          <div class="map-legend" aria-label="Map legend"><span><i class="legend-road"></i>Road network</span><span><i class="legend-agent"></i>Agent</span><span><i class="legend-selected"></i>Selected</span></div>
+        </div>
+        <div class="map-footer"><div class="map-copyright"><span id="attribution">Loading data attribution…</span><span aria-hidden="true"> · </span><span id="license-label"></span></div><a id="source-link" target="_blank" rel="noopener noreferrer">Data source ↗</a></div>
+      </section>
+
+      <aside class="sidebar" aria-label="Simulation details">
+        <div class="sidebar-intro"><span class="eyebrow">SCENARIO / OVERVIEW</span><h2>A city in motion.</h2><p>Follow synthetic agents through a deterministic daily routine on a directed street graph.</p></div>
+        <div class="metric-grid">
+          <div class="metric"><span>AGENTS</span><strong id="agent-count">—</strong></div>
+          <div class="metric"><span>STREETS</span><strong id="road-count">—</strong></div>
+          <div class="metric"><span>SEED</span><strong id="seed-value">—</strong></div>
+          <div class="metric"><span>MODEL</span><strong class="metric-small">ROAD MOBILITY V1</strong></div>
+        </div>
+        <div class="section-title"><span>SELECTED AGENT</span><span id="selected-id">—</span></div>
+        <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose an agent</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
+        <div class="detail-rows"><div><span>HOME NODE</span><strong id="home-node">—</strong></div><div><span>WORK NODE</span><strong id="work-node">—</strong></div><div><span>LEISURE NODE</span><strong id="leisure-node">—</strong></div><div><span>ROAD SEGMENT</span><strong id="road-segment">—</strong></div></div>
+        <div class="route-block"><span>PLANNED DIRECTED ROUTE</span><p id="route-summary">Select a person to inspect their route.</p></div>
+        <div class="section-title people-title"><span>SIMULATED PEOPLE</span><span id="people-total">—</span></div>
+        <div class="people-list" id="people-list" role="list"></div>
+        <div class="disclosure"><span>RESEARCH NOTE</span><p>Synthetic mobility pilot — not a prediction of real residents, traffic, or advertising results. Street geometry can come from a licensed local city pack; speeds and routines are illustrative.</p></div>
+      </aside>
+    </main>
+
+    <footer class="timeline" aria-label="Simulation timeline">
+      <div class="timeline-controls"><button id="play-button" type="button" aria-label="Play timeline">▶</button><div><span class="eyebrow">SIMULATED TIME</span><strong id="timeline-time">DAY 01 · 00:00</strong></div></div>
+      <div class="timeline-track"><input id="time-slider" type="range" min="0" max="1439" value="0" aria-label="Simulation minute"><div class="time-marks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div></div>
+      <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-MINUTE MOBILITY FRAMES</span></div>
+    </footer>
+  </div>
+  <div class="error-banner" id="error-banner" role="alert" hidden></div>
+</body>
+</html>

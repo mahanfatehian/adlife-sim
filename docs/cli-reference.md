@@ -46,6 +46,20 @@ Print a JSON validation result and exit 0 when valid; exit 2 with a diagnostic o
 `--verbose` adds validation detail on stderr. YAML documents are bounded to 1 MiB and
 32 nesting levels; aliases, duplicate keys, and custom object tags are refused.
 
+## `adlife city [--pack FILE] [--agents N] [--days N] [--seed N] [--port N]`
+
+Start the read-only geographic mobility pilot at `http://127.0.0.1:8765` (loopback
+only). Without `--pack`, the viewer uses an explicitly fictional, bundled offline
+street grid. With `--pack`, it loads one versioned local city-pack JSON file at startup;
+the HTTP API cannot open paths or change the loaded pack. `--agents` accepts 1–250
+(default 20), `--days` 1–31 (default 7), `--seed` defaults to 42, and `--port` defaults
+to 8765. Invalid packs exit 2 before the server starts. The interactive server accepts
+only the default human output mode. It does not open a browser automatically.
+
+This command does not run or persist the advertising engine. Its minute-addressable
+frames model illustrative home/work/leisure travel on local roads; they are not
+traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
+
 ## `adlife population generate [--size N] [--seed N] [--locale LC] [--out FILE] [--as FORMAT]`
 
 Generate a fictional population document. `--size` 1–30 (default 20), `--seed` (default

@@ -20,6 +20,7 @@ classifiers = [
   "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+  "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "jinja2>=3.1,<4",
   "mesa>=3,<4",
@@ -32,6 +33,7 @@ dependencies = [
   "scipy>=1.14,<2",
   "textual>=1",
   "typer>=0.16,<1",
+  "uvicorn>=0.30,<1",
 ]
 
 [project.scripts]
@@ -61,6 +63,9 @@ include = [
   "src/adlife/**/*.yaml",
   "src/adlife/**/*.j2",
   "src/adlife/**/*.css",
+  "src/adlife/**/*.html",
+  "src/adlife/**/*.js",
+  "src/adlife/**/*.json",
   "src/adlife/**/*.tcss",
 ]
 

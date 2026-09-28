@@ -55,6 +55,18 @@ def test_wheel_carries_report_template_and_stylesheets(built_wheel: Path) -> Non
     assert "adlife/tui/styles.tcss" in names
 
 
+def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> None:
+    with zipfile.ZipFile(built_wheel) as wheel:
+        names = set(wheel.namelist())
+    for resource in (
+        "adlife/city/demo_city.json",
+        "adlife/city/static/index.html",
+        "adlife/city/static/app.css",
+        "adlife/city/static/app.js",
+    ):
+        assert resource in names, resource
+
+
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:
     report = tmp_path / "smoke-result.txt"
     completed = subprocess.run(

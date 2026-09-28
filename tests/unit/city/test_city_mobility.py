@@ -1,0 +1,247 @@
+import pytest
+
+from adlife.core.domain.city import CityNode
+from adlife.core.simulation.city_mobility import CityMobility, shortest_path
+from adlife.core.simulation.rng import RandomOracle
+from tests.unit.city.test_city_pack import load_pack, pack_data
+
+
+def test_directed_one_way_paths() -> None:
+    data = pack_data()
+    data["roads"] = [
+        {
+            "road_id": "ab",
+            "source_node": "a",
+            "target_node": "b",
+            "kind": "residential",
+            "one_way": True,
+        },
+        {
+            "road_id": "bc",
+            "source_node": "b",
+            "target_node": "c",
+            "kind": "residential",
+            "one_way": True,
+        },
+        {
+            "road_id": "ca",
+            "source_node": "c",
+            "target_node": "a",
+            "kind": "residential",
+            "one_way": True,
+        },
+    ]
+    pack = load_pack(data)
+    assert shortest_path(pack, "a", "c").road_ids == ("ab", "bc")
+    assert shortest_path(pack, "c", "a").road_ids == ("ca",)
+
+
+def test_equal_travel_time_uses_stable_road_id_tie_break() -> None:
+    data = pack_data()
+    data["nodes"] = [
+        {"node_id": "a", "longitude": 0.0, "latitude": 0.0},
+        {"node_id": "b", "longitude": 0.01, "latitude": 0.01},
+        {"node_id": "c", "longitude": 0.01, "latitude": -0.01},
+        {"node_id": "d", "longitude": 0.02, "latitude": 0.0},
+    ]
+    data["roads"] = [
+        {"road_id": "ab", "source_node": "a", "target_node": "b", "kind": "residential"},
+        {"road_id": "ac", "source_node": "a", "target_node": "c", "kind": "residential"},
+        {"road_id": "bd", "source_node": "b", "target_node": "d", "kind": "residential"},
+        {"road_id": "cd", "source_node": "c", "target_node": "d", "kind": "residential"},
+    ]
+    assert shortest_path(load_pack(data), "a", "d").road_ids == ("ab", "bd")
+
+
+def test_route_endpoints_are_validated() -> None:
+    pack = load_pack(pack_data())
+    assert shortest_path(pack, "a", "a").road_ids == ()
+    with pytest.raises(ValueError, match="not a city node"):
+        shortest_path(pack, "a", "missing")
+
+
+def test_same_seed_and_permuted_pack_make_identical_trace() -> None:
+    data = pack_data()
+    nodes, roads = data["nodes"], data["roads"]
+    assert isinstance(nodes, list) and isinstance(roads, list)
+    permuted = {**data, "nodes": list(reversed(nodes)), "roads": list(reversed(roads))}
+    first = CityMobility(load_pack(data), seed=42, agent_count=8, days=2)
+    second = CityMobility(load_pack(permuted), seed=42, agent_count=8, days=2)
+    assert first.metadata() == second.metadata()
+    for minute in (0, 480, 481, 540, 1020, 1021, 1439, 1440, 1910):
+        assert first.frame(minute) == second.frame(minute)
+
+
+def test_positions_remain_on_the_road_or_at_nodes() -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=7, agent_count=12, days=1)
+    roads = {road.road_id: road for road in simulation.pack.roads}
+    nodes = {node.node_id: node for node in simulation.pack.nodes}
+    for minute in range(0, 1440):
+        for position in simulation.frame(minute):
+            assert -90 <= position.latitude <= 90
+            assert -180 <= position.longitude <= 180
+            if position.road_id is not None:
+                road = roads[position.road_id]
+                start, end = nodes[road.source_node], nodes[road.target_node]
+                assert (
+                    min(start.latitude, end.latitude) - 1e-12
+                    <= position.latitude
+                    <= max(start.latitude, end.latitude) + 1e-12
+                )
+                assert (
+                    min(start.longitude, end.longitude) - 1e-12
+                    <= position.longitude
+                    <= max(start.longitude, end.longitude) + 1e-12
+                )
+
+
+def test_weekend_has_leisure_not_work() -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=7, agent_count=3, days=7)
+    saturday = 5 * 1440
+    assert all(position.activity != "work" for position in simulation.frame(saturday + 13 * 60))
+    assert any(position.activity == "leisure" for position in simulation.frame(saturday + 13 * 60))
+
+
+@pytest.mark.parametrize("agent_count,days", [(0, 1), (251, 1), (1, 0), (1, 32)])
+def test_configuration_bounds(agent_count: int, days: int) -> None:
+    with pytest.raises(ValueError):
+        CityMobility(load_pack(pack_data()), seed=1, agent_count=agent_count, days=days)
+
+
+def test_out_of_range_minute_refused() -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=1, agent_count=1, days=1)
+    with pytest.raises(ValueError):
+        simulation.frame(1440)
+    with pytest.raises(ValueError):
+        simulation.frame(True)
+
+
+def test_boolean_seed_is_not_an_integer_configuration() -> None:
+    with pytest.raises(ValueError, match="seed"):
+        CityMobility(load_pack(pack_data()), seed=True, agent_count=1, days=1)
+
+
+def test_maximum_pilot_window_and_population_are_sampleable() -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=9, agent_count=250, days=31)
+    final_frame = simulation.frame(31 * 1440 - 1)
+    assert len(final_frame) == 250
+    assert final_frame[0].agent_id == "person-001"
+    assert final_frame[-1].agent_id == "person-250"
+
+
+def test_geographic_labels_support_southern_western_hemispheres() -> None:
+    data = pack_data()
+    nodes = data["nodes"]
+    assert isinstance(nodes, list)
+    for node in nodes:
+        assert isinstance(node, dict)
+        node["longitude"] = float(node["longitude"]) - 74
+        node["latitude"] = float(node["latitude"]) - 35
+    simulation = CityMobility(load_pack(data), seed=1, agent_count=1, days=1)
+    frame = simulation.frame_document(0)
+    positions = frame["positions"]
+    assert isinstance(positions, list)
+    assert "° S / " in positions[0]["coordinate_label"]
+    assert positions[0]["coordinate_label"].endswith("° W")
+
+
+def test_trip_that_cannot_finish_before_midnight_is_refused() -> None:
+    data = pack_data()
+    data["nodes"] = [
+        {"node_id": "a", "longitude": 0.0, "latitude": 0.0},
+        {"node_id": "b", "longitude": 0.0, "latitude": 2.0},
+    ]
+    data["roads"] = [
+        {"road_id": "ab", "source_node": "a", "target_node": "b", "kind": "residential"}
+    ]
+    with pytest.raises(ValueError, match="trip cannot finish before midnight"):
+        CityMobility(load_pack(data), seed=1, agent_count=1, days=1)
+
+
+def test_outbound_arriving_after_fixed_return_time_does_not_skip_return_travel() -> None:
+    data = pack_data()
+    data["nodes"] = [
+        {"node_id": "a", "longitude": 0.0, "latitude": 0.0},
+        {"node_id": "b", "longitude": 0.0, "latitude": 1.5},
+    ]
+    data["roads"] = [
+        {
+            "road_id": "slow",
+            "source_node": "a",
+            "target_node": "b",
+            "kind": "residential",
+            "one_way": True,
+        },
+        {
+            "road_id": "fast",
+            "source_node": "b",
+            "target_node": "a",
+            "kind": "motorway",
+            "one_way": True,
+        },
+    ]
+    pack = load_pack(data)
+    candidate = next(
+        seed
+        for seed in range(100)
+        if RandomOracle(seed).uniform("city-home", "person-001", 0, 0) < 0.5
+    )
+    simulation = CityMobility(pack, seed=candidate, agent_count=1, days=1)
+    assert simulation.agents[0].home_node == "a"
+    arrival = 480 + shortest_path(pack, "a", "b").duration_minutes
+    before = simulation.frame(int(arrival) - 1)[0]
+    after = simulation.frame(int(arrival) + 1)[0]
+    assert abs(after.latitude - before.latitude) < 0.02
+    assert after.road_id == "fast"
+
+
+def test_mobility_builds_weighted_road_graph_once_for_all_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import adlife.core.simulation.city_mobility as mobility
+
+    data = pack_data()
+    data["nodes"] = [
+        {"node_id": f"n-{index:03d}", "longitude": index * 0.0001, "latitude": 0.0}
+        for index in range(100)
+    ]
+    data["roads"] = [
+        {
+            "road_id": f"r-{index:03d}",
+            "source_node": f"n-{index:03d}",
+            "target_node": f"n-{index + 1:03d}",
+            "kind": "residential",
+        }
+        for index in range(99)
+    ]
+    calls = 0
+    original = mobility._length_meters
+
+    def counted(start: CityNode, end: CityNode) -> float:
+        nonlocal calls
+        calls += 1
+        return original(start, end)
+
+    monkeypatch.setattr(mobility, "_length_meters", counted)
+    simulation = CityMobility(load_pack(data), seed=42, agent_count=20, days=1)
+    assert len(simulation.agents) == 20
+    assert calls <= 99
+
+
+def test_selected_agent_route_uses_core_directed_paths_for_each_day() -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=1, days=7)
+    agent = simulation.agents[0]
+    outbound = simulation.frame_document(8 * 60, selected_agent_id=agent.agent_id)["route"]
+    inbound = simulation.frame_document(18 * 60, selected_agent_id=agent.agent_id)["route"]
+    weekend = simulation.frame_document(5 * 1440 + 12 * 60, selected_agent_id=agent.agent_id)[
+        "route"
+    ]
+    assert outbound["direction"] == "outbound"
+    assert outbound["node_ids"][0] == agent.home_node
+    assert outbound["node_ids"][-1] == agent.work_node
+    assert inbound["direction"] == "return"
+    assert inbound["node_ids"][0] == agent.work_node
+    assert inbound["node_ids"][-1] == agent.home_node
+    assert weekend["node_ids"][-1] == agent.leisure_node
+    with pytest.raises(ValueError, match="unknown city agent"):
+        simulation.frame_document(0, selected_agent_id="person-999")

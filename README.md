@@ -86,6 +86,8 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Complete command-line interface | Complete |
 | Live terminal user interface | Complete |
 | Self-contained HTML reports | Complete |
+| Opt-in deterministic street-mobility pilot and local web timeline | Initial pilot; separate from campaign engine |
+| Real-city catalog, geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
 | Package-index publication (PyPI) and public tagged releases | Not performed by this audit |
@@ -138,13 +140,31 @@ uv run adlife report my-study <run-id>   # self-contained HTML report (works off
 uv run adlife compare control treatment  # paired A/B across seeds (common random numbers)
 uv run adlife run my-study --live        # the four-panel terminal dashboard
 uv run adlife doctor --offline           # installation readiness, zero network
+uv run adlife city                       # local street-mobility pilot at 127.0.0.1:8765
 ```
 
 Campaign and population documents are authored in YAML and validated before use. They are treated as
 untrusted input: YAML is parsed with a safe loader, and any referenced asset path is resolved and
 confirmed to lie beneath the project root before it is opened. Every command honors the global
-`--format human|json|jsonl` output contract; see
+`--format human|json|jsonl` output contract for data commands; the interactive `city`
+server accepts human mode only. See
 [docs/cli-reference.md](docs/cli-reference.md) for the complete surface.
+
+### City mobility pilot
+
+`uv run adlife city` opens a loopback-only FastAPI viewer with a **fictional** offline
+grid. It has a day/night timeline, minute-level road-constrained positions, agent
+activities, and visible source attribution. Use `--pack CITY.json` to load a validated,
+locally supplied street graph (including a properly licensed real-city extract), and
+`--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
+provider key, or network connection is needed. The server does not open a browser or
+terminal window for you.
+
+This is a *separate mobility preview*, not a geographic advertising run: it does not
+persist campaign artifacts, simulate calibrated residents or traffic, model billboard
+exposure, or predict sales. A real street network improves spatial fidelity but does not
+validate agent behavior. City-pack format and scientific boundaries are in
+[docs/city-pilot.md](docs/city-pilot.md).
 
 ---
 
@@ -162,6 +182,7 @@ src/adlife/
 ├── cli/               # Command-line surface and output contract
 ├── tui/               # Live terminal dashboard (read-only adapter over the core)
 ├── reporting/         # Self-contained HTML report rendering
+├── city/              # Local FastAPI city pilot, pack loader, vanilla web assets
 └── resources/         # Packaged data (fictional name and routine templates, demo project)
 
 tests/
@@ -205,6 +226,7 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | [docs/installation.md](docs/installation.md) | Every installation path, frozen binaries, verification |
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command, flag, exit code, and the output contract |
 | [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, auditable events, the tick, artifacts |
+| [docs/city-pilot.md](docs/city-pilot.md) | Street-pack format, city viewer, and mobility model boundaries |
 | [docs/reproducibility.md](docs/reproducibility.md) | What a seed guarantees and how to reproduce any run |
 | [docs/defense-readiness.md](docs/defense-readiness.md) | Audited defense contracts, regressions, and verification evidence |
 | [docs/methodology/odd-protocol.md](docs/methodology/odd-protocol.md) | The ODD protocol: entities, scales, scheduling, submodels, formulas |
@@ -262,10 +284,10 @@ software produces.
    command above works everywhere; the wheel build and its release smoke test already run locally.
 2. **Continuous integration and releases** — automated gates and tagged releases on GitHub-hosted
    runners.
-3. **A separate commercial product** — the local, AGPL-licensed engine is designed to stay reusable:
-   the model core is adapter-free, so a future, separately licensed SaaS offering can be built *on* it
-   while this repository remains the open, inspectable research instrument. No hosted service exists
-   today; any such product would be a distinct codebase and offering.
+3. **Production-track city product on `main`** — mature the current opt-in pilot with
+   licensed city ingestion, geography-aware campaign events, persisted replayable traces,
+   authenticated administration and protected provider configuration. These are not
+   shipped capabilities yet. The `defense-ready` branch retains the research snapshot.
 
 ---
 

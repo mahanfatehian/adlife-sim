@@ -11,6 +11,7 @@ outside world.**
 │  cli/        command tree, output contract, wiring        │
 │  tui/        live dashboard (read-only Textual adapter)   │
 │  reporting/  self-contained HTML report rendering         │
+│  city/       local FastAPI mobility pilot + vanilla viewer  │
 ├──────────────────────────────────────────────────────────┤
 │  adapters/   SQLite run store, cognition providers, cache │
 ├──────────────────────────────────────────────────────────┤
@@ -25,6 +26,21 @@ outside world.**
 library, and no model provider. Interfaces to the outside world are defined as ports in
 `core/ports/` and implemented in `adapters/`. The import ban is enforced by a test, not
 convention.
+
+## Geographic mobility pilot
+
+The opt-in `adlife city` path is a separate model under `core/domain/city.py` and
+`core/simulation/city_mobility.py`. It does not modify the campaign engine's frozen
+scenario, 15-minute tick, event store, or replay format. A versioned, immutable local
+road graph is validated and canonicalized before a deterministic, seed-keyed schedule
+uses directed road paths. The FastAPI adapter loads one pack at startup and exposes
+read-only metadata, geometry, fictional agents and minute-addressable frames; the
+vanilla browser client only renders those frames. It binds to loopback, has no HTTP
+input for filesystem paths or secrets, and makes no tile/API calls.
+
+This boundary is deliberate: animating old abstract zone changes on a city map would
+misrepresent the science. Geographic campaign encounters and persisted city-run replay
+need their own explicit model and artifact schema before being claimed.
 
 ## The cognition seam
 

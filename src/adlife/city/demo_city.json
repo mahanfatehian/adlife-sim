@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "city_id": "fictional-grid",
+  "name": "Fictional Grid City",
+  "source_url": "https://example.org/fictional-city",
+  "license": "CC0-1.0",
+  "attribution": "Fictional demonstration streets; not OpenStreetMap data",
+  "nodes": [
+    {"node_id": "west-north", "longitude": 0.0, "latitude": 0.06},
+    {"node_id": "center-north", "longitude": 0.04, "latitude": 0.06},
+    {"node_id": "east-north", "longitude": 0.08, "latitude": 0.06},
+    {"node_id": "west-center", "longitude": 0.0, "latitude": 0.03},
+    {"node_id": "center-center", "longitude": 0.04, "latitude": 0.03},
+    {"node_id": "east-center", "longitude": 0.08, "latitude": 0.03},
+    {"node_id": "west-south", "longitude": 0.0, "latitude": 0.0},
+    {"node_id": "center-south", "longitude": 0.04, "latitude": 0.0},
+    {"node_id": "east-south", "longitude": 0.08, "latitude": 0.0}
+  ],
+  "roads": [
+    {"road_id": "north-west", "source_node": "west-north", "target_node": "center-north", "kind": "residential"},
+    {"road_id": "north-east", "source_node": "center-north", "target_node": "east-north", "kind": "residential"},
+    {"road_id": "middle-west", "source_node": "west-center", "target_node": "center-center", "kind": "primary"},
+    {"road_id": "middle-east", "source_node": "center-center", "target_node": "east-center", "kind": "primary"},
+    {"road_id": "south-west", "source_node": "west-south", "target_node": "center-south", "kind": "residential"},
+    {"road_id": "south-east", "source_node": "center-south", "target_node": "east-south", "kind": "residential"},
+    {"road_id": "west-upper", "source_node": "west-south", "target_node": "west-center", "kind": "secondary"},
+    {"road_id": "west-lower", "source_node": "west-center", "target_node": "west-north", "kind": "secondary"},
+    {"road_id": "center-upper", "source_node": "center-south", "target_node": "center-center", "kind": "trunk"},
+    {"road_id": "center-lower", "source_node": "center-center", "target_node": "center-north", "kind": "trunk"},
+    {"road_id": "east-upper", "source_node": "east-south", "target_node": "east-center", "kind": "secondary"},
+    {"road_id": "east-lower", "source_node": "east-center", "target_node": "east-north", "kind": "secondary"}
+  ]
+}
