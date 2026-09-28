@@ -43,9 +43,10 @@ dated subsystem spec/plan, written after predecessor interfaces are stable. The
 [first executable plan](2026-09-28-persisted-city-runs.md) locks the near-term files,
 interfaces, tests and commands.
 
-The current baseline is the original zone campaign engine, city mobility pilot,
-offline city importer, and local FastAPI viewer. The city feature is not yet a saved
-campaign run. See [city pilot](../../city-pilot.md) and
+The current baseline includes the original zone campaign engine, city mobility pilot,
+offline city importer, and local FastAPI viewer. Package A adds saved **mobility**
+traces and replay, not geographic advertising runs. See
+[city pilot](../../city-pilot.md) and
 [architecture](../../architecture.md) for exact shipped behavior. At the start of
 each execution session, inspect `git status --short --branch`, current tests, code
 and this document; historical plans are not proof of current behavior.
@@ -73,20 +74,21 @@ promise that every city is already modeled.
 **Entry:** Existing `CityPack`, `CityMobility`, local viewer and city tests pass.
 **Detailed execution:** [persisted-city-runs plan](2026-09-28-persisted-city-runs.md).
 
-- [ ] **A1 — Version the city-run contract.** Freeze exact city bytes/hash, synthetic
+- [x] **A1 — Version the city-run contract.** Freeze exact city bytes/hash, synthetic
   assignments, seed, days, model/parameter identity and output schema. Add strict
   cross-reference and size validation. Tests reject changed/missing packs, invalid
   assignments and unknown versions. Do not reuse the zone `Scenario` dishonestly.
-- [ ] **A2 — Add atomic city-run storage.** Publish a new run without clobbering,
+- [x] **A2 — Add atomic city-run storage.** Publish a new run without clobbering,
   store a canonical trace/event digest and explicit status, and detect corruption.
-  Fault-injection tests cover interruption, short write, export mismatch, symlink
-  escape and failed publication. Choose streaming evidence rather than persisting
-  every one-minute frame for 250 agents × 31 days.
-- [ ] **A3 — Add CLI run and replay commands.** Keep `adlife city` as an ephemeral
+  Fault-injection tests cover interrupted/partial publication, short write,
+  changed frozen inputs/trace evidence, symlink escape and failed publication;
+  this format has no separate city event export to mismatch. Choose streaming
+  evidence rather than persisting every one-minute frame for 250 agents × 31 days.
+- [x] **A3 — Add CLI run and replay commands.** Keep `adlife city` as an ephemeral
   viewer; a new command creates an artifact and another verifies it without writing
   to the source. Test exact exit-code and JSON-stdout behavior, duplicate IDs,
   corrupt/missing artifacts and source hashes before/after replay.
-- [ ] **A4 — Open a saved run in the local API/UI.** The viewer reads a validated
+- [x] **A4 — Open a saved run in the local API/UI.** The viewer reads a validated
   city-run artifact at startup; no HTTP path parameter chooses server files.
   Scrubbing any minute uses the frozen run and shows its run ID/version. Headless
   and browser views agree on core frames. Browser failures do not change a run.
@@ -94,6 +96,20 @@ promise that every city is already modeled.
 **Exit gate:** Two fresh runs with identical inputs have identical normalized trace
 evidence; a replay reports equality and does not mutate source; altered artifacts
 refuse; old `adlife city` and zone replay still pass.
+
+**Package A verification (2026-09-28, Windows/Python 3.12.11):** Final full suite
+`3193 passed, 12 skipped`; branch coverage `91.40%` (85% floor); Ruff format/lint
+and strict mypy passed. Full `PYTHONHASHSEED=0` and `12345` suites passed before the
+final narrow storage/UI corrections (`3188 passed, 12 skipped` each); the corrected
+city path passed both seeds (`125 passed, 1 skipped` each) and the final full suite
+and branch-coverage suite passed afterward. Final wheel built and passed clean-room
+smoke; installed city-run/city-replay reproduced a packaged fictional pack outside
+the checkout. Headless browser checks confirmed saved identity and minute scrub at
+desktop width and identity visibility at 700px. The 30-agent/7-day lifecycle on the
+bundled pack completed in 5.877s create, 3.376s load/verify and 3.333s replay.
+One symlink regression test is skipped on this Windows account because it lacks
+directory-symlink privilege; production code still rejects symlink targets and
+existing path-boundary tests pass.
 
 ## B. Licensed, scalable city data and selection
 

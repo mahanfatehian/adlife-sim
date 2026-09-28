@@ -39,8 +39,12 @@ vanilla browser client only renders those frames. It binds to loopback, has no H
 input for filesystem paths or secrets, and makes no tile/API calls.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Geographic campaign encounters and persisted city-run replay
-need their own explicit model and artifact schema before being claimed.
+misrepresent the science. Saved **mobility-only** runs now use a separate strict
+`CityRunManifest`, a core full-minute trace digest, and a no-clobber `CityRunStore`.
+`city-run` freezes the pack and generated assignments under `city-runs/<run-id>/`,
+`city-replay` regenerates every minute before reporting equality, and `city-view`
+validates before serving one immutable run. This is not an event-sourced advertising
+run; geographic campaign encounters remain a separate future model.
 
 ## The cognition seam
 
@@ -114,9 +118,9 @@ boundaries, not one distributed transaction: failure is reported, but does not r
 the already committed model or a durable event tail. The stage arithmetic is pinned by
 unit suites; whole runs are pinned by integration and golden suites.
 
-## Runs, artifacts, and observability
+## Campaign runs, artifacts, and observability
 
-A run is a whole scenario driven through the ports by `SimulationRunner`, which owns
+A campaign run is a whole scenario driven through the ports by `SimulationRunner`, which owns
 which ticks happen, what must persist before anyone observes it, and what is recorded
 when a run cannot continue. The artifact layout per run:
 

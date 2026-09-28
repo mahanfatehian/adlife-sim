@@ -44,7 +44,7 @@ and final state. Every stochastic decision is drawn from a keyed random oracle r
 a global generator, so a change in evaluation order cannot change an outcome. The test suite is run under
 varying `PYTHONHASHSEED` values to catch iteration-order leaks.
 
-**Runs are event-sourced and auditable.** The simulation emits an ordered, causally linked stream of
+**Campaign runs record an auditable event stream.** The advertising simulation emits an ordered, causally linked stream of
 immutable events with stable identifiers. Reports derive their numbers from persisted events,
 boundary-state checkpoints and provider-usage records, with explicit metric provenance.
 A completed run can be replayed; live-provider replay requires its validated cognition cache.
@@ -269,7 +269,7 @@ pre-registration, including the 80% directional-stability rule and sensitivity r
 With the same frozen inputs, parameters and original request identities, rules/mock
 execution is reproducible event for event. Every stochastic decision is drawn
 from a keyed random oracle scoped to its agent and purpose, so a change in evaluation order cannot
-change an outcome. Every run persists a manifest recording the code version, scenario fingerprint,
+change an outcome. Every campaign run persists a manifest recording the code version, scenario fingerprint,
 provider, and seed, and `adlife replay` re-executes a stored run and verifies the event stream matches
 the recorded one. Live API responses are not inherently reproducible: replay requires the
 recorded validated cognition. Wall-clock metadata is not part of event equality.

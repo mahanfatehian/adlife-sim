@@ -1,5 +1,9 @@
 # Reproducibility
 
+The event-stream guarantees below apply to **zone advertising campaign runs**. Saved
+city mobility runs have a separate full-minute trace hash and `city-replay` command,
+described at the end of this document; they are not event-sourced campaign runs.
+
 In rules mode, the same seed, frozen scenario, model parameters and code produce the
 same normalized events and final state. Mock cognition additionally uses the original
 request identity and complete request JSON to select its deterministic fixture; replay
@@ -40,7 +44,7 @@ hold the already-loaded initial population and all non-treatment inputs fixed.
 
 ## The manifest
 
-Every run persists `runs/<run-id>/run.json` recording:
+Every campaign run persists `runs/<run-id>/run.json` recording:
 
 - the code version and the exact model parameters in force (`ModelParameters` with every
   documented knob);
@@ -88,7 +92,7 @@ Two sources of nondeterminism outside the model are handled:
   reproduction requires recorded validated cognition and fallback provenance; fresh
   provider calls are not a reproducibility check.
 
-## Recipe: reproduce any run
+## Recipe: reproduce a campaign run
 
 ```bash
 # from the manifest, read the seed, the parameters, and the scenario hash
@@ -103,3 +107,16 @@ identifier references normalized away. A mismatch indicates changed code, missin
 corrupt recorded inputs/cognition, or a defect; it is never silently repaired. Integrity
 checks detect inconsistent artifacts, not a coordinated rewrite of every file: runs are
 not cryptographically signed or claimed to be tamper-proof against a malicious owner.
+
+## Saved city mobility traces
+
+`adlife city-run PACK --output-root ROOT --run-id ID` writes a distinct artifact at
+`ROOT/city-runs/ID/`, freezing the local city pack, generated fictional assignments,
+seed, duration, model/runtime identity and the SHA-256 digest of **every** normalized
+minute frame in order. `adlife city-replay ROOT ID` validates those inputs and
+regenerates the complete trace without changing source files; a mismatch, partial
+publication or incompatible artifact is refused. `adlife city-view ROOT ID` performs
+the same load verification before opening the read-only local timeline. A digest
+proves equality against that artifact, not authenticity against an owner rewriting
+all files. Identical frames are expected on a compatible implementation/runtime;
+cross-platform bitwise identity of floating-point interpolation is not claimed.

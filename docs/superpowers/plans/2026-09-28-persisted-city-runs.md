@@ -80,16 +80,16 @@ hash/count fields); `summarize_city_trace(mobility: CityMobility) -> CityTraceSu
 The digest input is `canonical_json(mobility.frame_document(minute)) + "\n"` for
 `minute in range(days * 1440)`, with no selected-agent route in that stream.
 
-- [ ] Write failing tests: two identical runs and permuted packs give identical
+- [x] Write failing tests: two identical runs and permuted packs give identical
   summaries; a changed seed or route changes the summary; `frame_count == days*1440`
   and `position_count == frame_count*agent_count`; unknown schema, booleans-as-int,
   malformed hashes and an invalid run ID are refused.
-- [ ] Run `uv run pytest tests/unit/city/test_city_run_contract.py tests/unit/city/test_city_trace.py -q`; confirm the new interface is absent/RED.
-- [ ] Implement the two files with bounded immutable models and streaming hashing;
+- [x] Run `uv run pytest tests/unit/city/test_city_run_contract.py tests/unit/city/test_city_trace.py -q`; confirm the new interface is absent/RED.
+- [x] Implement the two files with bounded immutable models and streaming hashing;
   keep wall-clock metadata out of the digest and avoid storing all frames in a list.
-- [ ] Run those two files, `tests/unit/city/test_city_mobility.py`, Ruff and mypy;
+- [x] Run those two files, `tests/unit/city/test_city_mobility.py`, Ruff and mypy;
   require PASS. Review the digest's ordering and exact JSON encoding.
-- [ ] Commit this independently testable core contract with the configured identity.
+- [x] Commit this independently testable core contract with the configured identity.
 
 ### Task 2: No-clobber, bounded city artifact store
 
@@ -103,18 +103,18 @@ Loading verifies canonical pack and agents hashes, model/schema compatibility,
 configuration bounds, generated-versus-frozen assignments and full trace digest
 before returning a run.
 
-- [ ] Write failing tests: new directory layout; duplicate refusal; no replacement
+- [x] Write failing tests: new directory layout; duplicate refusal; no replacement
   even under two racing writers; missing/truncated/malformed/oversized manifest and
   pack; changed valid pack or assignment; symlink escape; bad hash; partial directory; failure
   before publication leaves no successful final artifact or cleans temporary data.
-- [ ] Run `uv run pytest tests/integration/test_city_run_store.py -q`; confirm RED.
-- [ ] Implement bounded reads and a no-clobber publication primitive proven on
+- [x] Run `uv run pytest tests/integration/test_city_run_store.py -q`; confirm RED.
+- [x] Implement bounded reads and a no-clobber publication primitive proven on
   Windows and POSIX. Do not assume `os.replace()` prevents replacing a destination
   directory. Write+fsync staged files, make the final state unambiguously complete,
   and handle cleanup without deleting another writer's artifact.
-- [ ] Run the integration test, existing `tests/integration/test_sqlite_store.py`,
+- [x] Run the integration test, existing `tests/integration/test_sqlite_store.py`,
   Ruff and mypy; require PASS. Inspect every filesystem target before cleanup.
-- [ ] Commit the store and its failure-injection tests.
+- [x] Commit the store and its failure-injection tests.
 
 ### Task 3: Create and verify saved city runs through the CLI
 
@@ -129,16 +129,16 @@ agent_count: int, days: int) -> StoredCityRun`; `replay_city_run(stored: StoredC
 mode emits exactly one document on stdout. Input refusal is code 2, duplicate is
 3, corrupt/missing artifact is 4, interrupt is 130, internal defect is 1.
 
-- [ ] Write failing tests for offline create/replay, fresh-run equality, changed
+- [x] Write failing tests for offline create/replay, fresh-run equality, changed
   source hash detection, duplicate IDs, invalid pack and bounds, malformed run ID,
   corrupt source, interrupted creation, JSON stdout and no traceback for expected
   errors. Hash **every source file** before/after replay and assert equality.
-- [ ] Run `uv run pytest tests/integration/test_city_run_replay.py tests/cli/test_city_run.py tests/cli/test_city_replay.py -q`; confirm RED.
-- [ ] Implement orchestration and command registration through existing CLI error
+- [x] Run `uv run pytest tests/integration/test_city_run_replay.py tests/cli/test_city_run.py tests/cli/test_city_replay.py -q`; confirm RED.
+- [x] Implement orchestration and command registration through existing CLI error
   mapping; do not call a network/provider or mutate source during verification.
-- [ ] Run the narrow suite, `tests/cli/test_city.py`, `tests/cli/test_city_import.py`,
+- [x] Run the narrow suite, `tests/cli/test_city.py`, `tests/cli/test_city_import.py`,
   `tests/cli/test_replay_safety.py`, Ruff and mypy; require PASS.
-- [ ] Commit only the new run/replay CLI and its documented contract.
+- [x] Commit only the new run/replay CLI and its documented contract.
 
 ### Task 4: Open a saved run in the read-only city viewer
 
@@ -154,17 +154,17 @@ mode emits exactly one document on stdout. Input refusal is code 2, duplicate is
 `run_id`/saved status to `/api/meta` only for a validated saved run. Frame endpoint
 continues to call `CityMobility.frame_document` directly.
 
-- [ ] Write failing tests: saved run ID appears in metadata/UI; frame at any minute
+- [x] Write failing tests: saved run ID appears in metadata/UI; frame at any minute
   equals core output; corrupt run refuses before Uvicorn starts; HTTP never accepts
   a path or alternate run ID; old ephemeral viewer has no false saved-run label;
   no external assets/scripts; wheel includes updated static resources.
-- [ ] Run `uv run pytest tests/cli/test_city_view.py tests/unit/city/test_city_web.py -q`; confirm RED.
-- [ ] Implement command and minimal UI metadata, preserving safe `textContent`, CSP,
+- [x] Run `uv run pytest tests/cli/test_city_view.py tests/unit/city/test_city_web.py -q`; confirm RED.
+- [x] Implement command and minimal UI metadata, preserving safe `textContent`, CSP,
   loopback binding and existing canvas/time controls.
-- [ ] Run city CLI/unit/browser-equivalent tests, packaging tests and all full gates
+- [x] Run city CLI/unit/browser-equivalent tests, packaging tests and all full gates
   from the roadmap. Test a fresh temp run with `city-run`, `city-replay`, `city-view`
   (the last via API test when no interactive browser is available).
-- [ ] Review docs for the exact caveat: saved **mobility** run, not geographic ad
+- [x] Review docs for the exact caveat: saved **mobility** run, not geographic ad
   campaign or calibrated traffic. Inspect diff and commit the viewer/docs slice.
 
 ## Completion handoff
@@ -175,3 +175,30 @@ examples, and remaining limitations. Check A1–A4 in the roadmap only after the
 whole exit gate is demonstrated. The next work is B's licensed city catalog/pack-v2
 design; do not begin geographic advertising until stable road IDs and saved-run
 replay are in place.
+
+**Execution record (2026-09-28, Windows/Python 3.12.11):** Core trace contract
+`83128e5`, no-clobber store `a1f9cf1`, run/replay CLI `d5af93d`, read-only viewer
+`9d378e0`, and staged-byte safety fix `d233a18`. Each behavior slice had a RED
+regression before implementation and narrow/related GREEN suites afterward. A
+reviewer found a short-write completion gap; three injected short-write cases
+failed before the fix and passed after. High-level replay tests hash all source
+files before/after, and browser/API tests prove a view does not change them.
+
+Final full suite: `3193 passed, 12 skipped` in 418.70s. Full branch coverage:
+`3193 passed, 12 skipped`, 91.40% (85% floor) in 960.90s. Ruff format/lint,
+strict mypy, `uv build --no-sources`, clean-room wheel smoke, and installed-wheel
+city run/replay passed. Full suites under `PYTHONHASHSEED=0` and `12345` passed
+before the final storage/UI corrections (`3188 passed, 12 skipped` each); corrected
+city paths passed both seeds (`125 passed, 1 skipped` each), then final full and
+coverage suites passed. One new directory-symlink test is skipped on this Windows
+account without symlink privilege; refusal is implemented and other containment
+checks run.
+
+The streaming 30-agent/7-day digest took 12.986s with tracemalloc and 224,629
+bytes peak traced Python allocation; it covered 10,080 frames/302,400 positions.
+The untraced complete saved-city lifecycle took 5.877s create, 3.376s load and
+3.333s replay. No sparse sampling was substituted. Final wheel smoke produced a
+4,862,319-byte self-contained report. A fresh external wheel installation ran
+`city-run` and `city-replay` against the wheel's own fictional pack with equal
+trace hashes. The artifact is a synthetic mobility trace, not a geographic
+advertising result, real-population model or cryptographically signed record.
