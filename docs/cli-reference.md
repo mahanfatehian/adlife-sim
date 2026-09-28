@@ -60,6 +60,22 @@ This command does not run or persist the advertising engine. Its minute-addressa
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
+## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--largest-component]`
+
+Convert a locally supplied, complete OpenStreetMap Overpass JSON street extract into
+a validated city pack. This command performs no network request. Input is limited to
+16 MiB; output follows the city-pack 4 MiB / 10,000-node / 20,000-road limits.
+More than 50,000 input node elements or 20,000 selected input segments is refused
+before graph selection.
+The destination must be new; an existing file or symlink exits 3 and is not modified.
+Malformed, incomplete, unsupported or disconnected geometry exits 2 without creating
+an output. `--largest-component` explicitly discards all but the largest strongly
+connected directed road component, with deterministic tie breaking and reported loss
+counts. JSON mode returns the canonical city-pack fingerprint (`pack_sha256`, excluding
+the file's trailing newline), counts and destination as one document. The
+pack carries OSM ODbL attribution. See [city-pilot.md](city-pilot.md) for supported
+roads and scientific limits.
+
 ## `adlife population generate [--size N] [--seed N] [--locale LC] [--out FILE] [--as FORMAT]`
 
 Generate a fictional population document. `--size` 1–30 (default 20), `--seed` (default

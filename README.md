@@ -86,7 +86,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Complete command-line interface | Complete |
 | Live terminal user interface | Complete |
 | Self-contained HTML reports | Complete |
-| Opt-in deterministic street-mobility pilot and local web timeline | Initial pilot; separate from campaign engine |
+| Opt-in deterministic street-mobility pilot, local web timeline, and offline OSM extract importer | Initial pilot; separate from campaign engine |
 | Real-city catalog, geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
@@ -141,6 +141,7 @@ uv run adlife compare control treatment  # paired A/B across seeds (common rando
 uv run adlife run my-study --live        # the four-panel terminal dashboard
 uv run adlife doctor --offline           # installation readiness, zero network
 uv run adlife city                       # local street-mobility pilot at 127.0.0.1:8765
+uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
 ```
 
 Campaign and population documents are authored in YAML and validated before use. They are treated as
@@ -155,8 +156,10 @@ server accepts human mode only. See
 `uv run adlife city` opens a loopback-only FastAPI viewer with a **fictional** offline
 grid. It has a day/night timeline, minute-level road-constrained positions, agent
 activities, and visible source attribution. Use `--pack CITY.json` to load a validated,
-locally supplied street graph (including a properly licensed real-city extract), and
-`--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
+locally supplied street graph. `adlife city-import` converts a complete, properly
+licensed local Overpass JSON extract into a validated pack without network access.
+Use `--largest-component` only if dropping disconnected road segments is acceptable.
+Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
 terminal window for you.
 

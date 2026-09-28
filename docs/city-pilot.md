@@ -6,7 +6,55 @@ packaged HTML, CSS, and JavaScript. It shows synthetic agents on roads, activity
 each minute, a selected agent's planned directed route, an all-day timeline,
 day/night presentation, and visible attribution.
 
-To use a **local, properly licensed** street extract, create a city-pack JSON and run:
+To use a **local, properly licensed** street extract, import a complete local
+OpenStreetMap Overpass JSON document and run:
+
+```bash
+uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
+uv run adlife city --pack city.json --agents 30 --days 7 --seed 42
+```
+
+The importer makes no network request. Acquire the extract yourself under the
+[OpenStreetMap license and attribution requirements](https://www.openstreetmap.org/copyright).
+For example, an Overpass query for a **small area** can request ways and all their
+member nodes (replace the four bounding-box coordinates):
+
+```text
+[out:json][timeout:25];
+way["highway"](south,west,north,east);
+(._;>;);
+out body;
+```
+
+Keep the input below 16 MiB; the resulting pack must fit the existing 4 MiB,
+10,000-node and 20,000-road limits. Input is additionally capped at 50,000 node
+elements. The importer preserves shared OSM vertices,
+way shape and supported one-way directions; it includes motor-vehicle road classes
+from motorway through service and corresponding link roads. Non-drivable classes and
+roads restricted to non-car traffic are excluded. The most specific OSM access tag
+(`motorcar`, then `motor_vehicle`, `vehicle`, `access`) controls inclusion; only `yes`,
+`designated` and `permissive` are accepted. Vehicle-specific one-way tags override
+generic direction. Unsupported conditional, directional-access, or reversible rules
+are refused, not guessed. An Overpass response with a `remark`
+is refused as potentially partial. The selected directed graph must be
+strongly connected. If the extract is disconnected, the default is to refuse it;
+`--largest-component` explicitly keeps the largest strongly connected component and
+reports the number of routable nodes and road segments discarded. This can omit large
+parts of a city, so inspect the result before using it. Conversion of the same input
+is byte-stable independent of element ordering. Existing outputs are never replaced.
+More than 20,000 selected input road segments is refused before graph selection, even
+with `--largest-component`; this protects memory and prevents implicit truncation.
+
+Imported packs contain `ODbL-1.0`, `© OpenStreetMap contributors`, and the OSM copyright
+URL; tags or contributor contact details are not copied into the pack. Importing road
+geometry does **not** make this a real traffic or population model. OSM turn restrictions,
+time-dependent access, speed limits, intersections without shared nodes, traffic,
+transit and land use are not modeled. A legal driving route is not guaranteed. The
+current city pilot is a spatial preview, not a routing/navigation product.
+The importer's `pack_sha256` is the canonical city-pack model fingerprint used by the
+viewer API; it does not include the output file's trailing newline.
+
+You can still author a pack directly:
 
 ```bash
 uv run adlife city --pack path/to/city.json --agents 30 --days 7 --seed 42
@@ -47,11 +95,11 @@ is refused before startup. Date-line crossings are also refused because the pilo
 flat canvas cannot draw them faithfully. Input order does not affect the pack hash or trace.
 
 OpenStreetMap data is available under the [ODbL](https://www.openstreetmap.org/copyright).
-If an OSM extract is converted to a city pack, preserve its license and display
-`© OpenStreetMap contributors` as attribution, with `source_url` linking to its
-copyright page. Do not copy Google Maps or unlicensed map content. This release has
-no automatic city search, OSM downloader or converter; data acquisition and license
-compliance remain the operator's responsibility. No public map-tile service is used.
+The importer preserves its license and displays `© OpenStreetMap contributors` as
+attribution, with `source_url` linking to the copyright page. Do not copy Google Maps
+or unlicensed map content. There is no automatic city search or downloader; data
+acquisition and license compliance remain the operator's responsibility. No public
+map-tile service is used.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
