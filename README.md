@@ -230,6 +230,8 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command, flag, exit code, and the output contract |
 | [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, auditable events, the tick, artifacts |
 | [docs/city-pilot.md](docs/city-pilot.md) | Street-pack format, city viewer, and mobility model boundaries |
+| [Production city platform design](docs/superpowers/specs/2026-09-28-production-city-platform-design.md) | Target architecture, scientific/data-rights boundaries, and release profiles — proposed, not shipped |
+| [Production implementation roadmap](docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md) | Sequenced work packages, acceptance tests, and agent handoff through production readiness |
 | [docs/reproducibility.md](docs/reproducibility.md) | What a seed guarantees and how to reproduce any run |
 | [docs/defense-readiness.md](docs/defense-readiness.md) | Audited defense contracts, regressions, and verification evidence |
 | [docs/methodology/odd-protocol.md](docs/methodology/odd-protocol.md) | The ODD protocol: entities, scales, scheduling, submodels, formulas |
@@ -289,8 +291,10 @@ software produces.
    runners.
 3. **Production-track city product on `main`** — mature the current opt-in pilot with
    licensed city ingestion, geography-aware campaign events, persisted replayable traces,
-   authenticated administration and protected provider configuration. These are not
-   shipped capabilities yet. The `defense-ready` branch retains the research snapshot.
+   authenticated administration and protected provider configuration. The
+   [production roadmap](docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md)
+   separates these unshipped capabilities into testable milestones and a distinct
+   external-validation gate. The `defense-ready` branch retains the research snapshot.
 
 ---
 
