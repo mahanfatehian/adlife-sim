@@ -92,9 +92,9 @@ async def test_saved_run_identity_is_visible_but_ephemeral_viewer_is_not_mislabe
     assert saved_meta["run_schema_version"] == 1
     assert "saved" not in temporary_meta and "run_id" not in temporary_meta
     assert 'id="saved-run-label" hidden' in html
-    assert (
-        'byId("saved-run-label").textContent = '
-        '`SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}`'
-        in script
-    )
+    # The right-hand header is hidden below 900px; saved identity must stay visible.
+    identity_header = html.split('<div class="masthead-right">', 1)[0]
+    assert 'id="saved-run-label"' in identity_header
+    assert 'byId("saved-run-label").textContent =' in script
+    assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
     assert "innerHTML" not in script

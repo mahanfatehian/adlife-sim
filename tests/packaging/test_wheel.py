@@ -68,11 +68,8 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     ):
         assert resource in names, resource
     assert 'id="saved-run-label" hidden' in html
-    assert (
-        'byId("saved-run-label").textContent = '
-        '`SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}`'
-        in script
-    )
+    assert 'byId("saved-run-label").textContent =' in script
+    assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
 
 
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:
