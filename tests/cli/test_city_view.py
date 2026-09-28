@@ -19,6 +19,9 @@ async def test_city_view_loads_saved_run_before_binding_and_serves_exact_core_fr
     stored = create_city_run(
         load_pack(pack_data()), root=tmp_path, run_id="saved-study", seed=42, agent_count=2, days=1
     )
+    before = {
+        path.name: path.read_bytes() for path in stored.directory.rglob("*") if path.is_file()
+    }
     calls: list[tuple[FastAPI, dict[str, object]]] = []
 
     def fake_run(application: FastAPI, **kwargs: object) -> None:
@@ -42,6 +45,9 @@ async def test_city_view_loads_saved_run_before_binding_and_serves_exact_core_fr
     assert frame.json() == stored.mobility.frame_document(480)
     assert other.status_code == 404
     assert path.json() == frame.json()
+    assert before == {
+        path.name: path.read_bytes() for path in stored.directory.rglob("*") if path.is_file()
+    }
 
 
 def test_city_view_refuses_corruption_before_server_starts(

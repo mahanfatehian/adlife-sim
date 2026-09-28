@@ -47,7 +47,8 @@ def _canonical_bytes(value: CityPack | CityRunManifest | dict[str, object]) -> b
 
 def _write_new(path: Path, contents: bytes) -> None:
     with path.open("xb") as target:
-        target.write(contents)
+        if target.write(contents) != len(contents):
+            raise OSError("short city run artifact write")
         target.flush()
         os.fsync(target.fileno())
 
@@ -132,11 +133,23 @@ class CityRunStore:
         try:
             inputs = directory / "inputs"
             inputs.mkdir()
-            _write_new(inputs / "city.json", city_bytes)
-            _write_new(inputs / "agents.json", agents_bytes)
+            for path, contents, label in (
+                (inputs / "city.json", city_bytes, "city input"),
+                (inputs / "agents.json", agents_bytes, "agent assignments"),
+            ):
+                _write_new(path, contents)
+                if self._read_document(path, limit=len(contents), label=label) != contents:
+                    raise StorageError("city run staged input did not match its expected bytes")
             temporary = directory / ".run.json.tmp"
             try:
                 _write_new(temporary, manifest_bytes)
+                if (
+                    self._read_document(
+                        temporary, limit=len(manifest_bytes), label="staged manifest"
+                    )
+                    != manifest_bytes
+                ):
+                    raise StorageError("city run staged manifest did not match its expected bytes")
                 os.replace(temporary, directory / "run.json")
             finally:
                 temporary.unlink(missing_ok=True)

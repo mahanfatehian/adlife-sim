@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from adlife import __version__
+from adlife.city import run_store as city_store_module
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.core.domain.city_run import CityRunManifest
 from adlife.core.domain.serialization import canonical_json
@@ -174,6 +175,17 @@ def test_malformed_or_incompatible_manifest_is_refused(tmp_path: Path, document:
         store.load("sample-run")
 
 
+@pytest.mark.parametrize("artifact", ["inputs/city.json", "inputs/agents.json"])
+def test_truncated_frozen_input_is_refused(tmp_path: Path, artifact: str) -> None:
+    manifest, mobility = specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(manifest, mobility.pack, mobility.agents)
+    (directory / artifact).write_bytes(b"{")
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("sample-run")
+
+
 def test_failed_final_publication_is_not_loadable_or_reusable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -195,6 +207,32 @@ def test_failed_final_publication_is_not_loadable_or_reusable(
         store.load("sample-run")
     with pytest.raises(DuplicateRun):
         store.save(manifest, mobility.pack, mobility.agents)
+
+
+@pytest.mark.parametrize("short_file", ["city.json", "agents.json", ".run.json.tmp"])
+def test_short_write_cannot_publish_a_completed_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, short_file: str
+) -> None:
+    manifest, mobility = specimen()
+    store = CityRunStore(tmp_path)
+    original_write = city_store_module._write_new
+
+    def short_write(path: Path, contents: bytes) -> None:
+        if path.name == short_file:
+            with path.open("xb") as target:
+                target.write(contents[:-1])
+        else:
+            original_write(path, contents)
+
+    monkeypatch.setattr(city_store_module, "_write_new", short_write)
+    with pytest.raises(StorageError):
+        store.save(manifest, mobility.pack, mobility.agents)
+
+    directory = tmp_path / "city-runs" / "sample-run"
+    assert not (directory / "run.json").exists()
+    assert not (directory / ".run.json.tmp").exists()
+    with pytest.raises(CorruptRunArtifact):
+        store.load("sample-run")
 
 
 def test_run_location_cannot_follow_a_symlink_outside_the_root(tmp_path: Path) -> None:
