@@ -116,10 +116,32 @@ Each minute's position is interpolated along the selected directed road segments
 none is an observed trajectory. The API reports city-pack SHA-256, seed, agent count,
 days and model identifier for an exact-input trace under the same implementation and
 compatible runtime. Cross-platform bitwise identity of floating-point interpolation
-is not asserted. It does **not** persist an
-event-sourced city run or use the campaign replay command.
+is not asserted. The ephemeral `city` command does **not** persist a run or use the
+campaign replay command.
 
-This is a first product-track slice. Authentication, provider/OAuth settings,
-geographic ad placements, campaign decisions, saved/replayable city runs, traffic
-data and population calibration are not implemented. Adding MBTI labels without
+For a saved, replayable **mobility-only** run, use a local pack (including the bundled
+fictional `src/adlife/city/demo_city.json` in a source checkout):
+
+```bash
+uv run adlife city-run city.json --output-root ./city-output --run-id study-42 --agents 20 --days 3 --seed 42
+uv run adlife city-replay ./city-output study-42
+uv run adlife city-view ./city-output study-42
+```
+
+`city-run` reserves a new ID and freezes the validated pack, generated fictional
+home/work/leisure assignments, seed, model/runtime identity, and hashes of every
+minute's normalized positions. Saved runs are limited to 30 agents and seven days;
+the ephemeral preview retains its wider bounds. `city-replay` refuses a changed,
+missing, incompatible, or partial artifact and never repairs or mutates the source.
+`city-view` validates the full trace before opening a loopback-only viewer; its HTTP
+API has no path or run-selection endpoint. The header shows the saved ID and schema
+version. A crash during publication can leave an incomplete, reserved run directory:
+inspect it and choose a new ID; no command overwrites it silently. Integrity hashes
+detect accidental or adversarial edits to individual files but do not authenticate
+against an owner who rewrites the entire artifact consistently.
+
+This is an early product-track slice. Authentication, provider/OAuth settings,
+geographic ad placements, campaign decisions, traffic data and population
+calibration are not implemented. Saved city runs are mobility traces, not
+geographic advertising studies. Adding MBTI labels without
 evidence would not make behavior realistic and is deliberately deferred.

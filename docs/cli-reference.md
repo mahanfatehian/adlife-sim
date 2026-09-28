@@ -80,6 +80,15 @@ is not cryptographic authentication against an owner rewriting all artifact file
 Saved city runs are not zone advertising runs and do not claim measured traffic,
 real-person behavior, or geographic campaign effects.
 
+## `adlife city-view ROOT ID [--port N]`
+
+Open a **validated saved** city mobility run in the same read-only browser timeline
+at `http://127.0.0.1:8765` (loopback only). The run is fully verified before the
+server binds; a corrupt or partial run exits 4. The HTTP API cannot select another
+run or open a filesystem path. The header displays the saved run ID and artifact
+schema version. `--port` accepts 1–65535. Like `adlife city`, this interactive
+command accepts human output mode only and does not launch a browser automatically.
+
 ## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--largest-component]`
 
 Convert a locally supplied, complete OpenStreetMap Overpass JSON street extract into

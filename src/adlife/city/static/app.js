@@ -220,6 +220,10 @@ async function boot() {
     const [meta, city, agents] = await Promise.all([fetchJson("/api/meta"), fetchJson("/api/city"), fetchJson("/api/agents")]);
     state.meta = meta; state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
     byId("city-name").textContent = meta.city_name;
+    if (meta.saved === true && typeof meta.run_id === "string") {
+      byId("saved-run-label").textContent = `SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}`;
+      byId("saved-run-label").hidden = false;
+    }
     byId("map-title").textContent = meta.city_name;
     byId("agent-count").textContent = String(meta.agent_count).padStart(2, "0");
     byId("road-count").textContent = String(city.roads.length).padStart(2, "0");

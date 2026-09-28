@@ -23,6 +23,7 @@ from adlife.cli.commands.city import command as city_command
 from adlife.cli.commands.city_import import command as city_import_command
 from adlife.cli.commands.city_replay import command as city_replay_command
 from adlife.cli.commands.city_run import command as city_run_command
+from adlife.cli.commands.city_view import command as city_view_command
 from adlife.cli.commands.compare import command as compare_command
 from adlife.cli.commands.demo import command as demo_command
 from adlife.cli.commands.doctor import command as doctor_command
@@ -97,6 +98,7 @@ app.command("city")(city_command)
 app.command("city-import")(city_import_command)
 app.command("city-run")(city_run_command)
 app.command("city-replay")(city_replay_command)
+app.command("city-view")(city_view_command)
 
 
 def version_callback(value: bool) -> None:

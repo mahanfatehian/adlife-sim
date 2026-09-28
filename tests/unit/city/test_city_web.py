@@ -71,3 +71,30 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert "http://" not in html.text and "https://" not in html.text
     assert "textContent" in js.text
     assert "Content-Security-Policy" in html.headers
+
+
+@pytest.mark.asyncio
+async def test_saved_run_identity_is_visible_but_ephemeral_viewer_is_not_mislabeled() -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=2, days=1)
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_city_app(simulation, run_id="saved-study")),
+            base_url="http://city.test",
+        ) as saved,
+        client() as ephemeral,
+    ):
+        saved_meta = (await saved.get("/api/meta")).json()
+        temporary_meta = (await ephemeral.get("/api/meta")).json()
+        html = (await saved.get("/")).text
+        script = (await saved.get("/static/app.js")).text
+    assert saved_meta["saved"] is True
+    assert saved_meta["run_id"] == "saved-study"
+    assert saved_meta["run_schema_version"] == 1
+    assert "saved" not in temporary_meta and "run_id" not in temporary_meta
+    assert 'id="saved-run-label" hidden' in html
+    assert (
+        'byId("saved-run-label").textContent = '
+        '`SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}`'
+        in script
+    )
+    assert "innerHTML" not in script

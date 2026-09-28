@@ -20,7 +20,7 @@ _CSP = (
 )
 
 
-def create_city_app(simulation: CityMobility) -> FastAPI:
+def create_city_app(simulation: CityMobility, *, run_id: str | None = None) -> FastAPI:
     """Serve only this loaded immutable city and its derived, deterministic frames."""
     app = FastAPI(
         title="AdLife city mobility pilot",
@@ -50,7 +50,12 @@ def create_city_app(simulation: CityMobility) -> FastAPI:
 
     @app.get("/api/meta")
     def metadata() -> dict[str, object]:
-        return simulation.metadata()
+        document = simulation.metadata()
+        if run_id is not None:
+            document["saved"] = True
+            document["run_id"] = run_id
+            document["run_schema_version"] = 1
+        return document
 
     @app.get("/api/city")
     def city() -> dict[str, object]:

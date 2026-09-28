@@ -86,7 +86,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Complete command-line interface | Complete |
 | Live terminal user interface | Complete |
 | Self-contained HTML reports | Complete |
-| Opt-in deterministic street-mobility pilot, local web timeline, and offline OSM extract importer | Initial pilot; separate from campaign engine |
+| Opt-in deterministic street-mobility pilot, saved/replayable city traces, local web timeline, and offline OSM extract importer | Initial pilot; separate from campaign engine |
 | Real-city catalog, geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
@@ -142,6 +142,9 @@ uv run adlife run my-study --live        # the four-panel terminal dashboard
 uv run adlife doctor --offline           # installation readiness, zero network
 uv run adlife city                       # local street-mobility pilot at 127.0.0.1:8765
 uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
+uv run adlife city-run city.json --output-root ./city-output --run-id study-42 --agents 20 --days 3
+uv run adlife city-replay ./city-output study-42
+uv run adlife city-view ./city-output study-42
 ```
 
 Campaign and population documents are authored in YAML and validated before use. They are treated as
@@ -162,6 +165,11 @@ Use `--largest-component` only if dropping disconnected road segments is accepta
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
 terminal window for you.
+
+`city-run` freezes a bounded mobility trace with all-minute integrity evidence;
+`city-replay` verifies it without changing source artifacts, and `city-view` opens
+the verified run in the same read-only local timeline. These saved runs remain
+synthetic **mobility-only** studies, not geographic ad campaign runs.
 
 This is a *separate mobility preview*, not a geographic advertising run: it does not
 persist campaign artifacts, simulate calibrated residents or traffic, model billboard

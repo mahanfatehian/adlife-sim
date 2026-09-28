@@ -58,6 +58,8 @@ def test_wheel_carries_report_template_and_stylesheets(built_wheel: Path) -> Non
 def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> None:
     with zipfile.ZipFile(built_wheel) as wheel:
         names = set(wheel.namelist())
+        html = wheel.read("adlife/city/static/index.html").decode("utf-8")
+        script = wheel.read("adlife/city/static/app.js").decode("utf-8")
     for resource in (
         "adlife/city/demo_city.json",
         "adlife/city/static/index.html",
@@ -65,6 +67,12 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
         "adlife/city/static/app.js",
     ):
         assert resource in names, resource
+    assert 'id="saved-run-label" hidden' in html
+    assert (
+        'byId("saved-run-label").textContent = '
+        '`SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}`'
+        in script
+    )
 
 
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:
