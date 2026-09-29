@@ -59,12 +59,18 @@ What this model cannot support. Read alongside the
 
 - **Geographic mobility is a separate pilot.** `adlife city` can show up to 250
   fictional agents for up to 31 days on a local directed road graph. It is not joined
-  to campaign exposures, purchases, social influence, the run store, or replay. Its
-  minute-addressable trace is reproducible from the same city-pack bytes, seed, and
-  parameters, but it is not a persisted campaign artifact. Its home/work/leisure
-  assignments and travel speeds are illustrative, not demographic, traffic, or
-  behavioral measurements. The bundled grid is fictional; a real street extract
-  supplies geography, not real residents or validated effects.
+  to campaign exposures, purchases, or social influence. The bounded `city-run` path
+  can persist a separate mobility-only artifact for up to 30 agents and seven days;
+  `city-replay` verifies every normalized minute-frame digest, and `city-view` observes
+  the validated saved state. These are not campaign-engine run artifacts. The packaged,
+  offline, content-addressed catalog contains only the `fictional-grid-v2` fixture; no
+  real city is catalog-qualified. A local real street extract supplies geography, not
+  real residents, measured traffic, legal navigation routes, or validated effects.
+- **Time-zone metadata is not a civil-time model.** City-pack v2 records an IANA time
+  zone, but the fixed schedule treats day 1 as Monday, has no start date, holidays or
+  daylight-saving transition policy, and uses fixed light/dark hours rather than local
+  sunrise and sunset. A time zone therefore does not make the fixed schedule
+  calendar-accurate.
 
 - **Fresh hybrid calls are not reproducible.** Bounded provider modifiers and social/
   memory inputs can change numeric outcomes, including later rule-derived intention.

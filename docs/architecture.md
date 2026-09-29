@@ -33,14 +33,25 @@ The opt-in `adlife city` path is a separate model under `core/domain/city.py` an
 `core/simulation/city_mobility.py`. It does not modify the campaign engine's frozen
 scenario, 15-minute tick, event store, or replay format. A versioned, immutable local
 road graph is validated and canonicalized before a deterministic, seed-keyed schedule
-uses directed road paths. The FastAPI adapter loads one pack at startup and exposes
-read-only metadata, geometry, fictional agents and minute-addressable frames; the
-vanilla browser client only renders those frames. It binds to loopback, has no HTTP
-input for filesystem paths or secrets, and makes no tile/API calls.
+uses directed road paths. Version 1 remains readable; version 2 preserves road geometry,
+explicit traversal direction, exact bounds, source provenance, an IANA time zone and
+known omissions. The FastAPI adapter loads one pack at startup and exposes read-only
+metadata, geometry, fictional agents and minute-addressable frames; the vanilla browser
+client only renders those frames.
+
+The city adapter owns file and package-resource loading. Its packaged catalog is an
+offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
+matching ID/schema/metadata before selection. The only bundled entry is
+`fictional-grid-v2` with qualification `fictional-fixture`; no real city is represented
+as reviewed. The server binds to loopback, has no HTTP input for filesystem paths or
+secrets, and makes no network request. Catalog selection, import, simulation, replay and
+viewing do not contact a public tile service or geocoder and do not accept an arbitrary
+resource URL.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved **mobility-only** runs now use a separate strict
-`CityRunManifest`, a core full-minute trace digest, and a no-clobber `CityRunStore`.
+misrepresent the science. Saved **mobility-only** runs use separate strict v1/v2
+`CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
+`CityRunStore`.
 `city-run` freezes the pack and generated assignments under `city-runs/<run-id>/`,
 `city-replay` regenerates every minute before reporting equality, and `city-view`
 validates before serving one immutable run. This is not an event-sourced advertising

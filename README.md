@@ -86,8 +86,9 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Complete command-line interface | Complete |
 | Live terminal user interface | Complete |
 | Self-contained HTML reports | Complete |
-| Opt-in deterministic street-mobility pilot, saved/replayable city traces, local web timeline, and offline OSM extract importer | Initial pilot; separate from campaign engine |
-| Real-city catalog, geographic campaign effects, authenticated provider settings | Not implemented |
+| Opt-in deterministic street-mobility pilot, city-pack v2, saved/replayable traces, local web timeline, and offline OSM extract importer | Initial pilot; separate from campaign engine |
+| Verified offline, content-addressed city catalog with one `fictional-fixture` entry | Foundation complete; no real city is qualified |
+| Rights-reviewed real-city entries, geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
 | Package-index publication (PyPI) and public tagged releases | Not performed by this audit |
@@ -141,8 +142,10 @@ uv run adlife compare control treatment  # paired A/B across seeds (common rando
 uv run adlife run my-study --live        # the four-panel terminal dashboard
 uv run adlife doctor --offline           # installation readiness, zero network
 uv run adlife city                       # local street-mobility pilot at 127.0.0.1:8765
+uv run adlife city-catalog list          # packaged catalog; currently fictional only
+uv run adlife city --city-id fictional-grid-v2
 uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
-uv run adlife city-run city.json --output-root ./city-output --run-id study-42 --agents 20 --days 3
+uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42 --agents 20 --days 3
 uv run adlife city-replay ./city-output study-42
 uv run adlife city-view ./city-output study-42
 ```
@@ -159,8 +162,20 @@ server accepts human mode only. See
 `uv run adlife city` opens a loopback-only FastAPI viewer with a **fictional** offline
 grid. It has a day/night timeline, minute-level road-constrained positions, agent
 activities, and visible source attribution. Use `--pack CITY.json` to load a validated,
-locally supplied street graph. `adlife city-import` converts a complete, properly
-licensed local Overpass JSON extract into a validated pack without network access.
+locally supplied street graph. City-pack v2 preserves road geometry, explicit traversal
+direction, source provenance, exact bounds, an IANA time zone, and known omissions.
+`adlife city-import` converts a complete local Overpass JSON extract into a validated
+pack without network access; importing does not establish license or redistribution
+rights.
+
+`adlife city-catalog list` exposes a packaged, offline, content-addressed catalog. Its
+only shipped entry is `fictional-grid-v2`, explicitly classified as
+`fictional-fixture`; selection verifies the immutable pack hash and metadata before use.
+Use `--city-id fictional-grid-v2` with `city` or `city-run`. No command contacts a public
+tile server or geocoder, and a locally imported real-world pack is not automatically
+catalog-qualified. The
+[city-source qualification checklist](docs/data/city-source-qualification.md) defines
+the human rights review required before a real-world entry may ship.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
@@ -238,6 +253,7 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command, flag, exit code, and the output contract |
 | [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, auditable events, the tick, artifacts |
 | [docs/city-pilot.md](docs/city-pilot.md) | Street-pack format, city viewer, and mobility model boundaries |
+| [docs/data/city-source-qualification.md](docs/data/city-source-qualification.md) | Human rights and technical gate for any future real-city catalog entry |
 | [Production city platform design](docs/superpowers/specs/2026-09-28-production-city-platform-design.md) | Target architecture, scientific/data-rights boundaries, and release profiles — proposed, not shipped |
 | [Production implementation roadmap](docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md) | Sequenced work packages, acceptance tests, and agent handoff through production readiness |
 | [docs/reproducibility.md](docs/reproducibility.md) | What a seed guarantees and how to reproduce any run |

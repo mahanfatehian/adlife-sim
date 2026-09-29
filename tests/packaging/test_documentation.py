@@ -129,6 +129,64 @@ def test_model_card_states_external_validity_status() -> None:
     assert "stereotype" in text
 
 
+def test_city_source_qualification_checklist_records_human_decisions() -> None:
+    path = ROOT / "docs" / "data" / "city-source-qualification.md"
+    assert path.is_file(), "city-source qualification checklist is missing"
+    text = path.read_text(encoding="utf-8").lower()
+    for required in (
+        "jurisdiction",
+        "supplier",
+        "source date",
+        "source version",
+        "sha-256",
+        "license",
+        "attribution",
+        "commercial redistribution",
+        "retention",
+        "public tile",
+        "geocoder",
+        "reviewer",
+        "decision",
+        "review date",
+        "expiry",
+        "re-review",
+        "real-city qualification remains pending",
+    ):
+        assert required in text, required
+
+
+def test_city_catalog_public_contract_is_fictional_offline_and_content_addressed() -> None:
+    readme = _read("README.md").lower()
+    cli = _read("docs", "cli-reference.md").lower()
+    architecture = _read("docs", "architecture.md").lower()
+
+    for text in (readme, cli):
+        assert "city-catalog" in text
+        assert "fictional-grid-v2" in text
+        assert "fictional-fixture" in text
+        assert "content-addressed" in text
+        assert "offline" in text
+    assert "public tile" in architecture
+    assert "geocoder" in architecture
+    assert "no network" in architecture
+
+
+def test_city_v2_docs_preserve_map_evidence_without_overstating_time_zone() -> None:
+    city_pilot = _read("docs", "city-pilot.md").lower()
+    model_card = _read("docs", "methodology", "model-card.md").lower()
+    limitations = _read("docs", "methodology", "limitations.md").lower()
+
+    for required in ("road geometry", "direction", "source provenance"):
+        assert required in city_pilot, required
+    assert "odbl" in city_pilot
+    assert "commercial redistribution" in city_pilot
+    assert "recorded rights review" in city_pilot
+    for text in (model_card, limitations):
+        assert "time zone" in text
+        assert "fixed schedule" in text
+        assert "calendar-accurate" in text
+
+
 # ---------------------------------------------------------------------------
 # Governance files
 # ---------------------------------------------------------------------------

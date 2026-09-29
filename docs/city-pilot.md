@@ -6,7 +6,22 @@ packaged HTML, CSS, and JavaScript. It shows synthetic agents on roads, activity
 each minute, a selected agent's planned directed route, an all-day timeline,
 day/night presentation, and visible attribution.
 
-To use a **local, properly licensed** street extract, import a complete local
+The packaged catalog is also offline and content-addressed:
+
+```bash
+uv run adlife city-catalog list
+uv run adlife city-catalog show fictional-grid-v2
+uv run adlife city --city-id fictional-grid-v2
+```
+
+`fictional-grid-v2` is the only shipped catalog entry. Its origin is `fictional` and
+its qualification is `fictional-fixture`; it is not a real city or a rights-review
+claim. Catalog selection verifies the pack's canonical SHA-256 and public metadata
+before use. It reads packaged resources only, makes no network request, and accepts no
+arbitrary resource URL. Running `adlife city` without a selector retains the original
+bundled fictional v1 grid.
+
+To use a **local street extract you are authorized to use**, import a complete local
 OpenStreetMap Overpass JSON document and run:
 
 ```bash
@@ -14,9 +29,9 @@ uv run adlife city-import streets.json --output city.json --city-id my-city --na
 uv run adlife city --pack city.json --agents 30 --days 7 --seed 42
 ```
 
-Schema 1 remains the compatibility default. For explicit road direction, time-zone,
-source provenance, exact bounds, fixed omission disclosures, and stable
-way/end-node-derived road identities, request schema 2:
+Schema 1 remains the compatibility default. V2 preserves road geometry, explicit
+direction, source provenance, exact bounds, an IANA time zone, fixed omission
+disclosures, and stable way/end-node-derived road identities. Request schema 2 with:
 
 ```bash
 uv run adlife city-import streets.json --output city-v2.json \
@@ -133,11 +148,19 @@ attribution, with `source_url` linking to the copyright page. Do not copy Google
 or unlicensed map content. There is no automatic city search or downloader; data
 acquisition and license compliance remain the operator's responsibility. No public
 map-tile service, geocoder, downloader, or arbitrary URL loader is used.
+Importer validation is technical evidence, not permission to distribute a database.
+ODbL/commercial redistribution needs recorded rights review before a real-world pack
+can be marked `rights-reviewed` or bundled. Follow the
+[city-source qualification checklist](data/city-source-qualification.md); this release
+has no rights-reviewed real-city catalog entry.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
 Day 1 is treated as Monday. The UI's light/dark styling switches at fixed 06:00 and
-19:00 clock times; it is not a calculation of local sunrise, sunset, or time zone.
+19:00 clock times; it is not a calculation of local sunrise, sunset, or time zone. An
+IANA time zone is recorded as provenance but does not make the fixed schedule
+calendar-accurate: there is no start date, holiday calendar, daylight-saving policy or
+local solar calculation.
 Routes minimize free-flow travel time using fixed illustrative per-road-kind speeds.
 The speeds are motorway 60 km/h, trunk 48, primary 36, secondary 30, tertiary 24,
 residential 18, service 12, and path 4.8. They are assumptions, not measured speeds.
@@ -152,11 +175,12 @@ compatible runtime. Cross-platform bitwise identity of floating-point interpolat
 is not asserted. The ephemeral `city` command does **not** persist a run or use the
 campaign replay command.
 
-For a saved, replayable **mobility-only** run, use a local pack (including the bundled
-fictional `src/adlife/city/demo_city.json` in a source checkout):
+For a saved, replayable **mobility-only** run, use either a local pack or the verified
+fictional catalog entry:
 
 ```bash
 uv run adlife city-run city.json --output-root ./city-output --run-id study-42 --agents 20 --days 3 --seed 42
+# alternatively: uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42
 uv run adlife city-replay ./city-output study-42
 uv run adlife city-view ./city-output study-42
 ```

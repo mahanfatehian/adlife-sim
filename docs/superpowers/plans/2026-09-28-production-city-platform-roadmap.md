@@ -115,6 +115,16 @@ existing path-boundary tests pass.
 
 **Depends on:** A1 schema contract for run pinning; rights review before distribution.
 
+**Foundation progress (2026-09-29):** City-pack v2, geometry-aware deterministic
+routing, v2 frozen-run replay, bounded local v2 OSM ingestion, and an offline
+content-addressed catalog are implemented. The catalog deliberately contains only the
+`fictional-grid-v2` fixture. B1–B4 remain unchecked because no real-city data-rights
+decision, rights-reviewed pack, or representative permitted-extract benchmark exists;
+the implemented technical foundation is not evidence that those human and empirical
+gates have passed. See the
+[focused implementation plan](2026-09-29-city-pack-v2-catalog-foundation.md) and
+[qualification checklist](../../data/city-source-qualification.md).
+
 - [ ] **B1 — Record the data-product decision.** Document intended jurisdictions,
   city selection criteria, data suppliers, permitted commercial use, ODbL obligations,
   redistribution and retention terms, tile/geocoder service plan, and legal reviewer.

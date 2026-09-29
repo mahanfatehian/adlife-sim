@@ -110,13 +110,23 @@ not cryptographically signed or claimed to be tamper-proof against a malicious o
 
 ## Saved city mobility traces
 
-`adlife city-run PACK --output-root ROOT --run-id ID` writes a distinct artifact at
-`ROOT/city-runs/ID/`, freezing the local city pack, generated fictional assignments,
-seed, duration, model/runtime identity and the SHA-256 digest of **every** normalized
-minute frame in order. `adlife city-replay ROOT ID` validates those inputs and
-regenerates the complete trace without changing source files; a mismatch, partial
-publication or incompatible artifact is refused. `adlife city-view ROOT ID` performs
-the same load verification before opening the read-only local timeline. A digest
-proves equality against that artifact, not authenticity against an owner rewriting
-all files. Identical frames are expected on a compatible implementation/runtime;
-cross-platform bitwise identity of floating-point interpolation is not claimed.
+`adlife city-run PACK --output-root ROOT --run-id ID` or the catalog form
+`adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at
+`ROOT/city-runs/ID/`. Catalog selection is offline and content-addressed: the packaged
+v2 resource's canonical SHA-256 and public metadata are checked before the run starts.
+The only bundled catalog pack is explicitly fictional. A selected pack is then frozen
+inside the run, so replay does not consult the current catalog and cannot drift when a
+catalog is later replaced.
+
+The artifact freezes the city pack (including v2 road geometry, direction, source
+provenance, bounds, time zone and omissions), generated fictional assignments, seed,
+duration, model/runtime identity and the SHA-256 digest of **every** normalized minute
+frame in order. Versioned run manifests pair v1 packs with the v1 mobility model and v2
+packs with the v2 model; incompatible pairings are refused rather than coerced.
+`adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
+without changing source files; a mismatch, partial publication or incompatible artifact
+is refused. `adlife city-view ROOT ID` performs the same load verification before
+opening the read-only local timeline. A digest proves equality against that artifact,
+not authenticity against an owner rewriting all files. Identical frames are expected
+on a compatible implementation/runtime; cross-platform bitwise identity of
+floating-point interpolation is not claimed.

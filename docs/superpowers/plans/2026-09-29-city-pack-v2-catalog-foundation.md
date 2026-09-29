@@ -288,3 +288,37 @@ Expected: all applicable gates pass; environmental skips/warnings are reported e
 git add docs tests/packaging/test_documentation.py
 git commit -m "docs(city): define v2 data qualification contract"
 ```
+
+## Execution record — 2026-09-29
+
+The six-task foundation was implemented on `main` in focused commits beginning with
+`caefbd8` (v2 domain), `b4be697` (geometry-aware mobility), `32b0cc8` (v2 saved runs),
+`36e992c` plus `2ee165a` (bounded ingestion and adversarial access refusal), and
+`f07dbfb` (verified offline catalog). Independent review found and closed strict
+catalog-version, data-origin, review-date, conditional-access, node-barrier,
+resource-bound, surrogate-text, and negative-zero boundary gaps before the final gate.
+
+Final verification on Windows with Python 3.12.11:
+
+- locked environment sync, Ruff formatting/lint and strict mypy passed;
+- full suite: `3314 passed, 13 skipped in 445.11s`;
+- `PYTHONHASHSEED=0`: `3314 passed, 13 skipped in 410.41s`;
+- `PYTHONHASHSEED=12345`: `3314 passed, 13 skipped in 413.69s`;
+- branch coverage: `91.15%` (`3314 passed, 13 skipped`), above the 85% floor;
+- wheel and source distribution built; the exact wheel passed clean-room smoke outside
+  the checkout, including catalog selection, a v2 city run, identical replay, and a
+  4,862,319-byte self-contained report;
+- the available Windows PyInstaller build and exact frozen executable smoke passed;
+- the 30-agent/seven-day rule run completed in 14.60 seconds under the 40-second
+  machine-adjusted ceiling, emitted 5,685 events, used 2 MiB traced peak memory, and
+  produced a 3,629,056-byte database plus 4,862,947-byte report;
+- offline doctor exited 0 with seven of eight checks passing; its only failed check was
+  the environmental Windows `cp1252` stdout encoding warning, with `PYTHONUTF8=1`
+  documented as the remedy;
+- human and JSON headless demos completed offline with 2,042 events, and a fresh v2
+  import/run/replay flow produced 1,440 frames and 2,880 positions with identical
+  trace hashes.
+
+This closes the technical **foundation milestone**, not Package B or production
+readiness. The missing real-city rights decision and representative permitted-data
+benchmark remain explicit roadmap gates.

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **City-pack v2 and offline catalog foundation** — backwards-compatible city packs
+  can now preserve directed road geometry, exact bounds, IANA time-zone metadata,
+  source provenance and known omissions; mobility-only v2 runs freeze those inputs and
+  replay independently of later catalog changes. New `city-catalog list/show` and
+  `--city-id` selectors verify packaged resources by canonical hash. The sole catalog
+  entry is the explicit `fictional-grid-v2` fixture; no real city is claimed qualified.
+- **Bounded local OSM v2 ingestion** — explicit source date/version/time-zone inputs,
+  deterministic source hashing and quality counts, stable segment identities, and
+  refusal of access/turn semantics the model cannot represent. Import and catalog
+  workflows stay offline and do not contact public tiles or geocoders.
 - **Announcement-readiness hardening** — regression coverage for hybrid provider
   identity, non-destructive replay, the cognition fallback across ticks, the CLI
   error boundary, and documentation consistency (tick scale pinned by a doc test).

@@ -6,9 +6,11 @@ trusted. Read this before quoting any number the simulator produces.
 ## Intended use
 
 The opt-in city mobility viewer is a separate prototype, not a spatial extension of
-the advertising results. A licensed street pack can provide real geography, but the
-agents, schedules and speeds remain synthetic and uncalibrated. No campaign or
-provider result is plotted on that map in this release.
+the advertising results. Its packaged, content-addressed catalog currently contains
+only the `fictional-grid-v2` fixture; a rights-reviewed real city has not shipped. A
+street pack acquired under appropriate rights can provide real geography, but the
+agents, schedules and speeds remain synthetic and uncalibrated. No campaign or provider
+result is plotted on that map in this release.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -72,6 +74,15 @@ No built-in real-world consumer data or telemetry. User-supplied campaign/popula
 YAML and optional remote cognition are additional inputs; users must keep those inputs
 fictional. YAML is validated and campaign asset paths are confined to the project.
 Provider usage (request counts, cache hits, failures) is recorded locally per run.
+
+City-pack v2 can preserve real-world road geometry, traversal direction and public
+source provenance, but it contains no real-person trajectories. Its IANA time zone is
+source metadata: it does not make the fixed schedule calendar-accurate. The mobility
+model has no dated calendar, holiday rules, daylight-saving transition policy, local
+sunrise/sunset calculation, measured demand or calibrated traffic. Import validation
+also does not prove license or commercial redistribution rights; those require the
+separate recorded human review described in the
+[city-source qualification checklist](../data/city-source-qualification.md).
 
 ## Metrics
 

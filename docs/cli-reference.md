@@ -46,12 +46,31 @@ Print a JSON validation result and exit 0 when valid; exit 2 with a diagnostic o
 `--verbose` adds validation detail on stderr. YAML documents are bounded to 1 MiB and
 32 nesting levels; aliases, duplicate keys, and custom object tags are refused.
 
-## `adlife city [--pack FILE] [--agents N] [--days N] [--seed N] [--port N]`
+## `adlife city-catalog list [--search TEXT]`
+
+List the packaged, integrity-verified city catalog. Selection is offline and
+content-addressed: every entry pins a v2 resource by canonical SHA-256 and matching
+metadata. The only shipped entry is `fictional-grid-v2`, whose origin is `fictional`
+and whose qualification is `fictional-fixture`; no real city is qualified by this
+release. `--search` applies case-insensitive local token matching to ID, display name,
+provider and dataset. No matches is a successful empty result. JSON mode emits one
+`{"cities": [...]}` document; JSONL emits one entry per line.
+
+## `adlife city-catalog show CITY_ID`
+
+Show one exact catalog record, including hash, schema, qualification, bounds, time
+zone, public source metadata and known omissions. An unknown ID exits 2. A missing,
+malformed, mismatched or hash-invalid packaged catalog resource exits 4. Listing and
+showing the catalog make no network request and accept no URL or arbitrary file path.
+
+## `adlife city [--pack FILE | --city-id ID] [--agents N] [--days N] [--seed N] [--port N]`
 
 Start the read-only geographic mobility pilot at `http://127.0.0.1:8765` (loopback
-only). Without `--pack`, the viewer uses an explicitly fictional, bundled offline
-street grid. With `--pack`, it loads one versioned local city-pack JSON file at startup;
-the HTTP API cannot open paths or change the loaded pack. `--agents` accepts 1–250
+only). Without either selector, the viewer preserves the original explicitly fictional,
+bundled v1 offline grid. `--pack` loads one versioned local city-pack JSON file;
+`--city-id` selects an integrity-verified packaged v2 entry such as
+`fictional-grid-v2`. The selectors are mutually exclusive. The HTTP API cannot open
+paths or change the loaded pack. `--agents` accepts 1–250
 (default 20), `--days` 1–31 (default 7), `--seed` defaults to 42, and `--port` defaults
 to 8765. Invalid packs exit 2 before the server starts. The interactive server accepts
 only the default human output mode. It does not open a browser automatically.
@@ -60,11 +79,13 @@ This command does not run or persist the advertising engine. Its minute-addressa
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
-## `adlife city-run PACK --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
+## `adlife city-run [PACK | --city-id ID] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
 
-Save a deterministic **mobility-only** city run under `ROOT/city-runs/ID`. The pack is
-frozen into the artifact; `--agents` accepts 1–30 (default 20), `--days` 1–7 (default 7),
-and `--seed` defaults to 42. Creating an existing ID exits 3 without overwriting it.
+Save a deterministic **mobility-only** city run under `ROOT/city-runs/ID`. Supply
+exactly one local `PACK` or verified catalog `--city-id`; neither and both exit 2. The
+validated pack is frozen into the artifact, so catalog replacement cannot change
+replay. `--agents` accepts 1–30 (default 20), `--days` 1–7 (default 7), and `--seed`
+defaults to 42. Creating an existing ID exits 3 without overwriting it.
 The command hashes every minute frame and the generated fictional assignments. A
 completed artifact contains `run.json`, `inputs/city.json`, and `inputs/agents.json`.
 Interrupted or failed publication may leave an incomplete, reserved directory; use a
@@ -89,21 +110,26 @@ run or open a filesystem path. The header displays the saved run ID and artifact
 schema version. `--port` accepts 1–65535. Like `adlife city`, this interactive
 command accepts human output mode only and does not launch a browser automatically.
 
-## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--largest-component]`
+## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--schema-version 1|2] [--largest-component]`
 
 Convert a locally supplied, complete OpenStreetMap Overpass JSON street extract into
-a validated city pack. This command performs no network request. Input is limited to
-16 MiB; output follows the city-pack 4 MiB / 10,000-node / 20,000-road limits.
-More than 50,000 input node elements or 20,000 selected input segments is refused
-before graph selection.
+a validated city pack. This command performs no network request. Schema 1 remains the
+compatibility default. Schema 2 additionally requires `--time-zone`, `--source-date`
+and `--source-version`; it preserves explicit direction, complete way geometry through
+successive nodes, exact bounds, normalized source provenance and declared omissions.
+Input is limited to 16 MiB; output follows the city-pack 4 MiB / 10,000-node /
+20,000-road limits. More than 100,000 total elements, 50,000 node elements, 50,000 way
+elements, 100,000 way-member references or 20,000 selected road segments is refused.
 The destination must be new; an existing file or symlink exits 3 and is not modified.
 Malformed, incomplete, unsupported or disconnected geometry exits 2 without creating
 an output. `--largest-component` explicitly discards all but the largest strongly
 connected directed road component, with deterministic tie breaking and reported loss
 counts. JSON mode returns the canonical city-pack fingerprint (`pack_sha256`, excluding
-the file's trailing newline), counts and destination as one document. The
-pack carries OSM ODbL attribution. See [city-pilot.md](city-pilot.md) for supported
-roads and scientific limits.
+the file's trailing newline), counts and destination as one document; v2 also returns
+bounded quality counts. The pack carries OSM ODbL attribution, but validation or import
+does not grant commercial redistribution rights and does not add a real-world pack to
+the catalog. See [city-pilot.md](city-pilot.md) for supported roads, rights review and
+scientific limits.
 
 ## `adlife population generate [--size N] [--seed N] [--locale LC] [--out FILE] [--as FORMAT]`
 
