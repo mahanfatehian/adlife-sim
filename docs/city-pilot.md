@@ -43,15 +43,17 @@ out body;
 ```
 
 Keep the input below 16 MiB; the resulting pack must fit the existing 4 MiB,
-10,000-node and 20,000-road limits. Input is additionally capped at 50,000 node
-elements and 50,000 way elements. The importer preserves shared OSM vertices,
+10,000-node and 20,000-road limits. Input is additionally capped at 100,000 total
+elements, 50,000 node elements, 50,000 way elements, and 100,000 way-member
+references. The importer preserves shared OSM vertices,
 way shape and supported one-way directions; it includes motor-vehicle road classes
 from motorway through service and corresponding link roads. Non-drivable classes and
 roads restricted to non-car traffic are excluded. The most specific OSM access tag
 (`motorcar`, then `motor_vehicle`, `vehicle`, `access`) controls inclusion; only `yes`,
 `designated` and `permissive` are accepted. Vehicle-specific one-way tags override
 generic direction. Unsupported conditional, directional-access, or reversible rules
-are refused, not guessed. Schema 2 also refuses an extract containing an OSM turn
+are refused, not guessed. Node-level barriers or motor-vehicle access tags are also
+refused because the graph cannot represent them safely. Schema 2 refuses an extract containing an OSM turn
 restriction relation rather than silently losing its meaning. An Overpass response with a `remark`
 is refused as potentially partial. The selected directed graph must be
 strongly connected. If the extract is disconnected, the default is to refuse it;

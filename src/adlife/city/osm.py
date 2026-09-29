@@ -25,6 +25,8 @@ from adlife.core.domain.city import (
 from adlife.core.domain.serialization import canonical_json
 
 MAX_OSM_INPUT_BYTES = 16_777_216
+MAX_OSM_ELEMENTS = 100_000
+MAX_OSM_MEMBER_REFERENCES = 100_000
 MAX_OSM_NODE_ELEMENTS = 50_000
 MAX_OSM_WAY_ELEMENTS = 50_000
 MAX_OSM_ROAD_SEGMENTS = 20_000
@@ -40,6 +42,8 @@ _ROAD_CLASSES: dict[str, RoadKind] = {
 }
 _ROAD_CLASSES.update({f"{kind}_link": value for kind, value in tuple(_ROAD_CLASSES.items())})
 _ALLOWED_CAR_ACCESS = {"yes", "designated", "permissive"}
+_ACCESS_NAMESPACES = frozenset({"access", "vehicle", "motor_vehicle", "motorcar"})
+_RESTRICTION_NAMESPACES = _ACCESS_NAMESPACES | {"oneway"}
 _SOURCE_TAG_KEYS = {
     "access",
     "highway",
@@ -113,19 +117,41 @@ def _coordinate(value: object, *, latitude: bool) -> float:
     limit = 90 if latitude else 180
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise OSMImportError("OSM node has an invalid coordinate")
-    if not -limit <= value <= limit or not math.isfinite(value):
+    try:
+        number = float(value)
+    except OverflowError:
+        raise OSMImportError("OSM node has an invalid coordinate") from None
+    if not -limit <= number <= limit or not math.isfinite(number):
         raise OSMImportError("OSM node has an invalid coordinate")
-    return float(value)
+    return 0.0 if number == 0 else number
+
+
+def _tags(value: object, *, element: str) -> dict[str, str]:
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str)
+        or not isinstance(item, str)
+        or any(0xD800 <= ord(character) <= 0xDFFF for character in key + item)
+        for key, item in value.items()
+    ):
+        raise OSMImportError(f"OSM {element} has invalid tags")
+    return value
+
+
+def _refuse_node_semantics(tags: dict[str, str]) -> None:
+    if any(key == "barrier" or key.split(":", 1)[0] in _ACCESS_NAMESPACES for key in tags):
+        raise OSMImportError("OSM node has node-level access semantics this importer cannot model")
 
 
 def _direction(tags: dict[str, str], highway: str) -> tuple[bool, bool]:
-    restrictions = ("oneway", "access", "vehicle", "motor_vehicle", "motorcar")
-    if any(f"{mode}:conditional" in tags for mode in restrictions):
+    parsed_keys = tuple(key.split(":") for key in tags)
+    if any(
+        parts[0] in _RESTRICTION_NAMESPACES and parts[-1] == "conditional" for parts in parsed_keys
+    ):
         raise OSMImportError("OSM road has a conditional restriction this importer cannot model")
     if any(
-        f"{mode}:{direction}" in tags
-        for mode in ("access", "vehicle", "motor_vehicle", "motorcar")
-        for direction in ("forward", "backward")
+        parts[0] in _ACCESS_NAMESPACES
+        and any(part in {"forward", "backward"} for part in parts[1:])
+        for parts in parsed_keys
     ):
         raise OSMImportError("OSM road has directional access this importer cannot model")
     value = next(
@@ -288,6 +314,8 @@ def convert_overpass_json(
         raise OSMImportError("OSM JSON needs an elements array")
     if "remark" in document:
         raise OSMImportError("OSM response reports an incomplete or failed query")
+    if len(document["elements"]) > MAX_OSM_ELEMENTS:
+        raise OSMImportError("OSM extract has too many elements")
     nodes: dict[int, CityNode] = {}
     ways: dict[int, dict[str, Any]] = {}
     for element in document["elements"]:
@@ -306,6 +334,7 @@ def convert_overpass_json(
                 raise OSMImportError("OSM extract has too many node elements")
             latitude = _coordinate(element.get("lat"), latitude=True)
             longitude = _coordinate(element.get("lon"), latitude=False)
+            _refuse_node_semantics(_tags(element.get("tags", {}), element="node"))
             nodes[identifier] = CityNode(
                 node_id=f"osm-node-{identifier}", latitude=latitude, longitude=longitude
             )
@@ -317,18 +346,18 @@ def convert_overpass_json(
             ways[identifier] = element
     roads: list[CityRoad] = []
     used_nodes: set[int] = set()
+    member_references = 0
     for way_id, way in sorted(ways.items()):
         members = way.get("nodes")
         if not isinstance(members, list) or len(members) < 2:
             raise OSMImportError("OSM road needs at least two member nodes")
+        if len(members) > MAX_OSM_MEMBER_REFERENCES - member_references:
+            raise OSMImportError("OSM extract has too many way member references")
+        member_references += len(members)
         node_ids = [_positive_id(member) for member in members]
         if any(member not in nodes for member in node_ids):
             raise OSMImportError("OSM road references a missing node")
-        tags = way.get("tags", {})
-        if not isinstance(tags, dict) or any(
-            not isinstance(key, str) or not isinstance(value, str) for key, value in tags.items()
-        ):
-            raise OSMImportError("OSM way has invalid tags")
+        tags = _tags(way.get("tags", {}), element="way")
         highway = tags.get("highway")
         if highway not in _ROAD_CLASSES:
             continue
@@ -418,6 +447,8 @@ def convert_overpass_json_v2(
         raise OSMImportError("OSM JSON needs an elements array")
     if "remark" in document:
         raise OSMImportError("OSM response reports an incomplete or failed query")
+    if len(document["elements"]) > MAX_OSM_ELEMENTS:
+        raise OSMImportError("OSM extract has too many elements")
 
     nodes: dict[int, CityNode] = {}
     ways: dict[int, dict[str, Any]] = {}
@@ -428,12 +459,7 @@ def convert_overpass_json_v2(
         if not isinstance(kind, str):
             raise OSMImportError("OSM element has an invalid type")
         if kind == "relation":
-            tags = element.get("tags", {})
-            if not isinstance(tags, dict) or any(
-                not isinstance(key, str) or not isinstance(value, str)
-                for key, value in tags.items()
-            ):
-                raise OSMImportError("OSM relation has invalid tags")
+            tags = _tags(element.get("tags", {}), element="relation")
             if _is_turn_restriction(tags):
                 raise OSMImportError(
                     "OSM extract has a turn restriction this importer cannot model"
@@ -449,6 +475,7 @@ def convert_overpass_json_v2(
                 raise OSMImportError("OSM extract has too many node elements")
             latitude = _coordinate(element.get("lat"), latitude=True)
             longitude = _coordinate(element.get("lon"), latitude=False)
+            _refuse_node_semantics(_tags(element.get("tags", {}), element="node"))
             nodes[identifier] = CityNode(
                 node_id=f"osm-node-{identifier}", latitude=latitude, longitude=longitude
             )
@@ -465,18 +492,18 @@ def convert_overpass_json_v2(
     source_node_ids: set[int] = set()
     eligible_ways = 0
     road_ids: set[str] = set()
+    member_references = 0
     for way_id, way in sorted(ways.items()):
         members = way.get("nodes")
         if not isinstance(members, list) or len(members) < 2:
             raise OSMImportError("OSM road needs at least two member nodes")
+        if len(members) > MAX_OSM_MEMBER_REFERENCES - member_references:
+            raise OSMImportError("OSM extract has too many way member references")
+        member_references += len(members)
         node_ids = [_positive_id(member) for member in members]
         if any(member not in nodes for member in node_ids):
             raise OSMImportError("OSM road references a missing node")
-        tags = way.get("tags", {})
-        if not isinstance(tags, dict) or any(
-            not isinstance(key, str) or not isinstance(value, str) for key, value in tags.items()
-        ):
-            raise OSMImportError("OSM way has invalid tags")
+        tags = _tags(way.get("tags", {}), element="way")
         highway = tags.get("highway")
         if highway not in _ROAD_CLASSES:
             continue
@@ -595,7 +622,9 @@ def convert_overpass_json_v2(
 
 
 __all__ = [
+    "MAX_OSM_ELEMENTS",
     "MAX_OSM_INPUT_BYTES",
+    "MAX_OSM_MEMBER_REFERENCES",
     "MAX_OSM_NODE_ELEMENTS",
     "MAX_OSM_ROAD_SEGMENTS",
     "MAX_OSM_WAY_ELEMENTS",

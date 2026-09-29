@@ -265,6 +265,39 @@ def test_unrelated_tag_namespace_is_not_misread_as_motorcar_access() -> None:
     assert len(convert_v2(document).pack.roads) == 3
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "motorcar:forward:conditional",
+        "access:backward:conditional",
+        "oneway:motor_vehicle:conditional",
+    ],
+)
+def test_nested_conditional_vehicle_rules_are_refused(key: str) -> None:
+    document = extract()
+    document["elements"][3]["tags"][key] = "no @ (Mo-Fr 08:00-18:00)"
+    with pytest.raises(OSMImportError, match="conditional"):
+        convert(document)
+    with pytest.raises(OSMImportError, match="conditional"):
+        convert_v2(document)
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        {"barrier": "bollard", "motor_vehicle": "no"},
+        {"access:conditional": "no @ (08:00-09:00)"},
+    ],
+)
+def test_node_level_access_semantics_are_refused(tags: dict[str, str]) -> None:
+    document = extract()
+    document["elements"][1]["tags"] = tags
+    with pytest.raises(OSMImportError, match="node-level"):
+        convert(document)
+    with pytest.raises(OSMImportError, match="node-level"):
+        convert_v2(document)
+
+
 def test_segment_limit_is_checked_before_expanding_a_way() -> None:
     document = extract()
     document["elements"][3]["nodes"] = [10, 11] * 10_001
@@ -465,3 +498,42 @@ def test_way_count_is_bounded_before_conversion(
         convert(extract())
     with pytest.raises(OSMImportError, match="too many way elements"):
         convert_v2(extract())
+
+
+def test_total_elements_and_way_member_references_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(osm_module, "MAX_OSM_ELEMENTS", 5, raising=False)
+    with pytest.raises(OSMImportError, match="too many elements"):
+        convert(extract())
+    with pytest.raises(OSMImportError, match="too many elements"):
+        convert_v2(extract())
+
+    monkeypatch.setattr(osm_module, "MAX_OSM_ELEMENTS", 100)
+    monkeypatch.setattr(osm_module, "MAX_OSM_MEMBER_REFERENCES", 6, raising=False)
+    with pytest.raises(OSMImportError, match="member references"):
+        convert(extract())
+    with pytest.raises(OSMImportError, match="member references"):
+        convert_v2(extract())
+
+
+def test_surrogate_tag_text_is_refused_and_negative_zero_is_normalized() -> None:
+    invalid = extract()
+    invalid["elements"][3]["tags"]["junction"] = "\ud800"
+    with pytest.raises(OSMImportError, match="tags"):
+        convert(invalid)
+    with pytest.raises(OSMImportError, match="tags"):
+        convert_v2(invalid)
+
+    baseline_v1 = convert(extract()).pack
+    baseline_v2 = convert_v2(extract()).pack
+    signed = extract()
+    signed["elements"][0]["lat"] = -0.0
+    signed["elements"][0]["lon"] = -0.0
+    baseline = extract()
+    baseline["elements"][0]["lat"] = 0.0
+    baseline["elements"][0]["lon"] = 0.0
+    assert convert(signed).pack.fingerprint == convert(baseline).pack.fingerprint
+    assert convert_v2(signed).pack.fingerprint == convert_v2(baseline).pack.fingerprint
+    assert baseline_v1.fingerprint != convert(baseline).pack.fingerprint
+    assert baseline_v2.fingerprint != convert_v2(baseline).pack.fingerprint
