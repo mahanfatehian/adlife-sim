@@ -1,9 +1,12 @@
 import json
+from dataclasses import asdict
 from typing import Any
 
 import pytest
 
+from adlife.city import osm as osm_module
 from adlife.city.osm import OSMImportError, convert_overpass_json
+from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.serialization import canonical_json
 
 
@@ -27,6 +30,23 @@ def convert(document: dict[str, Any], **kwargs: Any) -> Any:
     )
 
 
+def convert_v2(document: dict[str, Any], **kwargs: Any) -> Any:
+    converter = getattr(osm_module, "convert_overpass_json_v2", None)
+    assert converter is not None, "v2 OSM conversion is not implemented"
+    options = {
+        "time_zone": "Asia/Tehran",
+        "source_date": "2026-09-29",
+        "source_version": "local-extract-1",
+        **kwargs,
+    }
+    return converter(
+        json.dumps(document).encode("utf-8"),
+        city_id="tehran-pilot",
+        name="تهران",
+        **options,
+    )
+
+
 def test_import_preserves_geometry_with_osm_license_and_ignores_private_tags() -> None:
     document = extract()
     elements = document["elements"]
@@ -34,6 +54,7 @@ def test_import_preserves_geometry_with_osm_license_and_ignores_private_tags() -
     elements[3]["tags"]["contact:email"] = "person@example.org"
     result = convert(document)
     pack = result.pack
+    assert pack.fingerprint == "1fb3858d19406651a0c9718b62cb085154b9ca28514dfed0d9ea949fa9bc1323"
     assert pack.city_id == "tehran-pilot"
     assert pack.name == "تهران"
     assert str(pack.source_url) == "https://www.openstreetmap.org/copyright"
@@ -219,6 +240,31 @@ def test_directional_car_access_is_refused_instead_of_imported_as_two_way() -> N
         convert(document)
 
 
+@pytest.mark.parametrize(
+    "restriction,message",
+    [
+        ({"access:conditional": "yes @ (08:00-09:00)"}, "conditional"),
+        ({"motorcar:backward": "yes"}, "directional"),
+    ],
+)
+def test_unsupported_rules_are_refused_before_access_exclusion(
+    restriction: dict[str, str], message: str
+) -> None:
+    document = extract()
+    document["elements"][3]["tags"].update(access="no", **restriction)
+    with pytest.raises(OSMImportError, match=message):
+        convert(document)
+    with pytest.raises(OSMImportError, match=message):
+        convert_v2(document)
+
+
+def test_unrelated_tag_namespace_is_not_misread_as_motorcar_access() -> None:
+    document = extract()
+    document["elements"][3]["tags"]["motorcaravan:conditional"] = "no @ (08:00-09:00)"
+    assert len(convert(document).pack.roads) == 3
+    assert len(convert_v2(document).pack.roads) == 3
+
+
 def test_segment_limit_is_checked_before_expanding_a_way() -> None:
     document = extract()
     document["elements"][3]["nodes"] = [10, 11] * 10_001
@@ -240,3 +286,182 @@ def test_unused_nodes_are_bounded_before_model_construction() -> None:
     )
     with pytest.raises(OSMImportError, match="too many node elements"):
         convert(document)
+
+
+def test_v2_import_records_exact_provenance_directions_bounds_and_quality() -> None:
+    result = convert_v2(extract())
+    pack = result.pack
+    assert isinstance(pack, CityPackV2)
+    assert pack.fingerprint == "d6f89ebf13502af8d14842c1a9c0e1aa3094a8163d1c17de7faf56994ba129f1"
+    assert pack.schema_version == 2
+    assert pack.time_zone == "Asia/Tehran"
+    assert pack.source.provider == "OpenStreetMap contributors"
+    assert pack.source.dataset == "OpenStreetMap road extract"
+    assert pack.source.version == "local-extract-1"
+    assert pack.source.published_on == "2026-09-29"
+    assert pack.source.source_sha256 == (
+        "131d87d89d11fb4b6f9183c930cc41120470ad18b27e7423dfe79231ce07b71d"
+    )
+    assert str(pack.source.source_url) == "https://www.openstreetmap.org/copyright"
+    assert pack.source.license == "ODbL-1.0"
+    assert pack.source.attribution == "© OpenStreetMap contributors"
+    assert pack.bounds.model_dump() == {
+        "west": 51.0,
+        "south": 35.0,
+        "east": 51.01,
+        "north": 35.01,
+    }
+    assert set(pack.known_omissions) == {
+        "Measured or live traffic and speeds are not represented",
+        "Time-dependent access rules are not represented",
+        "Turn restrictions are not represented",
+    }
+    assert [(road.road_id, road.directions, road.shape) for road in pack.roads] == [
+        ("osm-way-20-10-11", ("forward", "backward"), ()),
+        ("osm-way-20-11-12", ("forward", "backward"), ()),
+        ("osm-way-21-12-10", ("forward", "backward"), ()),
+    ]
+    assert asdict(result.quality) == {
+        "input_nodes": 3,
+        "input_ways": 3,
+        "eligible_ways": 2,
+        "excluded_ways": 1,
+        "retained_nodes": 3,
+        "retained_roads": 3,
+        "dropped_nodes": 0,
+        "dropped_roads": 0,
+    }
+
+
+def test_v2_source_hash_and_output_ignore_order_and_irrelevant_private_tags() -> None:
+    first = extract()
+    second = extract()
+    elements = second["elements"]
+    assert isinstance(elements, list)
+    elements.reverse()
+    way = next(element for element in elements if element.get("id") == 20)
+    way["tags"] = {
+        "contact:email": "private@example.org",
+        **dict(reversed(tuple(way["tags"].items()))),
+    }
+    irrelevant = {
+        "type": "way",
+        "id": 99,
+        "nodes": [10, 11],
+        "tags": {"highway": "footway", "api_key": "topsecret123"},
+    }
+    elements.append(irrelevant)
+    converted_first = convert_v2(first)
+    converted_second = convert_v2(second)
+    assert converted_first.pack.source.source_sha256 == converted_second.pack.source.source_sha256
+    assert canonical_json(converted_first.pack) == canonical_json(converted_second.pack)
+    assert "private@example.org" not in canonical_json(converted_second.pack)
+    assert "topsecret123" not in canonical_json(converted_second.pack)
+
+    changed = extract()
+    changed["elements"][0]["lat"] = 35.001
+    assert (
+        convert_v2(changed).pack.source.source_sha256 != converted_first.pack.source.source_sha256
+    )
+    changed_access = extract()
+    changed_access["elements"][3]["tags"]["motorcar"] = "no"
+    assert (
+        convert_v2(changed_access).pack.source.source_sha256
+        != converted_first.pack.source.source_sha256
+    )
+
+
+def test_v2_segment_identity_survives_an_inserted_earlier_member() -> None:
+    baseline = convert_v2(extract()).pack
+    changed = extract()
+    changed["elements"].append({"type": "node", "id": 9, "lat": 35.002, "lon": 50.999})
+    changed["elements"][3]["nodes"].insert(0, 9)
+    expanded = convert_v2(changed).pack
+    baseline_ids = {road.road_id for road in baseline.roads}
+    expanded_ids = {road.road_id for road in expanded.roads}
+    assert baseline_ids <= expanded_ids
+    assert "osm-way-20-9-10" in expanded_ids
+
+
+def test_v2_reverse_oneway_preserves_physical_endpoint_order() -> None:
+    document = extract()
+    document["elements"][3]["tags"] = {"highway": "motorway", "oneway": "-1"}
+    document["elements"][4]["tags"] = {"highway": "motorway", "oneway": "no"}
+    roads = {road.road_id: road for road in convert_v2(document).pack.roads}
+    reverse = roads["osm-way-20-10-11"]
+    assert (reverse.source_node, reverse.target_node) == ("osm-node-10", "osm-node-11")
+    assert reverse.directions == ("backward",)
+    assert roads["osm-way-21-12-10"].directions == ("forward", "backward")
+
+
+@pytest.mark.parametrize(
+    "mutation,message",
+    [
+        (
+            lambda d: d["elements"].append(
+                {
+                    "type": "relation",
+                    "id": 50,
+                    "members": [],
+                    "tags": {"type": "restriction", "restriction": "no_left_turn"},
+                }
+            ),
+            "turn restriction",
+        ),
+        (
+            lambda d: d["elements"][3]["tags"].update({"access:conditional": "no @ (08:00-09:00)"}),
+            "conditional",
+        ),
+        (
+            lambda d: d["elements"][3]["tags"].update({"motorcar:backward": "no"}),
+            "directional",
+        ),
+    ],
+)
+def test_v2_refuses_road_semantics_it_cannot_represent(mutation: Any, message: str) -> None:
+    document = extract()
+    mutation(document)
+    with pytest.raises(OSMImportError, match=message):
+        convert_v2(document)
+
+
+def test_v2_largest_component_reports_bounded_quality_counts() -> None:
+    document = extract()
+    document["elements"].extend(
+        [
+            {"type": "node", "id": 30, "lat": 35.1, "lon": 51.1},
+            {"type": "node", "id": 31, "lat": 35.1, "lon": 51.11},
+            {"type": "way", "id": 40, "nodes": [30, 31], "tags": {"highway": "residential"}},
+        ]
+    )
+    with pytest.raises(OSMImportError, match="disconnected"):
+        convert_v2(document)
+    result = convert_v2(document, largest_component=True)
+    assert result.quality.retained_nodes == 3
+    assert result.quality.retained_roads == 3
+    assert result.quality.dropped_nodes == 2
+    assert result.quality.dropped_roads == 1
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("time_zone", "Mars/Olympus"),
+        ("source_date", "2026-02-30"),
+        ("source_version", " "),
+    ],
+)
+def test_v2_refuses_invalid_operator_provenance(field: str, value: str) -> None:
+    kwargs = {field: value}
+    with pytest.raises(OSMImportError, match=r"provenance|metadata"):
+        convert_v2(extract(), **kwargs)
+
+
+def test_way_count_is_bounded_before_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(osm_module, "MAX_OSM_WAY_ELEMENTS", 2, raising=False)
+    with pytest.raises(OSMImportError, match="too many way elements"):
+        convert(extract())
+    with pytest.raises(OSMImportError, match="too many way elements"):
+        convert_v2(extract())

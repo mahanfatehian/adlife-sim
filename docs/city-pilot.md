@@ -14,6 +14,22 @@ uv run adlife city-import streets.json --output city.json --city-id my-city --na
 uv run adlife city --pack city.json --agents 30 --days 7 --seed 42
 ```
 
+Schema 1 remains the compatibility default. For explicit road direction, time-zone,
+source provenance, exact bounds, fixed omission disclosures, and stable
+way/end-node-derived road identities, request schema 2:
+
+```bash
+uv run adlife city-import streets.json --output city-v2.json \
+  --city-id my-city --name "My City" --schema-version 2 \
+  --time-zone Asia/Tehran --source-date 2026-09-29 \
+  --source-version local-extract-1
+uv run adlife city --pack city-v2.json --agents 30 --days 7 --seed 42
+```
+
+The date, version, and IANA time-zone values are operator-supplied facts. The importer
+validates their shape but does not independently verify provenance, license rights, or
+fitness for a real-city catalog.
+
 The importer makes no network request. Acquire the extract yourself under the
 [OpenStreetMap license and attribution requirements](https://www.openstreetmap.org/copyright).
 For example, an Overpass query for a **small area** can request ways and all their
@@ -28,14 +44,15 @@ out body;
 
 Keep the input below 16 MiB; the resulting pack must fit the existing 4 MiB,
 10,000-node and 20,000-road limits. Input is additionally capped at 50,000 node
-elements. The importer preserves shared OSM vertices,
+elements and 50,000 way elements. The importer preserves shared OSM vertices,
 way shape and supported one-way directions; it includes motor-vehicle road classes
 from motorway through service and corresponding link roads. Non-drivable classes and
 roads restricted to non-car traffic are excluded. The most specific OSM access tag
 (`motorcar`, then `motor_vehicle`, `vehicle`, `access`) controls inclusion; only `yes`,
 `designated` and `permissive` are accepted. Vehicle-specific one-way tags override
 generic direction. Unsupported conditional, directional-access, or reversible rules
-are refused, not guessed. An Overpass response with a `remark`
+are refused, not guessed. Schema 2 also refuses an extract containing an OSM turn
+restriction relation rather than silently losing its meaning. An Overpass response with a `remark`
 is refused as potentially partial. The selected directed graph must be
 strongly connected. If the extract is disconnected, the default is to refuse it;
 `--largest-component` explicitly keeps the largest strongly connected component and
@@ -53,6 +70,15 @@ transit and land use are not modeled. A legal driving route is not guaranteed. T
 current city pilot is a spatial preview, not a routing/navigation product.
 The importer's `pack_sha256` is the canonical city-pack model fingerprint used by the
 viewer API; it does not include the output file's trailing newline.
+
+For schema 2, `source_sha256` hashes a canonical projection of supported road ways,
+their ordered member IDs, referenced coordinates, and only the tags used for road
+class, car access, junction, and direction decisions. JSON element/tag order and
+irrelevant or private tags do not affect that hash or enter the pack; coordinates or
+decision-relevant tags do. The JSON command result includes bounded aggregate quality
+counts for input nodes/ways, eligible and excluded ways, retained nodes/roads, and any
+nodes/roads discarded by explicit largest-component selection. These technical checks
+are not legal review, city qualification, traffic validation, or navigation certification.
 
 You can still author a pack directly:
 
@@ -93,13 +119,18 @@ home/work pair can make a return trip. Files are limited to 4 MiB, 10,000 nodes 
 20,000 roads. Invalid, disconnected, duplicate, non-finite and zero-length geometry
 is refused before startup. Date-line crossings are also refused because the pilot's
 flat canvas cannot draw them faithfully. Input order does not affect the pack hash or trace.
+Schema 2 replaces `one_way` with explicit `directions`, adds optional intermediate
+`shape` points, exact `bounds`, an IANA `time_zone`, structured source provenance, and
+declared omissions. The local OSM converter represents every adjacent OSM member pair
+as a stable road segment, so its `shape` is empty while the complete way geometry is
+retained through successive shared nodes.
 
 OpenStreetMap data is available under the [ODbL](https://www.openstreetmap.org/copyright).
 The importer preserves its license and displays `© OpenStreetMap contributors` as
 attribution, with `source_url` linking to the copyright page. Do not copy Google Maps
 or unlicensed map content. There is no automatic city search or downloader; data
 acquisition and license compliance remain the operator's responsibility. No public
-map-tile service is used.
+map-tile service, geocoder, downloader, or arbitrary URL loader is used.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
