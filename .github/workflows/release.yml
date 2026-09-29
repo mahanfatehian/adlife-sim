@@ -98,7 +98,7 @@ jobs:
           fi
           echo "ASSET=dist/adlife-v${VERSION}-${{ matrix.asset }}.${{ matrix.archive }}" >> "$GITHUB_ENV"
       # actions/upload-artifact v6.0.0
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: frozen-${{ matrix.asset }}
           path: ${{ env.ASSET }}
@@ -117,7 +117,7 @@ jobs:
       # astral-sh/setup-uv v10.2.0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
       # actions/download-artifact v6.0.0
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: frozen-*
           path: assets
@@ -139,7 +139,7 @@ jobs:
           sha256sum --binary * > SHA256SUMS
           sha256sum --check SHA256SUMS
       # actions/upload-artifact v6.0.0
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: verified-distributions
           path: dist/
@@ -166,12 +166,12 @@ jobs:
       url: https://pypi.org/p/adlife-sim
     steps:
       # actions/download-artifact v6.0.0
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: verified-distributions
           path: dist/
       # pypa/gh-action-pypi-publish v1.13.0
-      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
 
   publish-release:
     name: publish the GitHub release
