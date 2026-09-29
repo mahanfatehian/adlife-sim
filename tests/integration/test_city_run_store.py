@@ -12,6 +12,8 @@ import pytest
 from adlife import __version__
 from adlife.city import run_store as city_store_module
 from adlife.city.run_store import CityRunStore, StoredCityRun
+from adlife.city.runs import create_city_run
+from adlife.core.domain.city import parse_city_pack_json
 from adlife.core.domain.city_run import CityRunManifest
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import (
@@ -22,7 +24,7 @@ from adlife.core.ports.run_store import (
 )
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
-from tests.unit.city.test_city_pack import load_pack, pack_data
+from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
 def specimen() -> tuple[CityRunManifest, CityMobility]:
@@ -59,6 +61,79 @@ def test_save_freezes_inputs_and_loads_an_identical_trace(tmp_path: Path) -> Non
     assert loaded.manifest == manifest
     assert loaded.pack == mobility.pack
     assert loaded.mobility.frame(480) == mobility.frame(480)
+
+
+def test_v2_save_freezes_canonical_geometry_and_loads_identical_trace(tmp_path: Path) -> None:
+    pack = load_pack_v2(pack_v2_data())
+    stored = create_city_run(pack, root=tmp_path, run_id="v2-study", seed=42, agent_count=2, days=1)
+    loaded = CityRunStore(tmp_path).load("v2-study")
+    city_bytes = (stored.directory / "inputs" / "city.json").read_bytes()
+    assert stored.manifest.schema_version == 2
+    assert stored.manifest.model_id == "illustrative-road-mobility-v2"
+    assert loaded.pack == pack
+    assert loaded.mobility.frame(481) == stored.mobility.frame(481)
+    assert city_bytes == (canonical_json(pack) + "\n").encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    ("member", "value"),
+    [
+        (("time_zone",), "Europe/London"),
+        (("source", "version"), "changed-source"),
+        (("roads", 0, "shape", 0, "latitude"), 0.003),
+    ],
+)
+def test_changed_but_valid_v2_input_is_refused(
+    tmp_path: Path, member: tuple[str | int, ...], value: object
+) -> None:
+    stored = create_city_run(
+        load_pack_v2(pack_v2_data()),
+        root=tmp_path,
+        run_id="v2-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+    )
+    city_file = stored.directory / "inputs" / "city.json"
+    root = json.loads(city_file.read_text(encoding="utf-8"))
+    cursor: object = root
+    for part in member[:-1]:
+        if isinstance(cursor, dict):
+            assert isinstance(part, str)
+            cursor = cursor[part]
+        else:
+            assert isinstance(cursor, list) and isinstance(part, int)
+            cursor = cursor[part]
+    final = member[-1]
+    if isinstance(cursor, dict):
+        assert isinstance(final, str)
+        cursor[final] = value
+    else:
+        assert isinstance(cursor, list) and isinstance(final, int)
+        cursor[final] = value
+    changed = parse_city_pack_json(json.dumps(root))
+    city_file.write_text(canonical_json(changed) + "\n", encoding="utf-8")
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path).load("v2-study")
+
+
+def test_manifest_and_pack_schema_versions_must_match(tmp_path: Path) -> None:
+    stored = create_city_run(
+        load_pack_v2(pack_v2_data()),
+        root=tmp_path,
+        run_id="v2-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+    )
+    manifest_file = stored.directory / "run.json"
+    document = json.loads(manifest_file.read_text(encoding="utf-8"))
+    document["schema_version"] = 1
+    document["model_id"] = "illustrative-road-mobility-v1"
+    del document["city_schema_version"]
+    manifest_file.write_text(canonical_json(document) + "\n", encoding="utf-8")
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path).load("v2-study")
 
 
 def test_duplicate_save_preserves_every_original_artifact_byte(tmp_path: Path) -> None:

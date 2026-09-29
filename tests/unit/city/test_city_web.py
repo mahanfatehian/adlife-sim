@@ -116,3 +116,16 @@ async def test_saved_run_identity_is_visible_but_ephemeral_viewer_is_not_mislabe
     assert 'byId("saved-run-label").textContent =' in script
     assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
     assert "innerHTML" not in script
+
+
+@pytest.mark.asyncio
+async def test_saved_v2_run_reports_its_actual_manifest_schema() -> None:
+    simulation = CityMobility(load_pack_v2(pack_v2_data()), seed=42, agent_count=2, days=1)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_city_app(simulation, run_id="saved-v2-study")),
+        base_url="http://city.test",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+    assert metadata["saved"] is True
+    assert metadata["run_id"] == "saved-v2-study"
+    assert metadata["run_schema_version"] == 2

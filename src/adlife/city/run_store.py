@@ -11,8 +11,18 @@ from pydantic import ValidationError
 
 from adlife import __version__
 from adlife.city.loader import MAX_CITY_PACK_BYTES
-from adlife.core.domain.city import CityPack
-from adlife.core.domain.city_run import CityRunManifest
+from adlife.core.domain.city import (
+    CityPack,
+    CityPackDocument,
+    CityPackV2,
+    parse_city_pack_json,
+)
+from adlife.core.domain.city_run import (
+    CityRunManifest,
+    CityRunManifestDocument,
+    CityRunManifestV2,
+    parse_city_run_manifest_json,
+)
 from adlife.core.domain.serialization import DocumentNotSerialisable, canonical_json
 from adlife.core.ports.run_store import (
     CorruptRunArtifact,
@@ -31,8 +41,8 @@ MAX_CITY_AGENTS_BYTES = 65_536
 
 @dataclass(frozen=True, slots=True)
 class StoredCityRun:
-    manifest: CityRunManifest
-    pack: CityPack
+    manifest: CityRunManifestDocument
+    pack: CityPackDocument
     mobility: CityMobility
     directory: Path
 
@@ -41,8 +51,18 @@ def _runtime_version() -> str:
     return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 
-def _canonical_bytes(value: CityPack | CityRunManifest | dict[str, object]) -> bytes:
+def _canonical_bytes(
+    value: CityPackDocument | CityRunManifestDocument | dict[str, object],
+) -> bytes:
     return (canonical_json(value) + "\n").encode("utf-8")
+
+
+def _validate_schema_pair(manifest: CityRunManifestDocument, pack: CityPackDocument) -> None:
+    if isinstance(manifest, CityRunManifestV2):
+        if not isinstance(pack, CityPackV2) or manifest.city_schema_version != pack.schema_version:
+            raise CorruptRunArtifact("city run manifest and city pack schemas do not match")
+    elif not isinstance(manifest, CityRunManifest) or not isinstance(pack, CityPack):
+        raise CorruptRunArtifact("city run manifest and city pack schemas do not match")
 
 
 def _write_new(path: Path, contents: bytes) -> None:
@@ -86,12 +106,16 @@ class CityRunStore:
         return directory
 
     def save(
-        self, manifest: CityRunManifest, pack: CityPack, agents: tuple[CityAgent, ...]
+        self,
+        manifest: CityRunManifestDocument,
+        pack: CityPackDocument,
+        agents: tuple[CityAgent, ...],
     ) -> Path:
         """Reserve a fresh ID; publish the completion manifest only after frozen inputs."""
         try:
-            manifest = CityRunManifest.model_validate(manifest.model_dump(mode="json"))
-            pack = CityPack.model_validate_json(canonical_json(pack))
+            manifest = parse_city_run_manifest_json(canonical_json(manifest))
+            pack = parse_city_pack_json(canonical_json(pack))
+            _validate_schema_pair(manifest, pack)
             mobility = CityMobility(
                 pack,
                 seed=manifest.seed,
@@ -191,8 +215,9 @@ class CityRunStore:
             label="agent assignments",
         )
         try:
-            manifest = CityRunManifest.model_validate_json(manifest_bytes)
-            pack = CityPack.model_validate_json(city_bytes)
+            manifest = parse_city_run_manifest_json(manifest_bytes)
+            pack = parse_city_pack_json(city_bytes)
+            _validate_schema_pair(manifest, pack)
             if (
                 manifest.run_id != run_id
                 or manifest.package_version != __version__

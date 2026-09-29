@@ -10,7 +10,7 @@ import pytest
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run, replay_city_run
 from adlife.core.ports.run_store import CorruptRunArtifact
-from tests.unit.city.test_city_pack import load_pack, pack_data
+from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
 def _file_hashes(directory: Path) -> dict[str, str]:
@@ -55,3 +55,21 @@ def test_changed_source_is_not_silently_repaired(tmp_path: Path) -> None:
         replay_city_run(CityRunStore(tmp_path).load("study"))
 
     assert _file_hashes(stored.directory) == before
+
+
+def test_v2_replay_is_identical_and_preserves_every_source_artifact(tmp_path: Path) -> None:
+    pack = load_pack_v2(pack_v2_data())
+    first = create_city_run(
+        pack, root=tmp_path / "first", run_id="v2-study", seed=17, agent_count=3, days=1
+    )
+    second = create_city_run(
+        pack, root=tmp_path / "second", run_id="v2-study", seed=17, agent_count=3, days=1
+    )
+    first_before = _file_hashes(first.directory)
+    second_before = _file_hashes(second.directory)
+    result = replay_city_run(CityRunStore(tmp_path / "first").load("v2-study"))
+    assert result.identical is True
+    assert first.manifest.schema_version == 2
+    assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
+    assert _file_hashes(first.directory) == first_before
+    assert _file_hashes(second.directory) == second_before

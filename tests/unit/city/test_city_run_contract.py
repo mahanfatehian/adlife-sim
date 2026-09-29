@@ -1,8 +1,11 @@
 """Saved mobility artifacts are versioned and have strict cross-field invariants."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
+from adlife.core.domain import city_run
 from adlife.core.domain.city_run import CityRunManifest, CityTraceSummary
 
 
@@ -22,6 +25,15 @@ def valid_manifest() -> dict[str, object]:
         "days": 1,
         "frame_count": 1440,
         "position_count": 2880,
+    }
+
+
+def valid_manifest_v2() -> dict[str, object]:
+    return {
+        **valid_manifest(),
+        "schema_version": 2,
+        "model_id": "illustrative-road-mobility-v2",
+        "city_schema_version": 2,
     }
 
 
@@ -68,3 +80,32 @@ def test_trace_summary_refuses_wrong_counts() -> None:
                 "position_count": 0,
             }
         )
+
+
+def test_v2_manifest_round_trips_only_with_v2_model_and_city_schema() -> None:
+    model = getattr(city_run, "CityRunManifestV2", None)
+    parser = getattr(city_run, "parse_city_run_manifest_json", None)
+    assert model is not None, "CityRunManifestV2 is not implemented"
+    assert parser is not None, "run manifest version dispatch is not implemented"
+    manifest = parser(model.model_validate(valid_manifest_v2()).model_dump_json())
+    assert isinstance(manifest, model)
+    assert manifest.city_schema_version == 2
+    for field, value in (
+        ("model_id", "illustrative-road-mobility-v1"),
+        ("city_schema_version", 1),
+    ):
+        with pytest.raises(ValidationError):
+            model.model_validate({**valid_manifest_v2(), field: value})
+
+
+@pytest.mark.parametrize("version", [None, True, 1.0, 0, 3])
+def test_run_manifest_version_dispatch_fails_closed(version: object) -> None:
+    parser = getattr(city_run, "parse_city_run_manifest_json", None)
+    assert parser is not None, "run manifest version dispatch is not implemented"
+    document = valid_manifest_v2()
+    if version is None:
+        del document["schema_version"]
+    else:
+        document["schema_version"] = version
+    with pytest.raises((ValidationError, ValueError), match=r"schema_version|version"):
+        parser(json.dumps(document))

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self
+import json
+from typing import Any, Literal, Self, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
@@ -63,4 +64,84 @@ class CityRunManifest(DomainModel):
         return self
 
 
-__all__ = ["CityRunManifest", "CityTraceSummary"]
+class CityRunManifestV2(DomainModel):
+    """A saved trace generated from a geometry-preserving v2 city pack."""
+
+    schema_version: Literal[2] = 2
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    status: Literal["completed"] = "completed"
+    model_id: Literal["illustrative-road-mobility-v2"] = "illustrative-road-mobility-v2"
+    package_version: str = Field(min_length=1, max_length=40)
+    python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    agents_sha256: str = Field(pattern=_HASH_PATTERN)
+    trace_sha256: str = Field(pattern=_HASH_PATTERN)
+    seed: int = Field(ge=0, le=2**63 - 1)
+    agent_count: int = Field(ge=1, le=30)
+    days: int = Field(ge=1, le=7)
+    frame_count: int = Field(ge=1, le=10_080)
+    position_count: int = Field(ge=1, le=302_400)
+    city_schema_version: Literal[2] = 2
+
+    @field_validator("run_id")
+    @classmethod
+    def portable_run_id(cls, value: str) -> str:
+        if value in _RESERVED_RUN_IDS:
+            raise ValueError("run identifier is reserved on Windows")
+        return value
+
+    @model_validator(mode="after")
+    def complete_counts(self) -> Self:
+        if self.frame_count != self.days * 1_440:
+            raise ValueError("frame count does not match run duration")
+        if self.position_count != self.frame_count * self.agent_count:
+            raise ValueError("position count does not match run population")
+        return self
+
+
+CityRunManifestDocument: TypeAlias = CityRunManifest | CityRunManifestV2
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("city run manifest JSON contains a duplicate object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"city run manifest JSON contains non-finite constant {value}")
+
+
+def parse_city_run_manifest_json(document: str | bytes) -> CityRunManifestDocument:
+    """Dispatch one strict manifest without coercing its schema version token."""
+    try:
+        payload = json.loads(
+            document,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        raise ValueError("city run manifest is not valid UTF-8 JSON") from None
+    if not isinstance(payload, dict):
+        raise ValueError("city run manifest must be a JSON object")
+    version = payload.get("schema_version")
+    if type(version) is not int:
+        raise ValueError("city run manifest schema_version must be an integer")
+    normalized = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    if version == 1:
+        return CityRunManifest.model_validate_json(normalized)
+    if version == 2:
+        return CityRunManifestV2.model_validate_json(normalized)
+    raise ValueError("unsupported city run manifest schema_version")
+
+
+__all__ = [
+    "CityRunManifest",
+    "CityRunManifestDocument",
+    "CityRunManifestV2",
+    "CityTraceSummary",
+    "parse_city_run_manifest_json",
+]

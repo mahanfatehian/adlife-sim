@@ -8,8 +8,12 @@ from pathlib import Path
 
 from adlife import __version__
 from adlife.city.run_store import CityRunStore, StoredCityRun
-from adlife.core.domain.city import CityPack
-from adlife.core.domain.city_run import CityRunManifest
+from adlife.core.domain.city import CityPackDocument, CityPackV2
+from adlife.core.domain.city_run import (
+    CityRunManifest,
+    CityRunManifestDocument,
+    CityRunManifestV2,
+)
 from adlife.core.ports.run_store import CorruptRunArtifact
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
@@ -27,7 +31,7 @@ class CityReplayResult:
 
 
 def create_city_run(
-    pack: CityPack,
+    pack: CityPackDocument,
     *,
     root: Path,
     run_id: str,
@@ -44,19 +48,36 @@ def create_city_run(
         raise ValueError("saved city runs require 1 to 7 days")
     mobility = CityMobility(pack, seed=seed, agent_count=agent_count, days=days)
     summary = summarize_city_trace(mobility)
-    manifest = CityRunManifest(
-        run_id=run_id,
-        package_version=__version__,
-        python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        city_sha256=pack.fingerprint,
-        agents_sha256=summary.agents_sha256,
-        trace_sha256=summary.trace_sha256,
-        seed=seed,
-        agent_count=agent_count,
-        days=days,
-        frame_count=summary.frame_count,
-        position_count=summary.position_count,
-    )
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    manifest: CityRunManifestDocument
+    if isinstance(pack, CityPackV2):
+        manifest = CityRunManifestV2(
+            run_id=run_id,
+            package_version=__version__,
+            python_version=python_version,
+            city_sha256=pack.fingerprint,
+            agents_sha256=summary.agents_sha256,
+            trace_sha256=summary.trace_sha256,
+            seed=seed,
+            agent_count=agent_count,
+            days=days,
+            frame_count=summary.frame_count,
+            position_count=summary.position_count,
+        )
+    else:
+        manifest = CityRunManifest(
+            run_id=run_id,
+            package_version=__version__,
+            python_version=python_version,
+            city_sha256=pack.fingerprint,
+            agents_sha256=summary.agents_sha256,
+            trace_sha256=summary.trace_sha256,
+            seed=seed,
+            agent_count=agent_count,
+            days=days,
+            frame_count=summary.frame_count,
+            position_count=summary.position_count,
+        )
     directory = CityRunStore(root).save(manifest, pack, mobility.agents)
     return StoredCityRun(manifest, pack, mobility, directory)
 

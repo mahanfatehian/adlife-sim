@@ -54,7 +54,7 @@ def create_city_app(simulation: CityMobility, *, run_id: str | None = None) -> F
         if run_id is not None:
             document["saved"] = True
             document["run_id"] = run_id
-            document["run_schema_version"] = 1
+            document["run_schema_version"] = simulation.pack.schema_version
         return document
 
     @app.get("/api/city")
