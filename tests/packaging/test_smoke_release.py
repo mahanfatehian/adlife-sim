@@ -1,5 +1,6 @@
 """Exercise smoke workspace lifetime without creating another environment."""
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -67,4 +68,128 @@ def test_smoke_cleans_workspace_when_installation_fails(
     monkeypatch.setattr(smoke_release, "_create_interpreter", fail_provisioning)
     with pytest.raises(RuntimeError, match="environment unavailable"):
         smoke_release.smoke(tmp_path / "unused.whl")
+    assert not workspace.exists()
+
+
+def test_smoke_exercises_verified_catalog_run_and_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catch a wheel smoke that omits any packaged-catalog consumer boundary."""
+    workspace = tmp_path / "smoke-workspace"
+    workspace.mkdir()
+    scratch = workspace / "scratch"
+    calls: list[tuple[list[str], Path | None]] = []
+    city_sha256 = "a" * 64
+    trace_sha256 = "b" * 64
+
+    monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: str(workspace))
+    monkeypatch.setattr(
+        smoke_release,
+        "_create_interpreter",
+        lambda path: (workspace / "venv" / "Scripts" / "python.exe", None),
+    )
+    monkeypatch.setattr(smoke_release, "_install_wheel", lambda *args: None)
+
+    def run_child(
+        command: list[str], *, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((command[1:], cwd))
+        arguments = command[1:]
+        document: dict[str, object] = {}
+        if arguments == ["--format", "json", "doctor", "--offline"]:
+            document = {"status": "ok"}
+        elif arguments[:3] == ["--format", "json", "run"]:
+            document = {"status": "complete"}
+        elif arguments[:3] == ["--format", "json", "report"]:
+            report = scratch / "smoke-study" / "reports" / "smoke.html"
+            report.parent.mkdir(parents=True)
+            report.write_text("x" * 10_001, encoding="utf-8")
+        elif arguments == ["--format", "json", "city-catalog", "list"]:
+            document = {
+                "cities": [
+                    {
+                        "city_id": "fictional-grid-v2",
+                        "qualification": "fictional-fixture",
+                        "pack_schema_version": 2,
+                    }
+                ]
+            }
+        elif arguments == [
+            "--format",
+            "json",
+            "city-catalog",
+            "show",
+            "fictional-grid-v2",
+        ]:
+            document = {
+                "city_id": "fictional-grid-v2",
+                "qualification": "fictional-fixture",
+                "pack_schema_version": 2,
+                "pack_sha256": city_sha256,
+            }
+        elif arguments[:3] == ["--format", "json", "city-run"]:
+            document = {
+                "run_id": "catalog-smoke",
+                "city_id": "fictional-grid-v2",
+                "city_sha256": city_sha256,
+                "trace_sha256": trace_sha256,
+                "frame_count": 1_440,
+                "position_count": 2_880,
+                "directory": str(scratch / "city-output" / "city-runs" / "catalog-smoke"),
+            }
+        elif arguments == [
+            "--format",
+            "json",
+            "city-replay",
+            "city-output",
+            "catalog-smoke",
+        ]:
+            document = {
+                "run_id": "catalog-smoke",
+                "identical": True,
+                "city_sha256": city_sha256,
+                "trace_sha256": trace_sha256,
+                "frame_count": 1_440,
+                "position_count": 2_880,
+            }
+        return subprocess.CompletedProcess(command, 0, json.dumps(document), "")
+
+    monkeypatch.setattr(smoke_release, "_run", run_child)
+
+    smoke_release.smoke(tmp_path / "unused.whl")
+
+    invoked = [arguments for arguments, _cwd in calls]
+    assert ["--format", "json", "city-catalog", "list"] in invoked
+    assert [
+        "--format",
+        "json",
+        "city-catalog",
+        "show",
+        "fictional-grid-v2",
+    ] in invoked
+    assert [
+        "--format",
+        "json",
+        "city-run",
+        "--city-id",
+        "fictional-grid-v2",
+        "--output-root",
+        "city-output",
+        "--run-id",
+        "catalog-smoke",
+        "--agents",
+        "2",
+        "--days",
+        "1",
+        "--seed",
+        "42",
+    ] in invoked
+    assert [
+        "--format",
+        "json",
+        "city-replay",
+        "city-output",
+        "catalog-smoke",
+    ] in invoked
+    assert all(cwd == scratch for _arguments, cwd in calls)
     assert not workspace.exists()

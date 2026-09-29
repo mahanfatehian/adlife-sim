@@ -78,6 +78,10 @@ jobs:
           [ -x "$EXE" ] || EXE="dist/adlife/adlife.exe"
           "$EXE" --version
           "$EXE" doctor --offline
+          "$EXE" --format json city-catalog list
+          "$EXE" --format json city-catalog show fictional-grid-v2
+          "$EXE" --format json city-run --city-id fictional-grid-v2 --output-root frozen-city-output --run-id catalog-frozen --agents 2 --days 1 --seed 42
+          "$EXE" --format json city-replay frozen-city-output catalog-frozen
           "$EXE" init frozen-smoke
           "$EXE" run frozen-smoke --run-id frozen --mode rules --days 1 --population-size 2 --headless
           "$EXE" report frozen-smoke frozen

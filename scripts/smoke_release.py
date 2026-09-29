@@ -3,10 +3,9 @@
 The wheel is the canonical distribution, so release verification never happens inside
 the development checkout. This script creates a temporary virtual environment, installs
 exactly the wheel it was handed, changes to a scratch directory outside the checkout,
-and runs the documented five-command workflow — version, offline doctor, study
-initialisation, a small deterministic rules run, and the self-contained report —
-validating the JSON output contract along the way. Every temporary artifact is cleaned
-up on success and on failure.
+and runs the documented workflow — including the verified packaged city catalog, a
+catalog-selected v2 mobility run and its replay — validating the JSON output contract
+along the way. Every temporary artifact is cleaned up on success and on failure.
 """
 
 from __future__ import annotations
@@ -48,6 +47,17 @@ def _expect_json(completed: subprocess.CompletedProcess[str], label: str) -> dic
         print(f"{label}: expected a JSON object on stdout", file=sys.stderr)
         raise SystemExit(1)
     return document
+
+
+def _refuse(label: str, detail: str) -> None:
+    print(f"{label}: {detail}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _expect_value(document: dict[str, object], key: str, expected: object, label: str) -> None:
+    actual = document.get(key)
+    if type(actual) is not type(expected) or actual != expected:
+        _refuse(label, f"expected {key}={expected!r}, got {actual!r}")
 
 
 def _uv_executable() -> str | None:
@@ -98,9 +108,43 @@ def smoke(wheel: Path) -> None:
         adlife = python.parent / ("adlife.exe" if sys.platform == "win32" else "adlife")
 
         _install_wheel(python, uv, wheel)
-        _run([str(adlife), "--version"])
-        doctor = _run([str(adlife), "--format", "json", "doctor", "--offline"])
+        _run([str(adlife), "--version"], cwd=scratch)
+        doctor = _run([str(adlife), "--format", "json", "doctor", "--offline"], cwd=scratch)
         doctor_document = _expect_json(doctor, "doctor --offline")
+
+        catalog_list = _expect_json(
+            _run(
+                [str(adlife), "--format", "json", "city-catalog", "list"],
+                cwd=scratch,
+            ),
+            "city-catalog list",
+        )
+        cities = catalog_list.get("cities")
+        if not isinstance(cities, list) or not any(
+            isinstance(entry, dict) and entry.get("city_id") == "fictional-grid-v2"
+            for entry in cities
+        ):
+            _refuse("city-catalog list", "fictional-grid-v2 was not listed")
+        catalog_entry = _expect_json(
+            _run(
+                [
+                    str(adlife),
+                    "--format",
+                    "json",
+                    "city-catalog",
+                    "show",
+                    "fictional-grid-v2",
+                ],
+                cwd=scratch,
+            ),
+            "city-catalog show",
+        )
+        _expect_value(catalog_entry, "city_id", "fictional-grid-v2", "city-catalog show")
+        _expect_value(catalog_entry, "qualification", "fictional-fixture", "city-catalog show")
+        _expect_value(catalog_entry, "pack_schema_version", 2, "city-catalog show")
+        catalog_sha256 = catalog_entry.get("pack_sha256")
+        if not isinstance(catalog_sha256, str) or len(catalog_sha256) != 64:
+            _refuse("city-catalog show", "pack_sha256 is not a SHA-256 digest")
 
         _run([str(adlife), "init", "smoke-study"], cwd=scratch)
         run = _run(
@@ -140,8 +184,61 @@ def smoke(wheel: Path) -> None:
         if not html.is_file() or html.stat().st_size < 10_000:
             print(f"expected a substantive self-contained report at {html}", file=sys.stderr)
             raise SystemExit(1)
+
+        city_run = _expect_json(
+            _run(
+                [
+                    str(adlife),
+                    "--format",
+                    "json",
+                    "city-run",
+                    "--city-id",
+                    "fictional-grid-v2",
+                    "--output-root",
+                    "city-output",
+                    "--run-id",
+                    "catalog-smoke",
+                    "--agents",
+                    "2",
+                    "--days",
+                    "1",
+                    "--seed",
+                    "42",
+                ],
+                cwd=scratch,
+            ),
+            "city-run --city-id",
+        )
+        _expect_value(city_run, "run_id", "catalog-smoke", "city-run --city-id")
+        _expect_value(city_run, "city_id", "fictional-grid-v2", "city-run --city-id")
+        _expect_value(city_run, "city_sha256", catalog_sha256, "city-run --city-id")
+        _expect_value(city_run, "frame_count", 1_440, "city-run --city-id")
+        _expect_value(city_run, "position_count", 2_880, "city-run --city-id")
+
+        replay = _expect_json(
+            _run(
+                [
+                    str(adlife),
+                    "--format",
+                    "json",
+                    "city-replay",
+                    "city-output",
+                    "catalog-smoke",
+                ],
+                cwd=scratch,
+            ),
+            "city-replay",
+        )
+        _expect_value(replay, "run_id", "catalog-smoke", "city-replay")
+        _expect_value(replay, "identical", True, "city-replay")
+        for key in ("city_sha256", "trace_sha256", "frame_count", "position_count"):
+            _expect_value(replay, key, city_run.get(key), "city-replay")
         _ = doctor_document  # parsed: the JSON contract held
-        print(f"smoke ok: report at {html.stat().st_size} bytes")
+        print(
+            "smoke ok: "
+            f"report at {html.stat().st_size} bytes; "
+            "catalog fictional-grid-v2 replay verified"
+        )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

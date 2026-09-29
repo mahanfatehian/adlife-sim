@@ -78,3 +78,52 @@ def test_dependency_audit_targets_locked_project_requirements(tmp_path: Path) ->
     assert "mesa==" in requirements and "httpx==" in requirements
     assert "pytest==" not in requirements
     assert "-e ." not in requirements
+
+
+def test_frozen_binary_smoke_exercises_packaged_catalog_and_replay() -> None:
+    """Catch native release artifacts that omit or cannot consume city resources."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    steps = workflow["jobs"]["build-native"]["steps"]
+    smoke = next(
+        step
+        for step in steps
+        if step.get("name") == "Smoke-test the exact frozen artifact on its builder"
+    )
+    commands = [
+        shlex.split(line) for line in smoke["run"].splitlines() if line.strip().startswith('"$EXE"')
+    ]
+    assert ["$EXE", "--format", "json", "city-catalog", "list"] in commands
+    assert [
+        "$EXE",
+        "--format",
+        "json",
+        "city-catalog",
+        "show",
+        "fictional-grid-v2",
+    ] in commands
+    assert [
+        "$EXE",
+        "--format",
+        "json",
+        "city-run",
+        "--city-id",
+        "fictional-grid-v2",
+        "--output-root",
+        "frozen-city-output",
+        "--run-id",
+        "catalog-frozen",
+        "--agents",
+        "2",
+        "--days",
+        "1",
+        "--seed",
+        "42",
+    ] in commands
+    assert [
+        "$EXE",
+        "--format",
+        "json",
+        "city-replay",
+        "frozen-city-output",
+        "catalog-frozen",
+    ] in commands
