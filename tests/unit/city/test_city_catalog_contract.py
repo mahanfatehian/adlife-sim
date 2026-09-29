@@ -43,7 +43,11 @@ def entry_data(pack: CityPackV2 | None = None) -> dict[str, Any]:
 
 
 def catalog_data(*entries: dict[str, Any]) -> dict[str, Any]:
-    return {"schema_version": 1, "entries": entries or (entry_data(),)}
+    return {
+        "schema_version": 1,
+        "issued_on": "2026-09-29",
+        "entries": entries or (entry_data(),),
+    }
 
 
 def write_catalog_root(
@@ -152,7 +156,7 @@ def test_catalog_qualification_cannot_disguise_real_data_as_a_fixture() -> None:
 
 
 @pytest.mark.parametrize("reviewed_on", ["2025-12-31", "9999-12-31"])
-def test_rights_review_date_must_follow_source_and_not_be_future(reviewed_on: str) -> None:
+def test_rights_review_date_must_be_within_catalog_evidence_window(reviewed_on: str) -> None:
     base = entry_data()
     with pytest.raises(ValidationError, match="review"):
         CityCatalog.model_validate(
@@ -166,6 +170,13 @@ def test_rights_review_date_must_follow_source_and_not_be_future(reviewed_on: st
                 }
             )
         )
+
+
+def test_catalog_issuance_date_is_valid_and_not_before_source_evidence() -> None:
+    with pytest.raises(ValidationError, match="issued_on"):
+        CityCatalog.model_validate({**catalog_data(), "issued_on": "2026-02-30"})
+    with pytest.raises(ValidationError, match="issued"):
+        CityCatalog.model_validate({**catalog_data(), "issued_on": "2026-09-28"})
 
 
 @pytest.mark.parametrize("duplicate", ["city_id", "resource_name", "pack_sha256"])
@@ -196,6 +207,7 @@ def test_catalog_version_dispatch_fails_closed(version: object) -> None:
 
 def test_packaged_catalog_contains_only_an_explicit_fictional_v2_fixture() -> None:
     catalog = load_city_catalog()
+    assert catalog.issued_on == "2026-09-29"
     assert [entry.city_id for entry in catalog.entries] == ["fictional-grid-v2"]
     entry = catalog.entries[0]
     assert entry.qualification == "fictional-fixture"

@@ -144,6 +144,8 @@ def _refuse_node_semantics(tags: dict[str, str]) -> None:
 
 def _direction(tags: dict[str, str], highway: str) -> tuple[bool, bool]:
     parsed_keys = tuple(key.split(":") for key in tags)
+    if "barrier" in tags:
+        raise OSMImportError("OSM road has barrier semantics this importer cannot model")
     if any(
         parts[0] in _RESTRICTION_NAMESPACES and parts[-1] == "conditional" for parts in parsed_keys
     ):
@@ -154,6 +156,8 @@ def _direction(tags: dict[str, str], highway: str) -> tuple[bool, bool]:
         for parts in parsed_keys
     ):
         raise OSMImportError("OSM road has directional access this importer cannot model")
+    if any(parts[0] in _ACCESS_NAMESPACES and len(parts) > 1 for parts in parsed_keys):
+        raise OSMImportError("OSM road has scoped access semantics this importer cannot model")
     value = next(
         (
             tags[key]

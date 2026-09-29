@@ -241,6 +241,28 @@ def test_directional_car_access_is_refused_instead_of_imported_as_two_way() -> N
 
 
 @pytest.mark.parametrize(
+    "key",
+    ["access:lanes", "vehicle:lanes", "motor_vehicle:lanes", "motorcar:lanes"],
+)
+def test_lane_scoped_car_access_is_refused_instead_of_silently_dropped(key: str) -> None:
+    document = extract()
+    document["elements"][3]["tags"][key] = "no|no"
+    with pytest.raises(OSMImportError, match="access"):
+        convert(document)
+    with pytest.raises(OSMImportError, match="access"):
+        convert_v2(document)
+
+
+def test_way_level_barrier_is_refused_instead_of_silently_dropped() -> None:
+    document = extract()
+    document["elements"][3]["tags"]["barrier"] = "gate"
+    with pytest.raises(OSMImportError, match="barrier"):
+        convert(document)
+    with pytest.raises(OSMImportError, match="barrier"):
+        convert_v2(document)
+
+
+@pytest.mark.parametrize(
     "restriction,message",
     [
         ({"access:conditional": "yes @ (08:00-09:00)"}, "conditional"),

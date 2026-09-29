@@ -98,6 +98,19 @@ def test_v2_manifest_round_trips_only_with_v2_model_and_city_schema() -> None:
             model.model_validate({**valid_manifest_v2(), field: value})
 
 
+@pytest.mark.parametrize("version", [None, True, 1, 2.0, 3, "2"])
+def test_v2_manifest_city_schema_version_is_an_exact_integer(version: object) -> None:
+    model = city_run.CityRunManifestV2
+    parser = city_run.parse_city_run_manifest_json
+    document = {**valid_manifest_v2(), "city_schema_version": version}
+    if version is None:
+        del document["city_schema_version"]
+    with pytest.raises(ValidationError, match="city_schema_version"):
+        model.model_validate(document)
+    with pytest.raises((ValidationError, ValueError), match="city_schema_version"):
+        parser(json.dumps(document))
+
+
 @pytest.mark.parametrize("version", [None, True, 1.0, 0, 3])
 def test_run_manifest_version_dispatch_fails_closed(version: object) -> None:
     parser = getattr(city_run, "parse_city_run_manifest_json", None)

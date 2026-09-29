@@ -79,8 +79,10 @@ review.
 
 The catalog's public `reviewer_role` and `reviewed_on` fields are a small audit marker,
 not the complete decision record. For a real-world entry they must be present, the
-review date cannot predate the source date or be in the future, and the entry must be
-classified as both `real-world` and `rights-reviewed`.
+review date cannot predate the source date or follow the catalog's immutable
+`issued_on` date, and the entry must be classified as both `real-world` and
+`rights-reviewed`. Validation never consults the host clock, so identical catalog bytes
+have identical qualification results.
 
 ### Technical qualification
 

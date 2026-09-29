@@ -81,7 +81,14 @@ class CityRunManifestV2(DomainModel):
     days: int = Field(ge=1, le=7)
     frame_count: int = Field(ge=1, le=10_080)
     position_count: int = Field(ge=1, le=302_400)
-    city_schema_version: Literal[2] = 2
+    city_schema_version: Literal[2]
+
+    @field_validator("city_schema_version", mode="before")
+    @classmethod
+    def exact_city_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("city_schema_version must be integer 2")
+        return value
 
     @field_validator("run_id")
     @classmethod

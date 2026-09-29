@@ -53,6 +53,7 @@ def create_city_run(
     if isinstance(pack, CityPackV2):
         manifest = CityRunManifestV2(
             run_id=run_id,
+            city_schema_version=pack.schema_version,
             package_version=__version__,
             python_version=python_version,
             city_sha256=pack.fingerprint,

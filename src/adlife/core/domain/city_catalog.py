@@ -132,8 +132,6 @@ class CityCatalogEntry(DomainModel):
         published_on = date.fromisoformat(self.source.published_on)
         if reviewed_on < published_on:
             raise ValueError("rights review cannot predate the source publication")
-        if reviewed_on > date.today():
-            raise ValueError("rights review cannot be dated in the future")
         return self
 
 
@@ -141,11 +139,27 @@ class CityCatalog(DomainModel):
     """A small deterministic index; every referenced pack is verified by the adapter."""
 
     schema_version: Literal[1] = 1
+    issued_on: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
     entries: tuple[CityCatalogEntry, ...] = Field(min_length=1, max_length=50)
+
+    @field_validator("issued_on")
+    @classmethod
+    def real_issuance_date(cls, value: str) -> str:
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            raise ValueError("catalog issued_on must be a calendar date") from None
+        return value
 
     @model_validator(mode="after")
     def unique_sorted_entries(self) -> Self:
         entries = tuple(sorted(self.entries, key=lambda entry: entry.city_id))
+        issued_on = date.fromisoformat(self.issued_on)
+        for entry in entries:
+            if date.fromisoformat(entry.source.published_on) > issued_on:
+                raise ValueError("source publication cannot follow catalog issued_on")
+            if entry.reviewed_on is not None and date.fromisoformat(entry.reviewed_on) > issued_on:
+                raise ValueError("rights review cannot follow catalog issued_on")
         for field in ("city_id", "resource_name", "pack_sha256"):
             values = tuple(getattr(entry, field) for entry in entries)
             if len(values) != len(set(values)):

@@ -229,7 +229,7 @@ Expected: FAIL because no catalog contract or commands exist.
 
 - [ ] **Step 3: Implement the packaged, content-addressed catalog**
 
-Catalog entries carry stable ID/display name, resource name, immutable pack hash/schema, a separate structured data-origin class (`fictional` or `real-world`), qualification class (`fictional-fixture` or `rights-reviewed`), reviewer role/date when reviewed, coverage, time zone, source date/version, license, attribution and omissions. Fictional qualification requires fictional origin; real-world origin requires a review dated no earlier than source publication and no later than the validation date. Load only package resources or an explicitly supplied test root, validate before selection, and never accept an arbitrary URL. Bundle one clearly fictional v2 grid; no real city is marked reviewed in this milestone.
+Catalog entries carry stable ID/display name, resource name, immutable pack hash/schema, a separate structured data-origin class (`fictional` or `real-world`), qualification class (`fictional-fixture` or `rights-reviewed`), reviewer role/date when reviewed, coverage, time zone, source date/version, license, attribution and omissions. Fictional qualification requires fictional origin; real-world origin requires a review dated no earlier than source publication and no later than the catalog's immutable issuance date. Load only package resources or an explicitly supplied test root, validate before selection, and never accept an arbitrary URL. Bundle one clearly fictional v2 grid; no real city is marked reviewed in this milestone.
 
 - [ ] **Step 4: Run catalog, CLI, replay and packaging tests**
 
@@ -297,19 +297,24 @@ The six-task foundation was implemented on `main` in focused commits beginning w
 `f07dbfb` (verified offline catalog). Independent review found and closed strict
 catalog-version, data-origin, review-date, conditional-access, node-barrier,
 resource-bound, surrogate-text, and negative-zero boundary gaps before the final gate.
+A final independent review additionally closed lane-scoped access and way-barrier
+ingestion gaps, strict nested city-schema coercion/missing-token handling, and a
+host-clock-dependent qualification decision by pinning an immutable catalog issuance
+date.
 
 Final verification on Windows with Python 3.12.11:
 
 - locked environment sync, Ruff formatting/lint and strict mypy passed;
-- full suite: `3314 passed, 13 skipped in 445.11s`;
-- `PYTHONHASHSEED=0`: `3314 passed, 13 skipped in 410.41s`;
-- `PYTHONHASHSEED=12345`: `3314 passed, 13 skipped in 413.69s`;
-- branch coverage: `91.15%` (`3314 passed, 13 skipped`), above the 85% floor;
+- full suite: `3326 passed, 13 skipped in 406.85s`;
+- `PYTHONHASHSEED=0`: `3326 passed, 13 skipped in 386.61s`;
+- `PYTHONHASHSEED=12345`: `3326 passed, 13 skipped in 393.17s`;
+- branch coverage: `91.18%` (`3326 passed, 13 skipped in 816.30s`), above the
+  85% floor;
 - wheel and source distribution built; the exact wheel passed clean-room smoke outside
   the checkout, including catalog selection, a v2 city run, identical replay, and a
   4,862,319-byte self-contained report;
 - the available Windows PyInstaller build and exact frozen executable smoke passed;
-- the 30-agent/seven-day rule run completed in 14.60 seconds under the 40-second
+- the 30-agent/seven-day rule run completed in 14.94 seconds under the 40-second
   machine-adjusted ceiling, emitted 5,685 events, used 2 MiB traced peak memory, and
   produced a 3,629,056-byte database plus 4,862,947-byte report;
 - offline doctor exited 0 with seven of eight checks passing; its only failed check was
