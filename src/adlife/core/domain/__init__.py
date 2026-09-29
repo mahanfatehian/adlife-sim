@@ -9,6 +9,19 @@ from adlife.core.domain.campaign import (
     Price,
     TimeWindow,
 )
+from adlife.core.domain.city import (
+    CityBounds,
+    CityCoordinate,
+    CityNode,
+    CityPack,
+    CityPackDocument,
+    CityPackV2,
+    CityRoad,
+    CityRoadV2,
+    CitySource,
+    TravelDirection,
+    parse_city_pack_json,
+)
 from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.person import ConsumerTraits, DomainModel, PersonProfile
 from adlife.core.domain.results import RunManifest, SimulationResult
@@ -19,6 +32,15 @@ from adlife.core.domain.world import Relationship, Route, RoutineBlock, World, Z
 __all__ = [
     "BillboardPlacement",
     "Campaign",
+    "CityBounds",
+    "CityCoordinate",
+    "CityNode",
+    "CityPack",
+    "CityPackDocument",
+    "CityPackV2",
+    "CityRoad",
+    "CityRoadV2",
+    "CitySource",
     "ConsumerState",
     "ConsumerTraits",
     "CreativeFeatures",
@@ -39,6 +61,8 @@ __all__ = [
     "Scenario",
     "SimulationResult",
     "TimeWindow",
+    "TravelDirection",
     "World",
     "Zone",
+    "parse_city_pack_json",
 ]

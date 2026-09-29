@@ -10,6 +10,7 @@ from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.results import RunManifest
 from adlife.core.domain.scenario import Scenario
+from tests.unit.city.test_city_pack import pack_data, pack_v2_data
 
 
 @pytest.fixture
@@ -59,3 +60,15 @@ def test_integer_schema_version_and_defaults_still_round_trip(
         assert model.schema_version == 1
         assert model.model_copy(update={"schema_version": 1}) == model
         assert type(model).model_validate_json(model.model_dump_json()) == model
+
+
+@pytest.mark.parametrize("value", [True, 1.0], ids=["boolean", "float"])
+def test_city_pack_dispatch_never_coerces_schema_versions(value: object) -> None:
+    from adlife.core.domain import city
+
+    parser = getattr(city, "parse_city_pack_json", None)
+    assert parser is not None, "parse_city_pack_json is not implemented"
+    for document in (pack_data(), pack_v2_data()):
+        document["schema_version"] = value
+        with pytest.raises((ValidationError, ValueError), match="schema_version"):
+            parser(json.dumps(document))
