@@ -16,6 +16,9 @@ from pathlib import Path
 
 import pytest
 
+from adlife.core.domain.city import CityPackV2, parse_city_pack_json
+from adlife.core.domain.city_catalog import parse_city_catalog_json
+
 ROOT = Path(__file__).parents[2]
 
 
@@ -70,6 +73,23 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     assert 'id="saved-run-label" hidden' in html
     assert 'byId("saved-run-label").textContent =' in script
     assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
+
+
+def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> None:
+    with zipfile.ZipFile(built_wheel) as wheel:
+        names = set(wheel.namelist())
+        catalog_bytes = wheel.read("adlife/city/catalog.json")
+        pack_bytes = wheel.read("adlife/city/catalog/fictional-grid-v2.json")
+    assert "adlife/city/catalog.json" in names
+    assert "adlife/city/catalog/fictional-grid-v2.json" in names
+    catalog = parse_city_catalog_json(catalog_bytes)
+    pack = parse_city_pack_json(pack_bytes)
+    assert isinstance(pack, CityPackV2)
+    assert len(catalog.entries) == 1
+    entry = catalog.entries[0]
+    assert entry.city_id == pack.city_id == "fictional-grid-v2"
+    assert entry.qualification == "fictional-fixture"
+    assert entry.pack_sha256 == pack.fingerprint
 
 
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:

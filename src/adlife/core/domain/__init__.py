@@ -22,6 +22,11 @@ from adlife.core.domain.city import (
     TravelDirection,
     parse_city_pack_json,
 )
+from adlife.core.domain.city_catalog import (
+    CityCatalog,
+    CityCatalogEntry,
+    parse_city_catalog_json,
+)
 from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.person import ConsumerTraits, DomainModel, PersonProfile
 from adlife.core.domain.results import RunManifest, SimulationResult
@@ -33,6 +38,8 @@ __all__ = [
     "BillboardPlacement",
     "Campaign",
     "CityBounds",
+    "CityCatalog",
+    "CityCatalogEntry",
     "CityCoordinate",
     "CityNode",
     "CityPack",
@@ -65,4 +72,5 @@ __all__ = [
     "World",
     "Zone",
     "parse_city_pack_json",
+    "parse_city_catalog_json",
 ]

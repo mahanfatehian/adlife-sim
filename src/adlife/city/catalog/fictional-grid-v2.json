@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "city_id": "fictional-grid-v2",
+  "name": "Fictional Grid City V2",
+  "time_zone": "Etc/UTC",
+  "source": {
+    "provider": "AdLife Fictional Cartography",
+    "dataset": "Bundled fictional grid",
+    "version": "2.0.0",
+    "published_on": "2026-09-29",
+    "source_sha256": "02c6992095203c77308dee9c234d224e609d1942c87dc38bfdc1d9abb4eb7d5f",
+    "source_url": "https://example.org/fictional-city",
+    "license": "CC0-1.0",
+    "attribution": "Fictional demonstration streets; not real map data"
+  },
+  "bounds": {"west": 0.0, "south": 0.0, "east": 0.08, "north": 0.06},
+  "known_omissions": [
+    "No measured traffic, population, or land use",
+    "No turn restrictions or time-dependent access",
+    "Synthetic geometry; not a real city"
+  ],
+  "nodes": [
+    {"node_id": "west-north", "longitude": 0.0, "latitude": 0.06},
+    {"node_id": "center-north", "longitude": 0.04, "latitude": 0.06},
+    {"node_id": "east-north", "longitude": 0.08, "latitude": 0.06},
+    {"node_id": "west-center", "longitude": 0.0, "latitude": 0.03},
+    {"node_id": "center-center", "longitude": 0.04, "latitude": 0.03},
+    {"node_id": "east-center", "longitude": 0.08, "latitude": 0.03},
+    {"node_id": "west-south", "longitude": 0.0, "latitude": 0.0},
+    {"node_id": "center-south", "longitude": 0.04, "latitude": 0.0},
+    {"node_id": "east-south", "longitude": 0.08, "latitude": 0.0}
+  ],
+  "roads": [
+    {"road_id": "north-west", "source_node": "west-north", "target_node": "center-north", "kind": "residential", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "north-east", "source_node": "center-north", "target_node": "east-north", "kind": "residential", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "middle-west", "source_node": "west-center", "target_node": "center-center", "kind": "primary", "directions": ["forward", "backward"], "shape": [{"longitude": 0.02, "latitude": 0.034}]},
+    {"road_id": "middle-east", "source_node": "center-center", "target_node": "east-center", "kind": "primary", "directions": ["forward", "backward"], "shape": [{"longitude": 0.06, "latitude": 0.026}]},
+    {"road_id": "south-west", "source_node": "west-south", "target_node": "center-south", "kind": "residential", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "south-east", "source_node": "center-south", "target_node": "east-south", "kind": "residential", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "west-upper", "source_node": "west-south", "target_node": "west-center", "kind": "secondary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "west-lower", "source_node": "west-center", "target_node": "west-north", "kind": "secondary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "center-upper", "source_node": "center-south", "target_node": "center-center", "kind": "trunk", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "center-lower", "source_node": "center-center", "target_node": "center-north", "kind": "trunk", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "east-upper", "source_node": "east-south", "target_node": "east-center", "kind": "secondary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "east-lower", "source_node": "east-center", "target_node": "east-north", "kind": "secondary", "directions": ["forward", "backward"], "shape": []}
+  ]
+}

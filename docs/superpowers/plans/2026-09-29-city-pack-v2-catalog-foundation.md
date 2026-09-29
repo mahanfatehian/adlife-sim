@@ -198,6 +198,7 @@ git commit -m "feat(city): import v2 packs with quality evidence"
 
 **Files:**
 - Create: `src/adlife/core/domain/city_catalog.py`
+- Modify: `src/adlife/core/domain/__init__.py`
 - Create: `src/adlife/city/catalog.py`
 - Create: `src/adlife/city/catalog.json`
 - Create: `src/adlife/city/catalog/fictional-grid-v2.json`
@@ -205,10 +206,11 @@ git commit -m "feat(city): import v2 packs with quality evidence"
 - Modify: `src/adlife/cli/app.py`
 - Modify: `src/adlife/cli/commands/city.py`
 - Modify: `src/adlife/cli/commands/city_run.py`
-- Create: `tests/unit/city/test_city_catalog.py`
+- Create: `tests/unit/city/test_city_catalog_contract.py`
 - Create: `tests/cli/test_city_catalog.py`
 - Modify: `tests/cli/test_city.py`
 - Modify: `tests/cli/test_city_run.py`
+- Modify: `tests/integration/test_city_run_replay.py`
 - Modify: `tests/packaging/test_wheel.py`
 
 **Interfaces:**
@@ -221,24 +223,24 @@ Test stable sorted list/search/show output, exact JSON/JSONL, fictional classifi
 
 - [ ] **Step 2: Run the new tests and verify RED**
 
-Run: `uv run pytest tests/unit/city/test_city_catalog.py tests/cli/test_city_catalog.py tests/cli/test_city.py tests/cli/test_city_run.py tests/packaging/test_wheel.py -q`
+Run: `uv run pytest tests/unit/city/test_city_catalog_contract.py tests/cli/test_city_catalog.py tests/cli/test_city.py tests/cli/test_city_run.py tests/packaging/test_wheel.py -q`
 
 Expected: FAIL because no catalog contract or commands exist.
 
 - [ ] **Step 3: Implement the packaged, content-addressed catalog**
 
-Catalog entries carry stable ID/display name, resource name, immutable pack hash/schema, qualification class (`fictional-fixture` or `rights-reviewed`), reviewer role/date when reviewed, coverage, time zone, source date/version, license, attribution and omissions. Load only package resources or an explicitly supplied test root, validate before selection, and never accept an arbitrary URL. Bundle one clearly fictional v2 grid; no real city is marked reviewed in this milestone.
+Catalog entries carry stable ID/display name, resource name, immutable pack hash/schema, a separate structured data-origin class (`fictional` or `real-world`), qualification class (`fictional-fixture` or `rights-reviewed`), reviewer role/date when reviewed, coverage, time zone, source date/version, license, attribution and omissions. Fictional qualification requires fictional origin; real-world origin requires a review dated no earlier than source publication and no later than the validation date. Load only package resources or an explicitly supplied test root, validate before selection, and never accept an arbitrary URL. Bundle one clearly fictional v2 grid; no real city is marked reviewed in this milestone.
 
 - [ ] **Step 4: Run catalog, CLI, replay and packaging tests**
 
-Run: `uv run pytest tests/unit/city/test_city_catalog.py tests/cli/test_city_catalog.py tests/cli/test_city.py tests/cli/test_city_run.py tests/integration/test_city_run_replay.py tests/packaging/test_wheel.py tests/packaging/test_resources.py -q`
+Run: `uv run pytest tests/unit/city/test_city_catalog_contract.py tests/cli/test_city_catalog.py tests/cli/test_city.py tests/cli/test_city_run.py tests/integration/test_city_run_replay.py tests/packaging/test_wheel.py tests/packaging/test_resources.py -q`
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/adlife/core/domain/city_catalog.py src/adlife/city/catalog.py src/adlife/city/catalog.json src/adlife/city/catalog/fictional-grid-v2.json src/adlife/cli/commands/city_catalog.py src/adlife/cli/app.py src/adlife/cli/commands/city.py src/adlife/cli/commands/city_run.py tests/unit/city/test_city_catalog.py tests/cli/test_city_catalog.py tests/cli/test_city.py tests/cli/test_city_run.py tests/packaging/test_wheel.py
+git add src/adlife/core/domain/city_catalog.py src/adlife/city/catalog.py src/adlife/city/catalog.json src/adlife/city/catalog/fictional-grid-v2.json src/adlife/cli/commands/city_catalog.py src/adlife/cli/app.py src/adlife/cli/commands/city.py src/adlife/cli/commands/city_run.py tests/unit/city/test_city_catalog_contract.py tests/cli/test_city_catalog.py tests/cli/test_city.py tests/cli/test_city_run.py tests/packaging/test_wheel.py
 git commit -m "feat(city): add verified offline city catalog"
 ```
 

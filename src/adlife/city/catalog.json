@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "city_id": "fictional-grid-v2",
+      "display_name": "Fictional Grid City V2",
+      "resource_name": "fictional-grid-v2.json",
+      "pack_sha256": "c567018e97feb4d04bea1eb3f3526981fdd915df22ad3a54237b2f5e6cb8b92c",
+      "pack_schema_version": 2,
+      "data_origin": "fictional",
+      "qualification": "fictional-fixture",
+      "reviewer_role": null,
+      "reviewed_on": null,
+      "coverage": {"west": 0.0, "south": 0.0, "east": 0.08, "north": 0.06},
+      "time_zone": "Etc/UTC",
+      "source": {
+        "provider": "AdLife Fictional Cartography",
+        "dataset": "Bundled fictional grid",
+        "version": "2.0.0",
+        "published_on": "2026-09-29",
+        "source_sha256": "02c6992095203c77308dee9c234d224e609d1942c87dc38bfdc1d9abb4eb7d5f",
+        "source_url": "https://example.org/fictional-city",
+        "license": "CC0-1.0",
+        "attribution": "Fictional demonstration streets; not real map data"
+      },
+      "known_omissions": [
+        "No measured traffic, population, or land use",
+        "No turn restrictions or time-dependent access",
+        "Synthetic geometry; not a real city"
+      ]
+    }
+  ]
+}

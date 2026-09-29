@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from adlife.city.run_store import CityRunStore
 from adlife.cli.app import app
 from adlife.core.domain.serialization import canonical_json
 from tests.unit.city.test_city_pack import load_pack, pack_data
@@ -121,4 +122,50 @@ def test_city_run_interrupt_exits_130_without_an_artifact(
     )
     assert result.exit_code == 130
     assert json.loads(result.stdout)["error"]["exit_code"] == 130
+    assert not (tmp_path / "city-runs" / "study").exists()
+
+
+def test_city_run_can_freeze_a_verified_catalog_pack(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-run",
+            "--city-id",
+            "fictional-grid-v2",
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "catalog-study",
+            "--agents",
+            "2",
+            "--days",
+            "1",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    stored = CityRunStore(tmp_path).load("catalog-study")
+    assert stored.pack.city_id == "fictional-grid-v2"
+    assert stored.manifest.schema_version == 2
+
+
+def test_city_run_requires_exactly_one_pack_selector(tmp_path: Path) -> None:
+    pack = _pack(tmp_path)
+    common = [
+        "city-run",
+        "--output-root",
+        str(tmp_path),
+        "--run-id",
+        "study",
+        "--agents",
+        "2",
+        "--days",
+        "1",
+    ]
+    neither = CliRunner().invoke(app, common)
+    both = CliRunner().invoke(app, [*common, str(pack), "--city-id", "fictional-grid-v2"])
+    unknown = CliRunner().invoke(app, [*common, "--city-id", "unknown-city"])
+    assert neither.exit_code == both.exit_code == unknown.exit_code == 2
+    assert "Traceback" not in neither.output + both.output + unknown.output
     assert not (tmp_path / "city-runs" / "study").exists()
