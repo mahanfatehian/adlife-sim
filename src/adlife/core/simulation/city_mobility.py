@@ -7,9 +7,18 @@ import itertools
 import math
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from itertools import pairwise
 from typing import Literal
 
-from adlife.core.domain.city import CityNode, CityPack, RoadKind
+from adlife.core.domain.city import (
+    CityCoordinate,
+    CityNode,
+    CityPack,
+    CityPackDocument,
+    CityPackV2,
+    RoadKind,
+    TravelDirection,
+)
 from adlife.core.simulation.rng import RandomOracle
 
 Activity = Literal["home", "commute", "work", "leisure"]
@@ -27,7 +36,7 @@ METERS_PER_MINUTE: dict[RoadKind, float] = {
 }
 
 
-def _length_meters(start: CityNode, end: CityNode) -> float:
+def _length_meters(start: CityNode | CityCoordinate, end: CityNode | CityCoordinate) -> float:
     lat1, lat2 = math.radians(start.latitude), math.radians(end.latitude)
     delta_lat = lat2 - lat1
     delta_lon = math.radians(end.longitude - start.longitude)
@@ -44,10 +53,21 @@ class CityPath:
     road_ids: tuple[str, ...]
     duration_minutes: float
     distance_meters: float
+    directions: tuple[TravelDirection, ...] = ()
+    geometry: tuple[tuple[tuple[float, float], ...], ...] = ()
 
 
-RoadEdge = tuple[str, str, float, float]
-RoadGraph = dict[str, tuple[RoadEdge, ...]]
+@dataclass(frozen=True, slots=True)
+class _RoadEdge:
+    target: str
+    road_id: str
+    duration: float
+    distance: float
+    direction: TravelDirection
+    geometry: tuple[tuple[float, float], ...]
+
+
+RoadGraph = dict[str, tuple[_RoadEdge, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,22 +76,90 @@ class _RouteState:
     distance: float
     parent: str | None
     road_id: str | None
+    direction: TravelDirection | None
+    geometry: tuple[tuple[float, float], ...] | None
     version: int
 
 
-def _build_road_graph(pack: CityPack) -> RoadGraph:
+def _coordinates(
+    start: CityNode,
+    shape: tuple[CityCoordinate, ...],
+    end: CityNode,
+) -> tuple[CityNode | CityCoordinate, ...]:
+    return (start, *shape, end)
+
+
+def _edge(
+    *,
+    target: str,
+    road_id: str,
+    kind: RoadKind,
+    direction: TravelDirection,
+    points: tuple[CityNode | CityCoordinate, ...],
+) -> _RoadEdge:
+    distance = sum(_length_meters(start, end) for start, end in pairwise(points))
+    if distance <= 0:
+        raise ValueError("road geometry must have positive length")
+    geometry = tuple((point.longitude, point.latitude) for point in points)
+    return _RoadEdge(
+        target=target,
+        road_id=road_id,
+        duration=distance / METERS_PER_MINUTE[kind],
+        distance=distance,
+        direction=direction,
+        geometry=geometry,
+    )
+
+
+def _reverse_edge(edge: _RoadEdge, *, target: str) -> _RoadEdge:
+    return _RoadEdge(
+        target=target,
+        road_id=edge.road_id,
+        duration=edge.duration,
+        distance=edge.distance,
+        direction="backward",
+        geometry=tuple(reversed(edge.geometry)),
+    )
+
+
+def _build_road_graph(pack: CityPackDocument) -> RoadGraph:
     nodes = {node.node_id: node for node in pack.nodes}
-    adjacency: dict[str, list[RoadEdge]] = {node_id: [] for node_id in nodes}
-    for road in pack.roads:
-        distance = _length_meters(nodes[road.source_node], nodes[road.target_node])
-        if distance <= 0:
-            raise ValueError("road endpoints must have different coordinates")
-        duration = distance / METERS_PER_MINUTE[road.kind]
-        adjacency[road.source_node].append((road.target_node, road.road_id, duration, distance))
-        if not road.one_way:
-            adjacency[road.target_node].append((road.source_node, road.road_id, duration, distance))
+    adjacency: dict[str, list[_RoadEdge]] = {node_id: [] for node_id in nodes}
+    if isinstance(pack, CityPack):
+        for road_v1 in pack.roads:
+            points = _coordinates(nodes[road_v1.source_node], (), nodes[road_v1.target_node])
+            forward = _edge(
+                target=road_v1.target_node,
+                road_id=road_v1.road_id,
+                kind=road_v1.kind,
+                direction="forward",
+                points=points,
+            )
+            adjacency[road_v1.source_node].append(forward)
+            if not road_v1.one_way:
+                adjacency[road_v1.target_node].append(
+                    _reverse_edge(forward, target=road_v1.source_node)
+                )
+    else:
+        for road_v2 in pack.roads:
+            points = _coordinates(
+                nodes[road_v2.source_node], road_v2.shape, nodes[road_v2.target_node]
+            )
+            forward = _edge(
+                target=road_v2.target_node,
+                road_id=road_v2.road_id,
+                kind=road_v2.kind,
+                direction="forward",
+                points=points,
+            )
+            if "forward" in road_v2.directions:
+                adjacency[road_v2.source_node].append(forward)
+            if "backward" in road_v2.directions:
+                adjacency[road_v2.target_node].append(
+                    _reverse_edge(forward, target=road_v2.source_node)
+                )
     for edges in adjacency.values():
-        edges.sort(key=lambda edge: (edge[1], edge[0]))
+        edges.sort(key=lambda edge: (edge.road_id, edge.target, edge.direction))
     return {node_id: tuple(edges) for node_id, edges in adjacency.items()}
 
 
@@ -96,7 +184,7 @@ def _shortest_path(graph: RoadGraph, start_id: str, end_id: str) -> CityPath:
     # sequences are reconstructed only on exact time ties, not copied on every edge.
     serial = itertools.count(1)
     frontier: list[tuple[float, int, str]] = [(0.0, 0, start_id)]
-    best = {start_id: _RouteState(0.0, 0.0, None, None, 0)}
+    best = {start_id: _RouteState(0.0, 0.0, None, None, None, None, 0)}
     while frontier:
         duration, version, current = heapq.heappop(frontier)
         state = best[current]
@@ -105,11 +193,17 @@ def _shortest_path(graph: RoadGraph, start_id: str, end_id: str) -> CityPath:
         if current == end_id:
             node_ids = [current]
             road_ids = []
+            directions: list[TravelDirection] = []
+            geometry: list[tuple[tuple[float, float], ...]] = []
             while best[current].parent is not None:
                 path_state = best[current]
                 assert path_state.road_id is not None
+                assert path_state.direction is not None
+                assert path_state.geometry is not None
                 assert path_state.parent is not None
                 road_ids.append(path_state.road_id)
+                directions.append(path_state.direction)
+                geometry.append(path_state.geometry)
                 current = path_state.parent
                 node_ids.append(current)
             return CityPath(
@@ -117,30 +211,35 @@ def _shortest_path(graph: RoadGraph, start_id: str, end_id: str) -> CityPath:
                 tuple(reversed(road_ids)),
                 state.duration,
                 state.distance,
+                tuple(reversed(directions)),
+                tuple(reversed(geometry)),
             )
-        for target, road_id, edge_duration, edge_distance in graph[current]:
-            candidate_duration = duration + edge_duration
-            previous = best.get(target)
+        for edge in graph[current]:
+            candidate_duration = duration + edge.duration
+            previous = best.get(edge.target)
             if previous is not None:
                 if candidate_duration > previous.duration:
                     continue
                 if candidate_duration == previous.duration and (
-                    (*_road_sequence(best, current), road_id) >= _road_sequence(best, target)
+                    (*_road_sequence(best, current), edge.road_id)
+                    >= _road_sequence(best, edge.target)
                 ):
                     continue
             next_version = next(serial)
-            best[target] = _RouteState(
+            best[edge.target] = _RouteState(
                 candidate_duration,
-                state.distance + edge_distance,
+                state.distance + edge.distance,
                 current,
-                road_id,
+                edge.road_id,
+                edge.direction,
+                edge.geometry,
                 next_version,
             )
-            heapq.heappush(frontier, (candidate_duration, next_version, target))
+            heapq.heappush(frontier, (candidate_duration, next_version, edge.target))
     raise ValueError("no directed road path between city nodes")
 
 
-def shortest_path(pack: CityPack, start_id: str, end_id: str) -> CityPath:
+def shortest_path(pack: CityPackDocument, start_id: str, end_id: str) -> CityPath:
     """Find a directed, minimum-travel-time path with canonical tie breaking."""
     if start_id not in {node.node_id for node in pack.nodes} or end_id not in {
         node.node_id for node in pack.nodes
@@ -179,9 +278,9 @@ class CityPosition:
 class CityMobility:
     """Immutable configuration; every frame is computed from seed and simulated minute."""
 
-    def __init__(self, pack: CityPack, *, seed: int, agent_count: int, days: int) -> None:
-        if not isinstance(pack, CityPack):
-            raise TypeError("pack must be a CityPack")
+    def __init__(self, pack: CityPackDocument, *, seed: int, agent_count: int, days: int) -> None:
+        if not isinstance(pack, (CityPack, CityPackV2)):
+            raise TypeError("pack must be a supported CityPack")
         if type(seed) is not int or seed < 0:
             raise ValueError("seed must be a nonnegative integer")
         if type(agent_count) is not int or not 1 <= agent_count <= 250:
@@ -193,10 +292,10 @@ class CityMobility:
         self.days = days
         self._nodes = {node.node_id: node for node in pack.nodes}
         road_graph = _build_road_graph(pack)
-        self._edge_minutes = {
-            (source, target, road_id): duration
+        self._edges = {
+            (source, edge.target, edge.road_id): edge
             for source, edges in road_graph.items()
-            for target, road_id, duration, _ in edges
+            for edge in edges
         }
         oracle = RandomOracle(seed)
         node_ids = tuple(self._nodes)
@@ -233,23 +332,42 @@ class CityMobility:
         self.agents = tuple(agents)
 
     def metadata(self) -> dict[str, object]:
-        return {
+        document: dict[str, object] = {
             "city_id": self.pack.city_id,
             "city_name": self.pack.name,
             "city_sha256": self.pack.fingerprint,
-            "source_url": str(self.pack.source_url),
-            "license": self.pack.license,
-            "attribution": self.pack.attribution,
             "seed": self.seed,
             "agent_count": len(self.agents),
             "days": self.days,
             "minutes_per_day": 1440,
-            "model": "illustrative-road-mobility-v1",
+            "model": (
+                "illustrative-road-mobility-v1"
+                if isinstance(self.pack, CityPack)
+                else "illustrative-road-mobility-v2"
+            ),
             "disclosure": (
                 "Synthetic agents and illustrative travel speeds; not measured traffic "
                 "or a prediction of real residents or advertising outcomes."
             ),
         }
+        if isinstance(self.pack, CityPack):
+            document.update(
+                source_url=str(self.pack.source_url),
+                license=self.pack.license,
+                attribution=self.pack.attribution,
+            )
+        else:
+            document.update(
+                city_schema_version=2,
+                time_zone=self.pack.time_zone,
+                source=self.pack.source.model_dump(mode="json"),
+                source_url=str(self.pack.source.source_url),
+                license=self.pack.source.license,
+                attribution=self.pack.source.attribution,
+                bounds=self.pack.bounds.model_dump(mode="json"),
+                known_omissions=list(self.pack.known_omissions),
+            )
+        return document
 
     def frame(self, minute: int) -> tuple[CityPosition, ...]:
         if type(minute) is not int or not 0 <= minute < self.days * 1440:
@@ -315,6 +433,11 @@ class CityMobility:
             "destination_activity": "leisure" if weekend else "work",
             "node_ids": list(path.node_ids),
             "road_ids": list(path.road_ids),
+            "directions": list(path.directions),
+            "geometry": [
+                [{"longitude": longitude, "latitude": latitude} for longitude, latitude in line]
+                for line in path.geometry
+            ],
             "duration_minutes": path.duration_minutes,
             "distance_meters": path.distance_meters,
         }
@@ -330,19 +453,35 @@ class CityMobility:
         for index, road_id in enumerate(path.road_ids):
             start = self._nodes[path.node_ids[index]]
             end = self._nodes[path.node_ids[index + 1]]
-            segment_minutes = self._edge_minutes[start.node_id, end.node_id, road_id]
-            if remaining < segment_minutes or index == len(path.road_ids) - 1:
-                fraction = min(1.0, remaining / segment_minutes)
-                return CityPosition(
-                    agent_id,
-                    minute,
-                    start.longitude + (end.longitude - start.longitude) * fraction,
-                    start.latitude + (end.latitude - start.latitude) * fraction,
-                    "commute",
-                    road_id,
-                )
-            remaining -= segment_minutes
+            edge = self._edges[start.node_id, end.node_id, road_id]
+            if remaining < edge.duration or index == len(path.road_ids) - 1:
+                fraction = min(1.0, remaining / edge.duration)
+                longitude, latitude = _interpolate_geometry(edge, fraction)
+                return CityPosition(agent_id, minute, longitude, latitude, "commute", road_id)
+            remaining -= edge.duration
         raise AssertionError("a nonempty path must contain a road")
+
+
+def _interpolate_geometry(edge: _RoadEdge, fraction: float) -> tuple[float, float]:
+    if len(edge.geometry) == 2:
+        start, end = edge.geometry
+        return (
+            start[0] + (end[0] - start[0]) * fraction,
+            start[1] + (end[1] - start[1]) * fraction,
+        )
+    remaining = edge.distance * fraction
+    for index, (start, end) in enumerate(pairwise(edge.geometry)):
+        start_point = CityCoordinate(longitude=start[0], latitude=start[1])
+        end_point = CityCoordinate(longitude=end[0], latitude=end[1])
+        segment_distance = _length_meters(start_point, end_point)
+        if remaining < segment_distance or index == len(edge.geometry) - 2:
+            segment_fraction = min(1.0, remaining / segment_distance)
+            return (
+                start[0] + (end[0] - start[0]) * segment_fraction,
+                start[1] + (end[1] - start[1]) * segment_fraction,
+            )
+        remaining -= segment_distance
+    raise AssertionError("validated road geometry must contain a segment")
 
 
 def _choose(

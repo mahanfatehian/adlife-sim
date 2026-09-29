@@ -45,8 +45,10 @@ function updateLabels() {
 
 function projection() {
   const nodes = state.city.nodes;
-  const longs = nodes.map((node) => node.longitude);
-  const lats = nodes.map((node) => node.latitude);
+  const shape = state.city.roads.flatMap((road) => road.shape || []);
+  const points = [...nodes, ...shape];
+  const longs = points.map((point) => point.longitude);
+  const lats = points.map((point) => point.latitude);
   const minLon = Math.min(...longs), maxLon = Math.max(...longs);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats);
   const midLat = (minLat + maxLat) / 2;
@@ -74,16 +76,25 @@ function renderMap() {
   const roadColors = { motorway: "#b09e6c", trunk: "#b09e6c", primary: "#8b9e9e", secondary: "#698b96", tertiary: "#698b96", residential: "#466976", service: "#466976", path: "#466976" };
   for (const road of state.city.roads) {
     const start = nodes.get(road.source_node), end = nodes.get(road.target_node);
-    const [x1, y1] = project(start.longitude, start.latitude);
-    const [x2, y2] = project(end.longitude, end.latitude);
+    const roadPoints = [start, ...(road.shape || []), end].map((point) => project(point.longitude, point.latitude));
+    const drawRoad = () => {
+      ctx.beginPath();
+      for (const [index, point] of roadPoints.entries()) {
+        if (index === 0) ctx.moveTo(point[0], point[1]); else ctx.lineTo(point[0], point[1]);
+      }
+      ctx.stroke();
+    };
     ctx.strokeStyle = "#061923";
     ctx.lineWidth = road.kind === "motorway" || road.kind === "trunk" ? 12 : 8;
     ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    drawRoad();
     ctx.strokeStyle = roadColors[road.kind] || "#466976";
     ctx.lineWidth -= 5;
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-    if (road.one_way) {
+    drawRoad();
+    const oneDirection = road.one_way || (road.directions && road.directions.length === 1);
+    if (oneDirection) {
+      const arrowPoints = road.directions && road.directions[0] === "backward" ? [...roadPoints].reverse() : roadPoints;
+      const [x1, y1] = arrowPoints[0], [x2, y2] = arrowPoints[arrowPoints.length - 1];
       const angle = Math.atan2(y2 - y1, x2 - x1), mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
       ctx.strokeStyle = "#c2a96f"; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(mx - 5 * Math.cos(angle - .6), my - 5 * Math.sin(angle - .6));
@@ -92,16 +103,26 @@ function renderMap() {
   }
   if (state.frame.route && state.frame.route.agent_id === state.selected) {
     const routeNodes = state.frame.route.node_ids;
-    if (routeNodes.length > 1) {
+    const routeGeometry = state.frame.route.geometry;
+    if (routeGeometry.length > 0 || routeNodes.length > 1) {
       ctx.strokeStyle = "#f2ca7d";
       ctx.lineWidth = 4;
       ctx.lineJoin = "round";
       ctx.setLineDash([10, 6]);
       ctx.beginPath();
-      for (const [index, nodeId] of routeNodes.entries()) {
-        const node = nodes.get(nodeId);
-        const [x, y] = project(node.longitude, node.latitude);
-        if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      if (routeGeometry.length > 0) {
+        for (const line of routeGeometry) {
+          for (const [index, point] of line.entries()) {
+            const [x, y] = project(point.longitude, point.latitude);
+            if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+        }
+      } else {
+        for (const [index, nodeId] of routeNodes.entries()) {
+          const node = nodes.get(nodeId);
+          const [x, y] = project(node.longitude, node.latitude);
+          if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
       }
       ctx.stroke();
       ctx.setLineDash([]);

@@ -5,6 +5,7 @@ from zipfile import ZipFile
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _NAME_RESOURCE_MEMBER = "adlife/resources/names/fictional.yaml"
+_CITY_SCRIPT_MEMBER = "adlife/city/static/app.js"
 
 
 def test_built_wheel_contains_fictional_name_resource(tmp_path: Path) -> None:
@@ -22,3 +23,6 @@ def test_built_wheel_contains_fictional_name_resource(tmp_path: Path) -> None:
 
     with ZipFile(wheels[0]) as archive:
         assert _NAME_RESOURCE_MEMBER in archive.namelist()
+        script = archive.read(_CITY_SCRIPT_MEMBER).decode("utf-8")
+        assert "road.shape" in script
+        assert "state.frame.route.geometry" in script

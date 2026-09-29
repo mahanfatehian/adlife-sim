@@ -3,7 +3,7 @@ import pytest
 
 from adlife.city.web import create_city_app
 from adlife.core.simulation.city_mobility import CityMobility
-from tests.unit.city.test_city_pack import load_pack, pack_data
+from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
 def client() -> httpx.AsyncClient:
@@ -26,6 +26,22 @@ async def test_api_exposes_exact_core_trace_and_pack_hash() -> None:
     assert frame.json() == CityMobility(
         load_pack(pack_data()), seed=42, agent_count=3, days=2
     ).frame_document(480)
+
+
+@pytest.mark.asyncio
+async def test_api_exposes_v2_geometry_timezone_and_provenance() -> None:
+    simulation = CityMobility(load_pack_v2(pack_v2_data()), seed=42, agent_count=2, days=1)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_city_app(simulation)),
+        base_url="http://city.test",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        city = (await web.get("/api/city")).json()
+    assert metadata["city_schema_version"] == 2
+    assert metadata["time_zone"] == "Etc/UTC"
+    assert metadata["source"]["dataset"] == "Fictional Grid"
+    assert city["schema_version"] == 2
+    assert city["roads"][0]["shape"] == [{"longitude": 0.005, "latitude": 0.004}]
 
 
 @pytest.mark.asyncio
@@ -67,6 +83,8 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'byId("license-label").textContent = meta.license' in js.text
     assert 'id="route-summary"' in html.text
     assert "state.frame.route.node_ids" in js.text
+    assert "road.shape" in js.text
+    assert "state.frame.route.geometry" in js.text
     assert "list.replaceChildren()" not in js.text
     assert "http://" not in html.text and "https://" not in html.text
     assert "textContent" in js.text

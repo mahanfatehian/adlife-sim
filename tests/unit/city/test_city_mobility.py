@@ -1,9 +1,10 @@
 import pytest
 
-from adlife.core.domain.city import CityNode
+from adlife.core.domain.city import CityNode, CityPackV2
 from adlife.core.simulation.city_mobility import CityMobility, shortest_path
+from adlife.core.simulation.city_trace import summarize_city_trace
 from adlife.core.simulation.rng import RandomOracle
-from tests.unit.city.test_city_pack import load_pack, pack_data
+from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
 def test_directed_one_way_paths() -> None:
@@ -51,6 +52,70 @@ def test_equal_travel_time_uses_stable_road_id_tie_break() -> None:
         {"road_id": "cd", "source_node": "c", "target_node": "d", "kind": "residential"},
     ]
     assert shortest_path(load_pack(data), "a", "d").road_ids == ("ab", "bd")
+
+
+def test_v2_curved_road_length_direction_and_geometry_are_core_owned() -> None:
+    pack = load_pack_v2(pack_v2_data())
+    assert isinstance(pack, CityPackV2)
+    forward = shortest_path(pack, "a", "b")
+    backward = shortest_path(pack, "b", "a")
+    expected_forward = ((0.0, 0.0), (0.005, 0.004), (0.01, 0.0))
+    assert forward.road_ids == ("ab",)
+    assert forward.directions == ("forward",)
+    assert forward.geometry == (expected_forward,)
+    assert forward.distance_meters > 1_400
+    assert backward.road_ids == ("ab",)
+    assert backward.directions == ("backward",)
+    assert backward.geometry == (tuple(reversed(expected_forward)),)
+    assert backward.distance_meters == pytest.approx(forward.distance_meters)
+
+
+def test_v2_prohibited_reverse_direction_is_not_added_to_graph() -> None:
+    data = pack_v2_data()
+    roads = data["roads"]
+    assert isinstance(roads, list) and isinstance(roads[0], dict)
+    roads[0]["directions"] = ["forward"]
+    pack = load_pack_v2(data)
+    assert isinstance(pack, CityPackV2)
+    assert shortest_path(pack, "a", "b").road_ids == ("ab",)
+    assert shortest_path(pack, "b", "a").road_ids != ("ab",)
+
+
+def test_v2_agent_position_follows_curve_and_route_document_exposes_geometry() -> None:
+    pack = load_pack_v2(pack_v2_data())
+    assert isinstance(pack, CityPackV2)
+    simulation = next(
+        candidate
+        for seed in range(100)
+        if (candidate := CityMobility(pack, seed=seed, agent_count=1, days=1)).agents[0].home_node
+        == "a"
+        and candidate.agents[0].work_node == "b"
+    )
+    position = simulation.frame(481)[0]
+    route = simulation.route_document("person-001", 481)
+    assert position.road_id == "ab"
+    assert position.latitude > 0
+    assert route["directions"] == ["forward"]
+    assert route["geometry"] == [
+        [
+            {"longitude": 0.0, "latitude": 0.0},
+            {"longitude": 0.005, "latitude": 0.004},
+            {"longitude": 0.01, "latitude": 0.0},
+        ]
+    ]
+    assert simulation.metadata()["model"] == "illustrative-road-mobility-v2"
+
+
+def test_v1_trace_digest_stays_compatible_after_v2_routing_support() -> None:
+    summary = summarize_city_trace(
+        CityMobility(load_pack(pack_data()), seed=42, agent_count=2, days=1)
+    )
+    assert (
+        summary.trace_sha256 == "2d7996c311c694f20adc244f4fada1170f355bbd1c8ea50ef804ab0b743d5583"
+    )
+    assert (
+        summary.agents_sha256 == "f563085e0ac5f8cdb32598b72f6b809b7608a2741e2a25c907b1dc771bc9695c"
+    )
 
 
 def test_route_endpoints_are_validated() -> None:
