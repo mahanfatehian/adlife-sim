@@ -69,12 +69,14 @@ What this model cannot support. Read alongside the
   Optional place sets constrain synthetic home, workplace and leisure nodes with stated
   provenance and deterministic assignment. They do not model land-use capacity, household
   composition, job matching, venue preference or observed origin-destination demand.
-- **Spatial campaigns stop at input validation.** `city-campaign validate` checks hashes,
-  references, windows, caps, direction and road-coordinate consistency, but no geographic
-  opportunity/impression/notice/response event exists yet. Billboard orientation and view
-  distance are assumptions, and the phone probability is not an observed usage rate.
-  These inputs cannot be passed to `city-run` until C2â€“C4 define and test event semantics,
-  persistence, replay and metrics.
+- **Spatial opportunities are core-only model evidence.** `city-campaign validate` checks
+  hashes, references, windows, caps, direction and road-coordinate consistency. C2 can
+  derive typed opportunities and explicit funnel denominators, but they are not accepted
+  or persisted by `city-run` and no geographic impression/notice/response event exists.
+  Road proximity and the half-plane orientation heuristic omit occlusion, lanes,
+  buildings, traffic, speed variation and measured viewability. Phone probability is an
+  analyst assumption, not an observed usage rate. C3/C4 must still define persistence,
+  replay, causal downstream events, metrics and reports.
 - **Time-zone metadata is not a civil-time model.** City-pack v2 records an IANA time
   zone, but the fixed schedule treats day 1 as Monday, has no start date, holidays or
   daylight-saving transition policy, and uses fixed light/dark hours rather than local

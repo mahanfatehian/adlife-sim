@@ -115,8 +115,21 @@ schema-v1 scenario fingerprint is canonical across campaign, placement, window a
 eligible-activity input order, and its geometry evidence is derived from the selected
 immutable city pack. The command writes no artifact and spatial campaigns are not yet
 accepted by `city-run`; therefore this fingerprint must not be described as replay of an
-advertising outcome. C2â€“C4 remain responsible for versioned events, persistence, replay
-and metrics.
+advertising outcome. C3 and C4 remain responsible for versioned events, persistence,
+replay and metrics.
+
+The pure C2 evaluator is nevertheless deterministic evidence. Continuous route crossings
+come from the same frozen paths and speeds as the unchanged minute trace. Crossing time is
+quantized to the nearest model millisecond before half-open-window checks. Phone stream
+keys are the leading 64 bits of SHA-256 over
+`{seed}|spatial-phone-opportunity-v1:{campaign_id}:{placement_id}|{agent_id}|0`;
+absolute minute is transformed with the documented SplitMix64 counter finalizer, and its
+upper 53 bits form the `[0,1)` draw. Probability and cap are not part of that stream key,
+so paired variants reuse common random numbers. Records are ordered by continuous time,
+agent, campaign, placement and channel; IDs hash scenario/city fingerprints and that
+canonical identity. Campaign, placement, window and activity input order and
+`PYTHONHASHSEED` therefore cannot alter an evaluation. This is reproducible computation,
+not yet artifact replay.
 
 `adlife city-run PACK --output-root ROOT --run-id ID` or the catalog form
 `adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at

@@ -27,7 +27,7 @@ and push. Do not regenerate compatibility goldens.
 - [x] Define terms, causal chain, denominators and scientific claim boundary.
 - [x] Fix time quantization, orientation convention, draw namespace, cap scope and order.
 - [x] Preserve existing city frame and trace serialization.
-- [ ] Commit and push `docs(city): plan spatial opportunity semantics`.
+- [x] Commit and push `docs(city): plan spatial opportunity semantics`.
 
 ### Task 2: Expose immutable continuous road traversals
 
@@ -119,15 +119,27 @@ the direct benchmark (4.85x). Ruff and strict mypy over 111 source files passed.
 - Modify: `docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md`
 - Modify: this plan with exact evidence.
 
-- [ ] Document opportunity terms and denominators without claiming real impressions,
+- [x] Document opportunity terms and denominators without claiming real impressions,
   traffic, device use, attention or outcomes.
-- [ ] Mark only C2 complete; state clearly that C3 persistence/run integration and C4
+- [x] Mark only C2 complete; state clearly that C3 persistence/run integration and C4
   metrics/reporting remain required.
-- [ ] Run lock sync, Ruff format/lint, strict mypy, full pytest, both hash seeds and branch
+- [x] Run lock sync, Ruff format/lint, strict mypy, full pytest, both hash seeds and branch
   coverage.
-- [ ] Build sdist/wheel and run the exact clean-room smoke.
-- [ ] Inspect status/diff/check and commit/push
+- [x] Build sdist/wheel and run the exact clean-room smoke.
+- [x] Inspect status/diff/check and commit/push
   `docs(city): document spatial opportunity semantics`.
+
+**Evidence:** The documentation contract first failed because public surfaces still said
+spatial campaigns stopped at validation. The completed docs pin the causal stages,
+denominators, exact claim-scope token and C3/C4 boundary. Lock sync resolved 78 packages
+and audited 68. Ruff format found all 262 files formatted, Ruff lint passed, and strict
+mypy passed all 111 source files. The full suite passed with 3,452 tests and 13 expected
+skips in 564.00 seconds; complete reruns passed under `PYTHONHASHSEED=0` in 503.11 seconds
+and `PYTHONHASHSEED=12345` in 482.80 seconds. Branch coverage passed the same 3,452 tests
+and 13 skips in 981.03 seconds at 91.41%, above the 85% floor. `uv build --no-sources`
+produced both the sdist and wheel, and the exact wheel passed the clean-room smoke with a
+4,862,319-byte self-contained report plus catalog spatial validation and place-aware
+replay. Existing city compatibility trace bytes remained unchanged throughout C2.
 
 ## Final self-review questions
 

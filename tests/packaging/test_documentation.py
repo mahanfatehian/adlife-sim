@@ -187,6 +187,30 @@ def test_city_v2_docs_preserve_map_evidence_without_overstating_time_zone() -> N
         assert "calendar-accurate" in text
 
 
+def test_spatial_opportunity_docs_pin_c2_without_claiming_a_complete_city_run() -> None:
+    readme = _read("README.md").lower()
+    architecture = _read("docs", "architecture.md").lower()
+    city_pilot = _read("docs", "city-pilot.md").lower()
+    reproducibility = _read("docs", "reproducibility.md").lower()
+    model_card = _read("docs", "methodology", "model-card.md").lower()
+    limitations = _read("docs", "methodology", "limitations.md").lower()
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    )
+
+    for text in (readme, architecture, city_pilot, model_card):
+        assert "synthetic-opportunity-not-impression" in text
+    for text in (readme, architecture, city_pilot, reproducibility, limitations):
+        assert "c3" in text
+    for text in (readme, architecture, city_pilot, reproducibility, model_card, limitations):
+        assert "city-run" in text
+    assert "not yet accepted or persisted" in model_card
+    assert "splitmix64" in city_pilot
+    assert "splitmix64" in reproducibility
+    assert "[x] **C2" in roadmap
+    assert "[ ] **C3" in roadmap
+
+
 # ---------------------------------------------------------------------------
 # Governance files
 # ---------------------------------------------------------------------------

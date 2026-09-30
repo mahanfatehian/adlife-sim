@@ -53,8 +53,21 @@ fictional campaigns by stable ID, and declares billboard/phone placement assumpt
 Core validation resolves road IDs and traversal directions, interpolates the complete v1
 or v2 road geometry, and refuses a declared coordinate more than one meter from its
 physical road fraction; it never snaps or mutates input. The city adapter only loads a
-bounded local JSON document and the CLI only reports validation evidence. No spatial
-advertising event is joined to mobility yet.
+bounded local JSON document and the CLI only reports validation evidence.
+
+`core/simulation/spatial_opportunity.py` is the C2 pure evaluation boundary.
+`CityMobility.road_traversals()` exposes continuous directed itinerary intervals without
+changing the compatibility-critical minute-frame stream. The evaluator revalidates C1
+bindings, derives half-open-window roadside crossings and an explicit orientation
+heuristic, evaluates activity-filtered counter-based phone draws, applies
+placement/agent/day caps, and returns frozen typed opportunities plus every funnel
+denominator. Opportunity IDs and phone draws are keyed and order-independent. The result
+literally carries `synthetic-opportunity-not-impression`. It performs no I/O and cannot
+change movement, state, budget, cognition or purchase probability.
+
+No spatial opportunity is joined to an advertising run or artifact yet. C3 must persist
+the C2 output through the core ports before adapters or observers may consume it; C4 must
+derive metrics and reports from those persisted events.
 
 The city adapter owns file and package-resource loading. Its packaged catalog is an
 offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
@@ -74,7 +87,8 @@ pack under `city-runs/<run-id>/`; their hashes are part of the final manifest.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute before reporting equality, and `city-view`
 validates before serving one immutable run. This is not an event-sourced advertising
-run; geographic campaign encounters remain a separate future model.
+run; C2 geographic opportunity evaluation remains an unpersisted pure-core result until
+C3 defines the joined run contract.
 
 ## The cognition seam
 

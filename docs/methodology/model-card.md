@@ -11,8 +11,9 @@ only the `fictional-grid-v2` fixture; a rights-reviewed real city has not shippe
 street pack acquired under appropriate rights can provide real geography, but the
 agents, schedules and speeds remain synthetic and uncalibrated. No campaign or provider
 result is plotted on that map in this release. Spatial campaign documents can be
-validated against roads, but validation creates no opportunity, impression, attention or
-response event.
+validated against roads, and the pure core can derive bounded synthetic opportunity
+records. Those records are not yet accepted or persisted by `city-run`, and they are not
+impressions, attention, responses or outcomes.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -95,6 +96,16 @@ assumptions, exact roadside bindings and a declared phone-opportunity probabilit
 creative hash proves byte identity only, not ownership or suitability. A road binding
 proves geometric consistency only, not legal inventory, line of sight, viewability,
 traffic, device use, attention or effect.
+
+Spatial opportunity model v1 distinguishes matching road traversal, active crossing,
+bound-coordinate proximity, an approximate billboard-facing heuristic, phone-eligible
+synthetic activity-minutes, keyed threshold successes, cap refusals and emitted
+opportunities. Each stage has a separate count. Phone draws are counter-based and keyed by
+seed/campaign/placement/fictional agent/minute; roadside timing comes from illustrative
+free-flow routes. Every record is explicitly a synthetic opportunity, not a verified
+impression, through the literal claim scope `synthetic-opportunity-not-impression`. No
+spatial opportunity currently reaches cognition, agent state, purchase logic, storage,
+replay, metrics or reports.
 
 ## Metrics
 

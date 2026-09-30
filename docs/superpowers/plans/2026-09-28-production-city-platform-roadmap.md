@@ -187,12 +187,20 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   geometry validation refuses unsupported directions, bounds errors and coordinates over
   one meter from the declared road fraction without snapping. The bounded offline
   `city-campaign validate` command and installed-wheel smoke cover local/catalog inputs.
-- [ ] **C2 — Specify measurable *model* semantics.** Define road traversal,
+- [x] **C2 — Specify measurable *model* semantics.** Define road traversal,
   proximity and approximate visibility separately from notice, and phone-use
   opportunity separately from location. Document denominator and causal chain.
   Golden tests assert none/one/multiple crossing cases, reverse direction, segment
   boundaries, time windows and repeat caps. Do not call a proximity result a
   verified real-world impression.
+
+  **Evidence (2026-10-01):** immutable continuous road traversals preserve legacy trace
+  bytes. Pure core evaluation separates matching/active/proximity/approximate-facing and
+  phone eligible/threshold/cap stages; typed records say
+  `synthetic-opportunity-not-impression`. Crossing time, curved approach geometry,
+  directions, half-open windows, cap scope, canonical IDs and a precisely specified
+  SHA-derived SplitMix64 phone stream have golden/property/hash-seed coverage. The maximum
+  20-policy/30-agent/7-day phone denominator is bounded by an automated performance gate.
 - [ ] **C3 — Join mobility and campaign policies through core ports.** Plan each
   tick from immutable state, resolve cognition before commit, persist before observer
   notification, maintain deterministic total order and bounded state. Reuse existing

@@ -199,9 +199,16 @@ uv run adlife city-campaign validate spatial-campaign.json --city-id fictional-g
 The schema binds a scenario to the exact city hash, validates creative hashes, active
 windows and caps, and proves each billboard coordinate matches a stable road fraction and
 supported direction without snapping. Phone placements declare an explicit synthetic
-opportunity policy. This command does **not** run advertising, create impressions, alter a
-city run, or claim observed device use, viewability, attention, traffic, or sales; those
-event semantics remain later roadmap work.
+opportunity policy. The adapter-free C2 core can now evaluate deterministic typed
+opportunities from that scenario plus immutable mobility: directional billboard passages
+use continuous crossing time and a disclosed facing heuristic, while phone opportunities
+use activity-filtered keyed draws. It reports every pre/post-filter denominator and labels
+each record `synthetic-opportunity-not-impression`.
+
+This validation command still does **not** run advertising or alter a city run. C2 results
+are not yet accepted or persisted by `city-run`, shown in the viewer, converted into
+impressions/notice/responses, or included in reports; C3 and C4 remain required. Nothing
+claims observed device use, real viewability, attention, traffic, people, or sales.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or

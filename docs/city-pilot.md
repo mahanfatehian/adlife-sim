@@ -215,10 +215,33 @@ refused. A `mobile-feed` supplies the versioned `keyed-activity-minute-v1` polic
 synthetic activities and an analyst-authored per-minute probability. V1 permits one phone
 policy per campaign so extra records cannot silently multiply opportunity.
 
-This input contract does not yet generate opportunity or impression events and is not
-accepted by `city-run`. The probability is not observed phone behavior; orientation and
-distance are not measured visibility. C2â€“C4 must define, test, persist and report the
-causal event semantics before AdLife can run a geographic campaign study.
+The pure C2 core evaluator can now combine this contract with the immutable mobility model
+to derive typed synthetic opportunity evidence. It keeps the causal stages separate:
+
+```text
+matching directed road traversal
+  -> active crossing -> <=1 m bound-coordinate passage
+  -> approximate-facing heuristic -> cap -> roadside opportunity
+
+active eligible activity-minute
+  -> keyed phone threshold success -> cap -> phone opportunity
+```
+
+Road crossings use continuous route time quantized once to model milliseconds. A
+billboard face normal passes the disclosed heuristic only when its circular angle from a
+bounded approach point is at most 90 degrees. Phone draws use an order-independent
+SHA-derived SplitMix64 counter stream keyed by seed, campaign, placement and fictional
+agent, with absolute minute as counter. Caps are scoped to placement, agent and day.
+Evaluation exposes matching, active, proximity, approximate-facing, phone-eligible,
+threshold-success, capped and emitted counts so a later metric cannot silently substitute
+its denominator.
+
+Every output record says `synthetic-opportunity-not-impression`. The probability is not
+observed phone behavior; road proximity is not an impression; orientation and distance
+are not measured visibility or attention. C2 is pure and unpersisted: the scenario is not
+accepted by `city-run`, and no viewer/report exposes these records yet. C3 must persist a
+joined causal stream and C4 must derive artifact-backed metrics before AdLife can run a
+complete geographic campaign study.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
