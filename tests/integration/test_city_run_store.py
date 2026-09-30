@@ -13,7 +13,9 @@ from adlife import __version__
 from adlife.city import run_store as city_store_module
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.runs import create_city_run
+from adlife.core.domain import city_run
 from adlife.core.domain.city import parse_city_pack_json
+from adlife.core.domain.city_places import parse_city_place_set_json
 from adlife.core.domain.city_run import CityRunManifest
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import (
@@ -24,6 +26,7 @@ from adlife.core.ports.run_store import (
 )
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
+from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
@@ -73,6 +76,113 @@ def test_v2_save_freezes_canonical_geometry_and_loads_identical_trace(tmp_path: 
     assert loaded.pack == pack
     assert loaded.mobility.frame(481) == stored.mobility.frame(481)
     assert city_bytes == (canonical_json(pack) + "\n").encode("utf-8")
+
+
+def test_v3_save_freezes_places_and_assignments_and_loads_identical_trace(
+    tmp_path: Path,
+) -> None:
+    pack = load_pack_v2(pack_v2_data())
+    places = mobility_place_set()
+    stored = create_city_run(
+        pack,
+        root=tmp_path,
+        run_id="place-study",
+        seed=42,
+        agent_count=2,
+        days=7,
+        places=places,
+    )
+    loaded = CityRunStore(tmp_path).load("place-study")
+
+    model = getattr(city_run, "CityRunManifestV3", None)
+    assert model is not None, "CityRunManifestV3 is not implemented"
+    assert isinstance(stored.manifest, model)
+    assert stored.manifest.model_id == "illustrative-road-mobility-v3"
+    assert stored.manifest.place_set_sha256 == places.fingerprint
+    assert loaded.mobility.places == places
+    assert loaded.mobility.place_assignments == stored.mobility.place_assignments
+    assert (stored.directory / "inputs" / "places.json").read_bytes() == (
+        canonical_json(places) + "\n"
+    ).encode("utf-8")
+    assert (stored.directory / "inputs" / "place-assignments.json").read_bytes() == (
+        canonical_json(stored.mobility.place_assignment_document()) + "\n"
+    ).encode("utf-8")
+
+
+@pytest.mark.parametrize("artifact", ["inputs/places.json", "inputs/place-assignments.json"])
+def test_missing_v3_place_artifact_is_refused(tmp_path: Path, artifact: str) -> None:
+    stored = create_city_run(
+        load_pack_v2(pack_v2_data()),
+        root=tmp_path,
+        run_id="place-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+        places=mobility_place_set(),
+    )
+    (stored.directory / artifact).unlink()
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path).load("place-study")
+
+
+def test_changed_but_valid_v3_place_set_is_refused(tmp_path: Path) -> None:
+    stored = create_city_run(
+        load_pack_v2(pack_v2_data()),
+        root=tmp_path,
+        run_id="place-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+        places=mobility_place_set(),
+    )
+    path = stored.directory / "inputs" / "places.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["name"] = "Changed fictional places"
+    changed = parse_city_place_set_json(json.dumps(document))
+    path.write_text(canonical_json(changed) + "\n", encoding="utf-8")
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path).load("place-study")
+
+
+def test_changed_v3_place_assignment_is_refused(tmp_path: Path) -> None:
+    stored = create_city_run(
+        load_pack_v2(pack_v2_data()),
+        root=tmp_path,
+        run_id="place-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+        places=mobility_place_set(),
+    )
+    path = stored.directory / "inputs" / "place-assignments.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["assignments"][0]["home_place_id"] = "home-b"
+    path.write_text(canonical_json(document) + "\n", encoding="utf-8")
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path).load("place-study")
+
+
+@pytest.mark.parametrize(
+    ("artifact", "size"),
+    [
+        ("inputs/places.json", 1_048_577),
+        ("inputs/place-assignments.json", 65_537),
+    ],
+)
+def test_oversized_v3_place_artifact_is_refused(tmp_path: Path, artifact: str, size: int) -> None:
+    stored = create_city_run(
+        load_pack_v2(pack_v2_data()),
+        root=tmp_path,
+        run_id="place-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+        places=mobility_place_set(),
+    )
+    with (stored.directory / artifact).open("wb") as target:
+        target.truncate(size)
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path).load("place-study")
 
 
 @pytest.mark.parametrize(

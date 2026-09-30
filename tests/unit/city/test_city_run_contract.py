@@ -37,6 +37,18 @@ def valid_manifest_v2() -> dict[str, object]:
     }
 
 
+def valid_manifest_v3() -> dict[str, object]:
+    return {
+        **valid_manifest(),
+        "schema_version": 3,
+        "model_id": "illustrative-road-mobility-v3",
+        "city_schema_version": 2,
+        "place_schema_version": 1,
+        "place_set_sha256": "d" * 64,
+        "place_assignments_sha256": "e" * 64,
+    }
+
+
 def test_valid_manifest_round_trips_and_is_immutable() -> None:
     manifest = CityRunManifest.model_validate(valid_manifest())
     assert CityRunManifest.model_validate_json(manifest.model_dump_json()) == manifest
@@ -111,7 +123,30 @@ def test_v2_manifest_city_schema_version_is_an_exact_integer(version: object) ->
         parser(json.dumps(document))
 
 
-@pytest.mark.parametrize("version", [None, True, 1.0, 0, 3])
+def test_v3_manifest_binds_place_set_and_assignments_with_exact_versions() -> None:
+    model = getattr(city_run, "CityRunManifestV3", None)
+    assert model is not None, "CityRunManifestV3 is not implemented"
+    manifest = city_run.parse_city_run_manifest_json(json.dumps(valid_manifest_v3()))
+    assert isinstance(manifest, model)
+    assert manifest.model_id == "illustrative-road-mobility-v3"
+    assert manifest.place_schema_version == 1
+    assert manifest.place_set_sha256 == "d" * 64
+    assert manifest.place_assignments_sha256 == "e" * 64
+
+    for field, value in (
+        ("city_schema_version", True),
+        ("city_schema_version", 3),
+        ("place_schema_version", True),
+        ("place_schema_version", 2),
+        ("place_set_sha256", "short"),
+        ("place_assignments_sha256", "F" * 64),
+        ("model_id", "illustrative-road-mobility-v2"),
+    ):
+        with pytest.raises(ValidationError):
+            model.model_validate({**valid_manifest_v3(), field: value})
+
+
+@pytest.mark.parametrize("version", [None, True, 1.0, 0, 4])
 def test_run_manifest_version_dispatch_fails_closed(version: object) -> None:
     parser = getattr(city_run, "parse_city_run_manifest_json", None)
     assert parser is not None, "run manifest version dispatch is not implemented"

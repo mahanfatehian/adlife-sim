@@ -12,6 +12,7 @@ from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run, replay_city_run
 from adlife.core.ports.run_store import CorruptRunArtifact
 from tests.unit.city.test_city_catalog_contract import write_catalog_root
+from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
@@ -75,6 +76,37 @@ def test_v2_replay_is_identical_and_preserves_every_source_artifact(tmp_path: Pa
     assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
     assert _file_hashes(first.directory) == first_before
     assert _file_hashes(second.directory) == second_before
+
+
+def test_v3_place_replay_is_identical_and_preserves_every_source_artifact(
+    tmp_path: Path,
+) -> None:
+    pack = load_pack_v2(pack_v2_data())
+    places = mobility_place_set()
+    first = create_city_run(
+        pack,
+        root=tmp_path / "first",
+        run_id="place-study",
+        seed=17,
+        agent_count=2,
+        days=7,
+        places=places,
+    )
+    second = create_city_run(
+        pack,
+        root=tmp_path / "second",
+        run_id="place-study",
+        seed=17,
+        agent_count=2,
+        days=7,
+        places=places,
+    )
+    before = _file_hashes(first.directory)
+    result = replay_city_run(CityRunStore(tmp_path / "first").load("place-study"))
+    assert result.identical is True
+    assert first.manifest.schema_version == 3
+    assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
+    assert _file_hashes(first.directory) == before == _file_hashes(second.directory)
 
 
 def test_catalog_selected_run_replays_after_catalog_is_removed(tmp_path: Path) -> None:

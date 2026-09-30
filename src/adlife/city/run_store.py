@@ -4,23 +4,28 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from adlife import __version__
 from adlife.city.loader import MAX_CITY_PACK_BYTES
+from adlife.city.place_loader import MAX_CITY_PLACE_SET_BYTES
 from adlife.core.domain.city import (
     CityPack,
     CityPackDocument,
     CityPackV2,
     parse_city_pack_json,
 )
+from adlife.core.domain.city_places import CityPlaceSet, parse_city_place_set_json
 from adlife.core.domain.city_run import (
     CityRunManifest,
     CityRunManifestDocument,
     CityRunManifestV2,
+    CityRunManifestV3,
     parse_city_run_manifest_json,
 )
 from adlife.core.domain.serialization import DocumentNotSerialisable, canonical_json
@@ -32,11 +37,16 @@ from adlife.core.ports.run_store import (
     UnsafeRunLocation,
     validate_run_id,
 )
-from adlife.core.simulation.city_mobility import CityAgent, CityMobility
+from adlife.core.simulation.city_mobility import (
+    CityAgent,
+    CityMobility,
+    CityPlaceAssignment,
+)
 from adlife.core.simulation.city_trace import summarize_city_trace
 
 MAX_CITY_MANIFEST_BYTES = 65_536
 MAX_CITY_AGENTS_BYTES = 65_536
+MAX_CITY_PLACE_ASSIGNMENTS_BYTES = 65_536
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,13 +62,32 @@ def _runtime_version() -> str:
 
 
 def _canonical_bytes(
-    value: CityPackDocument | CityRunManifestDocument | dict[str, object],
+    value: CityPackDocument | CityPlaceSet | CityRunManifestDocument | dict[str, object],
 ) -> bytes:
     return (canonical_json(value) + "\n").encode("utf-8")
 
 
-def _validate_schema_pair(manifest: CityRunManifestDocument, pack: CityPackDocument) -> None:
-    if isinstance(manifest, CityRunManifestV2):
+def _document_sha256(value: Mapping[str, object]) -> str:
+    return sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _validate_schema_pair(
+    manifest: CityRunManifestDocument,
+    pack: CityPackDocument,
+    places: CityPlaceSet | None,
+) -> None:
+    if isinstance(manifest, CityRunManifestV3):
+        if (
+            manifest.city_schema_version != pack.schema_version
+            or places is None
+            or manifest.place_schema_version != places.schema_version
+            or places.city_id != pack.city_id
+            or places.city_sha256 != pack.fingerprint
+        ):
+            raise CorruptRunArtifact("city run manifest, city pack, and place schemas do not match")
+    elif places is not None:
+        raise CorruptRunArtifact("legacy city run manifest cannot contain a place set")
+    elif isinstance(manifest, CityRunManifestV2):
         if not isinstance(pack, CityPackV2) or manifest.city_schema_version != pack.schema_version:
             raise CorruptRunArtifact("city run manifest and city pack schemas do not match")
     elif not isinstance(manifest, CityRunManifest) or not isinstance(pack, CityPack):
@@ -110,19 +139,35 @@ class CityRunStore:
         manifest: CityRunManifestDocument,
         pack: CityPackDocument,
         agents: tuple[CityAgent, ...],
+        *,
+        places: CityPlaceSet | None = None,
+        place_assignments: tuple[CityPlaceAssignment, ...] = (),
     ) -> Path:
         """Reserve a fresh ID; publish the completion manifest only after frozen inputs."""
         try:
             manifest = parse_city_run_manifest_json(canonical_json(manifest))
             pack = parse_city_pack_json(canonical_json(pack))
-            _validate_schema_pair(manifest, pack)
+            places = None if places is None else parse_city_place_set_json(canonical_json(places))
+            _validate_schema_pair(manifest, pack, places)
             mobility = CityMobility(
                 pack,
                 seed=manifest.seed,
                 agent_count=manifest.agent_count,
                 days=manifest.days,
+                places=places,
             )
             summary = summarize_city_trace(mobility)
+            assignment_document = mobility.place_assignment_document()
+            if isinstance(manifest, CityRunManifestV3):
+                if (
+                    places is None
+                    or mobility.place_assignments != place_assignments
+                    or manifest.place_set_sha256 != places.fingerprint
+                    or manifest.place_assignments_sha256 != _document_sha256(assignment_document)
+                ):
+                    raise CorruptRunArtifact("city run manifest does not match place inputs")
+            elif place_assignments:
+                raise CorruptRunArtifact("legacy city run cannot contain place assignments")
             if (
                 pack.fingerprint != manifest.city_sha256
                 or mobility.agents != agents
@@ -137,12 +182,23 @@ class CityRunStore:
             city_bytes = _canonical_bytes(pack)
             agents_bytes = _canonical_bytes({"agents": [asdict(agent) for agent in agents]})
             manifest_bytes = _canonical_bytes(manifest)
+            places_bytes = None if places is None else _canonical_bytes(places)
+            assignments_bytes = (
+                None
+                if not isinstance(manifest, CityRunManifestV3)
+                else _canonical_bytes(assignment_document)
+            )
         except (ValidationError, ValueError, TypeError, DocumentNotSerialisable):
             raise CorruptRunArtifact("city run inputs or manifest are invalid") from None
         if (
             len(city_bytes) > MAX_CITY_PACK_BYTES
             or len(agents_bytes) > MAX_CITY_AGENTS_BYTES
             or len(manifest_bytes) > MAX_CITY_MANIFEST_BYTES
+            or (places_bytes is not None and len(places_bytes) > MAX_CITY_PLACE_SET_BYTES)
+            or (
+                assignments_bytes is not None
+                and len(assignments_bytes) > MAX_CITY_PLACE_ASSIGNMENTS_BYTES
+            )
         ):
             raise CorruptRunArtifact("city run document exceeds its size limit")
 
@@ -157,10 +213,22 @@ class CityRunStore:
         try:
             inputs = directory / "inputs"
             inputs.mkdir()
-            for path, contents, label in (
+            documents: list[tuple[Path, bytes, str]] = [
                 (inputs / "city.json", city_bytes, "city input"),
                 (inputs / "agents.json", agents_bytes, "agent assignments"),
-            ):
+            ]
+            if places_bytes is not None and assignments_bytes is not None:
+                documents.extend(
+                    [
+                        (inputs / "places.json", places_bytes, "place input"),
+                        (
+                            inputs / "place-assignments.json",
+                            assignments_bytes,
+                            "place assignments",
+                        ),
+                    ]
+                )
+            for path, contents, label in documents:
                 _write_new(path, contents)
                 if self._read_document(path, limit=len(contents), label=label) != contents:
                     raise StorageError("city run staged input did not match its expected bytes")
@@ -206,6 +274,10 @@ class CityRunStore:
         manifest_bytes = self._read_document(
             directory / "run.json", limit=MAX_CITY_MANIFEST_BYTES, label="manifest"
         )
+        try:
+            manifest = parse_city_run_manifest_json(manifest_bytes)
+        except (ValidationError, ValueError, TypeError):
+            raise CorruptRunArtifact("city run manifest failed validation") from None
         city_bytes = self._read_document(
             directory / "inputs" / "city.json", limit=MAX_CITY_PACK_BYTES, label="city input"
         )
@@ -214,10 +286,23 @@ class CityRunStore:
             limit=MAX_CITY_AGENTS_BYTES,
             label="agent assignments",
         )
+        places_bytes: bytes | None = None
+        assignments_bytes: bytes | None = None
+        if isinstance(manifest, CityRunManifestV3):
+            places_bytes = self._read_document(
+                directory / "inputs" / "places.json",
+                limit=MAX_CITY_PLACE_SET_BYTES,
+                label="place input",
+            )
+            assignments_bytes = self._read_document(
+                directory / "inputs" / "place-assignments.json",
+                limit=MAX_CITY_PLACE_ASSIGNMENTS_BYTES,
+                label="place assignments",
+            )
         try:
-            manifest = parse_city_run_manifest_json(manifest_bytes)
             pack = parse_city_pack_json(city_bytes)
-            _validate_schema_pair(manifest, pack)
+            places = None if places_bytes is None else parse_city_place_set_json(places_bytes)
+            _validate_schema_pair(manifest, pack, places)
             if (
                 manifest.run_id != run_id
                 or manifest.package_version != __version__
@@ -228,13 +313,28 @@ class CityRunStore:
             ):
                 raise CorruptRunArtifact("city run manifest or city input does not match")
             mobility = CityMobility(
-                pack, seed=manifest.seed, agent_count=manifest.agent_count, days=manifest.days
+                pack,
+                seed=manifest.seed,
+                agent_count=manifest.agent_count,
+                days=manifest.days,
+                places=places,
             )
             expected_agents = _canonical_bytes(
                 {"agents": [asdict(agent) for agent in mobility.agents]}
             )
             if agents_bytes != expected_agents:
                 raise CorruptRunArtifact("city run agent assignments do not match")
+            if isinstance(manifest, CityRunManifestV3):
+                if places is None or places_bytes is None or assignments_bytes is None:
+                    raise CorruptRunArtifact("city run place inputs are missing")
+                expected_assignments = mobility.place_assignment_document()
+                if (
+                    places_bytes != _canonical_bytes(places)
+                    or assignments_bytes != _canonical_bytes(expected_assignments)
+                    or manifest.place_set_sha256 != places.fingerprint
+                    or manifest.place_assignments_sha256 != _document_sha256(expected_assignments)
+                ):
+                    raise CorruptRunArtifact("city run place inputs do not match")
             summary = summarize_city_trace(mobility)
             if (
                 summary.agents_sha256 != manifest.agents_sha256
