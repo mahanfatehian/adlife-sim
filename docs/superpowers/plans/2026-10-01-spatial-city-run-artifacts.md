@@ -95,17 +95,26 @@ Ruff passed and strict mypy remained clean over 111 source files.
   `StoredCityRun.opportunity_evaluation`; optional `spatial_scenario` and
   `opportunity_evaluation` keyword arguments on `CityRunStore.save()`.
 
-- [ ] Add failing save/load tests for zero/mixed streams, fixed layout and legacy
+- [x] Add failing save/load tests for zero/mixed streams, fixed layout and legacy
   compatibility.
-- [ ] Add failing corruption tests for missing/changed/appended/oversized/symlinked
+- [x] Add failing corruption tests for missing/changed/appended/oversized/symlinked
   scenario, summary and stream artifacts plus optional-place incoherence.
-- [ ] Confirm failures are caused by unsupported v4 persistence.
-- [ ] Implement preflight validation, exclusive streaming writes, exact incremental reads
+- [x] Confirm failures are caused by unsupported v4 persistence.
+- [x] Implement preflight validation, exclusive streaming writes, exact incremental reads
   and final-manifest publication.
-- [ ] Inject write failures and prove no completed manifest is published; prove duplicate
+- [x] Inject write failures and prove no completed manifest is published; prove duplicate
   save preserves every original byte.
-- [ ] Run run-store/security/architecture tests, Ruff and mypy.
-- [ ] Commit and push `feat(city): persist spatial opportunity runs`.
+- [x] Run run-store/security/architecture tests, Ruff and mypy.
+- [x] Commit and push `feat(city): persist spatial opportunity runs`.
+
+**Evidence:** Nine v4 tests first failed because `CityRunStore.save()` had no spatial
+inputs; after correcting one test-fixture import, every failure was the missing keyword
+contract. The adapter now independently reconstructs evidence before writing, streams
+canonical JSONL with exclusive creation, verifies exact bytes on load and publishes the
+manifest last. Empty/mixed streams, optional places, missing/changed/oversized/symlinked
+artifacts, duplicate preservation and injected stream failure are covered. Related
+storage, replay, manifest and architecture suites passed 196 tests with four expected
+Windows capability/catalog skips; Ruff and strict mypy over 111 source files passed.
 
 ### Task 4: Create and replay complete spatial runs
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,9 @@ from adlife.city.runs import create_city_run
 from adlife.core.domain import city_run
 from adlife.core.domain.city import parse_city_pack_json
 from adlife.core.domain.city_places import parse_city_place_set_json
-from adlife.core.domain.city_run import CityRunManifest
+from adlife.core.domain.city_run import CityRunManifest, CityRunManifestV4
 from adlife.core.domain.serialization import canonical_json
+from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.ports.run_store import (
     CorruptRunArtifact,
     DuplicateRun,
@@ -26,8 +28,15 @@ from adlife.core.ports.run_store import (
 )
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
+from adlife.core.simulation.spatial_opportunity import (
+    SpatialOpportunityEvaluation,
+    evaluate_spatial_opportunities,
+    spatial_opportunity_lines,
+    summarize_spatial_opportunity_artifact,
+)
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
+from tests.unit.city.test_spatial_opportunity import _billboard, _mobility, _phone, _scenario
 
 
 def specimen() -> tuple[CityRunManifest, CityMobility]:
@@ -47,6 +56,75 @@ def specimen() -> tuple[CityRunManifest, CityMobility]:
         position_count=summary.position_count,
     )
     return manifest, mobility
+
+
+def spatial_specimen() -> tuple[
+    CityRunManifestV4,
+    CityMobility,
+    SpatialCampaignScenario,
+    SpatialOpportunityEvaluation,
+]:
+    pack = load_pack(pack_data())
+    mobility = CityMobility(pack, seed=42, agent_count=1, days=1)
+    scenario = _scenario(
+        pack,
+        [
+            _phone(
+                windows=[{"start_minute": 0, "end_minute": 2}],
+                probability=1.0,
+                cap=2,
+            )
+        ],
+    )
+    return _spatial_manifest(mobility, scenario)
+
+
+def _spatial_manifest(
+    mobility: CityMobility,
+    scenario: SpatialCampaignScenario,
+) -> tuple[
+    CityRunManifestV4,
+    CityMobility,
+    SpatialCampaignScenario,
+    SpatialOpportunityEvaluation,
+]:
+    pack = mobility.pack
+    trace = summarize_city_trace(mobility)
+    evaluation = evaluate_spatial_opportunities(mobility, scenario)
+    opportunity = summarize_spatial_opportunity_artifact(evaluation)
+    opportunity_summary_bytes = (canonical_json(opportunity) + "\n").encode("utf-8")
+    place_fields: dict[str, object] = {}
+    if mobility.places is not None:
+        place_fields = {
+            "place_schema_version": mobility.places.schema_version,
+            "place_set_sha256": mobility.places.fingerprint,
+            "place_assignments_sha256": sha256(
+                canonical_json(mobility.place_assignment_document()).encode("utf-8")
+            ).hexdigest(),
+        }
+    manifest = CityRunManifestV4(
+        run_id="spatial-study",
+        package_version=__version__,
+        python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        city_sha256=pack.fingerprint,
+        agents_sha256=trace.agents_sha256,
+        trace_sha256=trace.trace_sha256,
+        scenario_sha256=scenario.fingerprint,
+        opportunity_stream_sha256=opportunity.stream_sha256,
+        opportunity_summary_sha256=sha256(opportunity_summary_bytes).hexdigest(),
+        opportunity_stream_bytes=opportunity.stream_bytes,
+        opportunity_count=opportunity.counts.opportunity_count,
+        seed=42,
+        agent_count=1,
+        days=1,
+        frame_count=trace.frame_count,
+        position_count=trace.position_count,
+        city_schema_version=pack.schema_version,
+        spatial_scenario_schema_version=scenario.schema_version,
+        spatial_opportunity_schema_version=evaluation.schema_version,
+        **place_fields,
+    )
+    return manifest, mobility, scenario, evaluation
 
 
 def test_save_freezes_inputs_and_loads_an_identical_trace(tmp_path: Path) -> None:
@@ -107,6 +185,258 @@ def test_v3_save_freezes_places_and_assignments_and_loads_identical_trace(
     assert (stored.directory / "inputs" / "place-assignments.json").read_bytes() == (
         canonical_json(stored.mobility.place_assignment_document()) + "\n"
     ).encode("utf-8")
+
+
+def test_v4_save_freezes_canonical_spatial_inputs_and_outputs(tmp_path: Path) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    loaded = store.load("spatial-study")
+
+    assert loaded.manifest == manifest
+    assert loaded.spatial_scenario == scenario
+    assert loaded.opportunity_evaluation == evaluation
+    assert (directory / "inputs" / "spatial-campaign.json").read_bytes() == (
+        canonical_json(scenario) + "\n"
+    ).encode("utf-8")
+    summary = summarize_spatial_opportunity_artifact(evaluation)
+    assert (directory / "outputs" / "opportunity-summary.json").read_bytes() == (
+        canonical_json(summary) + "\n"
+    ).encode("utf-8")
+    assert (directory / "outputs" / "spatial-opportunities.jsonl").read_bytes() == b"".join(
+        spatial_opportunity_lines(evaluation)
+    )
+    assert manifest.opportunity_count == 2
+    assert manifest.opportunity_stream_bytes > 0
+
+
+def test_v4_save_supports_zero_opportunities_and_an_empty_stream(tmp_path: Path) -> None:
+    pack = load_pack(pack_data())
+    mobility = CityMobility(pack, seed=42, agent_count=1, days=1)
+    manifest, _, scenario, evaluation = _spatial_manifest(
+        mobility,
+        _scenario(
+            pack,
+            [
+                _phone(
+                    windows=[{"start_minute": 0, "end_minute": 1}],
+                    probability=0.0,
+                )
+            ],
+        ),
+    )
+    store = CityRunStore(tmp_path)
+
+    directory = store.save(
+        manifest,
+        pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    loaded = store.load("spatial-study")
+
+    assert manifest.opportunity_count == 0
+    assert manifest.opportunity_stream_bytes == 0
+    assert (directory / "outputs" / "spatial-opportunities.jsonl").read_bytes() == b""
+    assert loaded.opportunity_evaluation == evaluation
+
+
+def test_v4_save_supports_places_and_mixed_channel_evidence(tmp_path: Path) -> None:
+    pack = load_pack(pack_data())
+    mobility = _mobility(pack)
+    manifest, _, scenario, evaluation = _spatial_manifest(
+        mobility,
+        _scenario(
+            pack,
+            [
+                _billboard(windows=[{"start_minute": 481, "end_minute": 482}]),
+                _phone(
+                    campaign_id="phone-campaign",
+                    activities=["commute"],
+                    windows=[{"start_minute": 481, "end_minute": 482}],
+                    cap=1,
+                ),
+            ],
+        ),
+    )
+    assert mobility.places is not None
+    store = CityRunStore(tmp_path)
+
+    directory = store.save(
+        manifest,
+        pack,
+        mobility.agents,
+        places=mobility.places,
+        place_assignments=mobility.place_assignments,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    loaded = store.load("spatial-study")
+
+    assert manifest.place_set_sha256 == mobility.places.fingerprint
+    assert evaluation.counts.roadside_opportunity_count == 1
+    assert evaluation.counts.phone_opportunity_count == 1
+    assert (directory / "inputs" / "places.json").is_file()
+    assert loaded.mobility.places == mobility.places
+    assert loaded.opportunity_evaluation == evaluation
+
+
+def test_v4_spatial_inputs_are_required_as_one_pair_before_reserving_id(
+    tmp_path: Path,
+) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+
+    for extra in (
+        {"spatial_scenario": scenario},
+        {"opportunity_evaluation": evaluation},
+        {},
+    ):
+        with pytest.raises(CorruptRunArtifact):
+            store.save(manifest, mobility.pack, mobility.agents, **extra)
+        assert not (tmp_path / "city-runs" / "spatial-study").exists()
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "inputs/spatial-campaign.json",
+        "outputs/opportunity-summary.json",
+        "outputs/spatial-opportunities.jsonl",
+    ],
+)
+def test_missing_v4_spatial_artifact_is_refused(tmp_path: Path, artifact: str) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    (directory / artifact).unlink()
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("spatial-study")
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "inputs/spatial-campaign.json",
+        "outputs/opportunity-summary.json",
+        "outputs/spatial-opportunities.jsonl",
+    ],
+)
+def test_changed_v4_spatial_artifact_is_refused_even_if_json_remains_valid(
+    tmp_path: Path, artifact: str
+) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    path = directory / artifact
+    path.write_bytes(path.read_bytes() + b" \n")
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("spatial-study")
+
+
+@pytest.mark.parametrize(
+    ("artifact", "size"),
+    [
+        ("inputs/spatial-campaign.json", 2_097_153),
+        ("outputs/opportunity-summary.json", 65_537),
+    ],
+)
+def test_oversized_v4_document_is_refused_before_unbounded_read(
+    tmp_path: Path, artifact: str, size: int
+) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    with (directory / artifact).open("wb") as target:
+        target.truncate(size)
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("spatial-study")
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "inputs/spatial-campaign.json",
+        "outputs/opportunity-summary.json",
+        "outputs/spatial-opportunities.jsonl",
+    ],
+)
+def test_v4_artifact_cannot_follow_a_symlink(tmp_path: Path, artifact: str) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    target = directory / artifact
+    outside = tmp_path / f"outside-{target.name}"
+    outside.write_bytes(target.read_bytes())
+    target.unlink()
+    try:
+        target.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create file symlinks")
+
+    with pytest.raises(UnsafeRunLocation):
+        store.load("spatial-study")
+
+
+def test_duplicate_v4_save_preserves_every_original_artifact_byte(tmp_path: Path) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+    before = {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+    with pytest.raises(DuplicateRun):
+        store.save(
+            manifest,
+            mobility.pack,
+            mobility.agents,
+            spatial_scenario=scenario,
+            opportunity_evaluation=evaluation,
+        )
+
+    assert before == {
+        p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()
+    }
 
 
 @pytest.mark.parametrize("artifact", ["inputs/places.json", "inputs/place-assignments.json"])
@@ -392,6 +722,33 @@ def test_failed_final_publication_is_not_loadable_or_reusable(
         store.load("sample-run")
     with pytest.raises(DuplicateRun):
         store.save(manifest, mobility.pack, mobility.agents)
+
+
+def test_failed_v4_stream_write_cannot_publish_a_completed_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+
+    def fail_stream(path: Path, value: SpatialOpportunityEvaluation) -> None:
+        raise OSError("injected spatial stream failure")
+
+    monkeypatch.setattr(city_store_module, "_write_opportunity_stream", fail_stream)
+    with pytest.raises(StorageError):
+        store.save(
+            manifest,
+            mobility.pack,
+            mobility.agents,
+            spatial_scenario=scenario,
+            opportunity_evaluation=evaluation,
+        )
+
+    directory = tmp_path / "city-runs" / "spatial-study"
+    assert directory.exists()
+    assert not (directory / "run.json").exists()
+    assert (directory / "outputs" / "opportunity-summary.json").is_file()
+    with pytest.raises(CorruptRunArtifact):
+        store.load("spatial-study")
 
 
 @pytest.mark.parametrize("short_file", ["city.json", "agents.json", ".run.json.tmp"])

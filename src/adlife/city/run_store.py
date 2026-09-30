@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from adlife import __version__
 from adlife.city.loader import MAX_CITY_PACK_BYTES
 from adlife.city.place_loader import MAX_CITY_PLACE_SET_BYTES
+from adlife.city.spatial_loader import MAX_SPATIAL_CAMPAIGN_BYTES
 from adlife.core.domain.city import (
     CityPack,
     CityPackDocument,
@@ -26,9 +27,14 @@ from adlife.core.domain.city_run import (
     CityRunManifestDocument,
     CityRunManifestV2,
     CityRunManifestV3,
+    CityRunManifestV4,
     parse_city_run_manifest_json,
 )
 from adlife.core.domain.serialization import DocumentNotSerialisable, canonical_json
+from adlife.core.domain.spatial_campaign import (
+    SpatialCampaignScenario,
+    parse_spatial_campaign_scenario_json,
+)
 from adlife.core.ports.run_store import (
     CorruptRunArtifact,
     DuplicateRun,
@@ -43,10 +49,19 @@ from adlife.core.simulation.city_mobility import (
     CityPlaceAssignment,
 )
 from adlife.core.simulation.city_trace import summarize_city_trace
+from adlife.core.simulation.spatial_opportunity import (
+    MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES,
+    SpatialOpportunityArtifactSummary,
+    SpatialOpportunityEvaluation,
+    evaluate_spatial_opportunities,
+    spatial_opportunity_lines,
+    summarize_spatial_opportunity_artifact,
+)
 
 MAX_CITY_MANIFEST_BYTES = 65_536
 MAX_CITY_AGENTS_BYTES = 65_536
 MAX_CITY_PLACE_ASSIGNMENTS_BYTES = 65_536
+MAX_CITY_OPPORTUNITY_SUMMARY_BYTES = 65_536
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +70,8 @@ class StoredCityRun:
     pack: CityPackDocument
     mobility: CityMobility
     directory: Path
+    spatial_scenario: SpatialCampaignScenario | None = None
+    opportunity_evaluation: SpatialOpportunityEvaluation | None = None
 
 
 def _runtime_version() -> str:
@@ -62,7 +79,14 @@ def _runtime_version() -> str:
 
 
 def _canonical_bytes(
-    value: CityPackDocument | CityPlaceSet | CityRunManifestDocument | dict[str, object],
+    value: (
+        CityPackDocument
+        | CityPlaceSet
+        | CityRunManifestDocument
+        | SpatialCampaignScenario
+        | SpatialOpportunityArtifactSummary
+        | dict[str, object]
+    ),
 ) -> bytes:
     return (canonical_json(value) + "\n").encode("utf-8")
 
@@ -76,7 +100,20 @@ def _validate_schema_pair(
     pack: CityPackDocument,
     places: CityPlaceSet | None,
 ) -> None:
-    if isinstance(manifest, CityRunManifestV3):
+    if isinstance(manifest, CityRunManifestV4):
+        if manifest.city_schema_version != pack.schema_version:
+            raise CorruptRunArtifact("city run manifest and city pack schemas do not match")
+        if manifest.place_schema_version is None:
+            if places is not None:
+                raise CorruptRunArtifact("spatial city run has an undeclared place set")
+        elif (
+            places is None
+            or manifest.place_schema_version != places.schema_version
+            or places.city_id != pack.city_id
+            or places.city_sha256 != pack.fingerprint
+        ):
+            raise CorruptRunArtifact("city run manifest, city pack, and place schemas do not match")
+    elif isinstance(manifest, CityRunManifestV3):
         if (
             manifest.city_schema_version != pack.schema_version
             or places is None
@@ -98,6 +135,15 @@ def _write_new(path: Path, contents: bytes) -> None:
     with path.open("xb") as target:
         if target.write(contents) != len(contents):
             raise OSError("short city run artifact write")
+        target.flush()
+        os.fsync(target.fileno())
+
+
+def _write_opportunity_stream(path: Path, evaluation: SpatialOpportunityEvaluation) -> None:
+    with path.open("xb") as target:
+        for line in spatial_opportunity_lines(evaluation):
+            if target.write(line) != len(line):
+                raise OSError("short city opportunity stream write")
         target.flush()
         os.fsync(target.fileno())
 
@@ -142,6 +188,8 @@ class CityRunStore:
         *,
         places: CityPlaceSet | None = None,
         place_assignments: tuple[CityPlaceAssignment, ...] = (),
+        spatial_scenario: SpatialCampaignScenario | None = None,
+        opportunity_evaluation: SpatialOpportunityEvaluation | None = None,
     ) -> Path:
         """Reserve a fresh ID; publish the completion manifest only after frozen inputs."""
         try:
@@ -158,16 +206,61 @@ class CityRunStore:
             )
             summary = summarize_city_trace(mobility)
             assignment_document = mobility.place_assignment_document()
-            if isinstance(manifest, CityRunManifestV3):
+            place_manifest = (
+                manifest
+                if isinstance(manifest, CityRunManifestV3)
+                or (
+                    isinstance(manifest, CityRunManifestV4)
+                    and manifest.place_schema_version is not None
+                )
+                else None
+            )
+            if place_manifest is not None:
                 if (
                     places is None
                     or mobility.place_assignments != place_assignments
-                    or manifest.place_set_sha256 != places.fingerprint
-                    or manifest.place_assignments_sha256 != _document_sha256(assignment_document)
+                    or place_manifest.place_set_sha256 != places.fingerprint
+                    or place_manifest.place_assignments_sha256
+                    != _document_sha256(assignment_document)
                 ):
                     raise CorruptRunArtifact("city run manifest does not match place inputs")
             elif place_assignments:
                 raise CorruptRunArtifact("legacy city run cannot contain place assignments")
+            spatial_scenario_bytes: bytes | None = None
+            opportunity_summary_bytes: bytes | None = None
+            verified_evaluation: SpatialOpportunityEvaluation | None = None
+            if isinstance(manifest, CityRunManifestV4):
+                if spatial_scenario is None or opportunity_evaluation is None:
+                    raise CorruptRunArtifact("spatial city run inputs are incomplete")
+                spatial_scenario = parse_spatial_campaign_scenario_json(
+                    canonical_json(spatial_scenario)
+                )
+                if not isinstance(opportunity_evaluation, SpatialOpportunityEvaluation):
+                    raise CorruptRunArtifact("spatial opportunity evaluation is invalid")
+                verified_evaluation = evaluate_spatial_opportunities(mobility, spatial_scenario)
+                if verified_evaluation != opportunity_evaluation:
+                    raise CorruptRunArtifact(
+                        "spatial opportunity evaluation does not match frozen inputs"
+                    )
+                opportunity_summary = summarize_spatial_opportunity_artifact(verified_evaluation)
+                spatial_scenario_bytes = _canonical_bytes(spatial_scenario)
+                opportunity_summary_bytes = _canonical_bytes(opportunity_summary)
+                if (
+                    manifest.scenario_sha256 != spatial_scenario.fingerprint
+                    or manifest.spatial_scenario_schema_version != spatial_scenario.schema_version
+                    or manifest.spatial_opportunity_schema_version
+                    != verified_evaluation.schema_version
+                    or manifest.opportunity_stream_sha256 != opportunity_summary.stream_sha256
+                    or manifest.opportunity_summary_sha256
+                    != sha256(opportunity_summary_bytes).hexdigest()
+                    or manifest.opportunity_stream_bytes != opportunity_summary.stream_bytes
+                    or manifest.opportunity_count != opportunity_summary.counts.opportunity_count
+                ):
+                    raise CorruptRunArtifact(
+                        "city run manifest does not match spatial opportunity inputs"
+                    )
+            elif spatial_scenario is not None or opportunity_evaluation is not None:
+                raise CorruptRunArtifact("legacy city run cannot contain spatial inputs")
             if (
                 pack.fingerprint != manifest.city_sha256
                 or mobility.agents != agents
@@ -184,9 +277,7 @@ class CityRunStore:
             manifest_bytes = _canonical_bytes(manifest)
             places_bytes = None if places is None else _canonical_bytes(places)
             assignments_bytes = (
-                None
-                if not isinstance(manifest, CityRunManifestV3)
-                else _canonical_bytes(assignment_document)
+                None if place_manifest is None else _canonical_bytes(assignment_document)
             )
         except (ValidationError, ValueError, TypeError, DocumentNotSerialisable):
             raise CorruptRunArtifact("city run inputs or manifest are invalid") from None
@@ -195,6 +286,14 @@ class CityRunStore:
             or len(agents_bytes) > MAX_CITY_AGENTS_BYTES
             or len(manifest_bytes) > MAX_CITY_MANIFEST_BYTES
             or (places_bytes is not None and len(places_bytes) > MAX_CITY_PLACE_SET_BYTES)
+            or (
+                spatial_scenario_bytes is not None
+                and len(spatial_scenario_bytes) > MAX_SPATIAL_CAMPAIGN_BYTES
+            )
+            or (
+                opportunity_summary_bytes is not None
+                and len(opportunity_summary_bytes) > MAX_CITY_OPPORTUNITY_SUMMARY_BYTES
+            )
             or (
                 assignments_bytes is not None
                 and len(assignments_bytes) > MAX_CITY_PLACE_ASSIGNMENTS_BYTES
@@ -228,10 +327,42 @@ class CityRunStore:
                         ),
                     ]
                 )
+            if spatial_scenario_bytes is not None:
+                documents.append(
+                    (
+                        inputs / "spatial-campaign.json",
+                        spatial_scenario_bytes,
+                        "spatial campaign input",
+                    )
+                )
             for path, contents, label in documents:
                 _write_new(path, contents)
                 if self._read_document(path, limit=len(contents), label=label) != contents:
                     raise StorageError("city run staged input did not match its expected bytes")
+            if opportunity_summary_bytes is not None and verified_evaluation is not None:
+                outputs = directory / "outputs"
+                outputs.mkdir()
+                summary_path = outputs / "opportunity-summary.json"
+                stream_path = outputs / "spatial-opportunities.jsonl"
+                _write_new(summary_path, opportunity_summary_bytes)
+                if (
+                    self._read_document(
+                        summary_path,
+                        limit=len(opportunity_summary_bytes),
+                        label="opportunity summary",
+                    )
+                    != opportunity_summary_bytes
+                ):
+                    raise StorageError(
+                        "city run staged opportunity summary did not match expected bytes"
+                    )
+                _write_opportunity_stream(stream_path, verified_evaluation)
+                try:
+                    self._verify_opportunity_stream(stream_path, verified_evaluation)
+                except CorruptRunArtifact:
+                    raise StorageError(
+                        "city run staged opportunity stream did not match expected bytes"
+                    ) from None
             temporary = directory / ".run.json.tmp"
             try:
                 _write_new(temporary, manifest_bytes)
@@ -262,6 +393,35 @@ class CityRunStore:
             raise CorruptRunArtifact(f"city run {label} exceeds its size limit")
         return data
 
+    def _verify_opportunity_stream(
+        self,
+        path: Path,
+        evaluation: SpatialOpportunityEvaluation,
+    ) -> None:
+        if path.is_symlink() or not path.resolve().is_relative_to(self.root):
+            raise UnsafeRunLocation("city run opportunity stream has an unsafe location")
+        expected_summary = summarize_spatial_opportunity_artifact(evaluation)
+        try:
+            if (
+                path.stat().st_size != expected_summary.stream_bytes
+                or path.stat().st_size > MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES
+            ):
+                raise CorruptRunArtifact("city run opportunity stream size does not match")
+            with path.open("rb") as source:
+                for expected_line in spatial_opportunity_lines(evaluation):
+                    if source.read(len(expected_line)) != expected_line:
+                        raise CorruptRunArtifact(
+                            "city run opportunity stream does not match frozen inputs"
+                        )
+                if source.read(1) != b"":
+                    raise CorruptRunArtifact(
+                        "city run opportunity stream does not match frozen inputs"
+                    )
+        except FileNotFoundError:
+            raise CorruptRunArtifact("city run opportunity stream is missing") from None
+        except OSError:
+            raise CorruptRunArtifact("city run opportunity stream is unreadable") from None
+
     def load(self, run_id: str) -> StoredCityRun:
         """Refuse any missing, damaged, incompatible or partial city artifact."""
         directory = self.run_directory(run_id)
@@ -288,7 +448,16 @@ class CityRunStore:
         )
         places_bytes: bytes | None = None
         assignments_bytes: bytes | None = None
-        if isinstance(manifest, CityRunManifestV3):
+        place_manifest = (
+            manifest
+            if isinstance(manifest, CityRunManifestV3)
+            or (
+                isinstance(manifest, CityRunManifestV4)
+                and manifest.place_schema_version is not None
+            )
+            else None
+        )
+        if place_manifest is not None:
             places_bytes = self._read_document(
                 directory / "inputs" / "places.json",
                 limit=MAX_CITY_PLACE_SET_BYTES,
@@ -298,6 +467,24 @@ class CityRunStore:
                 directory / "inputs" / "place-assignments.json",
                 limit=MAX_CITY_PLACE_ASSIGNMENTS_BYTES,
                 label="place assignments",
+            )
+        spatial_scenario_bytes: bytes | None = None
+        opportunity_summary_bytes: bytes | None = None
+        if isinstance(manifest, CityRunManifestV4):
+            outputs = directory / "outputs"
+            if not outputs.is_dir():
+                raise CorruptRunArtifact("city run outputs directory is incomplete")
+            if outputs.is_symlink():
+                raise UnsafeRunLocation("city run outputs directory cannot be a symlink")
+            spatial_scenario_bytes = self._read_document(
+                directory / "inputs" / "spatial-campaign.json",
+                limit=MAX_SPATIAL_CAMPAIGN_BYTES,
+                label="spatial campaign input",
+            )
+            opportunity_summary_bytes = self._read_document(
+                outputs / "opportunity-summary.json",
+                limit=MAX_CITY_OPPORTUNITY_SUMMARY_BYTES,
+                label="opportunity summary",
             )
         try:
             pack = parse_city_pack_json(city_bytes)
@@ -324,17 +511,45 @@ class CityRunStore:
             )
             if agents_bytes != expected_agents:
                 raise CorruptRunArtifact("city run agent assignments do not match")
-            if isinstance(manifest, CityRunManifestV3):
+            if place_manifest is not None:
                 if places is None or places_bytes is None or assignments_bytes is None:
                     raise CorruptRunArtifact("city run place inputs are missing")
                 expected_assignments = mobility.place_assignment_document()
                 if (
                     places_bytes != _canonical_bytes(places)
                     or assignments_bytes != _canonical_bytes(expected_assignments)
-                    or manifest.place_set_sha256 != places.fingerprint
-                    or manifest.place_assignments_sha256 != _document_sha256(expected_assignments)
+                    or place_manifest.place_set_sha256 != places.fingerprint
+                    or place_manifest.place_assignments_sha256
+                    != _document_sha256(expected_assignments)
                 ):
                     raise CorruptRunArtifact("city run place inputs do not match")
+            spatial_scenario: SpatialCampaignScenario | None = None
+            opportunity_evaluation: SpatialOpportunityEvaluation | None = None
+            if isinstance(manifest, CityRunManifestV4):
+                if spatial_scenario_bytes is None or opportunity_summary_bytes is None:
+                    raise CorruptRunArtifact("city run spatial inputs are missing")
+                spatial_scenario = parse_spatial_campaign_scenario_json(spatial_scenario_bytes)
+                opportunity_evaluation = evaluate_spatial_opportunities(mobility, spatial_scenario)
+                opportunity_summary = summarize_spatial_opportunity_artifact(opportunity_evaluation)
+                expected_opportunity_summary_bytes = _canonical_bytes(opportunity_summary)
+                if (
+                    spatial_scenario_bytes != _canonical_bytes(spatial_scenario)
+                    or opportunity_summary_bytes != expected_opportunity_summary_bytes
+                    or manifest.scenario_sha256 != spatial_scenario.fingerprint
+                    or manifest.spatial_scenario_schema_version != spatial_scenario.schema_version
+                    or manifest.spatial_opportunity_schema_version
+                    != opportunity_evaluation.schema_version
+                    or manifest.opportunity_stream_sha256 != opportunity_summary.stream_sha256
+                    or manifest.opportunity_summary_sha256
+                    != sha256(expected_opportunity_summary_bytes).hexdigest()
+                    or manifest.opportunity_stream_bytes != opportunity_summary.stream_bytes
+                    or manifest.opportunity_count != opportunity_summary.counts.opportunity_count
+                ):
+                    raise CorruptRunArtifact("city run spatial opportunity artifacts do not match")
+                self._verify_opportunity_stream(
+                    directory / "outputs" / "spatial-opportunities.jsonl",
+                    opportunity_evaluation,
+                )
             summary = summarize_city_trace(mobility)
             if (
                 summary.agents_sha256 != manifest.agents_sha256
@@ -345,7 +560,14 @@ class CityRunStore:
                 raise CorruptRunArtifact("city run trace does not match its manifest")
         except (ValidationError, ValueError, TypeError, DocumentNotSerialisable):
             raise CorruptRunArtifact("city run artifact failed validation") from None
-        return StoredCityRun(manifest, pack, mobility, directory)
+        return StoredCityRun(
+            manifest,
+            pack,
+            mobility,
+            directory,
+            spatial_scenario=spatial_scenario,
+            opportunity_evaluation=opportunity_evaluation,
+        )
 
 
 __all__ = ["CityRunStore", "StoredCityRun"]
