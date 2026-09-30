@@ -192,3 +192,28 @@ async def test_saved_v3_run_reports_manifest_schema_and_place_evidence() -> None
     assert metadata["run_id"] == "saved-v3-study"
     assert metadata["run_schema_version"] == 3
     assert metadata["place_set_sha256"] == places.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> None:
+    places = mobility_place_set()
+    simulation = CityMobility(
+        load_pack_v2(pack_v2_data()), seed=42, agent_count=2, days=7, places=places
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(
+            app=create_city_app(
+                simulation,
+                run_id="saved-spatial-study",
+                run_schema_version=4,
+            )
+        ),
+        base_url="http://city.test",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        opportunities = await web.get("/api/opportunities")
+    assert metadata["saved"] is True
+    assert metadata["run_id"] == "saved-spatial-study"
+    assert metadata["run_schema_version"] == 4
+    assert metadata["place_set_sha256"] == places.fingerprint
+    assert opportunities.status_code == 404

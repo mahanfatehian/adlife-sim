@@ -30,7 +30,7 @@ def create_city_app(
     if run_id is None and run_schema_version is not None:
         raise ValueError("run schema version requires a saved run identifier")
     if run_schema_version is not None and (
-        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3}
+        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4}
     ):
         raise ValueError("unsupported city run schema version")
     app = FastAPI(
