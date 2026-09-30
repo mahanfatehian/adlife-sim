@@ -4,9 +4,9 @@ The wheel is the canonical distribution, so release verification never happens i
 the development checkout. This script creates a temporary virtual environment, installs
 exactly the wheel it was handed, changes to a scratch directory outside the checkout,
 and runs the documented workflow — including the verified packaged city catalog,
-validated fictional place and spatial-campaign inputs, a place-aware v3 mobility run and
-its replay — validating the JSON output contract along the way. Every temporary artifact
-is cleaned up on success and on failure.
+validated fictional place and spatial-campaign inputs, a schema-v4 spatial opportunity
+run and its replay — validating the JSON output contract along the way. Every temporary
+artifact is cleaned up on success and on failure.
 """
 
 from __future__ import annotations
@@ -361,6 +361,8 @@ def smoke(wheel: Path) -> None:
                     "fictional-grid-v2",
                     "--places",
                     str(places_path),
+                    "--spatial-campaign",
+                    str(spatial_path),
                     "--output-root",
                     "city-output",
                     "--run-id",
@@ -377,7 +379,7 @@ def smoke(wheel: Path) -> None:
             "city-run --city-id",
         )
         _expect_value(city_run, "run_id", "catalog-smoke", "city-run --city-id")
-        _expect_value(city_run, "run_schema_version", 3, "city-run --city-id")
+        _expect_value(city_run, "run_schema_version", 4, "city-run --city-id")
         _expect_value(city_run, "city_id", "fictional-grid-v2", "city-run --city-id")
         _expect_value(city_run, "city_sha256", catalog_sha256, "city-run --city-id")
         _expect_value(
@@ -389,6 +391,33 @@ def smoke(wheel: Path) -> None:
         assignments_sha256 = city_run.get("place_assignments_sha256")
         if not isinstance(assignments_sha256, str) or len(assignments_sha256) != 64:
             _refuse("city-run --city-id", "place_assignments_sha256 is not a SHA-256 digest")
+        _expect_value(
+            city_run,
+            "scenario_sha256",
+            scenario_sha256,
+            "city-run --city-id",
+        )
+        for key in ("opportunity_stream_sha256", "opportunity_summary_sha256"):
+            value = city_run.get(key)
+            if not isinstance(value, str) or len(value) != 64:
+                _refuse("city-run --city-id", f"{key} is not a SHA-256 digest")
+        opportunity_bytes = city_run.get("opportunity_stream_bytes")
+        if type(opportunity_bytes) is not int or opportunity_bytes <= 0:
+            _refuse("city-run --city-id", "opportunity stream is empty or has invalid size")
+        opportunity_count = city_run.get("opportunity_count")
+        opportunity_counts = city_run.get("opportunity_counts")
+        if type(opportunity_count) is not int or opportunity_count <= 0:
+            _refuse("city-run --city-id", "opportunity stream contains no opportunities")
+        if not isinstance(opportunity_counts, dict) or (
+            opportunity_counts.get("opportunity_count") != opportunity_count
+        ):
+            _refuse("city-run --city-id", "opportunity summary does not match the stream")
+        _expect_value(
+            city_run,
+            "claim_scope",
+            "synthetic-opportunity-not-impression",
+            "city-run --city-id",
+        )
         _expect_value(city_run, "frame_count", 1_440, "city-run --city-id")
         _expect_value(city_run, "position_count", 2_880, "city-run --city-id")
 
@@ -413,6 +442,13 @@ def smoke(wheel: Path) -> None:
             "place_set_sha256",
             "place_assignments_sha256",
             "trace_sha256",
+            "scenario_sha256",
+            "opportunity_stream_sha256",
+            "opportunity_summary_sha256",
+            "opportunity_stream_bytes",
+            "opportunity_count",
+            "opportunity_counts",
+            "claim_scope",
             "frame_count",
             "position_count",
         ):
@@ -421,7 +457,7 @@ def smoke(wheel: Path) -> None:
         print(
             "smoke ok: "
             f"report at {html.stat().st_size} bytes; "
-            "catalog fictional-grid-v2 spatial validation and place-aware replay verified"
+            "catalog fictional-grid-v2 spatial run and replay verified"
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)

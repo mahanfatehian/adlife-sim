@@ -84,6 +84,13 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     assignments_sha256 = "d" * 64
     scenario_sha256 = "e" * 64
     trace_sha256 = "b" * 64
+    opportunity_stream_sha256 = "f" * 64
+    opportunity_summary_sha256 = "1" * 64
+    opportunity_counts = {
+        "opportunity_count": 4,
+        "roadside_billboard_count": 0,
+        "mobile_feed_count": 4,
+    }
 
     monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: str(workspace))
     monkeypatch.setattr(
@@ -174,12 +181,19 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         elif arguments[:3] == ["--format", "json", "city-run"]:
             document = {
                 "run_id": "catalog-smoke",
-                "run_schema_version": 3,
+                "run_schema_version": 4,
                 "city_id": "fictional-grid-v2",
                 "city_sha256": city_sha256,
                 "place_set_sha256": place_sha256,
                 "place_assignments_sha256": assignments_sha256,
                 "trace_sha256": trace_sha256,
+                "scenario_sha256": scenario_sha256,
+                "opportunity_stream_sha256": opportunity_stream_sha256,
+                "opportunity_summary_sha256": opportunity_summary_sha256,
+                "opportunity_stream_bytes": 1_234,
+                "opportunity_count": 4,
+                "opportunity_counts": opportunity_counts,
+                "claim_scope": "synthetic-opportunity-not-impression",
                 "frame_count": 1_440,
                 "position_count": 2_880,
                 "directory": str(scratch / "city-output" / "city-runs" / "catalog-smoke"),
@@ -198,6 +212,13 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "place_set_sha256": place_sha256,
                 "place_assignments_sha256": assignments_sha256,
                 "trace_sha256": trace_sha256,
+                "scenario_sha256": scenario_sha256,
+                "opportunity_stream_sha256": opportunity_stream_sha256,
+                "opportunity_summary_sha256": opportunity_summary_sha256,
+                "opportunity_stream_bytes": 1_234,
+                "opportunity_count": 4,
+                "opportunity_counts": opportunity_counts,
+                "claim_scope": "synthetic-opportunity-not-impression",
                 "frame_count": 1_440,
                 "position_count": 2_880,
             }
@@ -248,6 +269,8 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         "fictional-grid-v2",
         "--places",
         str(scratch / "fictional-grid-v2-places.json"),
+        "--spatial-campaign",
+        str(scratch / "fictional-grid-v2-spatial-campaign.json"),
         "--output-root",
         "city-output",
         "--run-id",
