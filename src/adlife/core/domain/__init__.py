@@ -27,6 +27,12 @@ from adlife.core.domain.city_catalog import (
     CityCatalogEntry,
     parse_city_catalog_json,
 )
+from adlife.core.domain.city_places import (
+    CityPlace,
+    CityPlaceProvenance,
+    CityPlaceSet,
+    parse_city_place_set_json,
+)
 from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.person import ConsumerTraits, DomainModel, PersonProfile
 from adlife.core.domain.results import RunManifest, SimulationResult
@@ -45,6 +51,9 @@ __all__ = [
     "CityPack",
     "CityPackDocument",
     "CityPackV2",
+    "CityPlace",
+    "CityPlaceProvenance",
+    "CityPlaceSet",
     "CityRoad",
     "CityRoadV2",
     "CitySource",
@@ -73,4 +82,5 @@ __all__ = [
     "Zone",
     "parse_city_catalog_json",
     "parse_city_pack_json",
+    "parse_city_place_set_json",
 ]

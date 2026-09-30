@@ -72,3 +72,17 @@ def test_city_pack_dispatch_never_coerces_schema_versions(value: object) -> None
         document["schema_version"] = value
         with pytest.raises((ValidationError, ValueError), match="schema_version"):
             parser(json.dumps(document))
+
+
+@pytest.mark.parametrize("value", [True, 1.0], ids=["boolean", "float"])
+def test_city_place_set_dispatch_never_coerces_schema_versions(value: object) -> None:
+    try:
+        module = __import__("adlife.core.domain.city_places", fromlist=["unused"])
+    except ModuleNotFoundError:
+        pytest.fail("city place-set contract is not implemented")
+    from tests.unit.city.test_city_places import place_set_data
+
+    document = place_set_data()
+    document["schema_version"] = value
+    with pytest.raises((ValidationError, ValueError), match="schema_version"):
+        module.parse_city_place_set_json(json.dumps(document))
