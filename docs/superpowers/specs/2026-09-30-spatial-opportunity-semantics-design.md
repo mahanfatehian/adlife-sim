@@ -73,7 +73,7 @@ The counts are:
 
 - matching roadside traversals, before active-window filtering;
 - active roadside crossings;
-- proximity passages (zero modeled centerline distance at the bound road fraction);
+- proximity passages (the bound fraction passes within C1's recorded one-meter maximum);
 - approximately visible passages;
 - eligible phone agent-minutes;
 - successful phone draws before caps;
@@ -94,8 +94,9 @@ For each planned road traversal whose road ID and direction match a billboard pl
 4. Quantize once to the nearest integer model millisecond. Active windows are half-open
    integer-minute intervals converted to milliseconds; a crossing at the end boundary is
    inactive.
-5. Treat the path as passing the validated placement coordinate with zero modeled
-   centerline distance. This is proximity evidence only.
+5. Measure the road-fraction point to the declared placement coordinate, record that
+   C1-validated distance (at most one meter), and count a proximity passage. This is
+   proximity evidence only.
 6. Walk backward from the placement along the approach polyline by at most
    `max_view_distance_meters`. Compute the bearing from the placement toward that
    approach point.

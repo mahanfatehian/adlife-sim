@@ -60,15 +60,25 @@ strict mypy over 110 source files passed. The existing v1 trace digest remained 
 **Produces:** strict roadside/phone opportunity models, stage counts, evaluation result and
 `evaluate_spatial_opportunities` (roadside path first).
 
-- [ ] Add red contract/golden tests for strict frozen output, stable IDs and one/no/multiple
+- [x] Add red contract/golden tests for strict frozen output, stable IDs and one/no/multiple
   directional crossings.
-- [ ] Add red geometry tests for forward/reverse physical fractions, curved roads,
+- [x] Add red geometry tests for forward/reverse physical fractions, curved roads,
   shape-point approach bearings, facing threshold and half-open windows.
-- [ ] Implement millisecond quantization, polyline approach point/bearing and roadside
+- [x] Implement millisecond quantization, polyline approach point/bearing and roadside
   candidate generation in pure core code.
-- [ ] Add cap tests proving placement/agent/day scope and stable chronological ordering.
-- [ ] Run focused city/spatial/architecture tests, Ruff and mypy.
-- [ ] Commit and push `feat(city): evaluate roadside opportunities`.
+- [x] Add canonical cap machinery and stable chronological ordering; exhaustive repeated
+  cap-scope tests use phone agent-minutes in Task 4 because current two-leg routing cannot
+  traverse one physical road in the same direction twice in a day.
+- [x] Run focused city/spatial/architecture tests, Ruff and mypy.
+- [x] Commit and push `feat(city): evaluate roadside opportunities`.
+
+**Evidence:** Seven golden tests first failed because the evaluator module did not exist.
+Eight final roadside tests cover typed/frozen/non-finite contracts, exact identity material,
+stage denominators, inactive and back-facing refusal, the inclusive 90-degree threshold,
+forward/reverse travel, continuous same-minute ordering, exact half-open boundaries, curved
+shape-point approach geometry, input immutability and duration mismatch. All 170 related
+city/spatial/architecture/documentation tests passed; Ruff and strict mypy over 111 source
+files passed.
 
 ### Task 4: Implement keyed phone opportunities and canonical evaluation
 
