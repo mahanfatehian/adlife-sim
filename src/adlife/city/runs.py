@@ -17,11 +17,18 @@ from adlife.core.domain.city_run import (
     CityRunManifestDocument,
     CityRunManifestV2,
     CityRunManifestV3,
+    CityRunManifestV4,
 )
 from adlife.core.domain.serialization import canonical_json
+from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.ports.run_store import CorruptRunArtifact
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
+from adlife.core.simulation.spatial_opportunity import (
+    SpatialOpportunityEvaluation,
+    evaluate_spatial_opportunities,
+    summarize_spatial_opportunity_artifact,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +42,11 @@ class CityReplayResult:
     position_count: int
     place_set_sha256: str | None
     place_assignments_sha256: str | None
+    scenario_sha256: str | None
+    opportunity_stream_sha256: str | None
+    opportunity_summary_sha256: str | None
+    opportunity_stream_bytes: int | None
+    opportunity_count: int | None
 
 
 def _document_sha256(value: Mapping[str, object]) -> str:
@@ -50,6 +62,7 @@ def create_city_run(
     agent_count: int,
     days: int,
     places: CityPlaceSet | None = None,
+    spatial_scenario: SpatialCampaignScenario | None = None,
 ) -> StoredCityRun:
     """Freeze a bounded mobility trace under a fresh, never-reused city run ID."""
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
@@ -68,7 +81,41 @@ def create_city_run(
     summary = summarize_city_trace(mobility)
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     manifest: CityRunManifestDocument
-    if places is not None:
+    opportunity_evaluation: SpatialOpportunityEvaluation | None = None
+    if spatial_scenario is not None:
+        opportunity_evaluation = evaluate_spatial_opportunities(mobility, spatial_scenario)
+        opportunity_summary = summarize_spatial_opportunity_artifact(opportunity_evaluation)
+        opportunity_summary_bytes = (canonical_json(opportunity_summary) + "\n").encode("utf-8")
+        place_schema_version = None if places is None else places.schema_version
+        place_set_sha256 = None if places is None else places.fingerprint
+        place_assignments_sha256 = (
+            None if places is None else _document_sha256(mobility.place_assignment_document())
+        )
+        manifest = CityRunManifestV4(
+            run_id=run_id,
+            city_schema_version=pack.schema_version,
+            spatial_scenario_schema_version=spatial_scenario.schema_version,
+            spatial_opportunity_schema_version=opportunity_evaluation.schema_version,
+            place_schema_version=place_schema_version,
+            place_set_sha256=place_set_sha256,
+            place_assignments_sha256=place_assignments_sha256,
+            package_version=__version__,
+            python_version=python_version,
+            city_sha256=pack.fingerprint,
+            agents_sha256=summary.agents_sha256,
+            trace_sha256=summary.trace_sha256,
+            scenario_sha256=spatial_scenario.fingerprint,
+            opportunity_stream_sha256=opportunity_summary.stream_sha256,
+            opportunity_summary_sha256=sha256(opportunity_summary_bytes).hexdigest(),
+            opportunity_stream_bytes=opportunity_summary.stream_bytes,
+            opportunity_count=opportunity_summary.counts.opportunity_count,
+            seed=seed,
+            agent_count=agent_count,
+            days=days,
+            frame_count=summary.frame_count,
+            position_count=summary.position_count,
+        )
+    elif places is not None:
         assignments = mobility.place_assignment_document()
         manifest = CityRunManifestV3(
             run_id=run_id,
@@ -122,8 +169,17 @@ def create_city_run(
         mobility.agents,
         places=places,
         place_assignments=mobility.place_assignments,
+        spatial_scenario=spatial_scenario,
+        opportunity_evaluation=opportunity_evaluation,
     )
-    return StoredCityRun(manifest, pack, mobility, directory)
+    return StoredCityRun(
+        manifest,
+        pack,
+        mobility,
+        directory,
+        spatial_scenario=spatial_scenario,
+        opportunity_evaluation=opportunity_evaluation,
+    )
 
 
 def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
@@ -132,11 +188,37 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     manifest = stored.manifest
     place_set_sha256: str | None = None
     place_assignments_sha256: str | None = None
-    if isinstance(manifest, CityRunManifestV3):
+    place_manifest = (
+        manifest
+        if isinstance(manifest, CityRunManifestV3)
+        or (isinstance(manifest, CityRunManifestV4) and manifest.place_schema_version is not None)
+        else None
+    )
+    if place_manifest is not None:
         if stored.mobility.places is None:
             raise CorruptRunArtifact("city run is missing its frozen place set")
         place_set_sha256 = stored.mobility.places.fingerprint
         place_assignments_sha256 = _document_sha256(stored.mobility.place_assignment_document())
+    scenario_sha256: str | None = None
+    opportunity_stream_sha256: str | None = None
+    opportunity_summary_sha256: str | None = None
+    opportunity_stream_bytes: int | None = None
+    opportunity_count: int | None = None
+    if isinstance(manifest, CityRunManifestV4):
+        if stored.spatial_scenario is None or stored.opportunity_evaluation is None:
+            raise CorruptRunArtifact("city run is missing its frozen spatial evidence")
+        opportunity_evaluation = evaluate_spatial_opportunities(
+            stored.mobility, stored.spatial_scenario
+        )
+        opportunity_summary = summarize_spatial_opportunity_artifact(opportunity_evaluation)
+        opportunity_summary_bytes = (canonical_json(opportunity_summary) + "\n").encode("utf-8")
+        scenario_sha256 = stored.spatial_scenario.fingerprint
+        opportunity_stream_sha256 = opportunity_summary.stream_sha256
+        opportunity_summary_sha256 = sha256(opportunity_summary_bytes).hexdigest()
+        opportunity_stream_bytes = opportunity_summary.stream_bytes
+        opportunity_count = opportunity_summary.counts.opportunity_count
+        if opportunity_evaluation != stored.opportunity_evaluation:
+            raise CorruptRunArtifact("city run spatial evidence does not replay identically")
     if (
         stored.pack.fingerprint != manifest.city_sha256
         or summary.agents_sha256 != manifest.agents_sha256
@@ -144,10 +226,20 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         or summary.frame_count != manifest.frame_count
         or summary.position_count != manifest.position_count
         or (
-            isinstance(manifest, CityRunManifestV3)
+            place_manifest is not None
             and (
-                place_set_sha256 != manifest.place_set_sha256
-                or place_assignments_sha256 != manifest.place_assignments_sha256
+                place_set_sha256 != place_manifest.place_set_sha256
+                or place_assignments_sha256 != place_manifest.place_assignments_sha256
+            )
+        )
+        or (
+            isinstance(manifest, CityRunManifestV4)
+            and (
+                scenario_sha256 != manifest.scenario_sha256
+                or opportunity_stream_sha256 != manifest.opportunity_stream_sha256
+                or opportunity_summary_sha256 != manifest.opportunity_summary_sha256
+                or opportunity_stream_bytes != manifest.opportunity_stream_bytes
+                or opportunity_count != manifest.opportunity_count
             )
         )
     ):
@@ -162,6 +254,11 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         position_count=summary.position_count,
         place_set_sha256=place_set_sha256,
         place_assignments_sha256=place_assignments_sha256,
+        scenario_sha256=scenario_sha256,
+        opportunity_stream_sha256=opportunity_stream_sha256,
+        opportunity_summary_sha256=opportunity_summary_sha256,
+        opportunity_stream_bytes=opportunity_stream_bytes,
+        opportunity_count=opportunity_count,
     )
 
 

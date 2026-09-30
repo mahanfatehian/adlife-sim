@@ -126,13 +126,21 @@ Windows capability/catalog skips; Ruff and strict mypy over 111 source files pas
 - Consumes: `create_city_run(..., spatial_scenario: SpatialCampaignScenario | None)`.
 - Produces: opportunity provenance fields on `CityReplayResult`.
 
-- [ ] Add failing creation/replay tests for v4 with and without places, two-run byte
+- [x] Add failing creation/replay tests for v4 with and without places, two-run byte
   identity, source hash immutability, and scenario/city/day mismatch before save.
-- [ ] Confirm RED because creation ignores spatial scenarios.
-- [ ] Build v4 from independently summarized C2 evaluation and pass it to the store.
-- [ ] Extend replay to verify scenario, summary and stream provenance without writes.
-- [ ] Run city create/replay/store suites, both focused hash seeds, Ruff and mypy.
-- [ ] Commit and push `feat(city): replay spatial opportunity runs`.
+- [x] Confirm RED because creation ignores spatial scenarios.
+- [x] Build v4 from independently summarized C2 evaluation and pass it to the store.
+- [x] Extend replay to verify scenario, summary and stream provenance without writes.
+- [x] Run city create/replay/store suites, both focused hash seeds, Ruff and mypy.
+- [x] Commit and push `feat(city): replay spatial opportunity runs`.
+
+**Evidence:** Three creation/replay tests first failed because `create_city_run()` did not
+accept a spatial scenario. V4 creation now supports runs with or without place bindings;
+two independently created runs have identical manifests/scientific artifacts, replay
+recomputes all opportunity provenance, and source file hashes remain unchanged. City and
+duration mismatches fail before reserving an ID. The related suite passed 199 tests with
+four expected skips; focused runs under `PYTHONHASHSEED=0` and `12345` each passed 57 tests
+with four skips. Ruff and strict mypy over 111 source files passed.
 
 ### Task 5: Expose the bounded CLI workflow
 
