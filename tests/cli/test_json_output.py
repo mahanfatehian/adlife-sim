@@ -118,3 +118,24 @@ def test_command_boundary_maps_validation_to_2() -> None:
     with pytest.raises(SystemExit) as excinfo:
         invalid()
     assert excinfo.value.code == ExitCode.INPUT_ERROR
+
+
+def test_city_place_validation_failure_is_one_clean_json_document(tmp_path: Path) -> None:
+    bad = tmp_path / "places.json"
+    bad.write_text('{"api_key":"topsecret123"', encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-places",
+            "validate",
+            str(bad),
+            "--city-id",
+            "fictional-grid-v2",
+        ],
+    )
+    assert result.exit_code == ExitCode.INPUT_ERROR
+    assert json.loads(result.stdout)["error"]["exit_code"] == ExitCode.INPUT_ERROR
+    assert "topsecret123" not in result.output
+    assert "Traceback" not in result.output

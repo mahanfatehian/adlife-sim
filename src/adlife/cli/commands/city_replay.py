@@ -34,6 +34,9 @@ def command(
         "frame_count": result.frame_count,
         "position_count": result.position_count,
     }
+    if result.place_set_sha256 is not None:
+        document["place_set_sha256"] = result.place_set_sha256
+        document["place_assignments_sha256"] = result.place_assignments_sha256
     if output_format() == "human":
         document["_lines"] = [
             f"city replay identical: {result.run_id} ({result.frame_count} minute frames)"

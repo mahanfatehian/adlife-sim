@@ -22,6 +22,7 @@ from adlife.cli.commands.campaign import app as campaign_app
 from adlife.cli.commands.city import command as city_command
 from adlife.cli.commands.city_catalog import app as city_catalog_app
 from adlife.cli.commands.city_import import command as city_import_command
+from adlife.cli.commands.city_places import app as city_places_app
 from adlife.cli.commands.city_replay import command as city_replay_command
 from adlife.cli.commands.city_run import command as city_run_command
 from adlife.cli.commands.city_view import command as city_view_command
@@ -88,6 +89,7 @@ app = typer.Typer(
 app.add_typer(campaign_app, name="campaign")
 app.add_typer(population_app, name="population")
 app.add_typer(city_catalog_app, name="city-catalog")
+app.add_typer(city_places_app, name="city-places")
 app.command("init")(init_command)
 app.command("validate")(validate_command)
 app.command("run")(run_command)

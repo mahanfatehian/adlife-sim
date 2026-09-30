@@ -63,7 +63,17 @@ zone, public source metadata and known omissions. An unknown ID exits 2. A missi
 malformed, mismatched or hash-invalid packaged catalog resource exits 4. Listing and
 showing the catalog make no network request and accept no URL or arbitrary file path.
 
-## `adlife city [--pack FILE | --city-id ID] [--agents N] [--days N] [--seed N] [--port N]`
+## `adlife city-places validate PLACE_SET [PACK | --city-id ID] [--agents N] [--days N] [--seed N]`
+
+Validate one bounded local synthetic place-set JSON document against exactly one local
+`PACK` or verified catalog `--city-id`. The command checks the immutable city hash,
+place provenance, home capacity, keyed assignment and directed routability without
+writing an artifact or making a network request. `--agents` accepts 1–250 (default
+20), `--days` 1–31 (default 7), and `--seed` defaults to 42. Invalid, mismatched,
+insufficient or unreadable inputs exit 2 with bounded diagnostics. JSON mode emits one
+document containing the city/place hashes and assignment count.
+
+## `adlife city [--pack FILE | --city-id ID] [--places FILE] [--agents N] [--days N] [--seed N] [--port N]`
 
 Start the read-only geographic mobility pilot at `http://127.0.0.1:8765` (loopback
 only). Without either selector, the viewer preserves the original explicitly fictional,
@@ -72,14 +82,16 @@ bundled v1 offline grid. `--pack` loads one versioned local city-pack JSON file;
 `fictional-grid-v2`. The selectors are mutually exclusive. The HTTP API cannot open
 paths or change the loaded pack. `--agents` accepts 1–250
 (default 20), `--days` 1–31 (default 7), `--seed` defaults to 42, and `--port` defaults
-to 8765. Invalid packs exit 2 before the server starts. The interactive server accepts
-only the default human output mode. It does not open a browser automatically.
+to 8765. `--places` optionally supplies a validated place set bound to the selected
+pack. Invalid packs or place sets exit 2 before the server starts. The interactive
+server accepts only the default human output mode. It does not open a browser
+automatically.
 
 This command does not run or persist the advertising engine. Its minute-addressable
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
-## `adlife city-run [PACK | --city-id ID] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
+## `adlife city-run [PACK | --city-id ID] [--places FILE] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
 
 Save a deterministic **mobility-only** city run under `ROOT/city-runs/ID`. Supply
 exactly one local `PACK` or verified catalog `--city-id`; neither and both exit 2. The
@@ -88,6 +100,8 @@ replay. `--agents` accepts 1–30 (default 20), `--days` 1–7 (default 7), and 
 defaults to 42. Creating an existing ID exits 3 without overwriting it.
 The command hashes every minute frame and the generated fictional assignments. A
 completed artifact contains `run.json`, `inputs/city.json`, and `inputs/agents.json`.
+With `--places`, schema-v3 artifacts also freeze `inputs/places.json` and
+`inputs/place-assignments.json` plus both content hashes.
 Interrupted or failed publication may leave an incomplete, reserved directory; use a
 new run ID after examining it. JSON mode emits one result document on stdout.
 

@@ -10,6 +10,7 @@ import uvicorn
 
 from adlife.city.catalog import CityCatalogError, UnknownCatalogCity, select_catalog_city
 from adlife.city.loader import CityPackError, load_city_pack
+from adlife.city.place_loader import CityPlaceSetError, load_city_place_set
 from adlife.city.web import create_city_app
 from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
 from adlife.cli.output import info
@@ -25,6 +26,10 @@ def command(
     city_id: Annotated[
         str | None,
         typer.Option("--city-id", help="Verified packaged city ID from `city-catalog list`."),
+    ] = None,
+    places: Annotated[
+        Path | None,
+        typer.Option("--places", help="Local synthetic city place-set JSON file."),
     ] = None,
     agents: Annotated[int, typer.Option("--agents", min=1, max=250)] = 20,
     days: Annotated[int, typer.Option("--days", min=1, max=31)] = 7,
@@ -44,7 +49,17 @@ def command(
         raise CommandError(str(error), ExitCode.ARTIFACT_ERROR) from None
     except CityPackError as error:
         raise CommandError(str(error)) from None
-    simulation = CityMobility(city_pack, seed=seed, agent_count=agents, days=days)
+    try:
+        place_set = None if places is None else load_city_place_set(places)
+    except CityPlaceSetError as error:
+        raise CommandError(str(error)) from None
+    simulation = CityMobility(
+        city_pack,
+        seed=seed,
+        agent_count=agents,
+        days=days,
+        places=place_set,
+    )
     info(f"city dashboard: http://127.0.0.1:{port} ({city_pack.name})")
     uvicorn.run(
         create_city_app(simulation),

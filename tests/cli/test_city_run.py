@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 from adlife.city.run_store import CityRunStore
 from adlife.cli.app import app
 from adlife.core.domain.serialization import canonical_json
+from tests.cli.test_city_places_cli import write_city_place_inputs
 from tests.unit.city.test_city_pack import load_pack, pack_data
 
 
@@ -169,3 +170,43 @@ def test_city_run_requires_exactly_one_pack_selector(tmp_path: Path) -> None:
     assert neither.exit_code == both.exit_code == unknown.exit_code == 2
     assert "Traceback" not in neither.output + both.output + unknown.output
     assert not (tmp_path / "city-runs" / "study").exists()
+
+
+def test_city_run_and_replay_expose_frozen_place_evidence(tmp_path: Path) -> None:
+    pack, places, place_set = write_city_place_inputs(tmp_path)
+    created = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-run",
+            str(pack),
+            "--places",
+            str(places),
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "place-study",
+            "--agents",
+            "2",
+            "--days",
+            "7",
+        ],
+    )
+    assert created.exit_code == 0, created.output
+    document = json.loads(created.stdout)
+    assert document["run_schema_version"] == 3
+    assert document["place_set_sha256"] == place_set.fingerprint
+    assert len(document["place_assignments_sha256"]) == 64
+
+    stored = CityRunStore(tmp_path).load("place-study")
+    assert stored.manifest.schema_version == 3
+    assert (stored.directory / "inputs" / "places.json").is_file()
+    replay = CliRunner().invoke(
+        app,
+        ["--format", "json", "city-replay", str(tmp_path), "place-study"],
+    )
+    assert replay.exit_code == 0, replay.output
+    replayed = json.loads(replay.stdout)
+    assert replayed["place_set_sha256"] == place_set.fingerprint
+    assert replayed["place_assignments_sha256"] == document["place_assignments_sha256"]

@@ -5,6 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from adlife.cli.app import app
+from tests.cli.test_city_places_cli import write_city_place_inputs
 from tests.unit.city.test_city_pack import pack_data
 
 
@@ -106,3 +107,32 @@ def test_city_refuses_ambiguous_or_unknown_catalog_selection(
     assert unknown.exit_code == 2
     assert "Traceback" not in both.output + unknown.output
     assert calls == []
+
+
+def test_city_accepts_a_validated_place_set_for_the_local_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import uvicorn
+
+    pack, places, model = write_city_place_inputs(tmp_path)
+    applications: list[object] = []
+    monkeypatch.setattr(
+        uvicorn, "run", lambda application, **kwargs: applications.append(application)
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "city",
+            "--pack",
+            str(pack),
+            "--places",
+            str(places),
+            "--agents",
+            "2",
+            "--days",
+            "7",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert len(applications) == 1
+    assert model.name not in result.output
