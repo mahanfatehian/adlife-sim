@@ -185,9 +185,9 @@ Ruff and strict mypy over 111 source files passed.
 
 - [x] Document C3a creation/replay without claiming full C3, UI, metrics or outcomes.
 - [x] Extend installed-wheel smoke with a schema-v4 run and replay.
-- [ ] Run lock sync, Ruff, mypy, full pytest, two hash seeds and branch coverage.
-- [ ] Build sdist/wheel and run the exact wheel smoke outside the checkout.
-- [ ] Inspect status/diff/check; commit and push
+- [x] Run lock sync, Ruff, mypy, full pytest, two hash seeds and branch coverage.
+- [x] Build sdist/wheel and run the exact wheel smoke outside the checkout.
+- [x] Inspect status/diff/check; commit and push
   `docs(city): document spatial run artifacts`.
 
 **Evidence so far:** The documentation contract first failed on the pre-C3a public
@@ -198,3 +198,22 @@ open. All 21 documentation tests pass. The clean-room smoke's regression first f
 because the script still required v3; all five smoke-script tests now prove it supplies
 the spatial scenario and verifies v4 stream/summary provenance through replay. A separate
 regression also proved and fixed that the mobility-only viewer must accept a valid v4 run.
+
+**Final evidence (2026-10-01):** `uv sync --locked --all-groups` resolved 78 and checked
+68 packages. Ruff format checked 264 files, Ruff lint passed, and mypy passed all 111
+source files. The full suite passed with 3,493 tests and 16 skips in 473.80 seconds;
+complete reruns under `PYTHONHASHSEED=0` and `12345` passed the same counts in 533.29 and
+538.86 seconds. Branch coverage passed 3,493/16 in 1,019.84 seconds at 91.24%, above the
+85% floor. Headless Chromium passed its browser interaction test (1 in 4.94 seconds), all
+25 TUI tests passed, and both live/headless equivalence tests passed in 50.56 seconds.
+
+`uv build --no-sources` produced the 271,076-byte sdist and 334,825-byte wheel. The exact
+wheel passed the outside-checkout clean-room smoke, including a 4,862,319-byte report and
+packaged-catalog schema-v4 spatial run/replay. Source version, human/JSON offline doctor,
+human/JSON headless demos and default noninteractive demo completed; doctor reported the
+expected local CP1252 warning (7/8) while proving no network use, and both headless demos
+emitted 2,042 events. The isolated maximum rules run passed at 18.45 seconds with 5,685
+events, 2 MiB traced peak memory, a 3,629,056-byte database and 4,862,947-byte report.
+The maximum spatial evaluator passed at 10.50 seconds over 6,048,000 eligible
+agent-minutes with 4,200 retained opportunities. `git diff --check` passed before the
+documentation commit and the pushed tree was clean.
