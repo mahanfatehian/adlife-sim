@@ -125,15 +125,35 @@ full suite passed 3,425 / skipped 13 in 461.83 seconds.
 - Modify: `docs/methodology/model-card.md`
 - Modify: `docs/methodology/limitations.md`
 - Modify: `docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md`
+- Modify: `scripts/smoke_release.py`
+- Modify: `tests/packaging/test_smoke_release.py`
 - Modify: this plan with exact evidence.
 
-- [ ] Document the input format and validation workflow without claiming impressions,
+- [x] Document the input format and validation workflow without claiming impressions,
   attention, real inventory, traffic, residents or sales.
-- [ ] Mark only C1 complete and name C2â€“C4 as required before a geographic campaign run.
-- [ ] Run Ruff format/lint, strict mypy, full pytest, both hash seeds and branch coverage.
-- [ ] Build sdist/wheel and run the exact clean-room smoke without adding network access.
-- [ ] Record exact evidence, inspect diff/status and push
+- [x] Mark only C1 complete and name C2â€“C4 as required before a geographic campaign run.
+- [x] Run Ruff format/lint, strict mypy, full pytest, both hash seeds and branch coverage.
+- [x] Build sdist/wheel and run the exact clean-room smoke without adding network access.
+- [x] Record exact evidence, inspect diff/status and push
   `docs(city): document spatial campaign contract`.
+
+**Evidence:** The installed-wheel smoke regression first failed because spatial validation
+was absent, then all 5 smoke tests passed; the final packaging/architecture run passed 151
+and skipped 4 platform-specific cases.
+Lock sync succeeded; Ruff reported 256 formatted files and no lint issues; mypy reported no
+issues in 110 source files. Final review added a failing regression proving that altered
+duplicate phone policies could multiply one campaign's opportunity; schema v1 now permits
+exactly one phone policy per campaign, and all 40 focused tests passed. The refreshed full
+suite passed 3,425 / skipped 13 in 490.77 seconds; hash seed 0 passed the same counts in
+487.99 seconds and seed 12345 in 430.05 seconds. Branch coverage passed 3,425 / skipped 13
+in 862.29 seconds at 91.35% against the 85% minimum; spatial core/loader/CLI measured
+96%/100%/95%. `uv build --no-sources` built the
+0.1.0 sdist and wheel; the exact clean-room wheel smoke validated both spatial channels,
+place-aware v3 replay and a 4,862,319-byte report. Direct offline validation produced
+scenario SHA-256 `8e6177b96636bcc37e48e217871e45cff3cd3c27fcca9bebc65896eb3e51f3c6`
+with zero-meter binding error. The maximum 30-agent/seven-day run passed at 16.45 seconds,
+5,685 events, 2 MiB peak traced memory, a 3,629,056-byte database and 4,862,947-byte report.
+Offline doctor retained only the documented Windows `cp1252` environment warning.
 
 ## Self-review record
 

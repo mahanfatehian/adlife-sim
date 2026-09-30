@@ -175,11 +175,18 @@ unsupported routing semantics are disclosed, never marketed as navigation.
 
 **Depends on:** A durable city run and B's stable road/geometry identifiers.
 
-- [ ] **C1 — Version spatial scenario and placements.** Define coordinates/road
+- [x] **C1 — Version spatial scenario and placements.** Define coordinates/road
   binding, billboard orientation/side, phone opportunity model, active windows,
   creative hash and frequency caps. Validate IDs, geometry, time and campaign
   references; refuse impossible placement rather than snapping invisibly. Tests
   include injection, out-of-bounds, one-way, duplicate and off-network cases.
+
+  **Evidence (2026-09-30):** canonical schema-v1 scenarios bind exact city/creative
+  hashes, campaign references, non-overlapping windows, caps, explicit roadside
+  direction/fraction/coordinate/side/orientation and versioned phone policy. Core v1/v2
+  geometry validation refuses unsupported directions, bounds errors and coordinates over
+  one meter from the declared road fraction without snapping. The bounded offline
+  `city-campaign validate` command and installed-wheel smoke cover local/catalog inputs.
 - [ ] **C2 — Specify measurable *model* semantics.** Define road traversal,
   proximity and approximate visibility separately from notice, and phone-use
   opportunity separately from location. Document denominator and causal chain.

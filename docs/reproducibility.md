@@ -110,6 +110,14 @@ not cryptographically signed or claimed to be tamper-proof against a malicious o
 
 ## Saved city mobility traces
 
+`adlife city-campaign validate` is deterministic validation, not a saved run. Its
+schema-v1 scenario fingerprint is canonical across campaign, placement, window and
+eligible-activity input order, and its geometry evidence is derived from the selected
+immutable city pack. The command writes no artifact and spatial campaigns are not yet
+accepted by `city-run`; therefore this fingerprint must not be described as replay of an
+advertising outcome. C2â€“C4 remain responsible for versioned events, persistence, replay
+and metrics.
+
 `adlife city-run PACK --output-root ROOT --run-id ID` or the catalog form
 `adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at
 `ROOT/city-runs/ID/`. Catalog selection is offline and content-addressed: the packaged

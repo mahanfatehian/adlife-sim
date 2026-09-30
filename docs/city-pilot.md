@@ -192,6 +192,34 @@ Place input order does not change the fingerprint or keyed assignments. A workpl
 leisure selection cannot equal that agent's home node. The viewer presents place glyphs,
 the selected agent's three labels and provenance, but stays read-only.
 
+## Spatial campaign inputs (validation only)
+
+A separate schema-v1 spatial campaign document can be checked against a local or catalog
+city before any advertising model exists:
+
+```bash
+uv run adlife city-campaign validate spatial-campaign.json --city-id fictional-grid-v2
+```
+
+The document is capped at 2 MiB and binds `city_id` plus `city_sha256`, 1â€“20 fictional
+campaigns and 1â€“500 placements. Each campaign carries the SHA-256 of its creative bytes.
+Every placement references a campaign, uses non-overlapping absolute model-minute windows
+within 1â€“7 days, and declares a per-agent/per-day cap.
+
+A `roadside-billboard` supplies a stable road ID, supported travel direction, physical
+source-to-target road fraction, explicit WGS84 coordinate, left/right side, orientation
+and bounded approximate view distance. Validation interpolates all road shape points and
+allows at most one meter of authoring/serialization error; it never moves the coordinate.
+Endpoints, unknown roads, wrong directions, out-of-bounds and off-network coordinates are
+refused. A `mobile-feed` supplies the versioned `keyed-activity-minute-v1` policy, eligible
+synthetic activities and an analyst-authored per-minute probability. V1 permits one phone
+policy per campaign so extra records cannot silently multiply opportunity.
+
+This input contract does not yet generate opportunity or impression events and is not
+accepted by `city-run`. The probability is not observed phone behavior; orientation and
+distance are not measured visibility. C2â€“C4 must define, test, persist and report the
+causal event semantics before AdLife can run a geographic campaign study.
+
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
 Day 1 is treated as Monday. The UI's light/dark styling switches at fixed 06:00 and

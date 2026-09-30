@@ -189,6 +189,19 @@ uv run adlife city-run --city-id fictional-grid-v2 --places places.json --output
 Place-aware saved runs use manifest v3 and freeze both the canonical place set and its
 keyed per-agent assignments. The viewer shows the selected fictional labels and declared
 provenance; it does not turn them into real addresses or observed visits.
+
+Spatial campaign inputs now have a separate validation-only boundary:
+
+```bash
+uv run adlife city-campaign validate spatial-campaign.json --city-id fictional-grid-v2
+```
+
+The schema binds a scenario to the exact city hash, validates creative hashes, active
+windows and caps, and proves each billboard coordinate matches a stable road fraction and
+supported direction without snapping. Phone placements declare an explicit synthetic
+opportunity policy. This command does **not** run advertising, create impressions, alter a
+city run, or claim observed device use, viewability, attention, traffic, or sales; those
+event semantics remain later roadmap work.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or

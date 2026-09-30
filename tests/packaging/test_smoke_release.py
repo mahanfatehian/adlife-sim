@@ -82,6 +82,7 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     city_sha256 = "a" * 64
     place_sha256 = "c" * 64
     assignments_sha256 = "d" * 64
+    scenario_sha256 = "e" * 64
     trace_sha256 = "b" * 64
 
     monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: str(workspace))
@@ -148,6 +149,28 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "city_id": "fictional-grid-v2",
                 "place_set_sha256": place_sha256,
             }
+        elif arguments[:4] == ["--format", "json", "city-campaign", "validate"]:
+            scenario_path = Path(arguments[4])
+            scenario_document = json.loads(scenario_path.read_text(encoding="utf-8"))
+            assert scenario_document["scenario_id"] == "clean-room-spatial"
+            assert scenario_document["city_id"] == "fictional-grid-v2"
+            assert scenario_document["city_sha256"] == city_sha256
+            assert {item["channel"] for item in scenario_document["placements"]} == {
+                "roadside-billboard",
+                "mobile-feed",
+            }
+            document = {
+                "valid": True,
+                "scenario_id": "clean-room-spatial",
+                "scenario_sha256": scenario_sha256,
+                "city_id": "fictional-grid-v2",
+                "city_sha256": city_sha256,
+                "campaign_count": 1,
+                "placement_count": 2,
+                "billboard_count": 1,
+                "phone_count": 1,
+                "max_billboard_binding_error_meters": 0.0,
+            }
         elif arguments[:3] == ["--format", "json", "city-run"]:
             document = {
                 "run_id": "catalog-smoke",
@@ -207,6 +230,15 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         "1",
         "--seed",
         "42",
+    ] in invoked
+    assert [
+        "--format",
+        "json",
+        "city-campaign",
+        "validate",
+        str(scratch / "fictional-grid-v2-spatial-campaign.json"),
+        "--city-id",
+        "fictional-grid-v2",
     ] in invoked
     assert [
         "--format",

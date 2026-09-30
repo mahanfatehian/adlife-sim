@@ -3,10 +3,10 @@
 The wheel is the canonical distribution, so release verification never happens inside
 the development checkout. This script creates a temporary virtual environment, installs
 exactly the wheel it was handed, changes to a scratch directory outside the checkout,
-and runs the documented workflow — including the verified packaged city catalog, a
-validated fictional place set, a place-aware v3 mobility run and its replay — validating
-the JSON output contract along the way. Every temporary artifact is cleaned up on
-success and on failure.
+and runs the documented workflow — including the verified packaged city catalog,
+validated fictional place and spatial-campaign inputs, a place-aware v3 mobility run and
+its replay — validating the JSON output contract along the way. Every temporary artifact
+is cleaned up on success and on failure.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from hashlib import sha256
 from pathlib import Path
 from typing import Never
 
@@ -98,6 +99,56 @@ def _write_fictional_place_set(path: Path, *, city_sha256: str) -> None:
                 "node_id": "center-south",
                 "label": "Fictional south leisure venue",
                 "provenance": provenance,
+            },
+        ],
+    }
+    path.write_text(
+        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_fictional_spatial_campaign(path: Path, *, city_sha256: str) -> None:
+    """Create one explicit two-channel validation fixture for the packaged grid."""
+    document = {
+        "schema_version": 1,
+        "scenario_id": "clean-room-spatial",
+        "name": "Fictional clean-room spatial campaign",
+        "days": 1,
+        "city_id": "fictional-grid-v2",
+        "city_sha256": city_sha256,
+        "campaigns": [
+            {
+                "campaign_id": "fictional-launch",
+                "name": "Fictional product launch",
+                "creative_sha256": sha256(b"fictional clean-room creative").hexdigest(),
+            }
+        ],
+        "placements": [
+            {
+                "placement_id": "north-road-billboard",
+                "campaign_id": "fictional-launch",
+                "channel": "roadside-billboard",
+                "active_windows": [{"start_minute": 360, "end_minute": 1_140}],
+                "frequency_cap_per_agent_per_day": 3,
+                "road_id": "north-west",
+                "travel_direction": "forward",
+                "road_fraction": 0.5,
+                "longitude": 0.02,
+                "latitude": 0.06,
+                "side": "right",
+                "orientation_degrees": 180.0,
+                "max_view_distance_meters": 120.0,
+            },
+            {
+                "placement_id": "fictional-mobile-feed",
+                "campaign_id": "fictional-launch",
+                "channel": "mobile-feed",
+                "active_windows": [{"start_minute": 360, "end_minute": 1_140}],
+                "frequency_cap_per_agent_per_day": 2,
+                "opportunity_model": "keyed-activity-minute-v1",
+                "eligible_activities": ["home", "commute", "work", "leisure"],
+                "opportunity_probability_per_minute": 0.05,
             },
         ],
     }
@@ -223,6 +274,43 @@ def smoke(wheel: Path) -> None:
         if not isinstance(place_set_sha256, str) or len(place_set_sha256) != 64:
             _refuse("city-places validate", "place_set_sha256 is not a SHA-256 digest")
 
+        spatial_path = scratch / "fictional-grid-v2-spatial-campaign.json"
+        _write_fictional_spatial_campaign(spatial_path, city_sha256=catalog_sha256)
+        spatial = _expect_json(
+            _run(
+                [
+                    str(adlife),
+                    "--format",
+                    "json",
+                    "city-campaign",
+                    "validate",
+                    str(spatial_path),
+                    "--city-id",
+                    "fictional-grid-v2",
+                ],
+                cwd=scratch,
+            ),
+            "city-campaign validate",
+        )
+        _expect_value(spatial, "valid", True, "city-campaign validate")
+        _expect_value(
+            spatial,
+            "scenario_id",
+            "clean-room-spatial",
+            "city-campaign validate",
+        )
+        _expect_value(spatial, "city_sha256", catalog_sha256, "city-campaign validate")
+        _expect_value(spatial, "campaign_count", 1, "city-campaign validate")
+        _expect_value(spatial, "placement_count", 2, "city-campaign validate")
+        _expect_value(spatial, "billboard_count", 1, "city-campaign validate")
+        _expect_value(spatial, "phone_count", 1, "city-campaign validate")
+        scenario_sha256 = spatial.get("scenario_sha256")
+        if not isinstance(scenario_sha256, str) or len(scenario_sha256) != 64:
+            _refuse("city-campaign validate", "scenario_sha256 is not a SHA-256 digest")
+        binding_error = spatial.get("max_billboard_binding_error_meters")
+        if type(binding_error) is not float or not 0 <= binding_error <= 1:
+            _refuse("city-campaign validate", "billboard binding error is outside 0..1 m")
+
         _run([str(adlife), "init", "smoke-study"], cwd=scratch)
         run = _run(
             [
@@ -333,7 +421,7 @@ def smoke(wheel: Path) -> None:
         print(
             "smoke ok: "
             f"report at {html.stat().st_size} bytes; "
-            "catalog fictional-grid-v2 place-aware replay verified"
+            "catalog fictional-grid-v2 spatial validation and place-aware replay verified"
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)

@@ -171,16 +171,7 @@ class SpatialCampaignScenario(DomainModel):
             raise ValueError("duplicate physical billboard placement")
 
         phone_keys = [
-            (
-                item.campaign_id,
-                item.opportunity_model,
-                item.eligible_activities,
-                item.opportunity_probability_per_minute,
-                item.frequency_cap_per_agent_per_day,
-                tuple((window.start_minute, window.end_minute) for window in item.active_windows),
-            )
-            for item in placements
-            if isinstance(item, PhoneOpportunityPlacement)
+            item.campaign_id for item in placements if isinstance(item, PhoneOpportunityPlacement)
         ]
         if len(phone_keys) != len(set(phone_keys)):
             raise ValueError("duplicate phone opportunity policy")

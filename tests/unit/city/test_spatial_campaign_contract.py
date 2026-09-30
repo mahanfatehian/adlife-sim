@@ -196,6 +196,10 @@ def test_duplicate_physical_billboards_and_phone_policies_are_refused() -> None:
     duplicate_phone = spatial_scenario_data()
     clone = deepcopy(duplicate_phone["placements"][1])
     clone["placement_id"] = "phone-snack-copy"
+    clone["active_windows"] = [{"start_minute": 1_400, "end_minute": 1_500}]
+    clone["frequency_cap_per_agent_per_day"] = 7
+    clone["eligible_activities"] = ["commute"]
+    clone["opportunity_probability_per_minute"] = 0.2
     duplicate_phone["placements"].append(clone)
     with pytest.raises(ValidationError, match="phone opportunity policy"):
         _parse(duplicate_phone)

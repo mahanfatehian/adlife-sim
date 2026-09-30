@@ -47,6 +47,15 @@ canonical order, validates home capacity and every directed itinerary before gen
 frames, and exposes assignments as data rather than mutable agent fields. Neither the
 web adapter nor the CLI can inject an unvalidated assignment.
 
+`core/domain/spatial_campaign.py` is another separate immutable boundary. A schema-v1
+spatial scenario is content-addressed, binds to an exact city ID/hash, references
+fictional campaigns by stable ID, and declares billboard/phone placement assumptions.
+Core validation resolves road IDs and traversal directions, interpolates the complete v1
+or v2 road geometry, and refuses a declared coordinate more than one meter from its
+physical road fraction; it never snaps or mutates input. The city adapter only loads a
+bounded local JSON document and the CLI only reports validation evidence. No spatial
+advertising event is joined to mobility yet.
+
 The city adapter owns file and package-resource loading. Its packaged catalog is an
 offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
 matching ID/schema/metadata before selection. The only bundled entry is

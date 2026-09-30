@@ -10,7 +10,9 @@ the advertising results. Its packaged, content-addressed catalog currently conta
 only the `fictional-grid-v2` fixture; a rights-reviewed real city has not shipped. A
 street pack acquired under appropriate rights can provide real geography, but the
 agents, schedules and speeds remain synthetic and uncalibrated. No campaign or provider
-result is plotted on that map in this release.
+result is plotted on that map in this release. Spatial campaign documents can be
+validated against roads, but validation creates no opportunity, impression, attention or
+response event.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -87,6 +89,12 @@ sunrise/sunset calculation, measured demand or calibrated traffic. Import valida
 also does not prove license or commercial redistribution rights; those require the
 separate recorded human review described in the
 [city-source qualification checklist](../data/city-source-qualification.md).
+
+Spatial scenario v1 records fictional campaign IDs, creative content hashes, time/cap
+assumptions, exact roadside bindings and a declared phone-opportunity probability. A
+creative hash proves byte identity only, not ownership or suitability. A road binding
+proves geometric consistency only, not legal inventory, line of sight, viewability,
+traffic, device use, attention or effect.
 
 ## Metrics
 
