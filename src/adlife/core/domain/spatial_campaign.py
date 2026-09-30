@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import math
 from hashlib import sha256
 from itertools import pairwise
 from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
-from adlife.core.domain.city import TravelDirection, _validate_public_metadata
+from adlife.core.domain.city import (
+    CityPack,
+    CityPackDocument,
+    TravelDirection,
+    _validate_public_metadata,
+)
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
 
@@ -19,6 +25,7 @@ _ACTIVITY_ORDER = {"home": 0, "commute": 1, "work": 2, "leisure": 3}
 
 SpatialActivity = Literal["home", "commute", "work", "leisure"]
 BillboardSide = Literal["left", "right"]
+MAX_BILLBOARD_BINDING_ERROR_METERS = 1.0
 
 
 class SpatialActiveWindow(DomainModel):
@@ -187,6 +194,134 @@ class SpatialCampaignScenario(DomainModel):
         return sha256(canonical_json(self).encode("utf-8")).hexdigest()
 
 
+class SpatialScenarioEvidence(DomainModel):
+    """Deterministic evidence that a scenario binds to one exact city graph."""
+
+    scenario_sha256: str = Field(pattern=_HASH_PATTERN)
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    campaign_count: int = Field(ge=1, le=20)
+    placement_count: int = Field(ge=1, le=500)
+    billboard_count: int = Field(ge=0, le=500)
+    phone_count: int = Field(ge=0, le=500)
+    max_billboard_binding_error_meters: float = Field(ge=0, le=1)
+
+
+def _distance_meters(
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> float:
+    longitude1, latitude1 = start
+    longitude2, latitude2 = end
+    lat1, lat2 = math.radians(latitude1), math.radians(latitude2)
+    delta_lat = lat2 - lat1
+    delta_lon = math.radians(longitude2 - longitude1)
+    value = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+    )
+    return 12_742_000.0 * math.asin(min(1.0, math.sqrt(value)))
+
+
+def _interpolate_geometry(
+    points: tuple[tuple[float, float], ...],
+    fraction: float,
+) -> tuple[float, float]:
+    segment_lengths = tuple(_distance_meters(start, end) for start, end in pairwise(points))
+    total = sum(segment_lengths)
+    if total <= 0:
+        raise ValueError("billboard road geometry must have positive length")
+    remaining = total * fraction
+    for index, ((start, end), segment_length) in enumerate(
+        zip(pairwise(points), segment_lengths, strict=True)
+    ):
+        if remaining < segment_length or index == len(segment_lengths) - 1:
+            segment_fraction = min(1.0, remaining / segment_length)
+            return (
+                start[0] + (end[0] - start[0]) * segment_fraction,
+                start[1] + (end[1] - start[1]) * segment_fraction,
+            )
+        remaining -= segment_length
+    raise AssertionError("validated road geometry must contain a segment")
+
+
+def validate_spatial_scenario_against_city(
+    scenario: SpatialCampaignScenario,
+    pack: CityPackDocument,
+) -> SpatialScenarioEvidence:
+    """Validate all geographic bindings without mutating or snapping the scenario."""
+    if scenario.city_id != pack.city_id:
+        raise ValueError("spatial scenario city identifier does not match city pack")
+    if scenario.city_sha256 != pack.fingerprint:
+        raise ValueError("spatial scenario city fingerprint does not match city pack")
+
+    nodes = {node.node_id: node for node in pack.nodes}
+    errors: list[float] = []
+    billboard_count = 0
+    for placement in scenario.placements:
+        if not isinstance(placement, RoadsideBillboardPlacement):
+            continue
+        billboard_count += 1
+        points: tuple[tuple[float, float], ...]
+        directions: tuple[TravelDirection, ...]
+        if isinstance(pack, CityPack):
+            road = next(
+                (item for item in pack.roads if item.road_id == placement.road_id),
+                None,
+            )
+            if road is None:
+                raise ValueError("billboard references an unknown city road")
+            directions = ("forward",) if road.one_way else ("forward", "backward")
+            points = (
+                (nodes[road.source_node].longitude, nodes[road.source_node].latitude),
+                (nodes[road.target_node].longitude, nodes[road.target_node].latitude),
+            )
+            west = min(node.longitude for node in pack.nodes)
+            east = max(node.longitude for node in pack.nodes)
+            south = min(node.latitude for node in pack.nodes)
+            north = max(node.latitude for node in pack.nodes)
+        else:
+            road_v2 = next(
+                (item for item in pack.roads if item.road_id == placement.road_id),
+                None,
+            )
+            if road_v2 is None:
+                raise ValueError("billboard references an unknown city road")
+            directions = road_v2.directions
+            points = (
+                (nodes[road_v2.source_node].longitude, nodes[road_v2.source_node].latitude),
+                *((point.longitude, point.latitude) for point in road_v2.shape),
+                (nodes[road_v2.target_node].longitude, nodes[road_v2.target_node].latitude),
+            )
+            west = pack.bounds.west
+            east = pack.bounds.east
+            south = pack.bounds.south
+            north = pack.bounds.north
+
+        if placement.travel_direction not in directions:
+            raise ValueError(
+                f"city road {placement.road_id} does not support "
+                f"{placement.travel_direction} travel"
+            )
+        if not (west <= placement.longitude <= east and south <= placement.latitude <= north):
+            raise ValueError("billboard coordinate is outside city bounds")
+
+        expected = _interpolate_geometry(points, placement.road_fraction)
+        error = _distance_meters(expected, (placement.longitude, placement.latitude))
+        if error > MAX_BILLBOARD_BINDING_ERROR_METERS:
+            raise ValueError("billboard coordinate is more than 1 meter from its road fraction")
+        errors.append(error)
+
+    return SpatialScenarioEvidence(
+        scenario_sha256=scenario.fingerprint,
+        city_sha256=pack.fingerprint,
+        campaign_count=len(scenario.campaigns),
+        placement_count=len(scenario.placements),
+        billboard_count=billboard_count,
+        phone_count=len(scenario.placements) - billboard_count,
+        max_billboard_binding_error_meters=max(errors, default=0.0),
+    )
+
+
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -222,6 +357,7 @@ def parse_spatial_campaign_scenario_json(document: str | bytes) -> SpatialCampai
 
 
 __all__ = [
+    "MAX_BILLBOARD_BINDING_ERROR_METERS",
     "BillboardSide",
     "PhoneOpportunityPlacement",
     "RoadsideBillboardPlacement",
@@ -230,5 +366,7 @@ __all__ = [
     "SpatialCampaign",
     "SpatialCampaignScenario",
     "SpatialPlacement",
+    "SpatialScenarioEvidence",
     "parse_spatial_campaign_scenario_json",
+    "validate_spatial_scenario_against_city",
 ]

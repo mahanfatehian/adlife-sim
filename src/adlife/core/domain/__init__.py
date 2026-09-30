@@ -44,7 +44,9 @@ from adlife.core.domain.spatial_campaign import (
     SpatialCampaign,
     SpatialCampaignScenario,
     SpatialPlacement,
+    SpatialScenarioEvidence,
     parse_spatial_campaign_scenario_json,
+    validate_spatial_scenario_against_city,
 )
 from adlife.core.domain.state import ConsumerState, ExposureCount, Memory
 from adlife.core.domain.world import Relationship, Route, RoutineBlock, World, Zone
@@ -91,6 +93,7 @@ __all__ = [
     "SpatialCampaign",
     "SpatialCampaignScenario",
     "SpatialPlacement",
+    "SpatialScenarioEvidence",
     "TimeWindow",
     "TravelDirection",
     "World",
@@ -99,4 +102,5 @@ __all__ = [
     "parse_city_pack_json",
     "parse_city_place_set_json",
     "parse_spatial_campaign_scenario_json",
+    "validate_spatial_scenario_against_city",
 ]

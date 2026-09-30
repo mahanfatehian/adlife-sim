@@ -74,14 +74,18 @@ mypy (108 source files) and the full suite passed 3,404 / skipped 13 in 452.22 s
 **Produces:** `SpatialScenarioEvidence` and
 `validate_spatial_scenario_against_city(scenario, pack)`.
 
-- [ ] Write failing tests for city ID/hash mismatch, unknown road, unsupported one-way
+- [x] Write failing tests for city ID/hash mismatch, unknown road, unsupported one-way
   direction, v1/v2/intermediate geometry, out-of-bounds coordinate, off-network error,
   endpoint refusal and exact evidence.
-- [ ] Implement deterministic geometry interpolation and bounded haversine error without
+- [x] Implement deterministic geometry interpolation and bounded haversine error without
   snapping or mutating input.
-- [ ] Add property coverage for campaign/placement/window/activity permutations.
-- [ ] Run city domain, mobility compatibility and architecture tests.
-- [ ] Commit and push `feat(city): validate spatial campaign geometry`.
+- [x] Add property coverage for campaign/placement/window/activity permutations.
+- [x] Run city domain, mobility compatibility and architecture tests.
+- [x] Commit and push `feat(city): validate spatial campaign geometry`.
+
+**Evidence:** RED 10 failed because city binding was absent; GREEN 10 passed, then 150
+focused/domain/mobility/architecture tests passed. Ruff, mypy and the full suite passed
+3,414 / skipped 13 in 461.09 seconds.
 
 ### Task 3: Bounded loader and offline validation CLI
 
