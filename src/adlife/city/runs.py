@@ -25,6 +25,7 @@ from adlife.core.ports.run_store import CorruptRunArtifact
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
 from adlife.core.simulation.spatial_opportunity import (
+    SpatialOpportunityCounts,
     SpatialOpportunityEvaluation,
     evaluate_spatial_opportunities,
     summarize_spatial_opportunity_artifact,
@@ -47,6 +48,7 @@ class CityReplayResult:
     opportunity_summary_sha256: str | None
     opportunity_stream_bytes: int | None
     opportunity_count: int | None
+    opportunity_counts: SpatialOpportunityCounts | None
 
 
 def _document_sha256(value: Mapping[str, object]) -> str:
@@ -204,6 +206,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     opportunity_summary_sha256: str | None = None
     opportunity_stream_bytes: int | None = None
     opportunity_count: int | None = None
+    opportunity_counts: SpatialOpportunityCounts | None = None
     if isinstance(manifest, CityRunManifestV4):
         if stored.spatial_scenario is None or stored.opportunity_evaluation is None:
             raise CorruptRunArtifact("city run is missing its frozen spatial evidence")
@@ -217,6 +220,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         opportunity_summary_sha256 = sha256(opportunity_summary_bytes).hexdigest()
         opportunity_stream_bytes = opportunity_summary.stream_bytes
         opportunity_count = opportunity_summary.counts.opportunity_count
+        opportunity_counts = opportunity_summary.counts
         if opportunity_evaluation != stored.opportunity_evaluation:
             raise CorruptRunArtifact("city run spatial evidence does not replay identically")
     if (
@@ -259,6 +263,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         opportunity_summary_sha256=opportunity_summary_sha256,
         opportunity_stream_bytes=opportunity_stream_bytes,
         opportunity_count=opportunity_count,
+        opportunity_counts=opportunity_counts,
     )
 
 

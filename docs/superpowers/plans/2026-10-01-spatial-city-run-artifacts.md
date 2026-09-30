@@ -153,13 +153,22 @@ with four skips. Ruff and strict mypy over 111 source files passed.
 **Interfaces:**
 - Produces: `city-run --spatial-campaign PATH` and v4 JSON/human provenance.
 
-- [ ] Add failing CLI tests for successful local/catalog runs, clean JSON, malformed,
+- [x] Add failing CLI tests for successful local/catalog runs, clean JSON, malformed,
   oversized, city-mismatched and duration-mismatched scenarios.
-- [ ] Confirm expected exit code 2 and no reserved run for every invalid input.
-- [ ] Load the bounded scenario and emit scenario/stream/summary hashes and counts.
-- [ ] Extend replay output with the same verified fields.
-- [ ] Run all city CLI and error-boundary tests, Ruff and mypy.
-- [ ] Commit and push `feat(cli): run persisted spatial studies`.
+- [x] Confirm expected exit code 2 and no reserved run for every invalid input.
+- [x] Load the bounded scenario and emit scenario/stream/summary hashes and counts.
+- [x] Extend replay output with the same verified fields.
+- [x] Run all city CLI and error-boundary tests, Ruff and mypy.
+- [x] Commit and push `feat(cli): run persisted spatial studies`.
+
+**Evidence:** Creation tests first failed with Typer's missing `--spatial-campaign`
+diagnostic and replay lacked scenario provenance. Local and packaged-catalog runs now emit
+clean JSON with schema v4, scenario/stream/summary hashes, exact byte/record counts, every
+funnel denominator and the literal claim scope. Malformed, oversized, city-mismatched and
+duration-mismatched scenarios exit 2 without reserving an ID or exposing input contents.
+The related CLI, error-boundary, storage, replay, manifest and architecture suites passed
+236 tests with four expected skips. Both focused hash seeds passed 22 tests; CLI help,
+Ruff and strict mypy over 111 source files passed.
 
 ### Task 6: Documentation, packaging and release evidence
 

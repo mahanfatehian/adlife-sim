@@ -4,9 +4,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
+from adlife.city.spatial_loader import MAX_SPATIAL_CAMPAIGN_BYTES
 from adlife.cli.app import app
 from adlife.core.domain.serialization import canonical_json
+from tests.cli.test_city_campaign import _scenario_for, _write_local_inputs
 from tests.cli.test_city_places_cli import write_city_place_inputs
 from tests.unit.city.test_city_pack import load_pack, pack_data
 
@@ -210,3 +213,124 @@ def test_city_run_and_replay_expose_frozen_place_evidence(tmp_path: Path) -> Non
     replayed = json.loads(replay.stdout)
     assert replayed["place_set_sha256"] == place_set.fingerprint
     assert replayed["place_assignments_sha256"] == document["place_assignments_sha256"]
+
+
+def test_city_run_persists_spatial_study_with_clean_json(tmp_path: Path) -> None:
+    pack, scenario_path, scenario = _write_local_inputs(tmp_path)
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-run",
+            str(pack),
+            "--spatial-campaign",
+            str(scenario_path),
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "spatial-study",
+            "--agents",
+            "2",
+            "--days",
+            "2",
+            "--seed",
+            "42",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["run_schema_version"] == 4
+    assert document["scenario_sha256"] == scenario.fingerprint
+    assert len(document["opportunity_stream_sha256"]) == 64
+    assert len(document["opportunity_summary_sha256"]) == 64
+    assert document["opportunity_stream_bytes"] > 0
+    assert document["opportunity_count"] > 0
+    assert document["opportunity_counts"]["opportunity_count"] == document["opportunity_count"]
+    assert document["claim_scope"] == "synthetic-opportunity-not-impression"
+    assert "_lines" not in document
+    stored = CityRunStore(tmp_path).load("spatial-study")
+    assert stored.spatial_scenario == scenario
+    assert stored.opportunity_evaluation is not None
+
+
+def test_city_run_can_use_catalog_city_for_spatial_study(tmp_path: Path) -> None:
+    pack = select_catalog_city("fictional-grid-v2")
+    scenario = _scenario_for(pack, catalog=True)
+    path = tmp_path / "catalog-spatial.json"
+    path.write_text(canonical_json(scenario) + "\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-run",
+            "--city-id",
+            "fictional-grid-v2",
+            "--spatial-campaign",
+            str(path),
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "catalog-spatial",
+            "--agents",
+            "1",
+            "--days",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["run_schema_version"] == 4
+    assert document["city_id"] == "fictional-grid-v2"
+    assert document["scenario_sha256"] == scenario.fingerprint
+
+
+def test_city_run_refuses_bad_spatial_inputs_without_reserving_run(
+    tmp_path: Path,
+) -> None:
+    pack, scenario_path, scenario = _write_local_inputs(tmp_path)
+    malformed = tmp_path / "malformed-spatial.json"
+    malformed.write_text('{"credential":"sk-live-ABCDEFGHIJKLMNOP"', encoding="utf-8")
+    oversized = tmp_path / "oversized-spatial.json"
+    with oversized.open("wb") as target:
+        target.truncate(MAX_SPATIAL_CAMPAIGN_BYTES + 1)
+    wrong = scenario.model_copy(update={"city_sha256": "f" * 64})
+    wrong_path = tmp_path / "wrong-spatial.json"
+    wrong_path.write_text(canonical_json(wrong) + "\n", encoding="utf-8")
+
+    cases: tuple[tuple[str, Path, int], ...] = (
+        ("malformed-study", malformed, 2),
+        ("oversized-study", oversized, 2),
+        ("wrong-city-study", wrong_path, 2),
+        ("wrong-duration-study", scenario_path, 1),
+    )
+    for run_id, spatial_path, days in cases:
+        result = CliRunner().invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "city-run",
+                str(pack),
+                "--spatial-campaign",
+                str(spatial_path),
+                "--output-root",
+                str(tmp_path),
+                "--run-id",
+                run_id,
+                "--agents",
+                "1",
+                "--days",
+                str(days),
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert json.loads(result.stdout)["error"]["exit_code"] == 2
+        assert "sk-live-ABCDEFGHIJKLMNOP" not in result.output
+        assert "No such option" not in result.output
+        assert "Traceback" not in result.output
+        assert not (tmp_path / "city-runs" / run_id).exists()
