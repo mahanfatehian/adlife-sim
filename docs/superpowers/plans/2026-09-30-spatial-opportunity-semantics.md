@@ -87,14 +87,25 @@ files passed.
 - Modify: `tests/unit/city/test_spatial_opportunity.py`
 - Add: `tests/property/test_spatial_opportunity_order.py`
 
-- [ ] Add red tests for activity eligibility, probability 0/1, exact draw namespace,
+- [x] Add red tests for activity eligibility, probability 0/1, exact draw namespace,
   threshold-independent common draws, windows and day-scoped caps.
-- [ ] Add a property test permuting campaigns, placements, windows and activities.
-- [ ] Implement active-window iteration, keyed draws, canonical candidate ordering, shared
+- [x] Add a property test permuting campaigns, placements, windows and activities.
+- [x] Implement active-window iteration, keyed draws, canonical candidate ordering, shared
   cap application and immutable evaluation counts.
-- [ ] Prove evaluator inputs are unchanged and outputs match across hash seeds.
-- [ ] Run focused/property/core-boundary tests, Ruff and mypy.
-- [ ] Commit and push `feat(city): evaluate phone opportunities`.
+- [x] Prove evaluator inputs are unchanged and outputs match across hash seeds.
+- [x] Run focused/property/core-boundary tests, Ruff and mypy.
+- [x] Commit and push `feat(city): evaluate phone opportunities`.
+
+**Evidence:** Six phone tests and one property test first failed on the explicit pre-C2
+phone refusal. The exact draw test then failed separately while replacing per-draw
+Mersenne-Twister construction with the specified SHA-derived SplitMix64 counter stream.
+All 15 opportunity/property tests passed under normal execution and both hash seeds; 397
+related city/property/architecture/documentation tests passed with one expected catalog
+skip. The maximum accepted phone workload (20 policies, 30 agents, 7 days) evaluates 6,048,000
+eligible agent-minutes, deterministically finds 3,025,584 successes, cap-retains 4,200
+records and passed the automated 30-second ceiling in 9.75 seconds. The same workload
+improved from 45.76 seconds with per-draw `random.Random` construction to 9.43 seconds in
+the direct benchmark (4.85x). Ruff and strict mypy over 111 source files passed.
 
 ### Task 5: Public methodology and release evidence
 

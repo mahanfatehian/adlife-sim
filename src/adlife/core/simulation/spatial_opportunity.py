@@ -29,6 +29,10 @@ _MODEL_ID: Literal["spatial-opportunity-v1"] = "spatial-opportunity-v1"
 _CLAIM_SCOPE: Literal["synthetic-opportunity-not-impression"] = (
     "synthetic-opportunity-not-impression"
 )
+_UINT64_MASK = (1 << 64) - 1
+_SPLITMIX_GAMMA = 0x9E3779B97F4A7C15
+_SPLITMIX_MIX_1 = 0xBF58476D1CE4E5B9
+_SPLITMIX_MIX_2 = 0x94D049BB133111EB
 
 
 class _SpatialOpportunity(DomainModel):
@@ -156,6 +160,23 @@ class _RoadsideCandidate:
     geometry: _RoadsideGeometryEvidence
 
 
+@dataclass(frozen=True, slots=True)
+class _PhoneCandidate:
+    placement: PhoneOpportunityPlacement
+    agent_id: str
+    day_index: int
+    minute: int
+    activity: SpatialActivity
+    draw: float
+
+    @property
+    def at_millisecond(self) -> int:
+        return self.minute * 60_000
+
+
+_OpportunityCandidate: TypeAlias = _RoadsideCandidate | _PhoneCandidate
+
+
 def _distance_meters(start: tuple[float, float], end: tuple[float, float]) -> float:
     longitude1, latitude1 = start
     longitude2, latitude2 = end
@@ -262,10 +283,22 @@ def _is_active(placement: RoadsideBillboardPlacement, at_millisecond: int) -> bo
     )
 
 
-def _candidate_sort_key(candidate: _RoadsideCandidate) -> tuple[object, ...]:
+def _candidate_agent_id(candidate: _OpportunityCandidate) -> str:
+    if isinstance(candidate, _RoadsideCandidate):
+        return candidate.traversal.agent_id
+    return candidate.agent_id
+
+
+def _candidate_day_index(candidate: _OpportunityCandidate) -> int:
+    if isinstance(candidate, _RoadsideCandidate):
+        return candidate.traversal.day_index
+    return candidate.day_index
+
+
+def _candidate_sort_key(candidate: _OpportunityCandidate) -> tuple[object, ...]:
     return (
         candidate.at_millisecond,
-        candidate.traversal.agent_id,
+        _candidate_agent_id(candidate),
         candidate.placement.campaign_id,
         candidate.placement.placement_id,
         candidate.placement.channel,
@@ -306,11 +339,31 @@ def _opportunity_id(
     return sha256(canonical_json(identity).encode("utf-8")).hexdigest()
 
 
+def _phone_stream_key(
+    seed: int,
+    placement: PhoneOpportunityPlacement,
+    agent_id: str,
+) -> int:
+    material = (
+        f"{seed}|spatial-phone-opportunity-v1:"
+        f"{placement.campaign_id}:{placement.placement_id}|{agent_id}|0"
+    )
+    return int.from_bytes(sha256(material.encode("utf-8")).digest()[:8], "big")
+
+
+def _keyed_phone_draw(stream_key: int, minute: int) -> float:
+    mixed = (stream_key + minute * _SPLITMIX_GAMMA) & _UINT64_MASK
+    mixed = ((mixed ^ (mixed >> 30)) * _SPLITMIX_MIX_1) & _UINT64_MASK
+    mixed = ((mixed ^ (mixed >> 27)) * _SPLITMIX_MIX_2) & _UINT64_MASK
+    mixed ^= mixed >> 31
+    return (mixed >> 11) / (1 << 53)
+
+
 def evaluate_spatial_opportunities(
     mobility: CityMobility,
     scenario: SpatialCampaignScenario,
 ) -> SpatialOpportunityEvaluation:
-    """Evaluate synthetic roadside opportunities from immutable validated inputs."""
+    """Evaluate typed synthetic opportunities from immutable validated inputs."""
     if not isinstance(mobility, CityMobility):
         raise TypeError("mobility must be CityMobility")
     if not isinstance(scenario, SpatialCampaignScenario):
@@ -318,11 +371,12 @@ def evaluate_spatial_opportunities(
     validate_spatial_scenario_against_city(scenario, mobility.pack)
     if scenario.days != mobility.days:
         raise ValueError("spatial scenario duration does not match mobility duration")
-    if any(isinstance(item, PhoneOpportunityPlacement) for item in scenario.placements):
-        raise ValueError("phone opportunity evaluation is not available in this model phase")
 
     roadside = tuple(
         item for item in scenario.placements if isinstance(item, RoadsideBillboardPlacement)
+    )
+    phone = tuple(
+        item for item in scenario.placements if isinstance(item, PhoneOpportunityPlacement)
     )
     by_road_direction: dict[
         tuple[str, TravelDirection], tuple[RoadsideBillboardPlacement, ...]
@@ -339,7 +393,7 @@ def evaluate_spatial_opportunities(
     active = 0
     proximity = 0
     approximately_visible = 0
-    candidates: list[_RoadsideCandidate] = []
+    candidates: list[_OpportunityCandidate] = []
     for day_index in range(mobility.days):
         for traversal in mobility.road_traversals(day_index):
             placements = by_road_direction.get((traversal.road_id, traversal.travel_direction), ())
@@ -358,60 +412,147 @@ def evaluate_spatial_opportunities(
                     _RoadsideCandidate(placement, traversal, at_millisecond, evidence)
                 )
 
+    phone_eligible = 0
+    phone_successful = 0
+    phone_pre_capped = 0
+    phone_candidate_counts: dict[tuple[str, str, int], int] = {}
+    phone_stream_keys = {
+        (placement.placement_id, agent.agent_id): _phone_stream_key(
+            mobility.seed,
+            placement,
+            agent.agent_id,
+        )
+        for placement in phone
+        for agent in mobility.agents
+    }
+    for minute in range(mobility.days * 1_440):
+        active_phone = tuple(
+            phone_placement
+            for phone_placement in phone
+            if any(
+                window.start_minute <= minute < window.end_minute
+                for window in phone_placement.active_windows
+            )
+        )
+        if not active_phone:
+            continue
+        day_index = minute // 1_440
+        for position in mobility.frame(minute):
+            for phone_placement in active_phone:
+                if position.activity not in phone_placement.eligible_activities:
+                    continue
+                phone_eligible += 1
+                draw = _keyed_phone_draw(
+                    phone_stream_keys[(phone_placement.placement_id, position.agent_id)],
+                    minute,
+                )
+                if draw >= phone_placement.opportunity_probability_per_minute:
+                    continue
+                phone_successful += 1
+                phone_cap_key = (
+                    phone_placement.placement_id,
+                    position.agent_id,
+                    day_index,
+                )
+                retained = phone_candidate_counts.get(phone_cap_key, 0)
+                if retained >= phone_placement.frequency_cap_per_agent_per_day:
+                    phone_pre_capped += 1
+                    continue
+                phone_candidate_counts[phone_cap_key] = retained + 1
+                candidates.append(
+                    _PhoneCandidate(
+                        placement=phone_placement,
+                        agent_id=position.agent_id,
+                        day_index=day_index,
+                        minute=minute,
+                        activity=position.activity,
+                        draw=draw,
+                    )
+                )
+
     cap_counts: dict[tuple[str, str, int], int] = {}
-    opportunities: list[RoadsideOpportunity] = []
-    capped = 0
+    opportunities: list[RoadsideOpportunity | PhoneOpportunity] = []
+    capped = phone_pre_capped
+    roadside_emitted = 0
+    phone_emitted = 0
     for candidate in sorted(candidates, key=_candidate_sort_key):
-        placement = candidate.placement
-        traversal = candidate.traversal
-        cap_key = (placement.placement_id, traversal.agent_id, traversal.day_index)
+        candidate_placement = candidate.placement
+        agent_id = _candidate_agent_id(candidate)
+        day_index = _candidate_day_index(candidate)
+        cap_key = (candidate_placement.placement_id, agent_id, day_index)
         prior = cap_counts.get(cap_key, 0)
-        if prior >= placement.frequency_cap_per_agent_per_day:
+        if prior >= candidate_placement.frequency_cap_per_agent_per_day:
             capped += 1
             continue
         ordinal = prior + 1
         cap_counts[cap_key] = ordinal
         model_minute, millisecond = divmod(candidate.at_millisecond, 60_000)
-        opportunities.append(
-            RoadsideOpportunity(
-                opportunity_id=_opportunity_id(
+        opportunity_id = _opportunity_id(
+            scenario_sha256=scenario.fingerprint,
+            city_sha256=mobility.pack.fingerprint,
+            campaign_id=candidate_placement.campaign_id,
+            placement_id=candidate_placement.placement_id,
+            agent_id=agent_id,
+            channel=candidate_placement.channel,
+            at_millisecond=candidate.at_millisecond,
+        )
+        if isinstance(candidate, _RoadsideCandidate):
+            roadside_placement = candidate.placement
+            roadside_emitted += 1
+            opportunities.append(
+                RoadsideOpportunity(
+                    opportunity_id=opportunity_id,
                     scenario_sha256=scenario.fingerprint,
                     city_sha256=mobility.pack.fingerprint,
-                    campaign_id=placement.campaign_id,
-                    placement_id=placement.placement_id,
-                    agent_id=traversal.agent_id,
-                    channel=placement.channel,
-                    at_millisecond=candidate.at_millisecond,
-                ),
-                scenario_sha256=scenario.fingerprint,
-                city_sha256=mobility.pack.fingerprint,
-                campaign_id=placement.campaign_id,
-                placement_id=placement.placement_id,
-                agent_id=traversal.agent_id,
-                day_index=traversal.day_index,
-                model_minute=model_minute,
-                millisecond_within_minute=millisecond,
-                ordinal_for_agent_placement_day=ordinal,
-                road_id=placement.road_id,
-                travel_direction=placement.travel_direction,
-                road_fraction=placement.road_fraction,
-                side=placement.side,
-                minimum_distance_meters=candidate.geometry.minimum_distance_meters,
-                approach_distance_meters=candidate.geometry.approach_distance_meters,
-                view_angle_degrees=candidate.geometry.view_angle_degrees,
+                    campaign_id=roadside_placement.campaign_id,
+                    placement_id=roadside_placement.placement_id,
+                    agent_id=agent_id,
+                    day_index=day_index,
+                    model_minute=model_minute,
+                    millisecond_within_minute=millisecond,
+                    ordinal_for_agent_placement_day=ordinal,
+                    road_id=roadside_placement.road_id,
+                    travel_direction=roadside_placement.travel_direction,
+                    road_fraction=roadside_placement.road_fraction,
+                    side=roadside_placement.side,
+                    minimum_distance_meters=candidate.geometry.minimum_distance_meters,
+                    approach_distance_meters=candidate.geometry.approach_distance_meters,
+                    view_angle_degrees=candidate.geometry.view_angle_degrees,
+                )
             )
-        )
+        else:
+            phone_placement = candidate.placement
+            phone_emitted += 1
+            opportunities.append(
+                PhoneOpportunity(
+                    opportunity_id=opportunity_id,
+                    scenario_sha256=scenario.fingerprint,
+                    city_sha256=mobility.pack.fingerprint,
+                    campaign_id=phone_placement.campaign_id,
+                    placement_id=phone_placement.placement_id,
+                    agent_id=agent_id,
+                    day_index=day_index,
+                    model_minute=model_minute,
+                    millisecond_within_minute=millisecond,
+                    ordinal_for_agent_placement_day=ordinal,
+                    activity=candidate.activity,
+                    eligibility_draw=candidate.draw,
+                    opportunity_probability_per_minute=(
+                        phone_placement.opportunity_probability_per_minute
+                    ),
+                )
+            )
 
     counts = SpatialOpportunityCounts(
         roadside_matching_traversal_count=matching,
         roadside_active_crossing_count=active,
         roadside_proximity_passage_count=proximity,
         roadside_approximately_visible_count=approximately_visible,
-        phone_eligible_agent_minute_count=0,
-        phone_successful_draw_count=0,
+        phone_eligible_agent_minute_count=phone_eligible,
+        phone_successful_draw_count=phone_successful,
         frequency_capped_candidate_count=capped,
-        roadside_opportunity_count=len(opportunities),
-        phone_opportunity_count=0,
+        roadside_opportunity_count=roadside_emitted,
+        phone_opportunity_count=phone_emitted,
         opportunity_count=len(opportunities),
     )
     return SpatialOpportunityEvaluation(

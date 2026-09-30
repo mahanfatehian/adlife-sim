@@ -134,6 +134,15 @@ threshold and activity. Probability zero never succeeds; probability one always 
 until capped. The policy is an analyst-authored synthetic assumption, not observed device
 use or location surveillance.
 
+The v1 draw is fully specified. SHA-256 over UTF-8
+`{seed}|{namespace}|{agent_id}|0` supplies the big-endian 64-bit stream key. Absolute
+minute is the counter: add `minute * 0x9E3779B97F4A7C15` modulo 2^64, then apply the
+SplitMix64 finalizer multipliers `0xBF58476D1CE4E5B9` and `0x94D049BB133111EB` with its
+30/27/31-bit xor shifts. The upper 53 bits divided by 2^53 form a value in `[0, 1)`.
+This counter-based rule is stateless, input-order independent and stable across Python
+hash seeds. Implementations retain at most the declared cap's successful candidates per
+placement/agent/day while still evaluating every draw needed for honest pre-cap counts.
+
 ## Canonical opportunity record
 
 Roadside and phone opportunity records are strict frozen discriminated models. Each
@@ -159,9 +168,8 @@ the result. Event IDs do not use UUIDs, wall time or process state.
 - The evaluator accepts only matching city IDs/hashes and matching durations, and calls
   the C1 geometry validator before evaluation.
 - Scenario limits bound placements, days and windows. Phone work iterates active window
-  minutes only and stops evaluating a placement/agent/day after the cap is reached only
-  when doing so cannot change published pre-cap denominators; otherwise it records the
-  full bounded denominator honestly.
+  minutes only and records the full bounded pre-cap denominator honestly. Successful
+  candidates beyond a cap increment the capped count but are not retained in memory.
 - No network, provider, credential or untrusted creative text enters the evaluator.
 - An invalid geometry, direction or model invariant is a clean exception, never a partial
   result.

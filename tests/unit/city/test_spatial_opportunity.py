@@ -27,7 +27,21 @@ def _mobility(
     home: str = "a",
     work: str = "b",
     leisure: str = "b",
+    agent_count: int = 1,
 ) -> CityMobility:
+    if agent_count not in {1, 2}:
+        raise ValueError("test fixture supports one or two agents")
+    home_nodes = (home,) if agent_count == 1 else (home, "c")
+    home_places = [
+        {
+            "place_id": f"home-place-{index}",
+            "kind": "home",
+            "node_id": node_id,
+            "label": f"Fictional home {index}",
+            "provenance": {"method": "operator-authored-fictional"},
+        }
+        for index, node_id in enumerate(home_nodes, start=1)
+    ]
     places = parse_city_place_set_json(
         json.dumps(
             {
@@ -36,13 +50,7 @@ def _mobility(
                 "city_sha256": pack.fingerprint,
                 "name": "Forced opportunity places",
                 "places": [
-                    {
-                        "place_id": "home-place",
-                        "kind": "home",
-                        "node_id": home,
-                        "label": "Fictional home",
-                        "provenance": {"method": "operator-authored-fictional"},
-                    },
+                    *home_places,
                     {
                         "place_id": "work-place",
                         "kind": "workplace",
@@ -61,7 +69,7 @@ def _mobility(
             }
         )
     )
-    return CityMobility(pack, seed=42, agent_count=1, days=days, places=places)
+    return CityMobility(pack, seed=42, agent_count=agent_count, days=days, places=places)
 
 
 def _billboard(
@@ -94,12 +102,34 @@ def _billboard(
     }
 
 
+def _phone(
+    *,
+    placement_id: str = "phone-feed",
+    campaign_id: str = "fictional-launch",
+    activities: list[str] | None = None,
+    probability: float = 1.0,
+    windows: list[dict[str, int]] | None = None,
+    cap: int = 3,
+) -> dict[str, Any]:
+    return {
+        "placement_id": placement_id,
+        "campaign_id": campaign_id,
+        "channel": "mobile-feed",
+        "active_windows": windows or [{"start_minute": 0, "end_minute": 1_440}],
+        "frequency_cap_per_agent_per_day": cap,
+        "opportunity_model": "keyed-activity-minute-v1",
+        "eligible_activities": activities or ["home"],
+        "opportunity_probability_per_minute": probability,
+    }
+
+
 def _scenario(
     pack: CityPackDocument,
     placements: list[dict[str, Any]],
     *,
     days: int = 1,
 ) -> SpatialCampaignScenario:
+    campaign_ids = sorted({str(item["campaign_id"]) for item in placements})
     return parse_spatial_campaign_scenario_json(
         json.dumps(
             {
@@ -111,10 +141,11 @@ def _scenario(
                 "city_sha256": pack.fingerprint,
                 "campaigns": [
                     {
-                        "campaign_id": "fictional-launch",
-                        "name": "Fictional launch",
-                        "creative_sha256": "a" * 64,
+                        "campaign_id": campaign_id,
+                        "name": f"Campaign {index}",
+                        "creative_sha256": f"{index:x}" * 64,
                     }
+                    for index, campaign_id in enumerate(campaign_ids, start=1)
                 ],
                 "placements": placements,
             }
@@ -369,3 +400,198 @@ def test_evaluation_refuses_duration_mismatch_and_does_not_mutate_inputs() -> No
     mismatch = _scenario(pack, [_billboard()], days=2)
     with pytest.raises(ValueError, match="duration"):
         _evaluate(mobility, mismatch)
+
+
+def test_phone_probability_one_records_all_pre_cap_candidates_and_exact_draws() -> None:
+    pack = load_pack(pack_data())
+    mobility = _mobility(pack)
+    scenario = _scenario(
+        pack,
+        [
+            _phone(
+                windows=[{"start_minute": 0, "end_minute": 5}],
+                probability=1.0,
+                cap=2,
+            )
+        ],
+    )
+
+    result = _evaluate(mobility, scenario)
+
+    assert result.counts.model_dump() == {
+        "schema_version": 1,
+        "roadside_matching_traversal_count": 0,
+        "roadside_active_crossing_count": 0,
+        "roadside_proximity_passage_count": 0,
+        "roadside_approximately_visible_count": 0,
+        "phone_eligible_agent_minute_count": 5,
+        "phone_successful_draw_count": 5,
+        "frequency_capped_candidate_count": 3,
+        "roadside_opportunity_count": 0,
+        "phone_opportunity_count": 2,
+        "opportunity_count": 2,
+    }
+    assert [event.model_minute for event in result.opportunities] == [0, 1]
+    assert [event.ordinal_for_agent_placement_day for event in result.opportunities] == [1, 2]
+    for event in result.opportunities:
+        assert event.channel == "mobile-feed"
+        assert event.claim_scope == "synthetic-opportunity-not-impression"
+        assert event.basis == "keyed-activity-minute-v1"
+        assert event.activity == "home"
+        assert event.millisecond_within_minute == 0
+        assert event.opportunity_probability_per_minute == 1.0
+        stream_material = "42|spatial-phone-opportunity-v1:fictional-launch:phone-feed|person-001|0"
+        stream_key = int.from_bytes(sha256(stream_material.encode("utf-8")).digest()[:8], "big")
+        mask = (1 << 64) - 1
+        mixed = (stream_key + event.model_minute * 0x9E3779B97F4A7C15) & mask
+        mixed = ((mixed ^ (mixed >> 30)) * 0xBF58476D1CE4E5B9) & mask
+        mixed = ((mixed ^ (mixed >> 27)) * 0x94D049BB133111EB) & mask
+        mixed ^= mixed >> 31
+        expected = (mixed >> 11) / (1 << 53)
+        assert event.eligibility_draw == expected
+
+
+def test_phone_probability_zero_keeps_eligible_denominator_without_events() -> None:
+    pack = load_pack(pack_data())
+    result = _evaluate(
+        _mobility(pack),
+        _scenario(
+            pack,
+            [
+                _phone(
+                    windows=[{"start_minute": 0, "end_minute": 5}],
+                    probability=0.0,
+                )
+            ],
+        ),
+    )
+
+    assert result.counts.phone_eligible_agent_minute_count == 5
+    assert result.counts.phone_successful_draw_count == 0
+    assert result.counts.phone_opportunity_count == 0
+    assert result.opportunities == ()
+
+
+def test_phone_activity_and_half_open_windows_define_eligible_minutes() -> None:
+    pack = load_pack(pack_data())
+    mobility = _mobility(pack)
+    scenario = _scenario(
+        pack,
+        [
+            _phone(
+                activities=["commute"],
+                windows=[{"start_minute": 479, "end_minute": 485}],
+                probability=1.0,
+                cap=10,
+            )
+        ],
+    )
+    expected_minutes = [
+        minute for minute in range(479, 485) if mobility.frame(minute)[0].activity == "commute"
+    ]
+
+    result = _evaluate(mobility, scenario)
+
+    assert expected_minutes == [480, 481, 482, 483]
+    assert result.counts.phone_eligible_agent_minute_count == len(expected_minutes)
+    assert [event.model_minute for event in result.opportunities] == expected_minutes
+
+
+def test_phone_probability_variants_reuse_common_random_draw() -> None:
+    pack = load_pack(pack_data())
+    mobility = _mobility(pack)
+    window = [{"start_minute": 0, "end_minute": 1}]
+    certain = _evaluate(
+        mobility,
+        _scenario(pack, [_phone(windows=window, probability=1.0, cap=1)]),
+    )
+    (certain_event,) = certain.opportunities
+    changed_threshold = (certain_event.eligibility_draw + 1) / 2
+
+    variant = _evaluate(
+        mobility,
+        _scenario(
+            pack,
+            [_phone(windows=window, probability=changed_threshold, cap=1)],
+        ),
+    )
+
+    (variant_event,) = variant.opportunities
+    assert variant_event.eligibility_draw == certain_event.eligibility_draw
+    assert variant_event.opportunity_probability_per_minute == changed_threshold
+    assert variant_event.opportunity_id != certain_event.opportunity_id
+
+
+def test_phone_caps_are_scoped_by_placement_agent_and_day() -> None:
+    pack = load_pack(pack_data())
+    mobility = _mobility(pack, days=2, agent_count=2)
+    scenario = _scenario(
+        pack,
+        [
+            _phone(
+                placement_id="phone-a",
+                campaign_id="campaign-a",
+                windows=[
+                    {"start_minute": 0, "end_minute": 2},
+                    {"start_minute": 1_440, "end_minute": 1_442},
+                ],
+                cap=1,
+            ),
+            _phone(
+                placement_id="phone-b",
+                campaign_id="campaign-b",
+                windows=[
+                    {"start_minute": 0, "end_minute": 2},
+                    {"start_minute": 1_440, "end_minute": 1_442},
+                ],
+                cap=1,
+            ),
+        ],
+        days=2,
+    )
+
+    result = _evaluate(mobility, scenario)
+
+    assert result.counts.phone_eligible_agent_minute_count == 16
+    assert result.counts.phone_successful_draw_count == 16
+    assert result.counts.frequency_capped_candidate_count == 8
+    assert result.counts.phone_opportunity_count == 8
+    assert {
+        (event.placement_id, event.agent_id, event.day_index, event.model_minute)
+        for event in result.opportunities
+    } == {
+        (placement, agent, day, day * 1_440)
+        for placement in ("phone-a", "phone-b")
+        for agent in ("person-001", "person-002")
+        for day in (0, 1)
+    }
+    assert all(event.ordinal_for_agent_placement_day == 1 for event in result.opportunities)
+
+
+def test_mixed_channels_share_one_canonical_continuous_time_order() -> None:
+    pack = load_pack(pack_data())
+    mobility = _mobility(pack)
+    scenario = _scenario(
+        pack,
+        [
+            _billboard(windows=[{"start_minute": 481, "end_minute": 482}]),
+            _phone(
+                campaign_id="phone-campaign",
+                activities=["commute"],
+                windows=[{"start_minute": 481, "end_minute": 482}],
+                cap=1,
+            ),
+        ],
+    )
+
+    result = _evaluate(mobility, scenario)
+
+    assert result.counts.roadside_opportunity_count == 1
+    assert result.counts.phone_opportunity_count == 1
+    assert [event.channel for event in result.opportunities] == [
+        "mobile-feed",
+        "roadside-billboard",
+    ]
+    assert [event.model_minute for event in result.opportunities] == [481, 481]
+    assert result.opportunities[0].millisecond_within_minute == 0
+    assert result.opportunities[1].millisecond_within_minute > 0
