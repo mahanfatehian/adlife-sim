@@ -289,6 +289,25 @@ class CityPosition:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CityRoadTraversal:
+    """One continuous directed road interval in an agent's immutable daily route."""
+
+    agent_id: str
+    day_index: int
+    leg: Literal["outbound", "return"]
+    road_sequence: int
+    road_id: str
+    travel_direction: TravelDirection
+    start_minute: float
+    end_minute: float
+    distance_meters: float
+
+    @property
+    def duration_minutes(self) -> float:
+        return self.end_minute - self.start_minute
+
+
 class CityMobility:
     """Immutable configuration; every frame is computed from seed and simulated minute."""
 
@@ -489,6 +508,40 @@ class CityMobility:
                 positions.append(self._at_node(agent.agent_id, minute, agent.home_node, "home"))
         return tuple(positions)
 
+    def road_traversals(self, day_index: int) -> tuple[CityRoadTraversal, ...]:
+        """Return the continuous directed road schedule without changing minute frames."""
+        if type(day_index) is not int or not 0 <= day_index < self.days:
+            raise ValueError("day index is outside the simulated period")
+        day_start = day_index * 1_440
+        weekend = day_index % 7 in {5, 6}
+        departure = 11 * 60 if weekend else 8 * 60
+        return_time = 16 * 60 if weekend else 17 * 60
+        traversals: list[CityRoadTraversal] = []
+        for agent in self.agents:
+            destination = agent.leisure_node if weekend else agent.work_node
+            outbound = self._paths[agent.home_node, destination]
+            inbound = self._paths[destination, agent.home_node]
+            return_departure = max(return_time, departure + outbound.duration_minutes)
+            traversals.extend(
+                self._path_traversals(
+                    agent.agent_id,
+                    day_index,
+                    "outbound",
+                    day_start + departure,
+                    outbound,
+                )
+            )
+            traversals.extend(
+                self._path_traversals(
+                    agent.agent_id,
+                    day_index,
+                    "return",
+                    day_start + return_departure,
+                    inbound,
+                )
+            )
+        return tuple(traversals)
+
     def frame_document(
         self, minute: int, *, selected_agent_id: str | None = None
     ) -> dict[str, object]:
@@ -553,6 +606,37 @@ class CityMobility:
             remaining -= edge.duration
         raise AssertionError("a nonempty path must contain a road")
 
+    def _path_traversals(
+        self,
+        agent_id: str,
+        day_index: int,
+        leg: Literal["outbound", "return"],
+        start_minute: float,
+        path: CityPath,
+    ) -> tuple[CityRoadTraversal, ...]:
+        traversals: list[CityRoadTraversal] = []
+        current = start_minute
+        for index, road_id in enumerate(path.road_ids):
+            source = path.node_ids[index]
+            target = path.node_ids[index + 1]
+            edge = self._edges[source, target, road_id]
+            end = current + edge.duration
+            traversals.append(
+                CityRoadTraversal(
+                    agent_id=agent_id,
+                    day_index=day_index,
+                    leg=leg,
+                    road_sequence=index,
+                    road_id=road_id,
+                    travel_direction=edge.direction,
+                    start_minute=current,
+                    end_minute=end,
+                    distance_meters=edge.distance,
+                )
+            )
+            current = end
+        return tuple(traversals)
+
 
 def _interpolate_geometry(edge: _RoadEdge, fraction: float) -> tuple[float, float]:
     if len(edge.geometry) == 2:
@@ -592,5 +676,6 @@ __all__ = [
     "CityPath",
     "CityPlaceAssignment",
     "CityPosition",
+    "CityRoadTraversal",
     "shortest_path",
 ]

@@ -1,3 +1,8 @@
+import json
+from dataclasses import FrozenInstanceError
+from itertools import pairwise
+from typing import cast
+
 import pytest
 
 from adlife.core.domain.city import CityNode, CityPackV2
@@ -134,6 +139,133 @@ def test_v1_trace_digest_stays_compatible_after_v2_routing_support() -> None:
     assert (
         summary.agents_sha256 == "f563085e0ac5f8cdb32598b72f6b809b7608a2741e2a25c907b1dc771bc9695c"
     )
+
+
+def test_continuous_road_traversals_expose_outbound_and_return_schedule() -> None:
+    pack = load_pack_v2(pack_v2_data())
+    simulation = next(
+        candidate
+        for seed in range(100)
+        if (candidate := CityMobility(pack, seed=seed, agent_count=1, days=1)).agents[0].home_node
+        == "a"
+        and candidate.agents[0].work_node == "b"
+    )
+
+    traversals = simulation.road_traversals(0)
+
+    assert [(item.leg, item.road_id, item.travel_direction) for item in traversals] == [
+        ("outbound", "ab", "forward"),
+        ("return", "ab", "backward"),
+    ]
+    outbound, returning = traversals
+    assert outbound.agent_id == returning.agent_id == "person-001"
+    assert outbound.day_index == returning.day_index == 0
+    assert outbound.road_sequence == returning.road_sequence == 0
+    assert outbound.start_minute == 480.0
+    assert outbound.end_minute == pytest.approx(480 + outbound.duration_minutes)
+    assert returning.start_minute == 1_020.0
+    assert returning.end_minute == pytest.approx(1_020 + returning.duration_minutes)
+    assert outbound.distance_meters == pytest.approx(returning.distance_meters)
+    assert outbound.duration_minutes > 0
+    assert outbound.distance_meters > 0
+    with pytest.raises(FrozenInstanceError):
+        outbound.__setattr__("road_id", "changed")
+
+
+def test_multi_road_traversals_are_continuous_and_stably_ordered() -> None:
+    data = pack_data()
+    data["roads"] = data["roads"][:2]
+    pack = load_pack(data)
+    places = parse_city_place_set_json(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "city_id": pack.city_id,
+                "city_sha256": pack.fingerprint,
+                "name": "Forced multi-road places",
+                "places": [
+                    {
+                        "place_id": "home-a",
+                        "kind": "home",
+                        "node_id": "a",
+                        "label": "Fictional home",
+                        "provenance": {"method": "operator-authored-fictional"},
+                    },
+                    {
+                        "place_id": "work-c",
+                        "kind": "workplace",
+                        "node_id": "c",
+                        "label": "Fictional work",
+                        "provenance": {"method": "operator-authored-fictional"},
+                    },
+                    {
+                        "place_id": "leisure-b",
+                        "kind": "leisure",
+                        "node_id": "b",
+                        "label": "Fictional leisure",
+                        "provenance": {"method": "operator-authored-fictional"},
+                    },
+                ],
+            }
+        )
+    )
+    simulation = CityMobility(pack, seed=42, agent_count=1, days=1, places=places)
+
+    traversals = simulation.road_traversals(0)
+
+    assert [item.agent_id for item in traversals] == sorted(item.agent_id for item in traversals)
+    for agent in simulation.agents:
+        outbound = [
+            item
+            for item in traversals
+            if item.agent_id == agent.agent_id and item.leg == "outbound"
+        ]
+        expected = shortest_path(pack, agent.home_node, agent.work_node)
+        assert [item.road_id for item in outbound] == list(expected.road_ids)
+        assert [item.travel_direction for item in outbound] == list(expected.directions)
+        assert [item.road_sequence for item in outbound] == list(range(len(outbound)))
+        assert outbound[0].start_minute == 480.0
+        assert all(
+            current.start_minute == pytest.approx(previous.end_minute)
+            for previous, current in pairwise(outbound)
+        )
+        assert sum(item.duration_minutes for item in outbound) == pytest.approx(
+            expected.duration_minutes
+        )
+        assert sum(item.distance_meters for item in outbound) == pytest.approx(
+            expected.distance_meters
+        )
+
+
+def test_weekend_traversals_use_leisure_route_and_absolute_model_time() -> None:
+    pack = load_pack(pack_data())
+    simulation = CityMobility(pack, seed=42, agent_count=1, days=7)
+    agent = simulation.agents[0]
+
+    saturday = simulation.road_traversals(5)
+    outbound = tuple(item for item in saturday if item.leg == "outbound")
+    expected = shortest_path(pack, agent.home_node, agent.leisure_node)
+
+    assert [item.road_id for item in outbound] == list(expected.road_ids)
+    assert outbound[0].start_minute == 5 * 1_440 + 11 * 60
+    assert all(item.day_index == 5 for item in saturday)
+
+
+@pytest.mark.parametrize("day_index", [-1, 1, True, 0.0])
+def test_road_traversals_refuse_invalid_day(day_index: object) -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=1, days=1)
+    with pytest.raises(ValueError, match="day"):
+        simulation.road_traversals(cast(int, day_index))
+
+
+def test_road_traversals_do_not_change_legacy_frame_document() -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=2, days=1)
+    before = simulation.frame_document(481)
+
+    simulation.road_traversals(0)
+
+    assert simulation.frame_document(481) == before
+    assert set(before) == {"minute", "positions"}
 
 
 def test_route_endpoints_are_validated() -> None:

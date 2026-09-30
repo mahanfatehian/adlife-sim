@@ -34,16 +34,20 @@ and push. Do not regenerate compatibility goldens.
 **Files:**
 - Modify: `src/adlife/core/simulation/city_mobility.py`
 - Modify: `tests/unit/city/test_city_mobility.py`
-- Modify: `tests/unit/city/test_city_trace.py`
+- Verify: `tests/unit/city/test_city_trace.py`
 
 **Produces:** `CityRoadTraversal` and `CityMobility.road_traversals(day_index)`.
 
-- [ ] Add red tests for outbound/return direction, continuous boundaries, multi-road
+- [x] Add red tests for outbound/return direction, continuous boundaries, multi-road
   sequence, weekend routing, invalid day and stable order.
-- [ ] Prove the existing frame document and compatibility trace digest do not change.
-- [ ] Implement from the already frozen path/edge schedule without duplicating routing.
-- [ ] Run city mobility/trace/property tests, Ruff and mypy.
-- [ ] Commit and push `feat(city): expose deterministic road traversals`.
+- [x] Prove the existing frame document and compatibility trace digest do not change.
+- [x] Implement from the already frozen path/edge schedule without duplicating routing.
+- [x] Run city mobility/trace/property tests, Ruff and mypy.
+- [x] Commit and push `feat(city): expose deterministic road traversals`.
+
+**Evidence:** Eight focused tests first failed on the missing traversal API. After the
+minimal implementation, 39 mobility/trace/property tests passed; Ruff format/lint and
+strict mypy over 110 source files passed. The existing v1 trace digest remained unchanged.
 
 ### Task 3: Define typed opportunity evidence and roadside semantics
 
