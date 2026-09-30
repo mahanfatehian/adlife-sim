@@ -86,3 +86,17 @@ def test_city_place_set_dispatch_never_coerces_schema_versions(value: object) ->
     document["schema_version"] = value
     with pytest.raises((ValidationError, ValueError), match="schema_version"):
         module.parse_city_place_set_json(json.dumps(document))
+
+
+@pytest.mark.parametrize("value", [True, 1.0], ids=["boolean", "float"])
+def test_spatial_campaign_dispatch_never_coerces_schema_versions(value: object) -> None:
+    try:
+        module = __import__("adlife.core.domain.spatial_campaign", fromlist=["unused"])
+    except ModuleNotFoundError:
+        pytest.fail("spatial campaign contract is not implemented")
+    from tests.unit.city.test_spatial_campaign_contract import spatial_scenario_data
+
+    document = spatial_scenario_data()
+    document["schema_version"] = value
+    with pytest.raises((ValidationError, ValueError), match="schema_version"):
+        module.parse_spatial_campaign_scenario_json(json.dumps(document))

@@ -50,13 +50,17 @@ here.
 **Produces:** `SpatialActiveWindow`, `SpatialCampaign`, `RoadsideBillboardPlacement`,
 `PhoneOpportunityPlacement`, `SpatialCampaignScenario`, strict parser and fingerprint.
 
-- [ ] Write failing tests for exact schema/types, IDs, creative hashes, public text,
+- [x] Write failing tests for exact schema/types, IDs, creative hashes, public text,
   windows, caps, campaign references, duplicate IDs/policies/physical keys, canonical order
   and unknown fields.
-- [ ] Run the narrow tests and confirm the missing contract is the cause.
-- [ ] Implement the smallest immutable canonical models and strict JSON parser.
-- [ ] Add schema-version contract coverage and re-run narrow tests.
-- [ ] Commit and push `feat(city): define spatial campaign scenarios`.
+- [x] Run the narrow tests and confirm the missing contract is the cause.
+- [x] Implement the smallest immutable canonical models and strict JSON parser.
+- [x] Add schema-version contract coverage and re-run narrow tests.
+- [x] Commit and push `feat(city): define spatial campaign scenarios`.
+
+**Evidence:** RED 23 failed / 21 passed because the contract module was absent; GREEN
+44 focused passed. Related city/schema/architecture tests passed 359 / skipped 1; Ruff,
+mypy (108 source files) and the full suite passed 3,404 / skipped 13 in 452.22 seconds.
 
 ### Task 2: Exact road and coordinate binding
 

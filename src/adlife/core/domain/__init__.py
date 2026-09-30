@@ -37,6 +37,15 @@ from adlife.core.domain.events import DomainEvent, EventSource, EventType
 from adlife.core.domain.person import ConsumerTraits, DomainModel, PersonProfile
 from adlife.core.domain.results import RunManifest, SimulationResult
 from adlife.core.domain.scenario import Scenario
+from adlife.core.domain.spatial_campaign import (
+    PhoneOpportunityPlacement,
+    RoadsideBillboardPlacement,
+    SpatialActiveWindow,
+    SpatialCampaign,
+    SpatialCampaignScenario,
+    SpatialPlacement,
+    parse_spatial_campaign_scenario_json,
+)
 from adlife.core.domain.state import ConsumerState, ExposureCount, Memory
 from adlife.core.domain.world import Relationship, Route, RoutineBlock, World, Zone
 
@@ -67,15 +76,21 @@ __all__ = [
     "ExposureCount",
     "Memory",
     "PersonProfile",
+    "PhoneOpportunityPlacement",
     "PhonePlacement",
     "Placement",
     "Price",
     "Relationship",
+    "RoadsideBillboardPlacement",
     "Route",
     "RoutineBlock",
     "RunManifest",
     "Scenario",
     "SimulationResult",
+    "SpatialActiveWindow",
+    "SpatialCampaign",
+    "SpatialCampaignScenario",
+    "SpatialPlacement",
     "TimeWindow",
     "TravelDirection",
     "World",
@@ -83,4 +98,5 @@ __all__ = [
     "parse_city_catalog_json",
     "parse_city_pack_json",
     "parse_city_place_set_json",
+    "parse_spatial_campaign_scenario_json",
 ]
