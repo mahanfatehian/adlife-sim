@@ -12,8 +12,8 @@ street pack acquired under appropriate rights can provide real geography, but th
 agents, schedules and speeds remain synthetic and uncalibrated. No campaign or provider
 result is plotted on that map in this release. Spatial campaign documents can be
 validated against roads, and the pure core can derive bounded synthetic opportunity
-records. Those records are not yet accepted or persisted by `city-run`, and they are not
-impressions, attention, responses or outcomes.
+records. A schema-v4 `city-run` can freeze those records and their funnel summary; they
+are persisted and replayed as evidence, not impressions, attention, responses or outcomes.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -83,7 +83,7 @@ source provenance, but it contains no real-person trajectories. Its IANA time zo
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
 pilot can optionally assign synthetic home, workplace and leisure points supplied in a
 pack-hash-bound place set. Those points must be routable road nodes, carry explicit
-authored/source-derived/inferred provenance, and are frozen for v3 replay; they are
+authored/source-derived/inferred provenance, and are frozen for v3/v4 replay; they are
 scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
 sunrise/sunset calculation, measured demand or calibrated traffic. Import validation
@@ -103,9 +103,10 @@ synthetic activity-minutes, keyed threshold successes, cap refusals and emitted
 opportunities. Each stage has a separate count. Phone draws are counter-based and keyed by
 seed/campaign/placement/fictional agent/minute; roadside timing comes from illustrative
 free-flow routes. Every record is explicitly a synthetic opportunity, not a verified
-impression, through the literal claim scope `synthetic-opportunity-not-impression`. No
-spatial opportunity currently reaches cognition, agent state, purchase logic, storage,
-replay, metrics or reports.
+impression, through the literal claim scope `synthetic-opportunity-not-impression`.
+Schema-v4 city artifacts persist and replay that stream and its independent summary. No
+spatial opportunity currently reaches cognition, agent state, purchase logic, metrics or
+reports, and the read-only city viewer still presents only mobility.
 
 ## Metrics
 

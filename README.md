@@ -190,10 +190,14 @@ Place-aware saved runs use manifest v3 and freeze both the canonical place set a
 keyed per-agent assignments. The viewer shows the selected fictional labels and declared
 provenance; it does not turn them into real addresses or observed visits.
 
-Spatial campaign inputs now have a separate validation-only boundary:
+Spatial campaign inputs have a separate strict validation boundary:
 
 ```bash
 uv run adlife city-campaign validate spatial-campaign.json --city-id fictional-grid-v2
+uv run adlife city-run --city-id fictional-grid-v2 --places places.json \
+  --spatial-campaign spatial-campaign.json --output-root ./city-output \
+  --run-id spatial-42 --agents 20 --days 3 --seed 42
+uv run adlife city-replay ./city-output spatial-42
 ```
 
 The schema binds a scenario to the exact city hash, validates creative hashes, active
@@ -205,25 +209,29 @@ use continuous crossing time and a disclosed facing heuristic, while phone oppor
 use activity-filtered keyed draws. It reports every pre/post-filter denominator and labels
 each record `synthetic-opportunity-not-impression`.
 
-This validation command still does **not** run advertising or alter a city run. C2 results
-are not yet accepted or persisted by `city-run`, shown in the viewer, converted into
-impressions/notice/responses, or included in reports; C3 and C4 remain required. Nothing
-claims observed device use, real viewability, attention, traffic, people, or sales.
+The validation command alone writes no run artifact. Passing the validated document to
+`city-run --spatial-campaign` creates a schema-v4 artifact that freezes the scenario,
+canonical opportunity stream, funnel summary, and their hashes. `city-replay` recomputes
+and verifies all of that evidence without changing the source. These records remain
+`synthetic-opportunity-not-impression`: they are not shown by the mobility-only viewer,
+converted into impressions/notice/responses, sent to cognition, applied to agent state or
+purchases, or included in metrics and reports. C3's causal bridge and C4 remain open.
+Nothing claims observed device use, real viewability, attention, traffic, people, or sales.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
 terminal window for you.
 
-`city-run` freezes a bounded mobility trace with all-minute integrity evidence;
-`city-replay` verifies it without changing source artifacts, and `city-view` opens
-the verified run in the same read-only local timeline. These saved runs remain
-synthetic **mobility-only** studies, not geographic ad campaign runs.
+`city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
+schema-v4 spatial runs additionally persist opportunity evidence. `city-replay` verifies
+the selected contract without changing source artifacts, and `city-view` opens only its
+verified mobility projection in the same read-only local timeline.
 
-This is a *separate mobility preview*, not a geographic advertising run: it does not
-persist campaign artifacts, simulate calibrated residents or traffic, model billboard
-exposure, or predict sales. A real street network improves spatial fidelity but does not
-validate agent behavior. City-pack format and scientific boundaries are in
-[docs/city-pilot.md](docs/city-pilot.md).
+This remains an early geographic research slice, not a calibrated advertising outcome
+model: it persists bounded opportunity evidence but does not infer impressions, simulate
+calibrated residents or traffic, or predict sales. A real street network improves spatial
+fidelity but does not validate agent behavior. City-pack format and scientific boundaries
+are in [docs/city-pilot.md](docs/city-pilot.md).
 
 ---
 

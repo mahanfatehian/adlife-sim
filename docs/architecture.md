@@ -65,9 +65,13 @@ denominator. Opportunity IDs and phone draws are keyed and order-independent. Th
 literally carries `synthetic-opportunity-not-impression`. It performs no I/O and cannot
 change movement, state, budget, cognition or purchase probability.
 
-No spatial opportunity is joined to an advertising run or artifact yet. C3 must persist
-the C2 output through the core ports before adapters or observers may consume it; C4 must
-derive metrics and reports from those persisted events.
+C3a persists that exact C2 output without broadening its meaning. A schema-v4 city run
+freezes `inputs/spatial-campaign.json`, streams canonical records to
+`outputs/spatial-opportunities.jsonl`, writes the independently derived
+`outputs/opportunity-summary.json`, and binds all three hashes, byte/count bounds and the
+mobility trace in the final manifest. Replay re-evaluates the frozen inputs and compares
+the normalized stream and summary. This storage boundary is not the remaining C3 causal
+bridge: no opportunity reaches cognition, agent state, purchase logic, metrics or reports.
 
 The city adapter owns file and package-resource loading. Its packaged catalog is an
 offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
@@ -79,16 +83,17 @@ viewing do not contact a public tile service or geocoder and do not accept an ar
 resource URL.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved **mobility-only** runs use separate strict v1/v2/v3
+misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4
 `CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
-`CityRunStore`.
+`CityRunStore`; v1-v3 remain mobility-only.
 V3 freezes the canonical place set and its generated assignment document alongside the
 pack under `city-runs/<run-id>/`; their hashes are part of the final manifest.
+V4 additionally freezes the validated spatial scenario, opportunity stream and summary.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute before reporting equality, and `city-view`
-validates before serving one immutable run. This is not an event-sourced advertising
-run; C2 geographic opportunity evaluation remains an unpersisted pure-core result until
-C3 defines the joined run contract.
+validates before serving one immutable mobility projection. V4 is auditable opportunity
+evidence, not an event-sourced advertising-outcome run; C3 still must define and test the
+causal downstream contract.
 
 ## The cognition seam
 

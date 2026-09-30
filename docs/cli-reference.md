@@ -102,9 +102,9 @@ This command does not run or persist the advertising engine. Its minute-addressa
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
-## `adlife city-run [PACK | --city-id ID] [--places FILE] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
+## `adlife city-run [PACK | --city-id ID] [--places FILE] [--spatial-campaign FILE] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
 
-Save a deterministic **mobility-only** city run under `ROOT/city-runs/ID`. Supply
+Save a deterministic city run under `ROOT/city-runs/ID`. Supply
 exactly one local `PACK` or verified catalog `--city-id`; neither and both exit 2. The
 validated pack is frozen into the artifact, so catalog replacement cannot change
 replay. `--agents` accepts 1–30 (default 20), `--days` 1–7 (default 7), and `--seed`
@@ -113,13 +113,21 @@ The command hashes every minute frame and the generated fictional assignments. A
 completed artifact contains `run.json`, `inputs/city.json`, and `inputs/agents.json`.
 With `--places`, schema-v3 artifacts also freeze `inputs/places.json` and
 `inputs/place-assignments.json` plus both content hashes.
+With `--spatial-campaign`, schema-v4 artifacts additionally freeze
+`inputs/spatial-campaign.json`, `outputs/spatial-opportunities.jsonl`, and
+`outputs/opportunity-summary.json`. The command validates the scenario against the exact
+selected city and duration before reserving the run ID. JSON output includes scenario,
+stream and summary hashes, stream bytes/count, all funnel counts, and the literal claim
+scope `synthetic-opportunity-not-impression`. These are opportunity records, not verified
+impressions or advertising outcomes; they do not affect cognition, state or purchases.
 Interrupted or failed publication may leave an incomplete, reserved directory; use a
 new run ID after examining it. JSON mode emits one result document on stdout.
 
 ## `adlife city-replay ROOT ID`
 
-Load the frozen pack and assignments, regenerate every minute frame, and compare the
-full trace hash and counts. Success emits `"identical": true`; missing, damaged,
+Load the frozen inputs, regenerate every minute frame, and compare the full trace hash and
+counts. For schema-v4, also re-evaluate and compare the canonical opportunity stream and
+independent summary. Success emits `"identical": true`; missing, damaged,
 partial, or incompatible artifacts exit 4 without modifying the source files. This
 proves replay against the saved artifact on a compatible implementation/runtime; it
 is not cryptographic authentication against an owner rewriting all artifact files.
@@ -132,8 +140,10 @@ Open a **validated saved** city mobility run in the same read-only browser timel
 at `http://127.0.0.1:8765` (loopback only). The run is fully verified before the
 server binds; a corrupt or partial run exits 4. The HTTP API cannot select another
 run or open a filesystem path. The header displays the saved run ID and artifact
-schema version. `--port` accepts 1–65535. Like `adlife city`, this interactive
-command accepts human output mode only and does not launch a browser automatically.
+schema version. Schema-v4 runs are accepted, but this viewer remains a mobility-only
+observer and does not expose the opportunity files. `--port` accepts 1–65535. Like
+`adlife city`, this interactive command accepts human output mode only and does not launch
+a browser automatically.
 
 ## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--schema-version 1|2] [--largest-component]`
 

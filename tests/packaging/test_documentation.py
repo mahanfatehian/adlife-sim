@@ -187,9 +187,10 @@ def test_city_v2_docs_preserve_map_evidence_without_overstating_time_zone() -> N
         assert "calendar-accurate" in text
 
 
-def test_spatial_opportunity_docs_pin_c2_without_claiming_a_complete_city_run() -> None:
+def test_spatial_opportunity_docs_describe_c3a_artifacts_without_claiming_outcomes() -> None:
     readme = _read("README.md").lower()
     architecture = _read("docs", "architecture.md").lower()
+    cli = _read("docs", "cli-reference.md").lower()
     city_pilot = _read("docs", "city-pilot.md").lower()
     reproducibility = _read("docs", "reproducibility.md").lower()
     model_card = _read("docs", "methodology", "model-card.md").lower()
@@ -198,17 +199,25 @@ def test_spatial_opportunity_docs_pin_c2_without_claiming_a_complete_city_run() 
         "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
     )
 
-    for text in (readme, architecture, city_pilot, model_card):
+    for text in (readme, architecture, cli, city_pilot, model_card):
         assert "synthetic-opportunity-not-impression" in text
     for text in (readme, architecture, city_pilot, reproducibility, limitations):
         assert "c3" in text
-    for text in (readme, architecture, city_pilot, reproducibility, model_card, limitations):
+    for text in (readme, architecture, cli, city_pilot, reproducibility, model_card, limitations):
         assert "city-run" in text
-    assert "not yet accepted or persisted" in model_card
+    for text in (readme, cli, city_pilot, reproducibility):
+        assert "--spatial-campaign" in text
+        assert "schema-v4" in text
+    for text in (architecture, cli, reproducibility):
+        assert "spatial-opportunities.jsonl" in text
+        assert "opportunity-summary.json" in text
+    assert "persisted and replayed" in model_card
+    assert "synthetic-opportunity-not-impression" in limitations
     assert "splitmix64" in city_pilot
     assert "splitmix64" in reproducibility
     assert "[x] **C2" in roadmap
     assert "[ ] **C3" in roadmap
+    assert "c3a" in roadmap.lower()
 
 
 # ---------------------------------------------------------------------------

@@ -207,6 +207,14 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   rule policies only where their units and assumptions match; retain old zone runs.
   Tests verify campaign copy cannot control movement, events, budget or purchase
   probability; failed cognition/storage leaves a typed outcome.
+
+  **C3a evidence (2026-10-01):** the first storage slice is complete without claiming
+  the full causal bridge. Schema-v4 city runs freeze the validated scenario, canonical
+  `synthetic-opportunity-not-impression` JSONL stream and independent funnel summary;
+  manifest hashes/byte/count bounds, final-manifest publication, corruption tests,
+  deterministic replay and installed-wheel smoke cover the artifact. C3 remains open:
+  these opportunities do not yet drive cognition, agent state, purchases, metrics,
+  reports or the read-only mobility viewer.
 - [ ] **C4 — Extend spatial metrics, comparison and reports.** Derive opportunity,
   impression, notice, recall/social and proxy metrics from persisted events with
   provenance; implement matched geographic A/A and paired A/B with common random

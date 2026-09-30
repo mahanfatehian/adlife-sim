@@ -238,10 +238,11 @@ its denominator.
 
 Every output record says `synthetic-opportunity-not-impression`. The probability is not
 observed phone behavior; road proximity is not an impression; orientation and distance
-are not measured visibility or attention. C2 is pure and unpersisted: the scenario is not
-accepted by `city-run`, and no viewer/report exposes these records yet. C3 must persist a
-joined causal stream and C4 must derive artifact-backed metrics before AdLife can run a
-complete geographic campaign study.
+are not measured visibility or attention. C2 remains pure; C3a adds a schema-v4 storage
+adapter that freezes its exact canonical stream and summary when `city-run` receives
+`--spatial-campaign`. No viewer/report exposes these records and no cognition, state or
+purchase transition consumes them. The remaining C3 causal bridge and C4 artifact-backed
+metrics are required before AdLife can run a complete geographic campaign study.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
@@ -264,13 +265,14 @@ compatible runtime. Cross-platform bitwise identity of floating-point interpolat
 is not asserted. The ephemeral `city` command does **not** persist a run or use the
 campaign replay command.
 
-For a saved, replayable **mobility-only** run, use either a local pack or the verified
-fictional catalog entry:
+For a saved, replayable city run, use either a local pack or the verified fictional
+catalog entry:
 
 ```bash
 uv run adlife city-run city.json --output-root ./city-output --run-id study-42 --agents 20 --days 3 --seed 42
 # alternatively: uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42
 # place-aware: add --places places.json (uses run manifest v3)
+# spatial opportunity evidence: add --spatial-campaign spatial-campaign.json (uses schema-v4)
 uv run adlife city-replay ./city-output study-42
 uv run adlife city-view ./city-output study-42
 ```
@@ -280,17 +282,21 @@ home/work/leisure assignments, seed, model/runtime identity, and hashes of every
 minute's normalized positions. Saved runs are limited to 30 agents and seven days;
 the ephemeral preview retains its wider bounds. With `--places`, v3 also freezes the
 canonical place set and assignment document and binds both hashes in the final manifest.
-Earlier v1/v2 runs remain readable. `city-replay` refuses a changed,
+With `--spatial-campaign`, schema-v4 also freezes `inputs/spatial-campaign.json`,
+`outputs/spatial-opportunities.jsonl`, and `outputs/opportunity-summary.json`; its final
+manifest binds the scenario, stream and summary hashes plus exact stream bytes/count.
+Earlier v1/v2/v3 runs remain readable. `city-replay` refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
-API has no path or run-selection endpoint. The header shows the saved ID and schema
-version. A crash during publication can leave an incomplete, reserved run directory:
-inspect it and choose a new ID; no command overwrites it silently. Integrity hashes
+API has no path or run-selection endpoint and remains a mobility-only observer for v4.
+The header shows the saved ID and schema version. A crash during publication can leave an
+incomplete, reserved run directory: inspect it and choose a new ID; no command overwrites
+it silently. Integrity hashes
 detect accidental or adversarial edits to individual files but do not authenticate
 against an owner who rewrites the entire artifact consistently.
 
 This is an early product-track slice. Authentication, provider/OAuth settings,
-geographic ad placements, campaign decisions, traffic data and population
-calibration are not implemented. Saved city runs are mobility traces, not
-geographic advertising studies. Adding MBTI labels without
+spatial downstream campaign decisions, traffic data and population calibration are not
+implemented. Schema-v4 saved runs add opportunity evidence to mobility; they are not
+geographic advertising-outcome studies. Adding MBTI labels without
 evidence would not make behavior realistic and is deliberately deferred.

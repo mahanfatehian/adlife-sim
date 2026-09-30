@@ -183,9 +183,18 @@ Ruff and strict mypy over 111 source files passed.
 - Modify: `tests/packaging/test_documentation.py`
 - Modify: this plan with exact evidence.
 
-- [ ] Document C3a creation/replay without claiming full C3, UI, metrics or outcomes.
-- [ ] Extend installed-wheel smoke with a schema-v4 run and replay.
+- [x] Document C3a creation/replay without claiming full C3, UI, metrics or outcomes.
+- [x] Extend installed-wheel smoke with a schema-v4 run and replay.
 - [ ] Run lock sync, Ruff, mypy, full pytest, two hash seeds and branch coverage.
 - [ ] Build sdist/wheel and run the exact wheel smoke outside the checkout.
 - [ ] Inspect status/diff/check; commit and push
   `docs(city): document spatial run artifacts`.
+
+**Evidence so far:** The documentation contract first failed on the pre-C3a public
+contract. README, architecture, CLI reference, city pilot, reproducibility, model card,
+limitations and the long-term roadmap now agree that v4 persists/replays opportunity
+evidence while the causal bridge, viewer opportunity panel, metrics and reports remain
+open. All 21 documentation tests pass. The clean-room smoke's regression first failed
+because the script still required v3; all five smoke-script tests now prove it supplies
+the spatial scenario and verifies v4 stream/summary provenance through replay. A separate
+regression also proved and fixed that the mobility-only viewer must accept a valid v4 run.

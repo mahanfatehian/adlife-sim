@@ -113,10 +113,11 @@ not cryptographically signed or claimed to be tamper-proof against a malicious o
 `adlife city-campaign validate` is deterministic validation, not a saved run. Its
 schema-v1 scenario fingerprint is canonical across campaign, placement, window and
 eligible-activity input order, and its geometry evidence is derived from the selected
-immutable city pack. The command writes no artifact and spatial campaigns are not yet
-accepted by `city-run`; therefore this fingerprint must not be described as replay of an
-advertising outcome. C3 and C4 remain responsible for versioned events, persistence,
-replay and metrics.
+immutable city pack. The command writes no artifact and its fingerprint is not an
+advertising outcome. Passing the same validated document to
+`city-run --spatial-campaign` creates a schema-v4 artifact; the validation command by
+itself is still not a saved run. The remaining C3 and C4 work is responsible for causal
+downstream events and metrics.
 
 The pure C2 evaluator is nevertheless deterministic evidence. Continuous route crossings
 come from the same frozen paths and speeds as the unchanged minute trace. Crossing time is
@@ -128,8 +129,9 @@ upper 53 bits form the `[0,1)` draw. Probability and cap are not part of that st
 so paired variants reuse common random numbers. Records are ordered by continuous time,
 agent, campaign, placement and channel; IDs hash scenario/city fingerprints and that
 canonical identity. Campaign, placement, window and activity input order and
-`PYTHONHASHSEED` therefore cannot alter an evaluation. This is reproducible computation,
-not yet artifact replay.
+`PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4 runs this same
+computation is also artifact replay: the frozen scenario is re-evaluated and the canonical
+stream and independently derived summary must match their manifest-bound evidence.
 
 `adlife city-run PACK --output-root ROOT --run-id ID` or the catalog form
 `adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at
@@ -147,11 +149,18 @@ packs with the v2 model; incompatible pairings are refused rather than coerced. 
 `--places` is supplied, manifest v3 additionally freezes canonical `places.json` and
 `place-assignments.json`, records both SHA-256 digests, and reconstructs the assignment
 document during load. Editing, omitting or swapping either file is therefore refused
-before replay or viewing.
+before replay or viewing. With `--spatial-campaign`, schema-v4 additionally freezes
+`inputs/spatial-campaign.json`, streams canonical opportunity records to
+`outputs/spatial-opportunities.jsonl`, and writes
+`outputs/opportunity-summary.json`. The manifest records the scenario, stream and summary
+hashes plus exact stream bytes/count, and is published last. The fixed claim scope remains
+`synthetic-opportunity-not-impression`.
+
 `adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
-without changing source files; a mismatch, partial publication or incompatible artifact
+without changing source files; for v4 it also recomputes and compares the normalized
+opportunity stream and summary. A mismatch, partial publication or incompatible artifact
 is refused. `adlife city-view ROOT ID` performs the same load verification before
-opening the read-only local timeline. A digest proves equality against that artifact,
-not authenticity against an owner rewriting all files. Identical frames are expected
-on a compatible implementation/runtime; cross-platform bitwise identity of
-floating-point interpolation is not claimed.
+opening the read-only mobility timeline; it does not present opportunity records. A
+digest proves equality against that artifact, not authenticity against an owner rewriting
+all files. Identical frames are expected on a compatible implementation/runtime;
+cross-platform bitwise identity of floating-point interpolation is not claimed.
