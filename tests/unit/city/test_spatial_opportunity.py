@@ -595,3 +595,120 @@ def test_mixed_channels_share_one_canonical_continuous_time_order() -> None:
     assert [event.model_minute for event in result.opportunities] == [481, 481]
     assert result.opportunities[0].millisecond_within_minute == 0
     assert result.opportunities[1].millisecond_within_minute > 0
+
+
+def test_artifact_lines_and_summary_bind_exact_canonical_bytes() -> None:
+    module = importlib.import_module("adlife.core.simulation.spatial_opportunity")
+    lines_for = getattr(module, "spatial_opportunity_lines", None)
+    summarize = getattr(module, "summarize_spatial_opportunity_artifact", None)
+    assert lines_for is not None, "canonical opportunity line iterator is not implemented"
+    assert summarize is not None, "opportunity artifact summary is not implemented"
+    pack = load_pack(pack_data())
+    result = _evaluate(
+        _mobility(pack),
+        _scenario(
+            pack,
+            [
+                _phone(
+                    windows=[{"start_minute": 0, "end_minute": 2}],
+                    probability=1.0,
+                    cap=2,
+                )
+            ],
+        ),
+    )
+
+    lines = tuple(lines_for(result))
+    expected = tuple(
+        (canonical_json(opportunity) + "\n").encode("utf-8") for opportunity in result.opportunities
+    )
+    summary = summarize(result)
+
+    assert lines == expected
+    assert summary.model_dump() == {
+        "schema_version": 1,
+        "model_id": "spatial-opportunity-artifact-v1",
+        "claim_scope": "synthetic-opportunity-not-impression",
+        "opportunity_model_id": "spatial-opportunity-v1",
+        "scenario_sha256": result.scenario_sha256,
+        "city_sha256": result.city_sha256,
+        "stream_sha256": sha256(b"".join(expected)).hexdigest(),
+        "stream_bytes": sum(map(len, expected)),
+        "counts": result.counts.model_dump(),
+    }
+    with pytest.raises(ValidationError, match="frozen"):
+        summary.__setattr__("stream_bytes", 0)
+
+
+def test_empty_artifact_uses_the_sha256_of_zero_bytes() -> None:
+    module = importlib.import_module("adlife.core.simulation.spatial_opportunity")
+    lines_for = getattr(module, "spatial_opportunity_lines", None)
+    summarize = getattr(module, "summarize_spatial_opportunity_artifact", None)
+    assert lines_for is not None, "canonical opportunity line iterator is not implemented"
+    assert summarize is not None, "opportunity artifact summary is not implemented"
+    pack = load_pack(pack_data())
+    result = _evaluate(
+        _mobility(pack),
+        _scenario(
+            pack,
+            [
+                _phone(
+                    windows=[{"start_minute": 0, "end_minute": 1}],
+                    probability=0.0,
+                )
+            ],
+        ),
+    )
+
+    assert tuple(lines_for(result)) == ()
+    summary = summarize(result)
+    assert summary.stream_bytes == 0
+    assert summary.stream_sha256 == sha256(b"").hexdigest()
+    assert summary.counts.opportunity_count == 0
+
+
+def test_artifact_contract_enforces_record_and_byte_ceilings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("adlife.core.simulation.spatial_opportunity")
+    summary_model = getattr(module, "SpatialOpportunityArtifactSummary", None)
+    summarize = getattr(module, "summarize_spatial_opportunity_artifact", None)
+    assert summary_model is not None, "opportunity artifact summary is not implemented"
+    assert summarize is not None, "opportunity artifact summary is not implemented"
+    assert module.MAX_SPATIAL_OPPORTUNITIES == 520_800
+    assert module.MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES == 536_870_912
+
+    pack = load_pack(pack_data())
+    result = _evaluate(_mobility(pack), _scenario(pack, [_billboard()]))
+    counts = result.counts.model_dump()
+    counts.update(
+        phone_eligible_agent_minute_count=520_801,
+        phone_successful_draw_count=520_801,
+        roadside_matching_traversal_count=0,
+        roadside_active_crossing_count=0,
+        roadside_proximity_passage_count=0,
+        roadside_approximately_visible_count=0,
+        roadside_opportunity_count=0,
+        phone_opportunity_count=520_801,
+        opportunity_count=520_801,
+    )
+    with pytest.raises(ValidationError, match="opportunity_count"):
+        type(result.counts).model_validate(counts)
+
+    document = {
+        "schema_version": 1,
+        "model_id": "spatial-opportunity-artifact-v1",
+        "claim_scope": "synthetic-opportunity-not-impression",
+        "opportunity_model_id": "spatial-opportunity-v1",
+        "scenario_sha256": result.scenario_sha256,
+        "city_sha256": result.city_sha256,
+        "stream_sha256": "0" * 64,
+        "stream_bytes": 536_870_913,
+        "counts": result.counts,
+    }
+    with pytest.raises(ValidationError, match="stream_bytes"):
+        summary_model.model_validate(document)
+
+    monkeypatch.setattr(module, "MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES", 1)
+    with pytest.raises(ValueError, match="size limit"):
+        summarize(result)

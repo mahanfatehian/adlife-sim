@@ -70,12 +70,18 @@ passed.
   SpatialOpportunityArtifactSummary` and
   `spatial_opportunity_lines(evaluation) -> Iterator[bytes]`.
 
-- [ ] Add failing golden tests for canonical lines, empty SHA-256, byte/count values and
+- [x] Add failing golden tests for canonical lines, empty SHA-256, byte/count values and
   the 520,800-record model ceiling.
-- [ ] Confirm RED on the missing interfaces.
-- [ ] Implement a frozen strict summary and iterator without I/O.
-- [ ] Run focused/property/performance/architecture tests, Ruff and mypy.
-- [ ] Commit and push `feat(city): summarize spatial opportunity artifacts`.
+- [x] Confirm RED on the missing interfaces.
+- [x] Implement a frozen strict summary and iterator without I/O.
+- [x] Run focused/property/performance/architecture tests, Ruff and mypy.
+- [x] Commit and push `feat(city): summarize spatial opportunity artifacts`.
+
+**Evidence:** Three artifact tests first failed on the missing iterator, summary model and
+summarizer. They now pin exact canonical line bytes, empty-stream SHA-256, frozen summary
+fields, the 520,800-record ceiling and 536,870,912-byte preflight refusal. All 114 related
+opportunity, property, maximum-workload and architecture tests passed in 11.72 seconds;
+Ruff passed and strict mypy remained clean over 111 source files.
 
 ### Task 3: Persist and load schema-v4 runs atomically
 

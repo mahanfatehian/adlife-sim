@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from dataclasses import dataclass
 from hashlib import sha256
 from itertools import pairwise
@@ -33,6 +34,8 @@ _UINT64_MASK = (1 << 64) - 1
 _SPLITMIX_GAMMA = 0x9E3779B97F4A7C15
 _SPLITMIX_MIX_1 = 0xBF58476D1CE4E5B9
 _SPLITMIX_MIX_2 = 0x94D049BB133111EB
+MAX_SPATIAL_OPPORTUNITIES = 520_800
+MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES = 536_870_912
 
 
 class _SpatialOpportunity(DomainModel):
@@ -95,7 +98,7 @@ class SpatialOpportunityCounts(DomainModel):
     frequency_capped_candidate_count: int = Field(ge=0)
     roadside_opportunity_count: int = Field(ge=0)
     phone_opportunity_count: int = Field(ge=0)
-    opportunity_count: int = Field(ge=0)
+    opportunity_count: int = Field(ge=0, le=MAX_SPATIAL_OPPORTUNITIES)
 
     @model_validator(mode="after")
     def coherent_funnel(self) -> Self:
@@ -126,7 +129,7 @@ class SpatialOpportunityEvaluation(DomainModel):
     scenario_sha256: str = Field(pattern=_HASH_PATTERN)
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     counts: SpatialOpportunityCounts
-    opportunities: tuple[SpatialOpportunity, ...]
+    opportunities: tuple[SpatialOpportunity, ...] = Field(max_length=MAX_SPATIAL_OPPORTUNITIES)
 
     @model_validator(mode="after")
     def coherent_records(self) -> Self:
@@ -143,6 +146,50 @@ class SpatialOpportunityEvaluation(DomainModel):
         if keys != tuple(sorted(keys)):
             raise ValueError("opportunity records must be in canonical order")
         return self
+
+
+class SpatialOpportunityArtifactSummary(DomainModel):
+    """Exact hashes and denominators for one canonical opportunity JSONL stream."""
+
+    schema_version: Literal[1] = 1
+    model_id: Literal["spatial-opportunity-artifact-v1"] = "spatial-opportunity-artifact-v1"
+    claim_scope: Literal["synthetic-opportunity-not-impression"] = _CLAIM_SCOPE
+    opportunity_model_id: Literal["spatial-opportunity-v1"] = _MODEL_ID
+    scenario_sha256: str = Field(pattern=_HASH_PATTERN)
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    stream_sha256: str = Field(pattern=_HASH_PATTERN)
+    stream_bytes: int = Field(ge=0, le=MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES)
+    counts: SpatialOpportunityCounts
+
+
+def spatial_opportunity_lines(
+    evaluation: SpatialOpportunityEvaluation,
+) -> Iterator[bytes]:
+    """Yield one canonical UTF-8 JSONL record for every opportunity, in core order."""
+    if not isinstance(evaluation, SpatialOpportunityEvaluation):
+        raise TypeError("evaluation must be SpatialOpportunityEvaluation")
+    for opportunity in evaluation.opportunities:
+        yield (canonical_json(opportunity) + "\n").encode("utf-8")
+
+
+def summarize_spatial_opportunity_artifact(
+    evaluation: SpatialOpportunityEvaluation,
+) -> SpatialOpportunityArtifactSummary:
+    """Hash canonical stream bytes without joining the full artifact in memory."""
+    digest = sha256()
+    stream_bytes = 0
+    for line in spatial_opportunity_lines(evaluation):
+        stream_bytes += len(line)
+        if stream_bytes > MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES:
+            raise ValueError("spatial opportunity stream exceeds its size limit")
+        digest.update(line)
+    return SpatialOpportunityArtifactSummary(
+        scenario_sha256=evaluation.scenario_sha256,
+        city_sha256=evaluation.city_sha256,
+        stream_sha256=digest.hexdigest(),
+        stream_bytes=stream_bytes,
+        counts=evaluation.counts,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,10 +611,15 @@ def evaluate_spatial_opportunities(
 
 
 __all__ = [
+    "MAX_SPATIAL_OPPORTUNITIES",
+    "MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES",
     "PhoneOpportunity",
     "RoadsideOpportunity",
     "SpatialOpportunity",
+    "SpatialOpportunityArtifactSummary",
     "SpatialOpportunityCounts",
     "SpatialOpportunityEvaluation",
     "evaluate_spatial_opportunities",
+    "spatial_opportunity_lines",
+    "summarize_spatial_opportunity_artifact",
 ]
