@@ -101,14 +101,19 @@ focused/domain/mobility/architecture tests passed. Ruff, mypy and the full suite
 **Produces:** `load_spatial_campaign_scenario(path)`, 2 MiB input cap and
 `city-campaign validate` for local/catalog city selection.
 
-- [ ] Write and witness failing loader tests for missing, unreadable, oversized, malformed,
+- [x] Write and witness failing loader tests for missing, unreadable, oversized, malformed,
   non-UTF-8 and invalid-version files with non-reflective diagnostics.
-- [ ] Implement the bounded loader.
-- [ ] Write and witness failing CLI tests for local/catalog success, exact JSON, selector
+- [x] Implement the bounded loader.
+- [x] Write and witness failing CLI tests for local/catalog success, exact JSON, selector
   refusal, bad binding, no traceback, offline behavior and help/reference coverage.
-- [ ] Register the command and translate only expected input/artifact errors.
-- [ ] Run CLI/root/documentation/security/architecture suites.
-- [ ] Commit and push `feat(cli): validate spatial campaign inputs`.
+- [x] Register the command and translate only expected input/artifact errors.
+- [x] Run CLI/root/documentation/security/architecture suites.
+- [x] Commit and push `feat(cli): validate spatial campaign inputs`.
+
+**Evidence:** RED 10 failed / 1 passed for the missing loader/command, strengthened to
+cover the exact redacted JSON diagnostic; GREEN 11 focused passed. Related CLI passed
+325, final focused/documentation/architecture passed 133, Ruff and mypy passed, and the
+full suite passed 3,425 / skipped 13 in 461.83 seconds.
 
 ### Task 4: Public contract and release evidence
 

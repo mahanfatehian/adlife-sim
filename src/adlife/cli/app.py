@@ -20,6 +20,7 @@ from typer.core import TyperGroup
 from adlife import __version__
 from adlife.cli.commands.campaign import app as campaign_app
 from adlife.cli.commands.city import command as city_command
+from adlife.cli.commands.city_campaign import app as city_campaign_app
 from adlife.cli.commands.city_catalog import app as city_catalog_app
 from adlife.cli.commands.city_import import command as city_import_command
 from adlife.cli.commands.city_places import app as city_places_app
@@ -89,6 +90,7 @@ app = typer.Typer(
 app.add_typer(campaign_app, name="campaign")
 app.add_typer(population_app, name="population")
 app.add_typer(city_catalog_app, name="city-catalog")
+app.add_typer(city_campaign_app, name="city-campaign")
 app.add_typer(city_places_app, name="city-places")
 app.command("init")(init_command)
 app.command("validate")(validate_command)

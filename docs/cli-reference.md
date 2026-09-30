@@ -73,6 +73,17 @@ writing an artifact or making a network request. `--agents` accepts 1–250 (def
 insufficient or unreadable inputs exit 2 with bounded diagnostics. JSON mode emits one
 document containing the city/place hashes and assignment count.
 
+## `adlife city-campaign validate SCENARIO [PACK | --city-id ID]`
+
+Validate one bounded local spatial-campaign JSON document against exactly one local
+`PACK` or verified catalog `--city-id`. The command checks the immutable city hash,
+campaign references, creative hashes, active windows, frequency caps, phone opportunity
+policy, road direction and explicit billboard coordinate/road-fraction binding. It does
+not snap coordinates, fetch creative or map data, run a simulation, or write an artifact.
+Malformed, mismatched, off-network, out-of-bounds or unsupported-direction inputs exit 2
+with bounded diagnostics. Catalog corruption exits 4. JSON mode emits one document with
+the scenario/city hashes, channel counts and maximum accepted binding error.
+
 ## `adlife city [--pack FILE | --city-id ID] [--places FILE] [--agents N] [--days N] [--seed N] [--port N]`
 
 Start the read-only geographic mobility pilot at `http://127.0.0.1:8765` (loopback
