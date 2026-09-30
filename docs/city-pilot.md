@@ -154,6 +154,44 @@ can be marked `rights-reviewed` or bundled. Follow the
 [city-source qualification checklist](data/city-source-qualification.md); this release
 has no rights-reviewed real-city catalog entry.
 
+## Synthetic place inputs
+
+The mobility model can optionally use a local schema-v1 place set instead of generating
+unlabelled node assignments. The document is bound to the exact city ID and canonical
+pack SHA-256, contains 3–10,000 bounded public labels, and supplies at least one home,
+workplace and leisure point. Each point references an existing road node and declares
+one provenance method: `operator-authored-fictional`, `source-derived`, or `inferred`.
+The latter two require a bounded public reference; fictional authored points must not
+claim one. Do not put addresses, personal data, credentials or private source URLs in
+labels or references.
+
+```json
+{
+  "schema_version": 1,
+  "city_id": "fictional-grid-v2",
+  "city_sha256": "<copy pack_sha256 from city-catalog show>",
+  "name": "Fictional study places",
+  "places": [
+    {"place_id": "home-west", "kind": "home", "node_id": "west-north", "label": "Fictional west home", "provenance": {"method": "operator-authored-fictional"}},
+    {"place_id": "work-center", "kind": "workplace", "node_id": "center-center", "label": "Fictional center workplace", "provenance": {"method": "operator-authored-fictional"}},
+    {"place_id": "leisure-south", "kind": "leisure", "node_id": "center-south", "label": "Fictional south leisure", "provenance": {"method": "operator-authored-fictional"}}
+  ]
+}
+```
+
+Supply at least as many distinct home points as agents. This three-place example supports
+one agent. Validation checks the binding,
+node references, capacity, deterministic assignment and every required directed route:
+
+```bash
+uv run adlife city-places validate places.json --city-id fictional-grid-v2 --agents 1 --days 7 --seed 42
+uv run adlife city --city-id fictional-grid-v2 --places places.json --agents 1 --days 7 --seed 42
+```
+
+Place input order does not change the fingerprint or keyed assignments. A workplace or
+leisure selection cannot equal that agent's home node. The viewer presents place glyphs,
+the selected agent's three labels and provenance, but stays read-only.
+
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
 Day 1 is treated as Monday. The UI's light/dark styling switches at fixed 06:00 and
@@ -181,6 +219,7 @@ fictional catalog entry:
 ```bash
 uv run adlife city-run city.json --output-root ./city-output --run-id study-42 --agents 20 --days 3 --seed 42
 # alternatively: uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42
+# place-aware: add --places places.json (uses run manifest v3)
 uv run adlife city-replay ./city-output study-42
 uv run adlife city-view ./city-output study-42
 ```
@@ -188,7 +227,9 @@ uv run adlife city-view ./city-output study-42
 `city-run` reserves a new ID and freezes the validated pack, generated fictional
 home/work/leisure assignments, seed, model/runtime identity, and hashes of every
 minute's normalized positions. Saved runs are limited to 30 agents and seven days;
-the ephemeral preview retains its wider bounds. `city-replay` refuses a changed,
+the ephemeral preview retains its wider bounds. With `--places`, v3 also freezes the
+canonical place set and assignment document and binds both hashes in the final manifest.
+Earlier v1/v2 runs remain readable. `city-replay` refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
 API has no path or run-selection endpoint. The header shows the saved ID and schema

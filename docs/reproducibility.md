@@ -122,7 +122,11 @@ The artifact freezes the city pack (including v2 road geometry, direction, sourc
 provenance, bounds, time zone and omissions), generated fictional assignments, seed,
 duration, model/runtime identity and the SHA-256 digest of **every** normalized minute
 frame in order. Versioned run manifests pair v1 packs with the v1 mobility model and v2
-packs with the v2 model; incompatible pairings are refused rather than coerced.
+packs with the v2 model; incompatible pairings are refused rather than coerced. When
+`--places` is supplied, manifest v3 additionally freezes canonical `places.json` and
+`place-assignments.json`, records both SHA-256 digests, and reconstructs the assignment
+document during load. Editing, omitting or swapping either file is therefore refused
+before replay or viewing.
 `adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
 without changing source files; a mismatch, partial publication or incompatible artifact
 is refused. `adlife city-view ROOT ID` performs the same load verification before

@@ -78,6 +78,10 @@ Provider usage (request counts, cache hits, failures) is recorded locally per ru
 City-pack v2 can preserve real-world road geometry, traversal direction and public
 source provenance, but it contains no real-person trajectories. Its IANA time zone is
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
+pilot can optionally assign synthetic home, workplace and leisure points supplied in a
+pack-hash-bound place set. Those points must be routable road nodes, carry explicit
+authored/source-derived/inferred provenance, and are frozen for v3 replay; they are
+scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
 sunrise/sunset calculation, measured demand or calibrated traffic. Import validation
 also does not prove license or commercial redistribution rights; those require the

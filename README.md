@@ -176,6 +176,19 @@ tile server or geocoder, and a locally imported real-world pack is not automatic
 catalog-qualified. The
 [city-source qualification checklist](docs/data/city-source-qualification.md) defines
 the human rights review required before a real-world entry may ship.
+An optional schema-v1 place-set JSON can bind fictional home, workplace and leisure
+points to exact road nodes and to the selected pack hash. Validate it before use, then
+pass the same file to either the ephemeral viewer or a saved run:
+
+```bash
+uv run adlife city-places validate places.json --city-id fictional-grid-v2 --agents 20 --days 3 --seed 42
+uv run adlife city --city-id fictional-grid-v2 --places places.json --agents 20 --days 3 --seed 42
+uv run adlife city-run --city-id fictional-grid-v2 --places places.json --output-root ./city-output --run-id study-42 --agents 20 --days 3 --seed 42
+```
+
+Place-aware saved runs use manifest v3 and freeze both the canonical place set and its
+keyed per-agent assignments. The viewer shows the selected fictional labels and declared
+provenance; it does not turn them into real addresses or observed visits.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or

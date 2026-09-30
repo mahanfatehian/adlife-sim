@@ -39,6 +39,14 @@ known omissions. The FastAPI adapter loads one pack at startup and exposes read-
 metadata, geometry, fictional agents and minute-addressable frames; the vanilla browser
 client only renders those frames.
 
+An optional immutable `CityPlaceSet` is a separate core contract bound to the exact city
+ID and canonical pack SHA-256. It names role-specific synthetic home, workplace and
+leisure points at validated road nodes and records whether each was fictionally authored,
+source-derived or inferred. `CityMobility` assigns these candidates with keyed draws in
+canonical order, validates home capacity and every directed itinerary before generating
+frames, and exposes assignments as data rather than mutable agent fields. Neither the
+web adapter nor the CLI can inject an unvalidated assignment.
+
 The city adapter owns file and package-resource loading. Its packaged catalog is an
 offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
 matching ID/schema/metadata before selection. The only bundled entry is
@@ -49,10 +57,12 @@ viewing do not contact a public tile service or geocoder and do not accept an ar
 resource URL.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved **mobility-only** runs use separate strict v1/v2
+misrepresent the science. Saved **mobility-only** runs use separate strict v1/v2/v3
 `CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
 `CityRunStore`.
-`city-run` freezes the pack and generated assignments under `city-runs/<run-id>/`,
+V3 freezes the canonical place set and its generated assignment document alongside the
+pack under `city-runs/<run-id>/`; their hashes are part of the final manifest.
+`city-run` publishes the manifest last,
 `city-replay` regenerates every minute before reporting equality, and `city-view`
 validates before serving one immutable run. This is not an event-sourced advertising
 run; geographic campaign encounters remain a separate future model.

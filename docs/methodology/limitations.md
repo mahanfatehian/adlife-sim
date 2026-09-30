@@ -66,6 +66,9 @@ What this model cannot support. Read alongside the
   offline, content-addressed catalog contains only the `fictional-grid-v2` fixture; no
   real city is catalog-qualified. A local real street extract supplies geography, not
   real residents, measured traffic, legal navigation routes, or validated effects.
+  Optional place sets constrain synthetic home, workplace and leisure nodes with stated
+  provenance and deterministic assignment. They do not model land-use capacity, household
+  composition, job matching, venue preference or observed origin-destination demand.
 - **Time-zone metadata is not a civil-time model.** City-pack v2 records an IANA time
   zone, but the fixed schedule treats day 1 as Monday, has no start date, holidays or
   daylight-saving transition policy, and uses fixed light/dark hours rather than local

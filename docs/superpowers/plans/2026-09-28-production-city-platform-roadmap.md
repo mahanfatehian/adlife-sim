@@ -153,13 +153,19 @@ gates have passed. See the
   map renderer on a representative pack. Attribution is always visible. Test offline
   fallback, tile failure, large geometry, browser accessibility and no unlicensed
   resource requests. Map styling is presentation only.
-- [ ] **B6 — Define synthetic place assignment.** Add validated home, workplace and
+- [x] **B6 — Define synthetic place assignment.** Add validated home, workplace and
   leisure zone/point sets from licensed land-use data or operator-authored fictional
   scenario inputs. Allow an analyst to choose or constrain spawn/home/work/hangout
   areas without importing real addresses. Assign agents with keyed draws and prove
   every itinerary remains routable; refuse insufficient or unreachable zones.
   Document whether each place was sourced, inferred or authored, and test that
   input order does not change assignments.
+
+  **Evidence (2026-09-30):** schema-v1 place sets are city-ID/hash bound, strictly
+  validated and provenance-explicit; keyed canonical assignment proves order invariance,
+  home capacity and directed routability. Manifest v3 freezes place inputs and assignments,
+  replay rejects edits, the read-only viewer exposes their labels/provenance, and the
+  installed-wheel smoke exercises validation, run and replay without network access.
 
 **Exit gate:** A qualified catalog entry can be selected, pinned, inspected and
 replayed even if the catalog later updates; data/license/coverage are visible;

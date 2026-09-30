@@ -44,13 +44,13 @@
 - Produces: `CityPlace`, `CityPlaceProvenance`, `CityPlaceSet`, `parse_city_place_set_json`, `load_city_place_set(path)`, `MAX_CITY_PLACE_SET_BYTES`.
 - Consumes: existing `DomainModel`, canonical JSON and city public-metadata policy.
 
-- [ ] Write failing tests for strict versions/types, duplicate keys, provenance/reference rules, public metadata, unique IDs, duplicate role/node weighting, required roles, canonical order and fingerprint stability.
-- [ ] Run the narrow tests and confirm failures are caused by missing place contracts.
-- [ ] Implement the minimal immutable Pydantic models and strict parser.
-- [ ] Write and witness failing bounded-loader tests for UTF-8, oversize, invalid schema and redacted diagnostics.
-- [ ] Implement the bounded local loader and exports.
-- [ ] Run the two unit files and schema contract tests.
-- [ ] Commit and push `feat(city): define versioned synthetic place sets`.
+- [x] Write failing tests for strict versions/types, duplicate keys, provenance/reference rules, public metadata, unique IDs, duplicate role/node weighting, required roles, canonical order and fingerprint stability.
+- [x] Run the narrow tests and confirm failures are caused by missing place contracts.
+- [x] Implement the minimal immutable Pydantic models and strict parser.
+- [x] Write and witness failing bounded-loader tests for UTF-8, oversize, invalid schema and redacted diagnostics.
+- [x] Implement the bounded local loader and exports.
+- [x] Run the two unit files and schema contract tests.
+- [x] Commit and push `feat(city): define versioned synthetic place sets`.
 
 ### Task 2: Deterministic place-aware mobility
 
@@ -64,12 +64,12 @@
 - Consumes: `CityPlaceSet` from Task 1.
 - Produces: `CityPlaceAssignment`, optional `places` argument on `CityMobility`, `place_assignments`, `place_assignment_document()` and place-aware metadata.
 
-- [ ] Write failing tests for city/hash binding, unknown nodes, unique-home capacity, non-home destinations, role/node correspondence, route construction and place-order invariance.
-- [ ] Run the narrow tests and confirm the expected missing-interface failures.
-- [ ] Implement keyed canonical assignment and route all selected nodes through the existing directed graph.
-- [ ] Add property coverage for place-order permutations and repeated seeds.
-- [ ] Re-run mobility/property tests and the v1/v2 trace compatibility assertion.
-- [ ] Commit and push `feat(city): assign synthetic places deterministically`.
+- [x] Write failing tests for city/hash binding, unknown nodes, unique-home capacity, non-home destinations, role/node correspondence, route construction and place-order invariance.
+- [x] Run the narrow tests and confirm the expected missing-interface failures.
+- [x] Implement keyed canonical assignment and route all selected nodes through the existing directed graph.
+- [x] Add property coverage for place-order permutations and repeated seeds.
+- [x] Re-run mobility/property tests and the v1/v2 trace compatibility assertion.
+- [x] Commit and push `feat(city): assign synthetic places deterministically`.
 
 ### Task 3: Manifest v3, atomic storage and replay
 
@@ -85,12 +85,12 @@
 - Consumes: place-aware `CityMobility` and place fingerprints/assignment documents.
 - Produces: `CityRunManifestV3`, optional `places` on `create_city_run`, and v3 load/replay support.
 
-- [ ] Write failing manifest tests for exact v3 schema/model/place hashes and v1/v2 compatibility.
-- [ ] Implement strict v3 dispatch and count validation.
-- [ ] Write failing storage/replay tests for frozen place bytes, assignment bytes, corruption, missing documents, schema mismatch, no-clobber and source immutability.
-- [ ] Extend publication/load verification with `places.json` and `place-assignments.json`, keeping the final manifest publish order.
-- [ ] Run city contract, store and replay suites.
-- [ ] Commit and push `feat(city): persist place-aware city runs`.
+- [x] Write failing manifest tests for exact v3 schema/model/place hashes and v1/v2 compatibility.
+- [x] Implement strict v3 dispatch and count validation.
+- [x] Write failing storage/replay tests for frozen place bytes, assignment bytes, corruption, missing documents, schema mismatch, no-clobber and source immutability.
+- [x] Extend publication/load verification with `places.json` and `place-assignments.json`, keeping the final manifest publish order.
+- [x] Run city contract, store and replay suites.
+- [x] Commit and push `feat(city): persist place-aware city runs`.
 
 ### Task 4: CLI validation and place-aware run/view flows
 
@@ -109,10 +109,10 @@
 - Consumes: loaders, `CityMobility`, v3 create/load/replay.
 - Produces: `city-places validate`, `city --places`, `city-run --places` and exact JSON results.
 
-- [ ] Write failing command tests for successful validation, pack/catalog selection, invalid combinations, wrong binding, insufficient homes, JSON cleanliness and v3 run/replay.
-- [ ] Register the command group and load place inputs before constructing mobility or saving runs.
-- [ ] Re-run all city CLI suites and root/help contract tests.
-- [ ] Commit and push `feat(cli): add synthetic place workflows`.
+- [x] Write failing command tests for successful validation, pack/catalog selection, invalid combinations, wrong binding, insufficient homes, JSON cleanliness and v3 run/replay.
+- [x] Register the command group and load place inputs before constructing mobility or saving runs.
+- [x] Re-run all city CLI suites and root/help contract tests.
+- [x] Commit and push `feat(cli): add synthetic place workflows`.
 
 ### Task 5: Read-only API and browser place inspection
 
@@ -129,12 +129,12 @@
 - Consumes: place-aware mobility from Tasks 2–4.
 - Produces: `/api/places`, `/api/place-assignments`, map markers, selected itinerary labels and provenance disclosure.
 
-- [ ] Write failing API tests for exact documents, explicit no-place 404s and immutable saved-run behavior.
-- [ ] Implement the two read-only endpoints and metadata fields.
-- [ ] Write DOM/browser assertions for marker legend, selected place labels, provenance, timeline scrub, no console errors and no external requests.
-- [ ] Extend the established urban-console design with three accessible place glyphs and compact labels; do not add a framework or external asset.
-- [ ] Run API tests, static-resource packaging tests and the browser smoke at desktop and narrow widths.
-- [ ] Commit and push `feat(city): inspect synthetic places in the viewer`.
+- [x] Write failing API tests for exact documents, explicit no-place 404s and immutable saved-run behavior.
+- [x] Implement the two read-only endpoints and metadata fields.
+- [x] Write DOM/browser assertions for marker legend, selected place labels, provenance, timeline scrub, no console errors and no external requests.
+- [x] Extend the established urban-console design with three accessible place glyphs and compact labels; do not add a framework or external asset.
+- [x] Run API tests, static-resource packaging tests and the browser smoke at desktop and narrow widths.
+- [x] Commit and push `feat(city): inspect synthetic places in the viewer`.
 
 ### Task 6: Documentation, packaging and release gates
 
@@ -154,13 +154,38 @@
 - Consumes: the complete place-aware behavior.
 - Produces: honest public contract, installed-wheel example and recorded verification evidence.
 
-- [ ] Add failing documentation/smoke expectations for the new CLI and packaged fictional fixture or generated test input.
-- [ ] Update public documentation without claiming real residents, calibrated schedules or worldwide catalog coverage; mark only B6 complete.
-- [ ] Run narrow docs/package tests, Ruff format/lint, strict mypy and the full pytest suite.
-- [ ] Run `PYTHONHASHSEED=0` and `PYTHONHASHSEED=12345` full suites, branch coverage, wheel build and exact clean-room wheel smoke.
-- [ ] Run offline doctor/demo plus a fresh place-aware city run/replay/view API and real browser smoke.
-- [ ] Record exact evidence in this plan and the roadmap.
-- [ ] Commit and push `docs(city): document place-aware mobility evidence`.
+- [x] Add failing documentation/smoke expectations for the new CLI and packaged fictional fixture or generated test input.
+- [x] Update public documentation without claiming real residents, calibrated schedules or worldwide catalog coverage; mark only B6 complete.
+- [x] Run narrow docs/package tests, Ruff format/lint, strict mypy and the full pytest suite.
+- [x] Run `PYTHONHASHSEED=0` and `PYTHONHASHSEED=12345` full suites, branch coverage, wheel build and exact clean-room wheel smoke.
+- [x] Run offline doctor/demo plus a fresh place-aware city run/replay/view API and real browser smoke.
+- [x] Record exact evidence in this plan and the roadmap.
+- [x] Commit and push `docs(city): document place-aware mobility evidence`.
+
+## Execution evidence (2026-09-30)
+
+- TDD witness: the Task 6 packaging regression failed because the clean-room smoke did
+  not invoke place validation or pass `--places`; the focused file then passed 5 tests.
+- Static gates: `uv sync --locked --all-groups` succeeded; Ruff reported 246 files
+  formatted and no lint issues; mypy reported no issues in 107 source files.
+- Full suite: 3,379 passed / 13 skipped in 467.36 seconds.
+- Hash-order gates: seed 0 passed 3,379 / skipped 13 in 459.62 seconds; the final seed
+  12345 invocation passed 3,379 / skipped 13 in 518.96 seconds.
+- Performance diagnosis: an earlier seed-12345 invocation reached 41.99 seconds after
+  consecutive full suites and missed the 40-second wall ceiling. The unchanged isolated
+  gate passed at 18.21 seconds with 5,685 events, 2 MiB peak traced memory, a 3,629,056-byte
+  database and 4,862,947-byte report; a clean complete seed-12345 rerun then passed. No
+  threshold or assertion was changed.
+- Branch coverage: 3,379 passed / 13 skipped in 950.94 seconds, total 91.23% against the
+  configured 85% minimum.
+- Distribution: `uv build --no-sources` built the 0.1.0 sdist and wheel. The exact wheel
+  smoke passed outside the checkout and produced a 4,862,319-byte self-contained report;
+  packaged catalog selection, generated fictional place validation, manifest-v3 run and
+  place-aware replay were verified.
+- Runtime: version, offline doctor, human/JSON headless demos succeeded. Doctor reported
+  7/8 checks because this Windows console exposes `cp1252`; its documented `PYTHONUTF8=1`
+  remediation remains an environment warning. The final saved-view/API/real-browser
+  group passed 15 tests in 3.92 seconds with external requests blocked.
 
 ## Self-review record
 

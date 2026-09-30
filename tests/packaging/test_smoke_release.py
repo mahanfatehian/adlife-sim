@@ -80,6 +80,8 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     scratch = workspace / "scratch"
     calls: list[tuple[list[str], Path | None]] = []
     city_sha256 = "a" * 64
+    place_sha256 = "c" * 64
+    assignments_sha256 = "d" * 64
     trace_sha256 = "b" * 64
 
     monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: str(workspace))
@@ -127,11 +129,33 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "pack_schema_version": 2,
                 "pack_sha256": city_sha256,
             }
+        elif arguments[:4] == ["--format", "json", "city-places", "validate"]:
+            place_path = Path(arguments[4])
+            place_document = json.loads(place_path.read_text(encoding="utf-8"))
+            assert place_document["city_id"] == "fictional-grid-v2"
+            assert place_document["city_sha256"] == city_sha256
+            assert {place["kind"] for place in place_document["places"]} == {
+                "home",
+                "workplace",
+                "leisure",
+            }
+            assert all(
+                place["provenance"]["method"] == "operator-authored-fictional"
+                for place in place_document["places"]
+            )
+            document = {
+                "valid": True,
+                "city_id": "fictional-grid-v2",
+                "place_set_sha256": place_sha256,
+            }
         elif arguments[:3] == ["--format", "json", "city-run"]:
             document = {
                 "run_id": "catalog-smoke",
+                "run_schema_version": 3,
                 "city_id": "fictional-grid-v2",
                 "city_sha256": city_sha256,
+                "place_set_sha256": place_sha256,
+                "place_assignments_sha256": assignments_sha256,
                 "trace_sha256": trace_sha256,
                 "frame_count": 1_440,
                 "position_count": 2_880,
@@ -148,6 +172,8 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "run_id": "catalog-smoke",
                 "identical": True,
                 "city_sha256": city_sha256,
+                "place_set_sha256": place_sha256,
+                "place_assignments_sha256": assignments_sha256,
                 "trace_sha256": trace_sha256,
                 "frame_count": 1_440,
                 "position_count": 2_880,
@@ -170,9 +196,26 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     assert [
         "--format",
         "json",
+        "city-places",
+        "validate",
+        str(scratch / "fictional-grid-v2-places.json"),
+        "--city-id",
+        "fictional-grid-v2",
+        "--agents",
+        "2",
+        "--days",
+        "1",
+        "--seed",
+        "42",
+    ] in invoked
+    assert [
+        "--format",
+        "json",
         "city-run",
         "--city-id",
         "fictional-grid-v2",
+        "--places",
+        str(scratch / "fictional-grid-v2-places.json"),
         "--output-root",
         "city-output",
         "--run-id",

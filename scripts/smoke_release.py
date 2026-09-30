@@ -4,8 +4,9 @@ The wheel is the canonical distribution, so release verification never happens i
 the development checkout. This script creates a temporary virtual environment, installs
 exactly the wheel it was handed, changes to a scratch directory outside the checkout,
 and runs the documented workflow — including the verified packaged city catalog, a
-catalog-selected v2 mobility run and its replay — validating the JSON output contract
-along the way. Every temporary artifact is cleaned up on success and on failure.
+validated fictional place set, a place-aware v3 mobility run and its replay — validating
+the JSON output contract along the way. Every temporary artifact is cleaned up on
+success and on failure.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Never
 
 
 def _run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -49,7 +51,7 @@ def _expect_json(completed: subprocess.CompletedProcess[str], label: str) -> dic
     return document
 
 
-def _refuse(label: str, detail: str) -> None:
+def _refuse(label: str, detail: str) -> Never:
     print(f"{label}: {detail}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -58,6 +60,51 @@ def _expect_value(document: dict[str, object], key: str, expected: object, label
     actual = document.get(key)
     if type(actual) is not type(expected) or actual != expected:
         _refuse(label, f"expected {key}={expected!r}, got {actual!r}")
+
+
+def _write_fictional_place_set(path: Path, *, city_sha256: str) -> None:
+    """Create the clean-room fixture without reading from the source checkout."""
+    provenance = {"method": "operator-authored-fictional"}
+    document = {
+        "schema_version": 1,
+        "city_id": "fictional-grid-v2",
+        "city_sha256": city_sha256,
+        "name": "Fictional clean-room smoke places",
+        "places": [
+            {
+                "place_id": "home-west",
+                "kind": "home",
+                "node_id": "west-north",
+                "label": "Fictional west home",
+                "provenance": provenance,
+            },
+            {
+                "place_id": "home-east",
+                "kind": "home",
+                "node_id": "east-north",
+                "label": "Fictional east home",
+                "provenance": provenance,
+            },
+            {
+                "place_id": "work-center",
+                "kind": "workplace",
+                "node_id": "center-center",
+                "label": "Fictional center workplace",
+                "provenance": provenance,
+            },
+            {
+                "place_id": "leisure-south",
+                "kind": "leisure",
+                "node_id": "center-south",
+                "label": "Fictional south leisure venue",
+                "provenance": provenance,
+            },
+        ],
+    }
+    path.write_text(
+        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _uv_executable() -> str | None:
@@ -146,6 +193,36 @@ def smoke(wheel: Path) -> None:
         if not isinstance(catalog_sha256, str) or len(catalog_sha256) != 64:
             _refuse("city-catalog show", "pack_sha256 is not a SHA-256 digest")
 
+        places_path = scratch / "fictional-grid-v2-places.json"
+        _write_fictional_place_set(places_path, city_sha256=catalog_sha256)
+        places = _expect_json(
+            _run(
+                [
+                    str(adlife),
+                    "--format",
+                    "json",
+                    "city-places",
+                    "validate",
+                    str(places_path),
+                    "--city-id",
+                    "fictional-grid-v2",
+                    "--agents",
+                    "2",
+                    "--days",
+                    "1",
+                    "--seed",
+                    "42",
+                ],
+                cwd=scratch,
+            ),
+            "city-places validate",
+        )
+        _expect_value(places, "valid", True, "city-places validate")
+        _expect_value(places, "city_id", "fictional-grid-v2", "city-places validate")
+        place_set_sha256 = places.get("place_set_sha256")
+        if not isinstance(place_set_sha256, str) or len(place_set_sha256) != 64:
+            _refuse("city-places validate", "place_set_sha256 is not a SHA-256 digest")
+
         _run([str(adlife), "init", "smoke-study"], cwd=scratch)
         run = _run(
             [
@@ -194,6 +271,8 @@ def smoke(wheel: Path) -> None:
                     "city-run",
                     "--city-id",
                     "fictional-grid-v2",
+                    "--places",
+                    str(places_path),
                     "--output-root",
                     "city-output",
                     "--run-id",
@@ -210,8 +289,18 @@ def smoke(wheel: Path) -> None:
             "city-run --city-id",
         )
         _expect_value(city_run, "run_id", "catalog-smoke", "city-run --city-id")
+        _expect_value(city_run, "run_schema_version", 3, "city-run --city-id")
         _expect_value(city_run, "city_id", "fictional-grid-v2", "city-run --city-id")
         _expect_value(city_run, "city_sha256", catalog_sha256, "city-run --city-id")
+        _expect_value(
+            city_run,
+            "place_set_sha256",
+            place_set_sha256,
+            "city-run --city-id",
+        )
+        assignments_sha256 = city_run.get("place_assignments_sha256")
+        if not isinstance(assignments_sha256, str) or len(assignments_sha256) != 64:
+            _refuse("city-run --city-id", "place_assignments_sha256 is not a SHA-256 digest")
         _expect_value(city_run, "frame_count", 1_440, "city-run --city-id")
         _expect_value(city_run, "position_count", 2_880, "city-run --city-id")
 
@@ -231,13 +320,20 @@ def smoke(wheel: Path) -> None:
         )
         _expect_value(replay, "run_id", "catalog-smoke", "city-replay")
         _expect_value(replay, "identical", True, "city-replay")
-        for key in ("city_sha256", "trace_sha256", "frame_count", "position_count"):
+        for key in (
+            "city_sha256",
+            "place_set_sha256",
+            "place_assignments_sha256",
+            "trace_sha256",
+            "frame_count",
+            "position_count",
+        ):
             _expect_value(replay, key, city_run.get(key), "city-replay")
         _ = doctor_document  # parsed: the JSON contract held
         print(
             "smoke ok: "
             f"report at {html.stat().st_size} bytes; "
-            "catalog fictional-grid-v2 replay verified"
+            "catalog fictional-grid-v2 place-aware replay verified"
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
