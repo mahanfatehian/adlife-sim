@@ -1,10 +1,28 @@
 import pytest
 
 from adlife.core.domain.city import CityNode, CityPackV2
+from adlife.core.domain.city_places import CityPlaceSet, parse_city_place_set_json
 from adlife.core.simulation.city_mobility import CityMobility, shortest_path
 from adlife.core.simulation.city_trace import summarize_city_trace
 from adlife.core.simulation.rng import RandomOracle
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
+from tests.unit.city.test_city_places import place_set_data
+
+
+def mobility_place_set() -> CityPlaceSet:
+    data = place_set_data()
+    places = data["places"]
+    assert isinstance(places, list)
+    places.append(
+        {
+            "place_id": "leisure-c",
+            "kind": "leisure",
+            "node_id": "c",
+            "label": "Copper Park",
+            "provenance": {"method": "operator-authored-fictional"},
+        }
+    )
+    return parse_city_place_set_json(__import__("json").dumps(data))
 
 
 def test_directed_one_way_paths() -> None:
@@ -310,3 +328,104 @@ def test_selected_agent_route_uses_core_directed_paths_for_each_day() -> None:
     assert weekend["node_ids"][-1] == agent.leisure_node
     with pytest.raises(ValueError, match="unknown city agent"):
         simulation.frame_document(0, selected_agent_id="person-999")
+
+
+def test_place_set_binding_and_node_references_are_refused_before_frames() -> None:
+    pack = load_pack_v2(pack_v2_data())
+    places = mobility_place_set()
+    with pytest.raises(ValueError, match="city identifier"):
+        CityMobility(
+            pack,
+            seed=42,
+            agent_count=2,
+            days=1,
+            places=places.model_copy(update={"city_id": "another-city"}),
+        )
+    with pytest.raises(ValueError, match="city fingerprint"):
+        CityMobility(
+            pack,
+            seed=42,
+            agent_count=2,
+            days=1,
+            places=places.model_copy(update={"city_sha256": "f" * 64}),
+        )
+    changed = places.places[0].model_copy(update={"node_id": "missing"})
+    with pytest.raises(ValueError, match="unknown city node"):
+        CityMobility(
+            pack,
+            seed=42,
+            agent_count=2,
+            days=1,
+            places=places.model_copy(update={"places": (changed, *places.places[1:])}),
+        )
+
+
+def test_place_assignment_requires_capacity_and_non_home_destinations() -> None:
+    pack = load_pack_v2(pack_v2_data())
+    places = mobility_place_set()
+    with pytest.raises(ValueError, match="distinct home"):
+        CityMobility(pack, seed=42, agent_count=3, days=1, places=places)
+
+    work = next(place for place in places.places if place.kind == "workplace")
+    work_at_a = work.model_copy(update={"node_id": "a"})
+    constrained = places.model_copy(
+        update={
+            "places": tuple(
+                work_at_a if place.place_id == work.place_id else place for place in places.places
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="workplace different from home"):
+        CityMobility(pack, seed=42, agent_count=2, days=1, places=constrained)
+
+
+def test_place_assignments_name_the_exact_routed_nodes() -> None:
+    pack = load_pack_v2(pack_v2_data())
+    places = mobility_place_set()
+    simulation = CityMobility(pack, seed=42, agent_count=2, days=7, places=places)
+    by_id = {place.place_id: place for place in places.places}
+
+    assert simulation.places == places
+    assert len(simulation.place_assignments) == 2
+    assert len({assignment.home_place_id for assignment in simulation.place_assignments}) == 2
+    for agent, assignment in zip(simulation.agents, simulation.place_assignments, strict=True):
+        assert assignment.agent_id == agent.agent_id
+        assert by_id[assignment.home_place_id].node_id == agent.home_node
+        assert by_id[assignment.work_place_id].node_id == agent.work_node
+        assert by_id[assignment.leisure_place_id].node_id == agent.leisure_node
+        assert assignment.home_node == agent.home_node
+        assert assignment.work_node == agent.work_node
+        assert assignment.leisure_node == agent.leisure_node
+        weekday = simulation.route_document(agent.agent_id, 8 * 60)
+        weekend = simulation.route_document(agent.agent_id, 5 * 1440 + 11 * 60)
+        assert weekday["node_ids"] == list(
+            shortest_path(pack, agent.home_node, agent.work_node).node_ids
+        )
+        assert weekend["node_ids"] == list(
+            shortest_path(pack, agent.home_node, agent.leisure_node).node_ids
+        )
+
+    assert simulation.place_assignment_document() == {
+        "assignments": [
+            {
+                "agent_id": assignment.agent_id,
+                "home_place_id": assignment.home_place_id,
+                "work_place_id": assignment.work_place_id,
+                "leisure_place_id": assignment.leisure_place_id,
+                "home_node": assignment.home_node,
+                "work_node": assignment.work_node,
+                "leisure_node": assignment.leisure_node,
+            }
+            for assignment in simulation.place_assignments
+        ]
+    }
+    assert simulation.metadata()["model"] == "illustrative-road-mobility-v3"
+    assert simulation.metadata()["place_set_sha256"] == places.fingerprint
+
+
+def test_legacy_mobility_exposes_no_place_assignments_and_keeps_v2_identity() -> None:
+    simulation = CityMobility(load_pack_v2(pack_v2_data()), seed=42, agent_count=2, days=1)
+    assert simulation.places is None
+    assert simulation.place_assignments == ()
+    assert simulation.place_assignment_document() == {"assignments": []}
+    assert simulation.metadata()["model"] == "illustrative-road-mobility-v2"

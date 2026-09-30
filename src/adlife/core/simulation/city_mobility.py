@@ -19,6 +19,7 @@ from adlife.core.domain.city import (
     RoadKind,
     TravelDirection,
 )
+from adlife.core.domain.city_places import CityPlace, CityPlaceSet
 from adlife.core.simulation.rng import RandomOracle
 
 Activity = Literal["home", "commute", "work", "leisure"]
@@ -257,6 +258,19 @@ class CityAgent:
 
 
 @dataclass(frozen=True, slots=True)
+class CityPlaceAssignment:
+    """Auditable place IDs and route nodes selected for one synthetic agent."""
+
+    agent_id: str
+    home_place_id: str
+    work_place_id: str
+    leisure_place_id: str
+    home_node: str
+    work_node: str
+    leisure_node: str
+
+
+@dataclass(frozen=True, slots=True)
 class CityPosition:
     agent_id: str
     minute: int
@@ -278,7 +292,15 @@ class CityPosition:
 class CityMobility:
     """Immutable configuration; every frame is computed from seed and simulated minute."""
 
-    def __init__(self, pack: CityPackDocument, *, seed: int, agent_count: int, days: int) -> None:
+    def __init__(
+        self,
+        pack: CityPackDocument,
+        *,
+        seed: int,
+        agent_count: int,
+        days: int,
+        places: CityPlaceSet | None = None,
+    ) -> None:
         if not isinstance(pack, (CityPack, CityPackV2)):
             raise TypeError("pack must be a supported CityPack")
         if type(seed) is not int or seed < 0:
@@ -287,9 +309,12 @@ class CityMobility:
             raise ValueError("agent_count must be between 1 and 250")
         if type(days) is not int or not 1 <= days <= 31:
             raise ValueError("days must be between 1 and 31")
+        if places is not None and not isinstance(places, CityPlaceSet):
+            raise TypeError("places must be a CityPlaceSet")
         self.pack = pack
         self.seed = seed
         self.days = days
+        self.places = places
         self._nodes = {node.node_id: node for node in pack.nodes}
         road_graph = _build_road_graph(pack)
         self._edges = {
@@ -300,13 +325,64 @@ class CityMobility:
         oracle = RandomOracle(seed)
         node_ids = tuple(self._nodes)
         agents: list[CityAgent] = []
+        place_assignments: list[CityPlaceAssignment] = []
         self._paths: dict[tuple[str, str], CityPath] = {}
+        homes: list[CityPlace] = []
+        workplaces: tuple[CityPlace, ...] = ()
+        leisure_places: tuple[CityPlace, ...] = ()
+        if places is not None:
+            if places.city_id != pack.city_id:
+                raise ValueError("city place set does not match the city identifier")
+            if places.city_sha256 != pack.fingerprint:
+                raise ValueError("city place set does not match the city fingerprint")
+            if any(place.node_id not in self._nodes for place in places.places):
+                raise ValueError("city place set references an unknown city node")
+            homes = [place for place in places.places if place.kind == "home"]
+            workplaces = tuple(place for place in places.places if place.kind == "workplace")
+            leisure_places = tuple(place for place in places.places if place.kind == "leisure")
+            if len(homes) < agent_count:
+                raise ValueError("city place set requires one distinct home place per agent")
         for index in range(agent_count):
             agent_id = f"person-{index + 1:03d}"
-            home = _choose(node_ids, oracle, "city-home", agent_id, 0)
-            other_nodes = tuple(node_id for node_id in node_ids if node_id != home)
-            work = _choose(other_nodes, oracle, "city-work", agent_id, 0)
-            leisure = _choose(other_nodes, oracle, "city-leisure", agent_id, 0)
+            if places is None:
+                home = _choose(node_ids, oracle, "city-home", agent_id, 0)
+                other_nodes = tuple(node_id for node_id in node_ids if node_id != home)
+                work = _choose(other_nodes, oracle, "city-work", agent_id, 0)
+                leisure = _choose(other_nodes, oracle, "city-leisure", agent_id, 0)
+            else:
+                home_place = homes.pop(
+                    _choice_index(len(homes), oracle, "city-place-home", agent_id)
+                )
+                available_workplaces = tuple(
+                    place for place in workplaces if place.node_id != home_place.node_id
+                )
+                if not available_workplaces:
+                    raise ValueError("each agent requires a workplace different from home")
+                available_leisure = tuple(
+                    place for place in leisure_places if place.node_id != home_place.node_id
+                )
+                if not available_leisure:
+                    raise ValueError("each agent requires a leisure place different from home")
+                work_place = available_workplaces[
+                    _choice_index(len(available_workplaces), oracle, "city-place-work", agent_id)
+                ]
+                leisure_place = available_leisure[
+                    _choice_index(len(available_leisure), oracle, "city-place-leisure", agent_id)
+                ]
+                home = home_place.node_id
+                work = work_place.node_id
+                leisure = leisure_place.node_id
+                place_assignments.append(
+                    CityPlaceAssignment(
+                        agent_id=agent_id,
+                        home_place_id=home_place.place_id,
+                        work_place_id=work_place.place_id,
+                        leisure_place_id=leisure_place.place_id,
+                        home_node=home,
+                        work_node=work,
+                        leisure_node=leisure,
+                    )
+                )
             agents.append(CityAgent(agent_id, home, work, leisure))
             for source, target in (
                 (home, work),
@@ -330,6 +406,7 @@ class CityMobility:
                         f"trip cannot finish before midnight for {agent_id} on {day_kind}"
                     )
         self.agents = tuple(agents)
+        self.place_assignments = tuple(place_assignments)
 
     def metadata(self) -> dict[str, object]:
         document: dict[str, object] = {
@@ -341,9 +418,13 @@ class CityMobility:
             "days": self.days,
             "minutes_per_day": 1440,
             "model": (
-                "illustrative-road-mobility-v1"
-                if isinstance(self.pack, CityPack)
-                else "illustrative-road-mobility-v2"
+                "illustrative-road-mobility-v3"
+                if self.places is not None
+                else (
+                    "illustrative-road-mobility-v1"
+                    if isinstance(self.pack, CityPack)
+                    else "illustrative-road-mobility-v2"
+                )
             ),
             "disclosure": (
                 "Synthetic agents and illustrative travel speeds; not measured traffic "
@@ -367,7 +448,18 @@ class CityMobility:
                 bounds=self.pack.bounds.model_dump(mode="json"),
                 known_omissions=list(self.pack.known_omissions),
             )
+        if self.places is not None:
+            document.update(
+                place_schema_version=self.places.schema_version,
+                place_set_name=self.places.name,
+                place_set_sha256=self.places.fingerprint,
+                place_assignment_count=len(self.place_assignments),
+            )
         return document
+
+    def place_assignment_document(self) -> dict[str, object]:
+        """Return the canonical JSON-shaped place assignments for persistence and UI."""
+        return {"assignments": [asdict(assignment) for assignment in self.place_assignments]}
 
     def frame(self, minute: int) -> tuple[CityPosition, ...]:
         if type(minute) is not int or not 0 <= minute < self.days * 1440:
@@ -490,4 +582,15 @@ def _choose(
     return choices[int(oracle.uniform(namespace, agent_id, 0, index) * len(choices))]
 
 
-__all__ = ["CityAgent", "CityMobility", "CityPath", "CityPosition", "shortest_path"]
+def _choice_index(length: int, oracle: RandomOracle, namespace: str, agent_id: str) -> int:
+    return int(oracle.uniform(namespace, agent_id, 0, 0) * length)
+
+
+__all__ = [
+    "CityAgent",
+    "CityMobility",
+    "CityPath",
+    "CityPlaceAssignment",
+    "CityPosition",
+    "shortest_path",
+]
