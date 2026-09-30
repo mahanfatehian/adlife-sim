@@ -9,7 +9,8 @@ from typer.testing import CliRunner
 
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
-from tests.unit.city.test_city_pack import load_pack, pack_data
+from tests.unit.city.test_city_mobility import mobility_place_set
+from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
 @pytest.mark.asyncio
@@ -69,3 +70,41 @@ def test_city_view_refuses_machine_mode(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["--format", "json", "city-view", str(tmp_path), "study"])
     assert result.exit_code == 2
     assert '"exit_code": 2' in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_city_view_serves_saved_v3_places_and_exact_manifest_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored = create_city_run(
+        load_pack_v2(pack_v2_data()),
+        root=tmp_path,
+        run_id="place-study",
+        seed=42,
+        agent_count=2,
+        days=7,
+        places=mobility_place_set(),
+    )
+    before = {
+        path.relative_to(stored.directory): path.read_bytes()
+        for path in stored.directory.rglob("*")
+        if path.is_file()
+    }
+    calls: list[FastAPI] = []
+    monkeypatch.setattr("uvicorn.run", lambda application, **kwargs: calls.append(application))
+    result = CliRunner().invoke(app, ["city-view", str(tmp_path), "place-study"])
+    assert result.exit_code == 0, result.output
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=calls[0]), base_url="http://city.test"
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        places = await web.get("/api/places")
+        assignments = await web.get("/api/place-assignments")
+    assert metadata["run_schema_version"] == 3
+    assert places.status_code == assignments.status_code == 200
+    assert assignments.json() == stored.mobility.place_assignment_document()
+    assert before == {
+        path.relative_to(stored.directory): path.read_bytes()
+        for path in stored.directory.rglob("*")
+        if path.is_file()
+    }

@@ -20,8 +20,19 @@ _CSP = (
 )
 
 
-def create_city_app(simulation: CityMobility, *, run_id: str | None = None) -> FastAPI:
+def create_city_app(
+    simulation: CityMobility,
+    *,
+    run_id: str | None = None,
+    run_schema_version: int | None = None,
+) -> FastAPI:
     """Serve only this loaded immutable city and its derived, deterministic frames."""
+    if run_id is None and run_schema_version is not None:
+        raise ValueError("run schema version requires a saved run identifier")
+    if run_schema_version is not None and (
+        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3}
+    ):
+        raise ValueError("unsupported city run schema version")
     app = FastAPI(
         title="AdLife city mobility pilot",
         docs_url=None,
@@ -54,7 +65,9 @@ def create_city_app(simulation: CityMobility, *, run_id: str | None = None) -> F
         if run_id is not None:
             document["saved"] = True
             document["run_id"] = run_id
-            document["run_schema_version"] = simulation.pack.schema_version
+            document["run_schema_version"] = (
+                simulation.pack.schema_version if run_schema_version is None else run_schema_version
+            )
         return document
 
     @app.get("/api/city")
@@ -64,6 +77,18 @@ def create_city_app(simulation: CityMobility, *, run_id: str | None = None) -> F
     @app.get("/api/agents")
     def agents() -> list[dict[str, object]]:
         return [asdict(agent) for agent in simulation.agents]
+
+    @app.get("/api/places")
+    def places() -> dict[str, object]:
+        if simulation.places is None:
+            raise HTTPException(status_code=404, detail="synthetic places not configured")
+        return simulation.places.model_dump(mode="json")
+
+    @app.get("/api/place-assignments")
+    def place_assignments() -> dict[str, object]:
+        if simulation.places is None:
+            raise HTTPException(status_code=404, detail="synthetic places not configured")
+        return simulation.place_assignment_document()
 
     @app.get("/api/frame")
     def frame(

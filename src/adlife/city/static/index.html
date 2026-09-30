@@ -28,7 +28,7 @@
           <canvas id="city-map" aria-label="Road map and simulated agent positions"></canvas>
           <div class="map-compass" aria-hidden="true"><span>N</span><span class="compass-needle"></span></div>
           <div class="map-help">Drag to pan <span>·</span> Scroll to zoom</div>
-          <div class="map-legend" aria-label="Map legend"><span><i class="legend-road"></i>Road network</span><span><i class="legend-agent"></i>Agent</span><span><i class="legend-selected"></i>Selected</span></div>
+          <div class="map-legend" aria-label="Map legend"><span><i class="legend-road"></i>Road network</span><span><i class="legend-agent"></i>Agent</span><span><i class="legend-selected"></i>Selected</span><span class="place-key" hidden><i class="legend-home"></i>Home</span><span class="place-key" hidden><i class="legend-work"></i>Work</span><span class="place-key" hidden><i class="legend-leisure"></i>Leisure</span></div>
         </div>
         <div class="map-footer"><div class="map-copyright"><span id="attribution">Loading data attribution…</span><span aria-hidden="true"> · </span><span id="license-label"></span></div><a id="source-link" target="_blank" rel="noopener noreferrer">Data source ↗</a></div>
       </section>
@@ -39,12 +39,13 @@
           <div class="metric"><span>AGENTS</span><strong id="agent-count">—</strong></div>
           <div class="metric"><span>STREETS</span><strong id="road-count">—</strong></div>
           <div class="metric"><span>SEED</span><strong id="seed-value">—</strong></div>
-          <div class="metric"><span>MODEL</span><strong class="metric-small">ROAD MOBILITY V1</strong></div>
+          <div class="metric"><span>MODEL</span><strong class="metric-small" id="model-label">ROAD MOBILITY</strong></div>
         </div>
         <div class="section-title"><span>SELECTED AGENT</span><span id="selected-id">—</span></div>
         <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose an agent</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
-        <div class="detail-rows"><div><span>HOME NODE</span><strong id="home-node">—</strong></div><div><span>WORK NODE</span><strong id="work-node">—</strong></div><div><span>LEISURE NODE</span><strong id="leisure-node">—</strong></div><div><span>ROAD SEGMENT</span><strong id="road-segment">—</strong></div></div>
+        <div class="detail-rows"><div><span>HOME</span><strong id="home-place">Generated node</strong><small id="home-node">—</small></div><div><span>WORKPLACE</span><strong id="work-place">Generated node</strong><small id="work-node">—</small></div><div><span>LEISURE</span><strong id="leisure-place">Generated node</strong><small id="leisure-node">—</small></div><div><span>ROAD SEGMENT</span><strong id="road-segment">—</strong></div></div>
         <div class="route-block"><span>PLANNED DIRECTED ROUTE</span><p id="route-summary">Select a person to inspect their route.</p></div>
+        <div class="place-evidence" id="place-evidence" hidden><span>PLACE PROVENANCE</span><p id="place-evidence-text">No analyst-supplied place set.</p></div>
         <div class="section-title people-title"><span>SIMULATED PEOPLE</span><span id="people-total">—</span></div>
         <div class="people-list" id="people-list" role="list"></div>
         <div class="disclosure"><span>RESEARCH NOTE</span><p>Synthetic mobility pilot — not a prediction of real residents, traffic, or advertising results. Street geometry can come from a licensed local city pack; speeds and routines are illustrative.</p></div>

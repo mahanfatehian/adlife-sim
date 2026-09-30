@@ -1,7 +1,7 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { meta: null, city: null, agents: [], frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
+const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -59,6 +59,35 @@ function projection() {
   const scale = Math.min((width - 110) / xSpan, (height - 110) / ySpan) * state.zoom;
   const centerLon = (minLon + maxLon) / 2, centerLat = (minLat + maxLat) / 2;
   return (longitude, latitude) => [width / 2 + (longitude - centerLon) * correction * scale + state.panX, height / 2 - (latitude - centerLat) * scale + state.panY];
+}
+
+function selectedPlaceAssignment() {
+  return state.placeAssignments.find((item) => item.agent_id === state.selected) || null;
+}
+
+function placeById(placeId) {
+  if (!state.places) return null;
+  return state.places.places.find((place) => place.place_id === placeId) || null;
+}
+
+function drawPlaceMarker(place, x, y, selected) {
+  const offsets = { home: -10, workplace: 0, leisure: 10 };
+  const colors = { home: "#8fb7ff", workplace: "#dfb66b", leisure: "#d68fc4" };
+  x += offsets[place.kind] || 0;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = selected ? colors[place.kind] : "#102733";
+  ctx.strokeStyle = colors[place.kind] || "#d8e2df";
+  ctx.lineWidth = selected ? 3 : 2;
+  ctx.beginPath();
+  if (place.kind === "home") {
+    ctx.moveTo(0, -7); ctx.lineTo(7, 0); ctx.lineTo(0, 7); ctx.lineTo(-7, 0); ctx.closePath();
+  } else if (place.kind === "workplace") {
+    ctx.rect(-6, -6, 12, 12);
+  } else {
+    ctx.moveTo(0, -7); ctx.lineTo(7, 6); ctx.lineTo(-7, 6); ctx.closePath();
+  }
+  ctx.fill(); ctx.stroke(); ctx.restore();
 }
 
 function renderMap() {
@@ -128,6 +157,16 @@ function renderMap() {
       ctx.setLineDash([]);
     }
   }
+  if (state.places) {
+    const assignment = selectedPlaceAssignment();
+    const selectedIds = new Set(assignment ? [assignment.home_place_id, assignment.work_place_id, assignment.leisure_place_id] : []);
+    for (const place of state.places.places) {
+      const node = nodes.get(place.node_id);
+      if (!node) continue;
+      const [x, y] = project(node.longitude, node.latitude);
+      drawPlaceMarker(place, x, y, selectedIds.has(place.place_id));
+    }
+  }
   for (const node of state.city.nodes) {
     const [x, y] = project(node.longitude, node.latitude);
     ctx.fillStyle = "#a3c0bd"; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
@@ -180,6 +219,26 @@ function renderSelected() {
   byId("home-node").textContent = agent.home_node;
   byId("work-node").textContent = agent.work_node;
   byId("leisure-node").textContent = agent.leisure_node;
+  const assignment = selectedPlaceAssignment();
+  if (assignment) {
+    const home = placeById(assignment.home_place_id);
+    const work = placeById(assignment.work_place_id);
+    const leisure = placeById(assignment.leisure_place_id);
+    byId("home-place").textContent = home ? home.label : assignment.home_place_id;
+    byId("work-place").textContent = work ? work.label : assignment.work_place_id;
+    byId("leisure-place").textContent = leisure ? leisure.label : assignment.leisure_place_id;
+    const evidence = [home, work, leisure].filter(Boolean).map((place) => {
+      const origin = place.provenance.method.replaceAll("-", " ");
+      return `${place.label}: ${origin}${place.provenance.reference ? ` — ${place.provenance.reference}` : ""}`;
+    });
+    byId("place-evidence-text").textContent = evidence.join(" · ");
+    byId("place-evidence").hidden = false;
+  } else {
+    byId("home-place").textContent = "Generated node";
+    byId("work-place").textContent = "Generated node";
+    byId("leisure-place").textContent = "Generated node";
+    byId("place-evidence").hidden = true;
+  }
   byId("road-segment").textContent = position.road_id || "At destination";
   const route = state.frame.route;
   if (route && route.agent_id === state.selected) {
@@ -240,6 +299,12 @@ async function boot() {
   try {
     const [meta, city, agents] = await Promise.all([fetchJson("/api/meta"), fetchJson("/api/city"), fetchJson("/api/agents")]);
     state.meta = meta; state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
+    if (meta.place_set_sha256) {
+      const [places, assignmentDocument] = await Promise.all([fetchJson("/api/places"), fetchJson("/api/place-assignments")]);
+      state.places = places;
+      state.placeAssignments = assignmentDocument.assignments;
+      for (const key of document.querySelectorAll(".place-key")) key.hidden = false;
+    }
     byId("city-name").textContent = meta.city_name;
     if (meta.saved === true && typeof meta.run_id === "string") {
       byId("saved-run-label").textContent = `SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}`;
@@ -249,6 +314,7 @@ async function boot() {
     byId("agent-count").textContent = String(meta.agent_count).padStart(2, "0");
     byId("road-count").textContent = String(city.roads.length).padStart(2, "0");
     byId("seed-value").textContent = String(meta.seed);
+    byId("model-label").textContent = meta.model.replace("illustrative-road-", "").replaceAll("-", " ").toUpperCase();
     byId("people-total").textContent = `${agents.length} ACTIVE`;
     byId("attribution").textContent = meta.attribution;
     byId("license-label").textContent = meta.license;

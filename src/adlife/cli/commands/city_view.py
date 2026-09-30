@@ -31,7 +31,11 @@ def command(
     stored = CityRunStore(root).load(run_id)
     info(f"saved city run: http://127.0.0.1:{port} ({stored.manifest.run_id})")
     uvicorn.run(
-        create_city_app(stored.mobility, run_id=stored.manifest.run_id),
+        create_city_app(
+            stored.mobility,
+            run_id=stored.manifest.run_id,
+            run_schema_version=stored.manifest.schema_version,
+        ),
         host="127.0.0.1",
         port=port,
         log_level="warning",
