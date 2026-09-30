@@ -46,12 +46,18 @@ Hypothesis, Ruff, mypy, uv/Hatch.
 - Produces: `CityRunManifestV4` and v4 dispatch from
   `parse_city_run_manifest_json(document)`.
 
-- [ ] Add failing strict-model tests for exact versions, hashes, byte/count bounds and
+- [x] Add failing strict-model tests for exact versions, hashes, byte/count bounds and
   optional place-field all-or-none validation.
-- [ ] Run the focused tests and confirm failure because v4 is unsupported.
-- [ ] Implement the minimal immutable v4 model and parser dispatch.
-- [ ] Run city-run contract, architecture, Ruff and mypy checks.
-- [ ] Commit and push `feat(city): define spatial run manifest`.
+- [x] Run the focused tests and confirm failure because v4 is unsupported.
+- [x] Implement the minimal immutable v4 model and parser dispatch.
+- [x] Run city-run contract, architecture, Ruff and mypy checks.
+- [x] Commit and push `feat(city): define spatial run manifest`.
+
+**Evidence:** The focused suite first reported 16 failures because v4 was unsupported,
+while all 31 legacy cases remained green. After the minimal model/dispatch change, all 47
+manifest tests passed. The related run-store, replay and architecture suites passed 182
+tests with one expected platform/catalog skip; Ruff and strict mypy over 111 source files
+passed.
 
 ### Task 2: Define canonical opportunity artifact evidence
 
