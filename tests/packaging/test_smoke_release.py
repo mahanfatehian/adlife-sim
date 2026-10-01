@@ -21,6 +21,17 @@ def test_smoke_subprocesses_do_not_create_console_windows(monkeypatch: pytest.Mo
     assert smoke_release._run(["adlife", "--version"]).stdout == "captured"
 
 
+def test_smoke_subprocess_flag_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run_child(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs.get("creationflags") == 0
+        return subprocess.CompletedProcess(command, 0, "captured", "")
+
+    monkeypatch.delattr(smoke_release.subprocess, "CREATE_NO_WINDOW", raising=False)
+    monkeypatch.setattr(smoke_release.subprocess, "run", run_child)
+
+    assert smoke_release._run(["adlife", "--version"]).stdout == "captured"
+
+
 def test_smoke_uses_the_running_supported_interpreter_without_fetching_another(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -47,7 +58,7 @@ def test_smoke_cleans_workspace_and_returns_no_dead_artifact_path(
     monkeypatch.setattr(
         smoke_release, "_create_interpreter", lambda path: (Path(sys.executable), None)
     )
-    monkeypatch.setattr(smoke_release, "_install_wheel", lambda *args: None)
+    monkeypatch.setattr(smoke_release, "_install_wheel", lambda *args, **kwargs: None)
 
     result = smoke_release.smoke(tmp_path / "unused.whl")
 
@@ -98,7 +109,7 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         "_create_interpreter",
         lambda path: (workspace / "venv" / "Scripts" / "python.exe", None),
     )
-    monkeypatch.setattr(smoke_release, "_install_wheel", lambda *args: None)
+    monkeypatch.setattr(smoke_release, "_install_wheel", lambda *args, **kwargs: None)
 
     def run_child(
         command: list[str], *, cwd: Path | None = None
@@ -291,3 +302,70 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     ] in invoked
     assert all(cwd == scratch for _arguments, cwd in calls)
     assert not workspace.exists()
+
+
+def test_offline_smoke_installs_exact_wheel_without_resolving_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def record_command(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(smoke_release, "_run", record_command)
+
+    smoke_release._install_wheel(Path("child-python"), "uv", Path("adlife.whl"), no_deps=True)
+
+    assert calls == [
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            "child-python",
+            "--quiet",
+            "--no-deps",
+            "adlife.whl",
+        ]
+    ]
+
+
+def test_offline_smoke_exposes_only_locked_host_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venv = tmp_path / "venv"
+    python = venv / "Scripts" / "python.exe"
+    child_site = venv / "Lib" / "site-packages"
+    child_site.mkdir(parents=True)
+    host_site = tmp_path / "host" / "site-packages"
+    host_site.mkdir(parents=True)
+
+    def run_child(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, f"{child_site}\n", "")
+
+    monkeypatch.setattr(smoke_release, "_run", run_child)
+    monkeypatch.setattr(smoke_release.site, "getsitepackages", lambda: [str(host_site)])
+
+    smoke_release._expose_locked_dependencies(python)
+
+    assert (child_site / "adlife-smoke-locked-dependencies.pth").read_text(
+        encoding="utf-8"
+    ) == f"{host_site.resolve()}\n"
+
+
+def test_offline_smoke_refuses_child_site_outside_the_created_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venv = tmp_path / "venv"
+    python = venv / "Scripts" / "python.exe"
+    outside = tmp_path / "outside" / "site-packages"
+    outside.mkdir(parents=True)
+
+    def run_child(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, f"{outside}\n", "")
+
+    monkeypatch.setattr(smoke_release, "_run", run_child)
+
+    with pytest.raises(RuntimeError, match="outside the smoke environment"):
+        smoke_release._expose_locked_dependencies(python)

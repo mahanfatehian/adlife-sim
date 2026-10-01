@@ -219,7 +219,7 @@ def _git_sha_of(project_root: Path) -> str:
             capture_output=True,
             text=True,
             timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError):
         return "uncommitted"

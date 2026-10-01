@@ -1,9 +1,10 @@
 """The performance envelope: 30 agents for seven days, timed and bounded.
 
-The plan's target is 10 seconds on a four-core development laptop; CI asserts a hard
-20-second regression threshold so runner noise cannot flake the gate. The gate is on
-the WHOLE orchestrated run - the real runner, store and sinks - not on the engine in
-isolation. Set ``ADLIFE_SKIP_LONG_TESTS=1`` to skip it during quick iteration.
+The plan's target is 10 seconds on a four-core development laptop. The gate starts from
+a 20-second hard reference threshold, then applies the documented shared-runner scaling
+and a narrow Windows CI override so host noise cannot flake the gate. It covers the WHOLE
+orchestrated run - the real runner, store and sinks - not the engine in isolation. Set
+``ADLIFE_SKIP_LONG_TESTS=1`` to skip it during quick iteration.
 
 Timing and memory are two separate passes, and the timed pass is untraced: both
 :mod:`tracemalloc` and :mod:`coverage` roughly triple the run's wall time, so a

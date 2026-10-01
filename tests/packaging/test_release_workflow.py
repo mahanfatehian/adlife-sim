@@ -10,6 +10,21 @@ import yaml
 ROOT = Path(__file__).parents[2]
 
 
+def test_ci_runs_maximum_performance_outside_coverage() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["test"]["steps"]
+    coverage = next(
+        step for step in steps if step.get("name") == "Test suite with branch coverage (85% floor)"
+    )
+    performance = next(step for step in steps if step.get("name") == "Maximum rules performance")
+
+    assert coverage["env"]["ADLIFE_SKIP_LONG_TESTS"] == "1"
+    assert performance["run"] == "uv run pytest -q -s tests/integration/test_maximum_run.py"
+    ceiling = performance["env"]["ADLIFE_PERF_CEILING_SECONDS"]
+    assert "runner.os == 'Windows'" in ceiling
+    assert "'60'" in ceiling
+
+
 @pytest.mark.parametrize("publisher", ["publish-pypi", "publish-release"])
 def test_publication_waits_for_completed_asset_assembly(publisher: str) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())

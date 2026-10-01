@@ -49,7 +49,15 @@ jobs:
       - name: Mypy strict
         run: uv run mypy src
       - name: Test suite with branch coverage (85% floor)
+        env:
+          # Run the timing-sensitive benchmark separately from coverage instrumentation.
+          ADLIFE_SKIP_LONG_TESTS: "1"
         run: uv run pytest -q --cov=adlife --cov-branch
+      - name: Maximum rules performance
+        env:
+          # GitHub's shared Windows runners are materially slower than Linux/macOS.
+          ADLIFE_PERF_CEILING_SECONDS: ${{ runner.os == 'Windows' && '60' || '' }}
+        run: uv run pytest -q -s tests/integration/test_maximum_run.py
       - name: Offline deterministic integration runs
         run: |
           uv run pytest -q tests/integration/test_rule_run.py tests/integration/test_demo.py

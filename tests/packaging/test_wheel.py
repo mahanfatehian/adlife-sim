@@ -95,7 +95,12 @@ def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> Non
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:
     report = tmp_path / "smoke-result.txt"
     completed = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "smoke_release.py"), str(built_wheel)],
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "smoke_release.py"),
+            "--reuse-locked-dependencies",
+            str(built_wheel),
+        ],
         capture_output=True,
         text=True,
         timeout=600,

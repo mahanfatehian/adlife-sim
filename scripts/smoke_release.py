@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,7 @@ def _run(command: list[str], *, cwd: Path | None = None) -> subprocess.Completed
         capture_output=True,
         text=True,
         timeout=300,
-        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if completed.returncode != 0:
         detail = completed.stdout + completed.stderr
@@ -189,14 +190,67 @@ def _create_interpreter(workspace: Path) -> tuple[Path, str | None]:
     )
 
 
-def _install_wheel(python: Path, uv: str | None, wheel: Path) -> None:
+def _install_wheel(python: Path, uv: str | None, wheel: Path, *, no_deps: bool = False) -> None:
+    dependency_option = ["--no-deps"] if no_deps else []
     if uv is not None:
-        _run([uv, "pip", "install", "--python", str(python), "--quiet", str(wheel)])
+        _run(
+            [
+                uv,
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--quiet",
+                *dependency_option,
+                str(wheel),
+            ]
+        )
     else:
-        _run([str(python), "-m", "pip", "install", "--quiet", str(wheel)])
+        _run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                *dependency_option,
+                str(wheel),
+            ]
+        )
 
 
-def smoke(wheel: Path) -> None:
+def _expose_locked_dependencies(python: Path) -> None:
+    """Expose this locked environment's dependencies to an isolated wheel venv.
+
+    This is solely for the repository's network-free pytest smoke. The wheel is still
+    installed into a fresh environment and is not imported from the source checkout.
+    Release CI deliberately omits this mode and resolves a genuinely clean environment.
+    """
+    completed = _run([str(python), "-c", "import site; print(site.getsitepackages()[0])"])
+    child_site = Path(completed.stdout.strip()).resolve()
+    environment_root = python.parent.parent.resolve()
+    if not child_site.is_relative_to(environment_root):
+        raise RuntimeError("child site-packages is outside the smoke environment")
+    if not child_site.is_dir():
+        raise RuntimeError("child site-packages does not exist")
+
+    host_sites = sorted(
+        {
+            path
+            for value in site.getsitepackages()
+            if (path := Path(value).resolve()).is_dir() and path != child_site
+        },
+        key=str,
+    )
+    if not host_sites:
+        raise RuntimeError("locked host dependencies are unavailable")
+    dependency_paths = "".join(f"{path}\n" for path in host_sites)
+    (child_site / "adlife-smoke-locked-dependencies.pth").write_text(
+        dependency_paths, encoding="utf-8"
+    )
+
+
+def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
     """Verify the wheel, then remove all temporary artifacts before returning."""
     workspace = Path(tempfile.mkdtemp(prefix="adlife-smoke-"))
     try:
@@ -205,7 +259,9 @@ def smoke(wheel: Path) -> None:
         python, uv = _create_interpreter(workspace)
         adlife = python.parent / ("adlife.exe" if sys.platform == "win32" else "adlife")
 
-        _install_wheel(python, uv, wheel)
+        if reuse_locked_dependencies:
+            _expose_locked_dependencies(python)
+        _install_wheel(python, uv, wheel, no_deps=reuse_locked_dependencies)
         _run([str(adlife), "--version"], cwd=scratch)
         doctor = _run([str(adlife), "--format", "json", "doctor", "--offline"], cwd=scratch)
         doctor_document = _expect_json(doctor, "doctor --offline")
@@ -465,12 +521,23 @@ def smoke(wheel: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--reuse-locked-dependencies",
+        action="store_true",
+        help=(
+            "Reuse dependencies from the invoking locked environment for a network-free "
+            "test; the wheel itself is still installed into a fresh environment."
+        ),
+    )
     parser.add_argument("wheel", type=Path, help="Path to the built wheel to verify.")
     arguments = parser.parse_args()
     if not arguments.wheel.is_file():
         print(f"wheel not found: {arguments.wheel}", file=sys.stderr)
         raise SystemExit(2)
-    smoke(arguments.wheel.resolve())
+    smoke(
+        arguments.wheel.resolve(),
+        reuse_locked_dependencies=arguments.reuse_locked_dependencies,
+    )
 
 
 if __name__ == "__main__":
