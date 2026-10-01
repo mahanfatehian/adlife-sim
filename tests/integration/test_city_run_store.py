@@ -486,8 +486,14 @@ def test_changed_v3_place_assignment_is_refused(tmp_path: Path) -> None:
     )
     path = stored.directory / "inputs" / "place-assignments.json"
     document = json.loads(path.read_text(encoding="utf-8"))
-    document["assignments"][0]["home_place_id"] = "home-b"
-    path.write_text(canonical_json(document) + "\n", encoding="utf-8")
+    first, second = document["assignments"]
+    assert first["home_place_id"] != second["home_place_id"]
+    first["home_place_id"], second["home_place_id"] = (
+        second["home_place_id"],
+        first["home_place_id"],
+    )
+    first["home_node"], second["home_node"] = second["home_node"], first["home_node"]
+    path.write_bytes((canonical_json(document) + "\n").encode("utf-8"))
     with pytest.raises(CorruptRunArtifact):
         CityRunStore(tmp_path).load("place-study")
 
