@@ -139,7 +139,15 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert "http://" not in html.text and "https://" not in html.text
     assert "textContent" in js.text
     assert "innerHTML" not in js.text
-    assert "Content-Security-Policy" in html.headers
+    policy = html.headers["Content-Security-Policy"]
+    assert "default-src 'none'" in policy
+    assert "script-src 'self'" in policy
+    assert "style-src 'self'" in policy
+    assert "connect-src 'self'" in policy
+    assert "frame-ancestors 'none'" in policy
+    assert html.headers["X-Frame-Options"] == "DENY"
+    assert html.headers["Referrer-Policy"] == "no-referrer"
+    assert html.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
 
 
 @pytest.mark.asyncio

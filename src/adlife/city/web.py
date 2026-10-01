@@ -25,8 +25,16 @@ _ASSETS = {
 }
 _CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; "
-    "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
+    "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'"
 )
+_DASHBOARD_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+}
 
 
 def create_city_app(
@@ -85,7 +93,7 @@ def create_city_app(
         html = files("adlife.city").joinpath("static/index.html").read_text(encoding="utf-8")
         return HTMLResponse(
             html,
-            headers={"Content-Security-Policy": _CSP, "X-Content-Type-Options": "nosniff"},
+            headers=_DASHBOARD_HEADERS,
         )
 
     @app.get("/static/{asset_name}", include_in_schema=False)
