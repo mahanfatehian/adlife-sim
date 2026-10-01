@@ -140,8 +140,13 @@ Open a **validated saved** city mobility run in the same read-only browser timel
 at `http://127.0.0.1:8765` (loopback only). The run is fully verified before the
 server binds; a corrupt or partial run exits 4. The HTTP API cannot select another
 run or open a filesystem path. The header displays the saved run ID and artifact
-schema version. Schema-v4 runs are accepted, but this viewer remains a mobility-only
-observer and does not expose the opportunity files. `--port` accepts 1–65535. Like
+schema version. For schema-v4 runs, the viewer adds a read-only current-minute opportunity
+panel with persisted totals, channel counts and canonical records for the timeline
+scrubber. Its bounded `/api/opportunities` endpoint accepts a required minute, optional
+saved agent ID, offset and a maximum page size of 100; `/api/opportunity-summary` exposes
+only validated scenario metadata and aggregate counts. Neither endpoint accepts a path or
+changes the run. Every record remains `synthetic-opportunity-not-impression`; the viewer
+does not infer an impression, response or outcome. `--port` accepts 1–65535. Like
 `adlife city`, this interactive command accepts human output mode only and does not launch
 a browser automatically.
 

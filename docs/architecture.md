@@ -91,9 +91,11 @@ pack under `city-runs/<run-id>/`; their hashes are part of the final manifest.
 V4 additionally freezes the validated spatial scenario, opportunity stream and summary.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute before reporting equality, and `city-view`
-validates before serving one immutable mobility projection. V4 is auditable opportunity
-evidence, not an event-sourced advertising-outcome run; C3 still must define and test the
-causal downstream contract.
+validates before serving one immutable mobility projection. For V4, the same loopback-only
+adapter also serves a bounded summary and canonical, paged current-minute opportunity
+evidence to the read-only browser. It does not create or mutate evidence. V4 remains
+auditable opportunity evidence, not an event-sourced advertising-outcome run; C3 still
+must define and test the causal downstream contract.
 
 ## The cognition seam
 

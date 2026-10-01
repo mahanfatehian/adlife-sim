@@ -91,6 +91,10 @@ retaining the existing mobility fields.
 `city-view` remains a mobility observer during C3a; serving/filtering persisted
 opportunities belongs to the later bounded API/UI stage.
 
+Implementation status (2026-10-01): that later read-only inspection stage now serves the
+validated summary and canonical current-minute opportunity pages. It does not change the
+C3a artifact contract or add impression, cognition, state, budget or purchase effects.
+
 ## Security and scientific boundary
 
 - Paths are derived only from the existing validated portable run ID and fixed filenames.

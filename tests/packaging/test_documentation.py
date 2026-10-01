@@ -218,6 +218,19 @@ def test_spatial_opportunity_docs_describe_c3a_artifacts_without_claiming_outcom
     assert "[x] **C2" in roadmap
     assert "[ ] **C3" in roadmap
     assert "c3a" in roadmap.lower()
+    for text in (readme, architecture, cli, city_pilot, reproducibility, model_card):
+        assert "current-minute opportunity" in text
+    combined = "\n".join(
+        (readme, architecture, cli, city_pilot, reproducibility, model_card, roadmap.lower())
+    )
+    for stale_claim in (
+        "not shown by the mobility-only viewer",
+        "remains a mobility-only observer",
+        "does not present opportunity records",
+        "still presents only mobility",
+        "reports or the read-only mobility viewer",
+    ):
+        assert stale_claim not in combined
 
 
 # ---------------------------------------------------------------------------

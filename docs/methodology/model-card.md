@@ -106,7 +106,8 @@ free-flow routes. Every record is explicitly a synthetic opportunity, not a veri
 impression, through the literal claim scope `synthetic-opportunity-not-impression`.
 Schema-v4 city artifacts persist and replay that stream and its independent summary. No
 spatial opportunity currently reaches cognition, agent state, purchase logic, metrics or
-reports, and the read-only city viewer still presents only mobility.
+reports. The read-only city viewer presents persisted current-minute opportunity evidence
+alongside mobility, explicitly as synthetic evidence rather than an impression or outcome.
 
 ## Metrics
 

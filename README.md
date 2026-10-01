@@ -213,9 +213,11 @@ The validation command alone writes no run artifact. Passing the validated docum
 `city-run --spatial-campaign` creates a schema-v4 artifact that freezes the scenario,
 canonical opportunity stream, funnel summary, and their hashes. `city-replay` recomputes
 and verifies all of that evidence without changing the source. These records remain
-`synthetic-opportunity-not-impression`: they are not shown by the mobility-only viewer,
-converted into impressions/notice/responses, sent to cognition, applied to agent state or
-purchases, or included in metrics and reports. C3's causal bridge and C4 remain open.
+`synthetic-opportunity-not-impression`. For a verified schema-v4 run, `city-view` shows
+read-only current-minute opportunity evidence on the map and in a bounded evidence rail;
+it does not convert it into impressions/notice/responses, send it to cognition, apply it
+to agent state or purchases, or include it in metrics and reports. C3's causal bridge and
+C4 remain open.
 Nothing claims observed device use, real viewability, attention, traffic, people, or sales.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
@@ -224,8 +226,9 @@ terminal window for you.
 
 `city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
 schema-v4 spatial runs additionally persist opportunity evidence. `city-replay` verifies
-the selected contract without changing source artifacts, and `city-view` opens only its
-verified mobility projection in the same read-only local timeline.
+the selected contract without changing source artifacts, and `city-view` opens its
+verified mobility projection plus persisted current-minute opportunity evidence in the
+same read-only local timeline.
 
 This remains an early geographic research slice, not a calibrated advertising outcome
 model: it persists bounded opportunity evidence but does not infer impressions, simulate

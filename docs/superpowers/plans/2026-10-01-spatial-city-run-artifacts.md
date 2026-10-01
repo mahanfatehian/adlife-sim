@@ -199,6 +199,11 @@ because the script still required v3; all five smoke-script tests now prove it s
 the spatial scenario and verifies v4 stream/summary provenance through replay. A separate
 regression also proved and fixed that the mobility-only viewer must accept a valid v4 run.
 
+**Subsequent implementation (2026-10-01):** a bounded read-only inspection slice now
+serves the already validated v4 summary and canonical current-minute opportunity records
+to the saved-run viewer. This does not revise C3a's storage scope or create the still-open
+causal bridge, metrics or report integration.
+
 **Final evidence (2026-10-01):** `uv sync --locked --all-groups` resolved 78 and checked
 68 packages. Ruff format checked 264 files, Ruff lint passed, and mypy passed all 111
 source files. The full suite passed with 3,493 tests and 16 skips in 473.80 seconds;

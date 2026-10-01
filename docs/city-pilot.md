@@ -240,9 +240,11 @@ Every output record says `synthetic-opportunity-not-impression`. The probability
 observed phone behavior; road proximity is not an impression; orientation and distance
 are not measured visibility or attention. C2 remains pure; C3a adds a schema-v4 storage
 adapter that freezes its exact canonical stream and summary when `city-run` receives
-`--spatial-campaign`. No viewer/report exposes these records and no cognition, state or
-purchase transition consumes them. The remaining C3 causal bridge and C4 artifact-backed
-metrics are required before AdLife can run a complete geographic campaign study.
+`--spatial-campaign`. The saved-run viewer can inspect persisted current-minute opportunity
+evidence without changing it; no cognition, state or purchase transition consumes the
+records and no report treats them as outcomes. The remaining C3 causal bridge and C4
+artifact-backed metrics are required before AdLife can run a complete geographic campaign
+study.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
@@ -288,7 +290,10 @@ manifest binds the scenario, stream and summary hashes plus exact stream bytes/c
 Earlier v1/v2/v3 runs remain readable. `city-replay` refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
-API has no path or run-selection endpoint and remains a mobility-only observer for v4.
+API has no path or run-selection endpoint. For v4, a bounded summary endpoint and a
+canonical page of current-minute opportunity records drive the read-only evidence rail
+and map markers. Selecting a record changes presentation only. The panel always labels
+the evidence `synthetic-opportunity-not-impression` and creates no downstream event.
 The header shows the saved ID and schema version. A crash during publication can leave an
 incomplete, reserved run directory: inspect it and choose a new ID; no command overwrites
 it silently. Integrity hashes

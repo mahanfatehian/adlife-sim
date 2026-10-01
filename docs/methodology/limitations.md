@@ -75,6 +75,8 @@ What this model cannot support. Read alongside the
   persist and replay that canonical stream and its summary. Every record retains the
   literal claim `synthetic-opportunity-not-impression`; no geographic
   impression/notice/response event exists.
+  The read-only saved-run viewer can display persisted current-minute opportunity evidence,
+  but this presentation adds no causal event or outcome semantics.
   Road proximity and the half-plane orientation heuristic omit occlusion, lanes,
   buildings, traffic, speed variation and measured viewability. Phone probability is an
   analyst assumption, not an observed usage rate. The remaining C3/C4 work must still

@@ -214,7 +214,8 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   manifest hashes/byte/count bounds, final-manifest publication, corruption tests,
   deterministic replay and installed-wheel smoke cover the artifact. C3 remains open:
   these opportunities do not yet drive cognition, agent state, purchases, metrics,
-  reports or the read-only mobility viewer.
+  or reports. A subsequent bounded UI slice exposes validated current-minute opportunity
+  evidence in the read-only saved-run viewer without adding any causal transition.
 - [ ] **C4 — Extend spatial metrics, comparison and reports.** Derive opportunity,
   impression, notice, recall/social and proxy metrics from persisted events with
   provenance; implement matched geographic A/A and paired A/B with common random

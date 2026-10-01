@@ -160,7 +160,9 @@ hashes plus exact stream bytes/count, and is published last. The fixed claim sco
 without changing source files; for v4 it also recomputes and compares the normalized
 opportunity stream and summary. A mismatch, partial publication or incompatible artifact
 is refused. `adlife city-view ROOT ID` performs the same load verification before
-opening the read-only mobility timeline; it does not present opportunity records. A
+opening the read-only mobility timeline. For schema-v4 it also presents canonical,
+persisted current-minute opportunity evidence; scrubbing or selecting an evidence record
+does not recompute, append to or mutate the source artifact. A
 digest proves equality against that artifact, not authenticity against an owner rewriting
 all files. Identical frames are expected on a compatible implementation/runtime;
 cross-platform bitwise identity of floating-point interpolation is not claimed.
