@@ -253,6 +253,11 @@ async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> 
     assert first.json()["total"] == 2
     assert first.json()["next_offset"] == 1
     assert first.json()["items"][0]["agent_id"] == "person-001"
+    assert first.json()["channel_counts"] == {
+        "roadside-billboard": 0,
+        "mobile-feed": 2,
+    }
+    assert first.json()["agent_counts"] == {"person-001": 1, "person-002": 1}
     assert second.json()["next_offset"] is None
     assert second.json()["items"][0]["agent_id"] == "person-002"
     assert selected.json()["total"] == 1

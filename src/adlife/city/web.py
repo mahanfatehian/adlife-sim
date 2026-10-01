@@ -175,6 +175,15 @@ def create_city_app(
         if agent_id is not None:
             matching = tuple(item for item in matching if item.agent_id == agent_id)
         total = len(matching)
+        channel_counts = {
+            "roadside-billboard": sum(item.channel == "roadside-billboard" for item in matching),
+            "mobile-feed": sum(item.channel == "mobile-feed" for item in matching),
+        }
+        agent_counts = {
+            known_agent.agent_id: sum(item.agent_id == known_agent.agent_id for item in matching)
+            for known_agent in simulation.agents
+            if any(item.agent_id == known_agent.agent_id for item in matching)
+        }
         page = matching[offset : offset + limit]
         consumed = offset + len(page)
         return {
@@ -185,6 +194,8 @@ def create_city_app(
             "offset": offset,
             "limit": limit,
             "total": total,
+            "channel_counts": channel_counts,
+            "agent_counts": agent_counts,
             "next_offset": consumed if consumed < total else None,
             "items": [item.model_dump(mode="json") for item in page],
         }

@@ -1,7 +1,7 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
+const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -70,6 +70,16 @@ function placeById(placeId) {
   return state.places.places.find((place) => place.place_id === placeId) || null;
 }
 
+function spatialPlacementById(placementId) {
+  if (!state.opportunitySummary) return null;
+  return state.opportunitySummary.placements.find((item) => item.placement_id === placementId) || null;
+}
+
+function spatialCampaignById(campaignId) {
+  if (!state.opportunitySummary) return null;
+  return state.opportunitySummary.campaigns.find((item) => item.campaign_id === campaignId) || null;
+}
+
 function drawPlaceMarker(place, x, y, selected) {
   const offsets = { home: -10, workplace: 0, leisure: 10 };
   const colors = { home: "#8fb7ff", workplace: "#dfb66b", leisure: "#d68fc4" };
@@ -88,6 +98,34 @@ function drawPlaceMarker(place, x, y, selected) {
     ctx.moveTo(0, -7); ctx.lineTo(7, 6); ctx.lineTo(-7, 6); ctx.closePath();
   }
   ctx.fill(); ctx.stroke(); ctx.restore();
+}
+
+function drawOpportunityMarker(opportunity, project) {
+  const placement = spatialPlacementById(opportunity.placement_id);
+  const position = state.frame.positions.find((item) => item.agent_id === opportunity.agent_id);
+  const coordinate = opportunity.channel === "roadside-billboard" && placement
+    ? [placement.longitude, placement.latitude]
+    : position ? [position.longitude, position.latitude] : null;
+  if (!coordinate) return;
+  const [x, y] = project(coordinate[0], coordinate[1]);
+  const selected = opportunity.agent_id === state.selected;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = selected ? "#fff3c8" : "#f0ca83";
+  ctx.fillStyle = opportunity.channel === "roadside-billboard" ? "#f0ca83" : "#69d7e4";
+  ctx.lineWidth = selected ? 3 : 2;
+  ctx.shadowColor = ctx.fillStyle;
+  ctx.shadowBlur = selected ? 14 : 8;
+  ctx.beginPath();
+  if (opportunity.channel === "roadside-billboard") {
+    ctx.moveTo(0, -10); ctx.lineTo(10, 0); ctx.lineTo(0, 10); ctx.lineTo(-10, 0); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#0b141d"; ctx.fillRect(-2, -2, 4, 4);
+  } else {
+    ctx.arc(0, 0, selected ? 14 : 11, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillRect(-3, -5, 6, 10);
+  }
+  ctx.restore();
 }
 
 function renderMap() {
@@ -184,6 +222,11 @@ function renderMap() {
       ctx.fillText(position.agent_id.toUpperCase(), x + 14, y - 11);
     }
   }
+  if (state.opportunityPage) {
+    for (const opportunity of state.opportunityPage.items) {
+      drawOpportunityMarker(opportunity, project);
+    }
+  }
 }
 
 function renderPeople() {
@@ -250,15 +293,53 @@ function renderSelected() {
   }
 }
 
+function renderOpportunityEvidence() {
+  if (!state.opportunitySummary || !state.opportunityPage) return;
+  const page = state.opportunityPage;
+  const list = byId("opportunity-list");
+  while (list.firstChild) list.removeChild(list.firstChild);
+  const selectedCount = page.agent_counts[state.selected] || 0;
+  byId("opportunity-current").textContent = `${page.total} AT THIS MINUTE · ${selectedCount} FOR SELECTED AGENT`;
+  byId("opportunity-empty").hidden = page.total !== 0;
+  const pageNote = byId("opportunity-page-note");
+  pageNote.hidden = page.items.length === page.total;
+  pageNote.textContent = `Showing the first ${page.items.length} of ${page.total} canonical records.`;
+  for (const opportunity of page.items) {
+    const campaign = spatialCampaignById(opportunity.campaign_id);
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "opportunity-card";
+    card.classList.toggle("selected", opportunity.agent_id === state.selected);
+    const channel = document.createElement("span");
+    channel.className = `opportunity-channel ${opportunity.channel === "mobile-feed" ? "phone" : "roadside"}`;
+    channel.textContent = opportunity.channel === "mobile-feed" ? "PHONE" : "ROADSIDE BILLBOARD";
+    const at = document.createElement("span");
+    at.className = "opportunity-at";
+    at.textContent = `${clockText(opportunity.model_minute)}:${String(Math.floor(opportunity.millisecond_within_minute / 1000)).padStart(2, "0")}`;
+    const identity = document.createElement("strong");
+    identity.textContent = `${opportunity.agent_id.toUpperCase()} · ${opportunity.placement_id.toUpperCase()}`;
+    const detail = document.createElement("small");
+    detail.textContent = `${campaign ? campaign.name : opportunity.campaign_id} · ordinal ${opportunity.ordinal_for_agent_placement_day}`;
+    card.append(channel, at, identity, detail);
+    card.addEventListener("click", () => {
+      state.selected = opportunity.agent_id;
+      renderPeople(); renderSelected(); renderOpportunityEvidence(); renderMap();
+    });
+    list.append(card);
+  }
+}
+
 async function setMinute(minute) {
   if (!state.meta) return;
   const next = Math.max(0, Math.min(state.meta.days * 1440 - 1, Math.floor(minute)));
   const request = ++state.request;
   try {
-    const frame = await fetchJson(`/api/frame?minute=${next}&agent_id=${encodeURIComponent(state.selected)}`);
+    const requests = [fetchJson(`/api/frame?minute=${next}&agent_id=${encodeURIComponent(state.selected)}`)];
+    if (state.opportunitySummary) requests.push(fetchJson(`/api/opportunities?minute=${next}`));
+    const [frame, opportunityPage = null] = await Promise.all(requests);
     if (request !== state.request) return;
-    state.frame = frame; state.minute = next;
-    updateLabels(); renderPeople(); renderSelected(); renderMap();
+    state.frame = frame; state.opportunityPage = opportunityPage; state.minute = next;
+    updateLabels(); renderPeople(); renderSelected(); renderOpportunityEvidence(); renderMap();
   } catch (error) { showError(String(error)); stopPlayback(); }
 }
 
@@ -304,6 +385,15 @@ async function boot() {
       state.places = places;
       state.placeAssignments = assignmentDocument.assignments;
       for (const key of document.querySelectorAll(".place-key")) key.hidden = false;
+    }
+    if (meta.spatial_opportunities === true) {
+      state.opportunitySummary = await fetchJson("/api/opportunity-summary");
+      byId("opportunity-scenario").textContent = state.opportunitySummary.scenario_name;
+      byId("opportunity-total").textContent = String(state.opportunitySummary.counts.opportunity_count);
+      byId("opportunity-roadside").textContent = String(state.opportunitySummary.counts.roadside_opportunity_count);
+      byId("opportunity-phone").textContent = String(state.opportunitySummary.counts.phone_opportunity_count);
+      byId("opportunity-panel").hidden = false;
+      for (const key of document.querySelectorAll(".opportunity-key")) key.hidden = false;
     }
     byId("city-name").textContent = meta.city_name;
     if (meta.saved === true && typeof meta.run_id === "string") {
