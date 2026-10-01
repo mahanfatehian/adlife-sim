@@ -5,6 +5,13 @@ from adlife.city.web import create_city_app
 from adlife.core.simulation.city_mobility import CityMobility
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
+from tests.unit.city.test_spatial_opportunity import (
+    _billboard,
+    _evaluate,
+    _mobility,
+    _phone,
+    _scenario,
+)
 
 
 def client() -> httpx.AsyncClient:
@@ -196,24 +203,97 @@ async def test_saved_v3_run_reports_manifest_schema_and_place_evidence() -> None
 
 @pytest.mark.asyncio
 async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> None:
-    places = mobility_place_set()
-    simulation = CityMobility(
-        load_pack_v2(pack_v2_data()), seed=42, agent_count=2, days=7, places=places
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack, agent_count=2)
+    scenario = _scenario(
+        pack,
+        [
+            _billboard(),
+            _phone(windows=[{"start_minute": 0, "end_minute": 2}], cap=2),
+        ],
     )
+    evaluation = _evaluate(simulation, scenario)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(
             app=create_city_app(
                 simulation,
                 run_id="saved-spatial-study",
                 run_schema_version=4,
+                spatial_scenario=scenario,
+                opportunity_evaluation=evaluation,
             )
         ),
         base_url="http://city.test",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
-        opportunities = await web.get("/api/opportunities")
+        summary = await web.get("/api/opportunity-summary")
+        first = await web.get("/api/opportunities?minute=0&limit=1")
+        second = await web.get("/api/opportunities?minute=0&offset=1&limit=1")
+        selected = await web.get("/api/opportunities?minute=0&agent_id=person-002")
+        invalid_minute = await web.get("/api/opportunities?minute=1440")
+        write = await web.post("/api/opportunities?minute=0")
     assert metadata["saved"] is True
     assert metadata["run_id"] == "saved-spatial-study"
     assert metadata["run_schema_version"] == 4
-    assert metadata["place_set_sha256"] == places.fingerprint
-    assert opportunities.status_code == 404
+    assert metadata["spatial_opportunities"] is True
+    assert metadata["claim_scope"] == "synthetic-opportunity-not-impression"
+    assert summary.status_code == 200
+    assert summary.json() == {
+        "schema_version": 1,
+        "scenario_id": "opportunity-golden",
+        "scenario_name": "Fictional opportunity golden",
+        "scenario_sha256": scenario.fingerprint,
+        "opportunity_model_id": "spatial-opportunity-v1",
+        "claim_scope": "synthetic-opportunity-not-impression",
+        "counts": evaluation.counts.model_dump(mode="json"),
+        "campaigns": [item.model_dump(mode="json") for item in scenario.campaigns],
+        "placements": [item.model_dump(mode="json") for item in scenario.placements],
+    }
+    assert first.status_code == second.status_code == selected.status_code == 200
+    assert first.json()["total"] == 2
+    assert first.json()["next_offset"] == 1
+    assert first.json()["items"][0]["agent_id"] == "person-001"
+    assert second.json()["next_offset"] is None
+    assert second.json()["items"][0]["agent_id"] == "person-002"
+    assert selected.json()["total"] == 1
+    assert selected.json()["items"][0]["agent_id"] == "person-002"
+    assert invalid_minute.status_code == 422
+    assert write.status_code == 405
+
+
+@pytest.mark.asyncio
+async def test_non_spatial_view_has_no_opportunity_api_or_spatial_metadata() -> None:
+    async with client() as web:
+        metadata = (await web.get("/api/meta")).json()
+        summary = await web.get("/api/opportunity-summary")
+        opportunities = await web.get("/api/opportunities?minute=0")
+    assert "spatial_opportunities" not in metadata
+    assert "claim_scope" not in metadata
+    assert summary.status_code == opportunities.status_code == 404
+    assert (
+        summary.json()
+        == opportunities.json()
+        == {"detail": "spatial opportunity evidence not configured"}
+    )
+
+
+def test_spatial_view_requires_a_complete_schema_v4_saved_run() -> None:
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack)
+    scenario = _scenario(pack, [_phone(windows=[{"start_minute": 0, "end_minute": 1}])])
+    evaluation = _evaluate(simulation, scenario)
+
+    with pytest.raises(ValueError, match="schema version 4 requires spatial opportunity evidence"):
+        create_city_app(
+            simulation,
+            run_id="incomplete-spatial-study",
+            run_schema_version=4,
+        )
+    with pytest.raises(ValueError, match="only valid for a saved schema version 4 run"):
+        create_city_app(
+            simulation,
+            run_id="wrong-schema-study",
+            run_schema_version=3,
+            spatial_scenario=scenario,
+            opportunity_evaluation=evaluation,
+        )

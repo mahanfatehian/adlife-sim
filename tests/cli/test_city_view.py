@@ -11,6 +11,7 @@ from adlife.city.runs import create_city_run
 from adlife.cli.app import app
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
+from tests.unit.city.test_spatial_opportunity import _phone, _scenario
 
 
 @pytest.mark.asyncio
@@ -103,6 +104,63 @@ async def test_city_view_serves_saved_v3_places_and_exact_manifest_version(
     assert metadata["run_schema_version"] == 3
     assert places.status_code == assignments.status_code == 200
     assert assignments.json() == stored.mobility.place_assignment_document()
+    assert before == {
+        path.relative_to(stored.directory): path.read_bytes()
+        for path in stored.directory.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.asyncio
+async def test_city_view_serves_verified_v4_opportunity_evidence_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pack = load_pack(pack_data())
+    scenario = _scenario(
+        pack,
+        [
+            _phone(
+                windows=[{"start_minute": 0, "end_minute": 2}],
+                probability=1.0,
+                cap=2,
+            )
+        ],
+    )
+    stored = create_city_run(
+        pack,
+        root=tmp_path,
+        run_id="spatial-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+        spatial_scenario=scenario,
+    )
+    before = {
+        path.relative_to(stored.directory): path.read_bytes()
+        for path in stored.directory.rglob("*")
+        if path.is_file()
+    }
+    calls: list[FastAPI] = []
+    monkeypatch.setattr("uvicorn.run", lambda application, **kwargs: calls.append(application))
+
+    result = CliRunner().invoke(app, ["city-view", str(tmp_path), "spatial-study"])
+
+    assert result.exit_code == 0, result.output
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=calls[0]), base_url="http://city.test"
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        summary = (await web.get("/api/opportunity-summary")).json()
+        opportunities = (await web.get("/api/opportunities?minute=0")).json()
+    assert metadata["run_schema_version"] == 4
+    assert metadata["opportunity_count"] == 4
+    assert summary["scenario_sha256"] == scenario.fingerprint
+    assert summary["counts"]["opportunity_count"] == 4
+    assert opportunities["total"] == 2
+    assert [item["agent_id"] for item in opportunities["items"]] == [
+        "person-001",
+        "person-002",
+    ]
     assert before == {
         path.relative_to(stored.directory): path.read_bytes()
         for path in stored.directory.rglob("*")

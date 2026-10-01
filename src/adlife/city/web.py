@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from dataclasses import asdict
 from importlib.resources import files
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 
+from adlife.core.domain.spatial_campaign import (
+    SpatialCampaignScenario,
+    validate_spatial_scenario_against_city,
+)
 from adlife.core.simulation.city_mobility import CityMobility
+from adlife.core.simulation.spatial_opportunity import (
+    MAX_SPATIAL_OPPORTUNITIES,
+    SpatialOpportunityEvaluation,
+)
 
 _ASSETS = {
     "app.js": "text/javascript; charset=utf-8",
@@ -25,6 +34,8 @@ def create_city_app(
     *,
     run_id: str | None = None,
     run_schema_version: int | None = None,
+    spatial_scenario: SpatialCampaignScenario | None = None,
+    opportunity_evaluation: SpatialOpportunityEvaluation | None = None,
 ) -> FastAPI:
     """Serve only this loaded immutable city and its derived, deterministic frames."""
     if run_id is None and run_schema_version is not None:
@@ -33,6 +44,35 @@ def create_city_app(
         type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4}
     ):
         raise ValueError("unsupported city run schema version")
+    if (spatial_scenario is None) != (opportunity_evaluation is None):
+        raise ValueError("spatial scenario and opportunity evaluation must be supplied together")
+    has_spatial_evidence = spatial_scenario is not None
+    if run_schema_version == 4 and not has_spatial_evidence:
+        raise ValueError("schema version 4 requires spatial opportunity evidence")
+    if has_spatial_evidence and (run_id is None or run_schema_version != 4):
+        raise ValueError(
+            "spatial opportunity evidence is only valid for a saved schema version 4 run"
+        )
+    if spatial_scenario is not None and opportunity_evaluation is not None:
+        spatial_scenario = SpatialCampaignScenario.model_validate(
+            spatial_scenario.model_dump(mode="python")
+        )
+        opportunity_evaluation = SpatialOpportunityEvaluation.model_validate(
+            opportunity_evaluation.model_dump(mode="python")
+        )
+        validate_spatial_scenario_against_city(spatial_scenario, simulation.pack)
+        if spatial_scenario.days != simulation.days:
+            raise ValueError("spatial scenario duration does not match city mobility")
+        if (
+            opportunity_evaluation.scenario_sha256 != spatial_scenario.fingerprint
+            or opportunity_evaluation.city_sha256 != simulation.pack.fingerprint
+        ):
+            raise ValueError("spatial opportunity evidence does not match its saved inputs")
+    opportunity_minutes = (
+        tuple(item.model_minute for item in opportunity_evaluation.opportunities)
+        if opportunity_evaluation is not None
+        else ()
+    )
     app = FastAPI(
         title="AdLife city mobility pilot",
         docs_url=None,
@@ -68,6 +108,10 @@ def create_city_app(
             document["run_schema_version"] = (
                 simulation.pack.schema_version if run_schema_version is None else run_schema_version
             )
+        if opportunity_evaluation is not None:
+            document["spatial_opportunities"] = True
+            document["claim_scope"] = "synthetic-opportunity-not-impression"
+            document["opportunity_count"] = opportunity_evaluation.counts.opportunity_count
         return document
 
     @app.get("/api/city")
@@ -89,6 +133,61 @@ def create_city_app(
         if simulation.places is None:
             raise HTTPException(status_code=404, detail="synthetic places not configured")
         return simulation.place_assignment_document()
+
+    @app.get("/api/opportunity-summary")
+    def opportunity_summary() -> dict[str, object]:
+        if spatial_scenario is None or opportunity_evaluation is None:
+            raise HTTPException(
+                status_code=404,
+                detail="spatial opportunity evidence not configured",
+            )
+        return {
+            "schema_version": 1,
+            "scenario_id": spatial_scenario.scenario_id,
+            "scenario_name": spatial_scenario.name,
+            "scenario_sha256": spatial_scenario.fingerprint,
+            "opportunity_model_id": opportunity_evaluation.model_id,
+            "claim_scope": "synthetic-opportunity-not-impression",
+            "counts": opportunity_evaluation.counts.model_dump(mode="json"),
+            "campaigns": [item.model_dump(mode="json") for item in spatial_scenario.campaigns],
+            "placements": [item.model_dump(mode="json") for item in spatial_scenario.placements],
+        }
+
+    @app.get("/api/opportunities")
+    def opportunities(
+        minute: int = Query(ge=0),
+        agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
+        offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_OPPORTUNITIES),
+        limit: int = Query(default=100, ge=1, le=100),
+    ) -> dict[str, object]:
+        if opportunity_evaluation is None:
+            raise HTTPException(
+                status_code=404,
+                detail="spatial opportunity evidence not configured",
+            )
+        if minute >= simulation.days * 1_440:
+            raise HTTPException(status_code=422, detail="minute is outside the saved run")
+        if agent_id is not None and all(agent.agent_id != agent_id for agent in simulation.agents):
+            raise HTTPException(status_code=400, detail="unknown city agent")
+        start = bisect_left(opportunity_minutes, minute)
+        stop = bisect_right(opportunity_minutes, minute)
+        matching = opportunity_evaluation.opportunities[start:stop]
+        if agent_id is not None:
+            matching = tuple(item for item in matching if item.agent_id == agent_id)
+        total = len(matching)
+        page = matching[offset : offset + limit]
+        consumed = offset + len(page)
+        return {
+            "schema_version": 1,
+            "claim_scope": "synthetic-opportunity-not-impression",
+            "minute": minute,
+            "agent_id": agent_id,
+            "offset": offset,
+            "limit": limit,
+            "total": total,
+            "next_offset": consumed if consumed < total else None,
+            "items": [item.model_dump(mode="json") for item in page],
+        }
 
     @app.get("/api/frame")
     def frame(

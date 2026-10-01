@@ -35,6 +35,8 @@ def command(
             stored.mobility,
             run_id=stored.manifest.run_id,
             run_schema_version=stored.manifest.schema_version,
+            spatial_scenario=stored.spatial_scenario,
+            opportunity_evaluation=stored.opportunity_evaluation,
         ),
         host="127.0.0.1",
         port=port,
