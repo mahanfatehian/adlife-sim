@@ -435,7 +435,7 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
             "city-run --city-id",
         )
         _expect_value(city_run, "run_id", "catalog-smoke", "city-run --city-id")
-        _expect_value(city_run, "run_schema_version", 4, "city-run --city-id")
+        _expect_value(city_run, "run_schema_version", 5, "city-run --city-id")
         _expect_value(city_run, "city_id", "fictional-grid-v2", "city-run --city-id")
         _expect_value(city_run, "city_sha256", catalog_sha256, "city-run --city-id")
         _expect_value(
@@ -470,10 +470,51 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
             _refuse("city-run --city-id", "opportunity summary does not match the stream")
         _expect_value(
             city_run,
-            "claim_scope",
+            "opportunity_claim_scope",
             "synthetic-opportunity-not-impression",
             "city-run --city-id",
         )
+        _expect_value(
+            city_run,
+            "attention_model_id",
+            "spatial-attention-v1",
+            "city-run --city-id",
+        )
+        _expect_value(
+            city_run,
+            "attention_claim_scope",
+            "synthetic-attention-not-observed-behavior",
+            "city-run --city-id",
+        )
+        _expect_value(
+            city_run,
+            "attention_notice_probability",
+            0.5,
+            "city-run --city-id",
+        )
+        for key in ("attention_stream_sha256", "attention_summary_sha256"):
+            value = city_run.get(key)
+            if not isinstance(value, str) or len(value) != 64:
+                _refuse("city-run --city-id", f"{key} is not a SHA-256 digest")
+        attention_bytes = city_run.get("attention_stream_bytes")
+        if type(attention_bytes) is not int or attention_bytes <= 0:
+            _refuse("city-run --city-id", "attention stream is empty or has invalid size")
+        impression_count = city_run.get("impression_count")
+        noticed_count = city_run.get("noticed_count")
+        attention_counts = city_run.get("attention_counts")
+        if impression_count != opportunity_count:
+            _refuse("city-run --city-id", "impressions do not match opportunities")
+        if (
+            type(noticed_count) is not int
+            or type(impression_count) is not int
+            or not 0 <= noticed_count <= impression_count
+        ):
+            _refuse("city-run --city-id", "attention funnel counts are invalid")
+        if not isinstance(attention_counts, dict) or (
+            attention_counts.get("impression_count") != impression_count
+            or attention_counts.get("noticed_count") != noticed_count
+        ):
+            _refuse("city-run --city-id", "attention summary does not match the stream")
         _expect_value(city_run, "frame_count", 1_440, "city-run --city-id")
         _expect_value(city_run, "position_count", 2_880, "city-run --city-id")
 
@@ -504,7 +545,16 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
             "opportunity_stream_bytes",
             "opportunity_count",
             "opportunity_counts",
-            "claim_scope",
+            "opportunity_claim_scope",
+            "attention_model_id",
+            "attention_claim_scope",
+            "attention_notice_probability",
+            "attention_stream_sha256",
+            "attention_summary_sha256",
+            "attention_stream_bytes",
+            "impression_count",
+            "noticed_count",
+            "attention_counts",
             "frame_count",
             "position_count",
         ):

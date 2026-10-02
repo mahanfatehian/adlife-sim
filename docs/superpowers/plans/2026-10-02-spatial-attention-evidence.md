@@ -91,13 +91,13 @@ FastAPI, vanilla JavaScript, pytest/Hypothesis, Ruff, mypy and uv/Hatch.
 **Interfaces:**
 - Produces: attention provenance fields on `CityReplayResult` and city run/replay output.
 
-- [ ] Write failing creation/replay/CLI tests for v5, two-run byte identity, source
+- [x] Write failing creation/replay/CLI tests for v5, two-run byte identity, source
   immutability and clean JSON provenance.
-- [ ] Confirm RED because spatial creation still emits v4.
-- [ ] Evaluate attention after opportunities, construct v5 and verify it during replay.
-- [ ] Emit model/claim/hash/bytes/impression/notice evidence in CLI output.
-- [ ] Run city creation/replay/CLI/hash-seed suites, Ruff and mypy.
-- [ ] Commit and push `feat(cli): expose spatial attention studies`.
+- [x] Confirm RED because spatial creation still emits v4.
+- [x] Evaluate attention after opportunities, construct v5 and verify it during replay.
+- [x] Emit model/claim/hash/bytes/impression/notice evidence in CLI output.
+- [x] Run city creation/replay/CLI/hash-seed suites, Ruff and mypy.
+- [x] Commit and push `feat(cli): expose spatial attention studies`.
 
 ### Task 4: Add read-only attention inspection to the local workbench
 

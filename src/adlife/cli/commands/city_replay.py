@@ -47,14 +47,31 @@ def command(
             opportunity_stream_bytes=result.opportunity_stream_bytes,
             opportunity_count=result.opportunity_count,
             opportunity_counts=result.opportunity_counts.model_dump(mode="json"),
-            claim_scope="synthetic-opportunity-not-impression",
+            opportunity_claim_scope="synthetic-opportunity-not-impression",
+        )
+    if result.attention_model_id is not None:
+        if result.attention_counts is None or result.attention_claim_scope is None:
+            raise RuntimeError("spatial replay result is missing attention evidence")
+        document.update(
+            attention_model_id=result.attention_model_id,
+            attention_claim_scope=result.attention_claim_scope,
+            attention_notice_probability=result.attention_notice_probability,
+            attention_stream_sha256=result.attention_stream_sha256,
+            attention_summary_sha256=result.attention_summary_sha256,
+            attention_stream_bytes=result.attention_stream_bytes,
+            impression_count=result.impression_count,
+            noticed_count=result.noticed_count,
+            attention_counts=result.attention_counts.model_dump(mode="json"),
         )
     if output_format() == "human":
-        suffix = (
-            ""
-            if result.opportunity_count is None
-            else f", {result.opportunity_count} synthetic opportunities"
-        )
+        suffix = ""
+        if result.impression_count is not None and result.noticed_count is not None:
+            suffix = (
+                f", {result.opportunity_count} synthetic opportunities, "
+                f"{result.impression_count} impressions, {result.noticed_count} notices"
+            )
+        elif result.opportunity_count is not None:
+            suffix = f", {result.opportunity_count} synthetic opportunities"
         document["_lines"] = [
             f"city replay identical: {result.run_id} ({result.frame_count} minute frames{suffix})"
         ]

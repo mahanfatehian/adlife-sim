@@ -37,6 +37,7 @@ def command(
             run_schema_version=stored.manifest.schema_version,
             spatial_scenario=stored.spatial_scenario,
             opportunity_evaluation=stored.opportunity_evaluation,
+            attention_evaluation=stored.attention_evaluation,
         ),
         host="127.0.0.1",
         port=port,

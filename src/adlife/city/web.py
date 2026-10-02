@@ -14,6 +14,10 @@ from adlife.core.domain.spatial_campaign import (
     validate_spatial_scenario_against_city,
 )
 from adlife.core.simulation.city_mobility import CityMobility
+from adlife.core.simulation.spatial_attention import (
+    SpatialAttentionEvaluation,
+    evaluate_spatial_attention,
+)
 from adlife.core.simulation.spatial_opportunity import (
     MAX_SPATIAL_OPPORTUNITIES,
     SpatialOpportunityEvaluation,
@@ -44,12 +48,13 @@ def create_city_app(
     run_schema_version: int | None = None,
     spatial_scenario: SpatialCampaignScenario | None = None,
     opportunity_evaluation: SpatialOpportunityEvaluation | None = None,
+    attention_evaluation: SpatialAttentionEvaluation | None = None,
 ) -> FastAPI:
     """Serve only this loaded immutable city and its derived, deterministic frames."""
     if run_id is None and run_schema_version is not None:
         raise ValueError("run schema version requires a saved run identifier")
     if run_schema_version is not None and (
-        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4}
+        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4, 5}
     ):
         raise ValueError("unsupported city run schema version")
     if (spatial_scenario is None) != (opportunity_evaluation is None):
@@ -57,9 +62,15 @@ def create_city_app(
     has_spatial_evidence = spatial_scenario is not None
     if run_schema_version == 4 and not has_spatial_evidence:
         raise ValueError("schema version 4 requires spatial opportunity evidence")
-    if has_spatial_evidence and (run_id is None or run_schema_version != 4):
+    if run_schema_version == 5 and (not has_spatial_evidence or attention_evaluation is None):
+        raise ValueError("schema version 5 requires spatial attention evidence")
+    if has_spatial_evidence and (run_id is None or run_schema_version not in {4, 5}):
         raise ValueError(
-            "spatial opportunity evidence is only valid for a saved schema version 4 run"
+            "spatial opportunity evidence is only valid for a saved schema version 4 or 5 run"
+        )
+    if attention_evaluation is not None and (run_id is None or run_schema_version != 5):
+        raise ValueError(
+            "spatial attention evidence is only valid for a saved schema version 5 run"
         )
     if spatial_scenario is not None and opportunity_evaluation is not None:
         spatial_scenario = SpatialCampaignScenario.model_validate(
@@ -76,6 +87,15 @@ def create_city_app(
             or opportunity_evaluation.city_sha256 != simulation.pack.fingerprint
         ):
             raise ValueError("spatial opportunity evidence does not match its saved inputs")
+    if attention_evaluation is not None and opportunity_evaluation is not None:
+        attention_evaluation = SpatialAttentionEvaluation.model_validate(
+            attention_evaluation.model_dump(mode="python")
+        )
+        if attention_evaluation != evaluate_spatial_attention(
+            opportunity_evaluation,
+            seed=simulation.seed,
+        ):
+            raise ValueError("spatial attention evidence does not match its saved inputs")
     opportunity_minutes = (
         tuple(item.model_minute for item in opportunity_evaluation.opportunities)
         if opportunity_evaluation is not None

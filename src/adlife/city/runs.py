@@ -18,12 +18,19 @@ from adlife.core.domain.city_run import (
     CityRunManifestV2,
     CityRunManifestV3,
     CityRunManifestV4,
+    CityRunManifestV5,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.ports.run_store import CorruptRunArtifact
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
+from adlife.core.simulation.spatial_attention import (
+    SpatialAttentionCounts,
+    SpatialAttentionEvaluation,
+    evaluate_spatial_attention,
+    summarize_spatial_attention_artifact,
+)
 from adlife.core.simulation.spatial_opportunity import (
     SpatialOpportunityCounts,
     SpatialOpportunityEvaluation,
@@ -49,6 +56,15 @@ class CityReplayResult:
     opportunity_stream_bytes: int | None
     opportunity_count: int | None
     opportunity_counts: SpatialOpportunityCounts | None
+    attention_model_id: str | None
+    attention_claim_scope: str | None
+    attention_notice_probability: float | None
+    attention_stream_sha256: str | None
+    attention_summary_sha256: str | None
+    attention_stream_bytes: int | None
+    impression_count: int | None
+    noticed_count: int | None
+    attention_counts: SpatialAttentionCounts | None
 
 
 def _document_sha256(value: Mapping[str, object]) -> str:
@@ -84,16 +100,20 @@ def create_city_run(
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     manifest: CityRunManifestDocument
     opportunity_evaluation: SpatialOpportunityEvaluation | None = None
+    attention_evaluation: SpatialAttentionEvaluation | None = None
     if spatial_scenario is not None:
         opportunity_evaluation = evaluate_spatial_opportunities(mobility, spatial_scenario)
         opportunity_summary = summarize_spatial_opportunity_artifact(opportunity_evaluation)
         opportunity_summary_bytes = (canonical_json(opportunity_summary) + "\n").encode("utf-8")
+        attention_evaluation = evaluate_spatial_attention(opportunity_evaluation, seed=seed)
+        attention_summary = summarize_spatial_attention_artifact(attention_evaluation)
+        attention_summary_bytes = (canonical_json(attention_summary) + "\n").encode("utf-8")
         place_schema_version = None if places is None else places.schema_version
         place_set_sha256 = None if places is None else places.fingerprint
         place_assignments_sha256 = (
             None if places is None else _document_sha256(mobility.place_assignment_document())
         )
-        manifest = CityRunManifestV4(
+        manifest = CityRunManifestV5(
             run_id=run_id,
             city_schema_version=pack.schema_version,
             spatial_scenario_schema_version=spatial_scenario.schema_version,
@@ -111,6 +131,13 @@ def create_city_run(
             opportunity_summary_sha256=sha256(opportunity_summary_bytes).hexdigest(),
             opportunity_stream_bytes=opportunity_summary.stream_bytes,
             opportunity_count=opportunity_summary.counts.opportunity_count,
+            spatial_attention_schema_version=attention_evaluation.schema_version,
+            spatial_attention_model_id=attention_evaluation.model_id,
+            attention_stream_sha256=attention_summary.stream_sha256,
+            attention_summary_sha256=sha256(attention_summary_bytes).hexdigest(),
+            attention_stream_bytes=attention_summary.stream_bytes,
+            impression_count=attention_summary.counts.impression_count,
+            noticed_count=attention_summary.counts.noticed_count,
             seed=seed,
             agent_count=agent_count,
             days=days,
@@ -173,6 +200,7 @@ def create_city_run(
         place_assignments=mobility.place_assignments,
         spatial_scenario=spatial_scenario,
         opportunity_evaluation=opportunity_evaluation,
+        attention_evaluation=attention_evaluation,
     )
     return StoredCityRun(
         manifest,
@@ -181,6 +209,7 @@ def create_city_run(
         directory,
         spatial_scenario=spatial_scenario,
         opportunity_evaluation=opportunity_evaluation,
+        attention_evaluation=attention_evaluation,
     )
 
 
@@ -193,7 +222,10 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     place_manifest = (
         manifest
         if isinstance(manifest, CityRunManifestV3)
-        or (isinstance(manifest, CityRunManifestV4) and manifest.place_schema_version is not None)
+        or (
+            isinstance(manifest, (CityRunManifestV4, CityRunManifestV5))
+            and manifest.place_schema_version is not None
+        )
         else None
     )
     if place_manifest is not None:
@@ -207,7 +239,16 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     opportunity_stream_bytes: int | None = None
     opportunity_count: int | None = None
     opportunity_counts: SpatialOpportunityCounts | None = None
-    if isinstance(manifest, CityRunManifestV4):
+    attention_model_id: str | None = None
+    attention_claim_scope: str | None = None
+    attention_notice_probability: float | None = None
+    attention_stream_sha256: str | None = None
+    attention_summary_sha256: str | None = None
+    attention_stream_bytes: int | None = None
+    impression_count: int | None = None
+    noticed_count: int | None = None
+    attention_counts: SpatialAttentionCounts | None = None
+    if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5)):
         if stored.spatial_scenario is None or stored.opportunity_evaluation is None:
             raise CorruptRunArtifact("city run is missing its frozen spatial evidence")
         opportunity_evaluation = evaluate_spatial_opportunities(
@@ -223,6 +264,26 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         opportunity_counts = opportunity_summary.counts
         if opportunity_evaluation != stored.opportunity_evaluation:
             raise CorruptRunArtifact("city run spatial evidence does not replay identically")
+        if isinstance(manifest, CityRunManifestV5):
+            if stored.attention_evaluation is None:
+                raise CorruptRunArtifact("city run is missing its frozen attention evidence")
+            attention_evaluation = evaluate_spatial_attention(
+                opportunity_evaluation,
+                seed=manifest.seed,
+            )
+            attention_summary = summarize_spatial_attention_artifact(attention_evaluation)
+            attention_summary_bytes = (canonical_json(attention_summary) + "\n").encode("utf-8")
+            attention_model_id = attention_evaluation.model_id
+            attention_claim_scope = attention_evaluation.claim_scope
+            attention_notice_probability = attention_evaluation.notice_probability
+            attention_stream_sha256 = attention_summary.stream_sha256
+            attention_summary_sha256 = sha256(attention_summary_bytes).hexdigest()
+            attention_stream_bytes = attention_summary.stream_bytes
+            impression_count = attention_summary.counts.impression_count
+            noticed_count = attention_summary.counts.noticed_count
+            attention_counts = attention_summary.counts
+            if attention_evaluation != stored.attention_evaluation:
+                raise CorruptRunArtifact("city run attention evidence does not replay identically")
     if (
         stored.pack.fingerprint != manifest.city_sha256
         or summary.agents_sha256 != manifest.agents_sha256
@@ -237,13 +298,24 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             )
         )
         or (
-            isinstance(manifest, CityRunManifestV4)
+            isinstance(manifest, (CityRunManifestV4, CityRunManifestV5))
             and (
                 scenario_sha256 != manifest.scenario_sha256
                 or opportunity_stream_sha256 != manifest.opportunity_stream_sha256
                 or opportunity_summary_sha256 != manifest.opportunity_summary_sha256
                 or opportunity_stream_bytes != manifest.opportunity_stream_bytes
                 or opportunity_count != manifest.opportunity_count
+            )
+        )
+        or (
+            isinstance(manifest, CityRunManifestV5)
+            and (
+                attention_model_id != manifest.spatial_attention_model_id
+                or attention_stream_sha256 != manifest.attention_stream_sha256
+                or attention_summary_sha256 != manifest.attention_summary_sha256
+                or attention_stream_bytes != manifest.attention_stream_bytes
+                or impression_count != manifest.impression_count
+                or noticed_count != manifest.noticed_count
             )
         )
     ):
@@ -264,6 +336,15 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         opportunity_stream_bytes=opportunity_stream_bytes,
         opportunity_count=opportunity_count,
         opportunity_counts=opportunity_counts,
+        attention_model_id=attention_model_id,
+        attention_claim_scope=attention_claim_scope,
+        attention_notice_probability=attention_notice_probability,
+        attention_stream_sha256=attention_stream_sha256,
+        attention_summary_sha256=attention_summary_sha256,
+        attention_stream_bytes=attention_stream_bytes,
+        impression_count=impression_count,
+        noticed_count=noticed_count,
+        attention_counts=attention_counts,
     )
 
 

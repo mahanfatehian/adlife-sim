@@ -78,4 +78,13 @@ def test_city_replay_reports_verified_spatial_provenance(tmp_path: Path) -> None
     assert document["opportunity_stream_bytes"] == stored.manifest.opportunity_stream_bytes
     assert document["opportunity_count"] == stored.manifest.opportunity_count == 2
     assert document["opportunity_counts"]["phone_eligible_agent_minute_count"] == 4
-    assert document["claim_scope"] == "synthetic-opportunity-not-impression"
+    assert document["opportunity_claim_scope"] == "synthetic-opportunity-not-impression"
+    assert document["attention_model_id"] == stored.manifest.spatial_attention_model_id
+    assert document["attention_stream_sha256"] == stored.manifest.attention_stream_sha256
+    assert document["attention_summary_sha256"] == stored.manifest.attention_summary_sha256
+    assert document["attention_stream_bytes"] == stored.manifest.attention_stream_bytes
+    assert document["impression_count"] == stored.manifest.impression_count == 2
+    assert document["noticed_count"] == stored.manifest.noticed_count
+    assert document["attention_counts"]["noticed_count"] == document["noticed_count"]
+    assert document["attention_claim_scope"] == "synthetic-attention-not-observed-behavior"
+    assert "claim_scope" not in document

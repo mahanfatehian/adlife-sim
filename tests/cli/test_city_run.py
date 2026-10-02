@@ -241,18 +241,28 @@ def test_city_run_persists_spatial_study_with_clean_json(tmp_path: Path) -> None
 
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
-    assert document["run_schema_version"] == 4
+    assert document["run_schema_version"] == 5
     assert document["scenario_sha256"] == scenario.fingerprint
     assert len(document["opportunity_stream_sha256"]) == 64
     assert len(document["opportunity_summary_sha256"]) == 64
     assert document["opportunity_stream_bytes"] > 0
     assert document["opportunity_count"] > 0
     assert document["opportunity_counts"]["opportunity_count"] == document["opportunity_count"]
-    assert document["claim_scope"] == "synthetic-opportunity-not-impression"
+    assert document["opportunity_claim_scope"] == "synthetic-opportunity-not-impression"
+    assert document["attention_model_id"] == "spatial-attention-v1"
+    assert len(document["attention_stream_sha256"]) == 64
+    assert len(document["attention_summary_sha256"]) == 64
+    assert document["attention_stream_bytes"] > 0
+    assert document["impression_count"] == document["opportunity_count"]
+    assert 0 <= document["noticed_count"] <= document["impression_count"]
+    assert document["attention_counts"]["noticed_count"] == document["noticed_count"]
+    assert document["attention_claim_scope"] == "synthetic-attention-not-observed-behavior"
+    assert "claim_scope" not in document
     assert "_lines" not in document
     stored = CityRunStore(tmp_path).load("spatial-study")
     assert stored.spatial_scenario == scenario
     assert stored.opportunity_evaluation is not None
+    assert stored.attention_evaluation is not None
 
 
 def test_city_run_can_use_catalog_city_for_spatial_study(tmp_path: Path) -> None:
@@ -284,9 +294,10 @@ def test_city_run_can_use_catalog_city_for_spatial_study(tmp_path: Path) -> None
 
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
-    assert document["run_schema_version"] == 4
+    assert document["run_schema_version"] == 5
     assert document["city_id"] == "fictional-grid-v2"
     assert document["scenario_sha256"] == scenario.fingerprint
+    assert document["impression_count"] == document["opportunity_count"]
 
 
 def test_city_run_refuses_bad_spatial_inputs_without_reserving_run(

@@ -112,7 +112,7 @@ async def test_city_view_serves_saved_v3_places_and_exact_manifest_version(
 
 
 @pytest.mark.asyncio
-async def test_city_view_serves_verified_v4_opportunity_evidence_without_mutation(
+async def test_city_view_serves_verified_v5_opportunity_evidence_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pack = load_pack(pack_data())
@@ -152,7 +152,7 @@ async def test_city_view_serves_verified_v4_opportunity_evidence_without_mutatio
         metadata = (await web.get("/api/meta")).json()
         summary = (await web.get("/api/opportunity-summary")).json()
         opportunities = (await web.get("/api/opportunities?minute=0")).json()
-    assert metadata["run_schema_version"] == 4
+    assert metadata["run_schema_version"] == 5
     assert metadata["opportunity_count"] == 4
     assert summary["scenario_sha256"] == scenario.fingerprint
     assert summary["counts"]["opportunity_count"] == 4

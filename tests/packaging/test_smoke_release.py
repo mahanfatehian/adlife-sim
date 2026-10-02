@@ -97,10 +97,21 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     trace_sha256 = "b" * 64
     opportunity_stream_sha256 = "f" * 64
     opportunity_summary_sha256 = "1" * 64
+    attention_stream_sha256 = "2" * 64
+    attention_summary_sha256 = "3" * 64
     opportunity_counts = {
         "opportunity_count": 4,
         "roadside_billboard_count": 0,
         "mobile_feed_count": 4,
+    }
+    attention_counts = {
+        "opportunity_count": 4,
+        "impression_count": 4,
+        "noticed_count": 2,
+        "roadside_impression_count": 0,
+        "roadside_noticed_count": 0,
+        "phone_impression_count": 4,
+        "phone_noticed_count": 2,
     }
 
     monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: str(workspace))
@@ -192,7 +203,7 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         elif arguments[:3] == ["--format", "json", "city-run"]:
             document = {
                 "run_id": "catalog-smoke",
-                "run_schema_version": 4,
+                "run_schema_version": 5,
                 "city_id": "fictional-grid-v2",
                 "city_sha256": city_sha256,
                 "place_set_sha256": place_sha256,
@@ -204,7 +215,16 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "opportunity_stream_bytes": 1_234,
                 "opportunity_count": 4,
                 "opportunity_counts": opportunity_counts,
-                "claim_scope": "synthetic-opportunity-not-impression",
+                "opportunity_claim_scope": "synthetic-opportunity-not-impression",
+                "attention_model_id": "spatial-attention-v1",
+                "attention_claim_scope": "synthetic-attention-not-observed-behavior",
+                "attention_notice_probability": 0.5,
+                "attention_stream_sha256": attention_stream_sha256,
+                "attention_summary_sha256": attention_summary_sha256,
+                "attention_stream_bytes": 2_468,
+                "impression_count": 4,
+                "noticed_count": 2,
+                "attention_counts": attention_counts,
                 "frame_count": 1_440,
                 "position_count": 2_880,
                 "directory": str(scratch / "city-output" / "city-runs" / "catalog-smoke"),
@@ -229,7 +249,16 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "opportunity_stream_bytes": 1_234,
                 "opportunity_count": 4,
                 "opportunity_counts": opportunity_counts,
-                "claim_scope": "synthetic-opportunity-not-impression",
+                "opportunity_claim_scope": "synthetic-opportunity-not-impression",
+                "attention_model_id": "spatial-attention-v1",
+                "attention_claim_scope": "synthetic-attention-not-observed-behavior",
+                "attention_notice_probability": 0.5,
+                "attention_stream_sha256": attention_stream_sha256,
+                "attention_summary_sha256": attention_summary_sha256,
+                "attention_stream_bytes": 2_468,
+                "impression_count": 4,
+                "noticed_count": 2,
+                "attention_counts": attention_counts,
                 "frame_count": 1_440,
                 "position_count": 2_880,
             }

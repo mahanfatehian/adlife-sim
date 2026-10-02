@@ -302,7 +302,7 @@ def test_spatial_view_requires_a_complete_schema_v4_saved_run() -> None:
             run_id="incomplete-spatial-study",
             run_schema_version=4,
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 4 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 4 or 5 run"):
         create_city_app(
             simulation,
             run_id="wrong-schema-study",

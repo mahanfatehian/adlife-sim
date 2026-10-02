@@ -14,7 +14,7 @@ from adlife.city.runs import create_city_run
 from adlife.city.spatial_loader import SpatialCampaignError, load_spatial_campaign_scenario
 from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
 from adlife.cli.output import emit_result
-from adlife.core.domain.city_run import CityRunManifestV3, CityRunManifestV4
+from adlife.core.domain.city_run import CityRunManifestV3, CityRunManifestV4, CityRunManifestV5
 from adlife.core.ports.run_store import UnsafeRunLocation, validate_run_id
 
 
@@ -45,7 +45,7 @@ def command(
     days: Annotated[int, typer.Option("--days", min=1, max=7)] = 7,
     seed: Annotated[int, typer.Option("--seed", min=0, max=2**63 - 1)] = 42,
 ) -> None:
-    """Save a replayable mobility trace with optional synthetic opportunity evidence."""
+    """Save a replayable mobility trace with optional synthetic attention evidence."""
     if (pack is None) == (city_id is None):
         raise CommandError("choose exactly one city pack path or --city-id")
     try:
@@ -92,13 +92,13 @@ def command(
         "directory": str(stored.directory),
     }
     if stored.mobility.places is not None and isinstance(
-        manifest, CityRunManifestV3 | CityRunManifestV4
+        manifest, CityRunManifestV3 | CityRunManifestV4 | CityRunManifestV5
     ):
         document.update(
             place_set_sha256=stored.mobility.places.fingerprint,
             place_assignments_sha256=manifest.place_assignments_sha256,
         )
-    if isinstance(manifest, CityRunManifestV4):
+    if isinstance(manifest, CityRunManifestV4 | CityRunManifestV5):
         if stored.opportunity_evaluation is None:
             raise RuntimeError("completed spatial city run is missing its evaluation")
         document.update(
@@ -108,14 +108,31 @@ def command(
             opportunity_stream_bytes=manifest.opportunity_stream_bytes,
             opportunity_count=manifest.opportunity_count,
             opportunity_counts=stored.opportunity_evaluation.counts.model_dump(mode="json"),
-            claim_scope="synthetic-opportunity-not-impression",
+            opportunity_claim_scope="synthetic-opportunity-not-impression",
+        )
+    if isinstance(manifest, CityRunManifestV5):
+        if stored.attention_evaluation is None:
+            raise RuntimeError("completed spatial city run is missing attention evidence")
+        document.update(
+            attention_model_id=manifest.spatial_attention_model_id,
+            attention_claim_scope=stored.attention_evaluation.claim_scope,
+            attention_notice_probability=stored.attention_evaluation.notice_probability,
+            attention_stream_sha256=manifest.attention_stream_sha256,
+            attention_summary_sha256=manifest.attention_summary_sha256,
+            attention_stream_bytes=manifest.attention_stream_bytes,
+            impression_count=manifest.impression_count,
+            noticed_count=manifest.noticed_count,
+            attention_counts=stored.attention_evaluation.counts.model_dump(mode="json"),
         )
     if output_format() == "human":
-        suffix = (
-            ""
-            if not isinstance(manifest, CityRunManifestV4)
-            else f", {manifest.opportunity_count} synthetic opportunities"
-        )
+        suffix = ""
+        if isinstance(manifest, CityRunManifestV5):
+            suffix = (
+                f", {manifest.opportunity_count} synthetic opportunities, "
+                f"{manifest.impression_count} impressions, {manifest.noticed_count} notices"
+            )
+        elif isinstance(manifest, CityRunManifestV4):
+            suffix = f", {manifest.opportunity_count} synthetic opportunities"
         document["_lines"] = [
             f"saved city run: {manifest.run_id} "
             f"({manifest.frame_count} verified minute frames{suffix})"

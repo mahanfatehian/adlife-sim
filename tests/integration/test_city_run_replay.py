@@ -10,7 +10,7 @@ import pytest
 from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run, replay_city_run
-from adlife.core.domain.city_run import CityRunManifestV4
+from adlife.core.domain.city_run import CityRunManifestV5
 from adlife.core.ports.run_store import CorruptRunArtifact
 from tests.unit.city.test_city_catalog_contract import write_catalog_root
 from tests.unit.city.test_city_mobility import mobility_place_set
@@ -137,7 +137,7 @@ def test_catalog_selected_run_replays_after_catalog_is_removed(tmp_path: Path) -
     assert _file_hashes(stored.directory) == before
 
 
-def test_spatial_city_run_replays_exact_opportunity_artifacts_without_mutation(
+def test_spatial_city_run_replays_exact_attention_artifacts_without_mutation(
     tmp_path: Path,
 ) -> None:
     pack = load_pack(pack_data())
@@ -173,16 +173,24 @@ def test_spatial_city_run_replays_exact_opportunity_artifacts_without_mutation(
 
     result = replay_city_run(CityRunStore(tmp_path / "first").load("spatial-study"))
 
-    assert isinstance(first.manifest, CityRunManifestV4)
+    assert isinstance(first.manifest, CityRunManifestV5)
     assert first.manifest == second.manifest
     assert first.spatial_scenario == scenario
     assert first.opportunity_evaluation is not None
+    assert first.attention_evaluation is not None
     assert result.identical is True
     assert result.scenario_sha256 == scenario.fingerprint
     assert result.opportunity_stream_sha256 == first.manifest.opportunity_stream_sha256
     assert result.opportunity_summary_sha256 == first.manifest.opportunity_summary_sha256
     assert result.opportunity_stream_bytes == first.manifest.opportunity_stream_bytes
     assert result.opportunity_count == first.manifest.opportunity_count == 4
+    assert result.attention_model_id == first.manifest.spatial_attention_model_id
+    assert result.attention_stream_sha256 == first.manifest.attention_stream_sha256
+    assert result.attention_summary_sha256 == first.manifest.attention_summary_sha256
+    assert result.attention_stream_bytes == first.manifest.attention_stream_bytes
+    assert result.impression_count == first.manifest.impression_count == 4
+    assert result.noticed_count == first.manifest.noticed_count
+    assert result.attention_counts == first.attention_evaluation.counts
     assert _file_hashes(first.directory) == before == _file_hashes(second.directory)
 
 
@@ -212,10 +220,11 @@ def test_spatial_city_run_can_bind_places_and_replay_them(tmp_path: Path) -> Non
     )
     result = replay_city_run(CityRunStore(tmp_path).load("spatial-place-study"))
 
-    assert isinstance(stored.manifest, CityRunManifestV4)
+    assert isinstance(stored.manifest, CityRunManifestV5)
     assert stored.manifest.place_set_sha256 == places.fingerprint
     assert result.place_set_sha256 == places.fingerprint
     assert result.opportunity_count == 2
+    assert result.impression_count == 2
 
 
 def test_spatial_city_run_refuses_city_or_duration_mismatch_before_reserving_id(
