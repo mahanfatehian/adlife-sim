@@ -50,12 +50,12 @@ FastAPI, vanilla JavaScript, pytest/Hypothesis, Ruff, mypy and uv/Hatch.
   `SpatialAttentionEvaluation`, `evaluate_spatial_attention(...)`,
   `spatial_attention_lines(...)` and `summarize_spatial_attention_artifact(...)`.
 
-- [ ] Write golden failing tests for exact causal events, keyed draws, neutral channel
+- [x] Write golden failing tests for exact causal events, keyed draws, neutral channel
   probability, copy/identity independence, strict bounds and canonical JSONL summary.
-- [ ] Run focused tests and confirm RED on the missing module.
-- [ ] Implement the minimal immutable evaluator, validation, iterator and streaming hash.
-- [ ] Run unit/property/architecture suites, Ruff and mypy.
-- [ ] Commit and push `feat(city): model spatial attention evidence`.
+- [x] Run focused tests and confirm RED on the missing module.
+- [x] Implement the minimal immutable evaluator, validation, iterator and streaming hash.
+- [x] Run unit/property/architecture suites, Ruff and mypy.
+- [x] Commit and push `feat(city): model spatial attention evidence`.
 
 ### Task 2: Freeze schema-v5 identity and persist attention atomically
 
