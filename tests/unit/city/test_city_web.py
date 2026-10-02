@@ -3,6 +3,7 @@ import pytest
 
 from adlife.city.web import create_city_app
 from adlife.core.simulation.city_mobility import CityMobility
+from adlife.core.simulation.spatial_attention import evaluate_spatial_attention
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 from tests.unit.city.test_spatial_opportunity import (
@@ -130,8 +131,14 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'id="work-place"' in html.text
     assert 'id="leisure-place"' in html.text
     assert 'id="model-label"' in html.text
+    assert 'id="attention-panel"' in html.text
+    assert 'id="attention-claim"' in html.text
+    assert 'id="attention-list" aria-live="polite"' in html.text
     assert 'fetchJson("/api/places")' in js.text
     assert 'fetchJson("/api/place-assignments")' in js.text
+    assert 'fetchJson("/api/attention-summary")' in js.text
+    assert "fetchJson(`/api/attention-events?minute=${next}`)" in js.text
+    assert "drawAttentionMarker" in js.text
     assert 'byId("model-label").textContent' in js.text
     assert "drawPlaceMarker" in js.text
     assert "state.placeAssignments" in js.text
@@ -240,6 +247,8 @@ async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> 
         selected = await web.get("/api/opportunities?minute=0&agent_id=person-002")
         invalid_minute = await web.get("/api/opportunities?minute=1440")
         write = await web.post("/api/opportunities?minute=0")
+        attention_summary = await web.get("/api/attention-summary")
+        attention_events = await web.get("/api/attention-events?minute=0")
     assert metadata["saved"] is True
     assert metadata["run_id"] == "saved-spatial-study"
     assert metadata["run_schema_version"] == 4
@@ -272,6 +281,121 @@ async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> 
     assert selected.json()["items"][0]["agent_id"] == "person-002"
     assert invalid_minute.status_code == 422
     assert write.status_code == 405
+    assert attention_summary.status_code == attention_events.status_code == 404
+    assert (
+        attention_summary.json()
+        == attention_events.json()
+        == {"detail": "spatial attention evidence not configured"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_v5_run_exposes_exact_paged_attention_evidence_read_only() -> None:
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack, agent_count=2)
+    scenario = _scenario(
+        pack,
+        [
+            _billboard(),
+            _phone(windows=[{"start_minute": 0, "end_minute": 2}], cap=2),
+        ],
+    )
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+    expected = tuple(event for event in attention.events if event.model_minute == 0)
+    selected_expected = tuple(event for event in expected if event.agent_id == "person-002")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(
+            app=create_city_app(
+                simulation,
+                run_id="saved-attention-study",
+                run_schema_version=5,
+                spatial_scenario=scenario,
+                opportunity_evaluation=opportunities,
+                attention_evaluation=attention,
+            )
+        ),
+        base_url="http://city.test",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        summary = await web.get("/api/attention-summary")
+        first = await web.get("/api/attention-events?minute=0&limit=1")
+        second = await web.get("/api/attention-events?minute=0&offset=1&limit=100")
+        selected = await web.get("/api/attention-events?minute=0&agent_id=person-002")
+        invalid_minute = await web.get("/api/attention-events?minute=1440")
+        unknown_agent = await web.get("/api/attention-events?minute=0&agent_id=person-999")
+        invalid_page = await web.get("/api/attention-events?minute=0&limit=101")
+        write = await web.post("/api/attention-events?minute=0")
+
+    assert metadata["run_schema_version"] == 5
+    assert metadata["spatial_attention"] is True
+    assert metadata["attention_model_id"] == "spatial-attention-v1"
+    assert metadata["attention_claim_scope"] == "synthetic-attention-not-observed-behavior"
+    assert metadata["impression_count"] == attention.counts.impression_count
+    assert metadata["noticed_count"] == attention.counts.noticed_count
+    assert summary.status_code == 200
+    assert summary.json() == {
+        "schema_version": 1,
+        "scenario_id": scenario.scenario_id,
+        "scenario_name": scenario.name,
+        "scenario_sha256": scenario.fingerprint,
+        "attention_model_id": "spatial-attention-v1",
+        "claim_scope": "synthetic-attention-not-observed-behavior",
+        "notice_probability": 0.5,
+        "counts": attention.counts.model_dump(mode="json"),
+    }
+    assert first.status_code == second.status_code == selected.status_code == 200
+    assert first.json()["total"] == len(expected)
+    assert first.json()["next_offset"] == 1
+    assert first.json()["items"] == [expected[0].model_dump(mode="json")]
+    assert second.json()["items"] == [event.model_dump(mode="json") for event in expected[1:]]
+    assert selected.json()["total"] == len(selected_expected)
+    assert selected.json()["items"] == [
+        event.model_dump(mode="json") for event in selected_expected
+    ]
+    assert first.json()["event_type_counts"] == {
+        "spatial.impression": sum(event.event_type == "spatial.impression" for event in expected),
+        "spatial.noticed": sum(event.event_type == "spatial.noticed" for event in expected),
+    }
+    assert invalid_minute.status_code == invalid_page.status_code == 422
+    assert unknown_agent.status_code == 400
+    assert write.status_code == 405
+
+
+def test_saved_v5_view_requires_matching_attention_evidence() -> None:
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack)
+    scenario = _scenario(pack, [_phone(windows=[{"start_minute": 0, "end_minute": 1}])])
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+
+    with pytest.raises(ValueError, match="schema version 5 requires spatial attention"):
+        create_city_app(
+            simulation,
+            run_id="incomplete-attention-study",
+            run_schema_version=5,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+        )
+    with pytest.raises(ValueError, match="only valid for a saved schema version 5 run"):
+        create_city_app(
+            simulation,
+            run_id="wrong-attention-schema",
+            run_schema_version=4,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=attention,
+        )
+    with pytest.raises(ValueError, match="does not match its saved inputs"):
+        create_city_app(
+            simulation,
+            run_id="mismatched-attention-study",
+            run_schema_version=5,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=evaluate_spatial_attention(opportunities, seed=43),
+        )
 
 
 @pytest.mark.asyncio

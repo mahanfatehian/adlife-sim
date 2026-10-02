@@ -152,14 +152,25 @@ async def test_city_view_serves_verified_v5_opportunity_evidence_without_mutatio
         metadata = (await web.get("/api/meta")).json()
         summary = (await web.get("/api/opportunity-summary")).json()
         opportunities = (await web.get("/api/opportunities?minute=0")).json()
+        attention_summary = (await web.get("/api/attention-summary")).json()
+        attention_events = (await web.get("/api/attention-events?minute=0")).json()
     assert metadata["run_schema_version"] == 5
     assert metadata["opportunity_count"] == 4
+    assert metadata["spatial_attention"] is True
     assert summary["scenario_sha256"] == scenario.fingerprint
     assert summary["counts"]["opportunity_count"] == 4
     assert opportunities["total"] == 2
     assert [item["agent_id"] for item in opportunities["items"]] == [
         "person-001",
         "person-002",
+    ]
+    assert stored.attention_evaluation is not None
+    assert attention_summary["attention_model_id"] == "spatial-attention-v1"
+    assert attention_summary["counts"] == stored.attention_evaluation.counts.model_dump(mode="json")
+    assert attention_events["items"] == [
+        event.model_dump(mode="json")
+        for event in stored.attention_evaluation.events
+        if event.model_minute == 0
     ]
     assert before == {
         path.relative_to(stored.directory): path.read_bytes()

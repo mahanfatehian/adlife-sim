@@ -115,14 +115,14 @@ FastAPI, vanilla JavaScript, pytest/Hypothesis, Ruff, mypy and uv/Hatch.
 - Produces: `/api/attention-summary`, paged `/api/attention-events`, and persisted
   current-minute impression/notice panels for schema v5.
 
-- [ ] Write failing API tests for exact order, filtering, pagination, invalid input,
+- [x] Write failing API tests for exact order, filtering, pagination, invalid input,
   legacy-v4 absence and read-only behavior.
-- [ ] Confirm RED on missing v5 app support/endpoints.
-- [ ] Implement prevalidated in-memory indexes and bounded response pages.
-- [ ] Write failing browser interaction/accessibility tests for scrub and selection.
-- [ ] Add safe-DOM attention totals/cards/map markers and retain CSP/offline behavior.
-- [ ] Run API/CLI/browser/TUI suites, Ruff and mypy.
-- [ ] Commit and push `feat(city): inspect spatial attention evidence`.
+- [x] Confirm RED on missing v5 app support/endpoints.
+- [x] Implement prevalidated in-memory indexes and bounded response pages.
+- [x] Write failing browser interaction/accessibility tests for scrub and selection.
+- [x] Add safe-DOM attention totals/cards/map markers and retain CSP/offline behavior.
+- [x] Run API/CLI/browser/TUI suites, Ruff and mypy.
+- [x] Commit and push `feat(city): inspect spatial attention evidence`.
 
 ### Task 5: Reconcile public contracts and certify the installed artifact
 

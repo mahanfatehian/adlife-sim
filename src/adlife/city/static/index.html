@@ -28,7 +28,7 @@
           <canvas id="city-map" aria-label="Road map and simulated agent positions"></canvas>
           <div class="map-compass" aria-hidden="true"><span>N</span><span class="compass-needle"></span></div>
           <div class="map-help">Drag to pan <span>·</span> Scroll to zoom</div>
-          <div class="map-legend" aria-label="Map legend"><span><i class="legend-road"></i>Road network</span><span><i class="legend-agent"></i>Agent</span><span><i class="legend-selected"></i>Selected</span><span class="place-key" hidden><i class="legend-home"></i>Home</span><span class="place-key" hidden><i class="legend-work"></i>Work</span><span class="place-key" hidden><i class="legend-leisure"></i>Leisure</span><span class="opportunity-key" hidden><i class="legend-billboard"></i>Roadside opportunity</span><span class="opportunity-key" hidden><i class="legend-phone"></i>Phone opportunity</span></div>
+          <div class="map-legend" aria-label="Map legend"><span><i class="legend-road"></i>Road network</span><span><i class="legend-agent"></i>Agent</span><span><i class="legend-selected"></i>Selected</span><span class="place-key" hidden><i class="legend-home"></i>Home</span><span class="place-key" hidden><i class="legend-work"></i>Work</span><span class="place-key" hidden><i class="legend-leisure"></i>Leisure</span><span class="opportunity-key" hidden><i class="legend-billboard"></i>Roadside opportunity</span><span class="opportunity-key" hidden><i class="legend-phone"></i>Phone opportunity</span><span class="attention-key" hidden><i class="legend-impression"></i>Model impression</span><span class="attention-key" hidden><i class="legend-notice"></i>Model notice</span></div>
         </div>
         <div class="map-footer"><div class="map-copyright"><span id="attribution">Loading data attribution…</span><span aria-hidden="true"> · </span><span id="license-label"></span></div><a id="source-link" target="_blank" rel="noopener noreferrer">Data source ↗</a></div>
       </section>
@@ -49,6 +49,16 @@
           <div class="opportunity-list" id="opportunity-list" aria-live="polite"></div>
           <p class="opportunity-empty" id="opportunity-empty">No opportunity evidence at this minute.</p>
           <p class="opportunity-page-note" id="opportunity-page-note" hidden></p>
+        </section>
+        <section class="attention-panel" id="attention-panel" aria-label="Synthetic attention evidence" hidden>
+          <div class="attention-heading"><div><span class="eyebrow">CAUSAL EVIDENCE / CURRENT MINUTE</span><h2>Modeled attention</h2></div><span class="attention-seal" aria-hidden="true">A</span></div>
+          <div class="attention-causal" aria-label="Opportunity causes impression; impression may cause notice"><span>OPPORTUNITY</span><i aria-hidden="true">&rarr;</i><span>IMPRESSION</span><i aria-hidden="true">&rarr;</i><span>NOTICE</span></div>
+          <div class="attention-totals" aria-label="Synthetic attention totals"><div><span>IMPRESSIONS</span><strong id="attention-impressions">0</strong></div><div><span>NOTICES</span><strong id="attention-notices">0</strong></div><div><span>FIXED P</span><strong id="attention-probability">0%</strong></div></div>
+          <p class="attention-claim" id="attention-claim">SYNTHETIC ATTENTION &middot; NOT OBSERVED BEHAVIOR</p>
+          <div class="attention-now"><span>AT THE SCRUBBER</span><strong id="attention-current">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
+          <div class="attention-list" id="attention-list" aria-live="polite"></div>
+          <p class="attention-empty" id="attention-empty">No attention evidence at this minute.</p>
+          <p class="attention-page-note" id="attention-page-note" hidden></p>
         </section>
         <div class="section-title"><span>SELECTED AGENT</span><span id="selected-id">—</span></div>
         <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose an agent</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>

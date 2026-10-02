@@ -1,7 +1,7 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
+const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -128,6 +128,30 @@ function drawOpportunityMarker(opportunity, project) {
   ctx.restore();
 }
 
+function drawAttentionMarker(event, project) {
+  if (event.event_type !== "spatial.impression") return;
+  const placement = spatialPlacementById(event.placement_id);
+  const position = state.frame.positions.find((item) => item.agent_id === event.agent_id);
+  const coordinate = event.channel === "roadside-billboard" && placement
+    ? [placement.longitude, placement.latitude]
+    : position ? [position.longitude, position.latitude] : null;
+  if (!coordinate) return;
+  const [x, y] = project(coordinate[0], coordinate[1]);
+  const selected = event.agent_id === state.selected;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = event.noticed ? "#77d6bd" : "#b6a7ef";
+  ctx.lineWidth = selected ? 3 : 2;
+  ctx.shadowColor = ctx.strokeStyle;
+  ctx.shadowBlur = event.noticed ? 15 : 7;
+  ctx.beginPath(); ctx.arc(0, 0, selected ? 18 : 15, 0, Math.PI * 2); ctx.stroke();
+  if (event.noticed) {
+    ctx.globalAlpha = .65;
+    ctx.beginPath(); ctx.arc(0, 0, selected ? 24 : 21, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function renderMap() {
   if (!state.city || !state.frame) return;
   const pixelRatio = window.devicePixelRatio || 1;
@@ -227,6 +251,9 @@ function renderMap() {
       drawOpportunityMarker(opportunity, project);
     }
   }
+  if (state.attentionPage) {
+    for (const event of state.attentionPage.items) drawAttentionMarker(event, project);
+  }
 }
 
 function renderPeople() {
@@ -323,7 +350,43 @@ function renderOpportunityEvidence() {
     card.append(channel, at, identity, detail);
     card.addEventListener("click", () => {
       state.selected = opportunity.agent_id;
-      renderPeople(); renderSelected(); renderOpportunityEvidence(); renderMap();
+      renderPeople(); renderSelected(); renderOpportunityEvidence(); renderAttentionEvidence(); renderMap();
+    });
+    list.append(card);
+  }
+}
+
+function renderAttentionEvidence() {
+  if (!state.attentionSummary || !state.attentionPage) return;
+  const page = state.attentionPage;
+  const list = byId("attention-list");
+  while (list.firstChild) list.removeChild(list.firstChild);
+  const selectedCount = page.agent_counts[state.selected] || 0;
+  byId("attention-current").textContent = `${page.total} EVENTS AT THIS MINUTE \u00b7 ${selectedCount} FOR SELECTED AGENT`;
+  byId("attention-empty").hidden = page.total !== 0;
+  const pageNote = byId("attention-page-note");
+  pageNote.hidden = page.items.length === page.total;
+  pageNote.textContent = `Showing the first ${page.items.length} of ${page.total} canonical events.`;
+  for (const event of page.items) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `attention-card ${event.event_type === "spatial.noticed" ? "notice" : "impression"}`;
+    card.classList.toggle("selected", event.agent_id === state.selected);
+    const stageLabel = document.createElement("span");
+    stageLabel.className = "attention-stage";
+    stageLabel.textContent = event.event_type === "spatial.noticed" ? "NOTICE" : "IMPRESSION";
+    const at = document.createElement("span");
+    at.className = "attention-at";
+    at.textContent = `${clockText(event.model_minute)}:${String(Math.floor(event.millisecond_within_minute / 1000)).padStart(2, "0")}`;
+    const identity = document.createElement("strong");
+    identity.textContent = `${event.agent_id.toUpperCase()} \u00b7 ${event.placement_id.toUpperCase()}`;
+    const decision = document.createElement("small");
+    const comparison = event.notice_draw < event.notice_probability ? "<" : "\u2265";
+    decision.textContent = `DRAW ${event.notice_draw.toFixed(4)} ${comparison} ${event.notice_probability.toFixed(4)} \u00b7 CAUSE ${event.caused_by.slice(0, 10).toUpperCase()}`;
+    card.append(stageLabel, at, identity, decision);
+    card.addEventListener("click", () => {
+      state.selected = event.agent_id;
+      renderPeople(); renderSelected(); renderOpportunityEvidence(); renderAttentionEvidence(); renderMap();
     });
     list.append(card);
   }
@@ -335,11 +398,17 @@ async function setMinute(minute) {
   const request = ++state.request;
   try {
     const requests = [fetchJson(`/api/frame?minute=${next}&agent_id=${encodeURIComponent(state.selected)}`)];
-    if (state.opportunitySummary) requests.push(fetchJson(`/api/opportunities?minute=${next}`));
-    const [frame, opportunityPage = null] = await Promise.all(requests);
+    const opportunityIndex = state.opportunitySummary ? requests.length : null;
+    if (opportunityIndex !== null) requests.push(fetchJson(`/api/opportunities?minute=${next}`));
+    const attentionIndex = state.attentionSummary ? requests.length : null;
+    if (attentionIndex !== null) requests.push(fetchJson(`/api/attention-events?minute=${next}`));
+    const responses = await Promise.all(requests);
+    const frame = responses[0];
+    const opportunityPage = opportunityIndex === null ? null : responses[opportunityIndex];
+    const attentionPage = attentionIndex === null ? null : responses[attentionIndex];
     if (request !== state.request) return;
-    state.frame = frame; state.opportunityPage = opportunityPage; state.minute = next;
-    updateLabels(); renderPeople(); renderSelected(); renderOpportunityEvidence(); renderMap();
+    state.frame = frame; state.opportunityPage = opportunityPage; state.attentionPage = attentionPage; state.minute = next;
+    updateLabels(); renderPeople(); renderSelected(); renderOpportunityEvidence(); renderAttentionEvidence(); renderMap();
   } catch (error) { showError(String(error)); stopPlayback(); }
 }
 
@@ -394,6 +463,14 @@ async function boot() {
       byId("opportunity-phone").textContent = String(state.opportunitySummary.counts.phone_opportunity_count);
       byId("opportunity-panel").hidden = false;
       for (const key of document.querySelectorAll(".opportunity-key")) key.hidden = false;
+    }
+    if (meta.spatial_attention === true) {
+      state.attentionSummary = await fetchJson("/api/attention-summary");
+      byId("attention-impressions").textContent = String(state.attentionSummary.counts.impression_count);
+      byId("attention-notices").textContent = String(state.attentionSummary.counts.noticed_count);
+      byId("attention-probability").textContent = `${Math.round(state.attentionSummary.notice_probability * 100)}%`;
+      byId("attention-panel").hidden = false;
+      for (const key of document.querySelectorAll(".attention-key")) key.hidden = false;
     }
     byId("city-name").textContent = meta.city_name;
     if (meta.saved === true && typeof meta.run_id === "string") {

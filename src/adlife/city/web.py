@@ -15,6 +15,7 @@ from adlife.core.domain.spatial_campaign import (
 )
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.spatial_attention import (
+    MAX_SPATIAL_ATTENTION_EVENTS,
     SpatialAttentionEvaluation,
     evaluate_spatial_attention,
 )
@@ -101,6 +102,11 @@ def create_city_app(
         if opportunity_evaluation is not None
         else ()
     )
+    attention_minutes = (
+        tuple(item.model_minute for item in attention_evaluation.events)
+        if attention_evaluation is not None
+        else ()
+    )
     app = FastAPI(
         title="AdLife city mobility pilot",
         docs_url=None,
@@ -140,6 +146,13 @@ def create_city_app(
             document["spatial_opportunities"] = True
             document["claim_scope"] = "synthetic-opportunity-not-impression"
             document["opportunity_count"] = opportunity_evaluation.counts.opportunity_count
+        if attention_evaluation is not None:
+            document["spatial_attention"] = True
+            document["attention_model_id"] = attention_evaluation.model_id
+            document["attention_claim_scope"] = attention_evaluation.claim_scope
+            document["attention_notice_probability"] = attention_evaluation.notice_probability
+            document["impression_count"] = attention_evaluation.counts.impression_count
+            document["noticed_count"] = attention_evaluation.counts.noticed_count
         return document
 
     @app.get("/api/city")
@@ -222,6 +235,81 @@ def create_city_app(
             "offset": offset,
             "limit": limit,
             "total": total,
+            "channel_counts": channel_counts,
+            "agent_counts": agent_counts,
+            "next_offset": consumed if consumed < total else None,
+            "items": [item.model_dump(mode="json") for item in page],
+        }
+
+    @app.get("/api/attention-summary")
+    def attention_summary() -> dict[str, object]:
+        if (
+            spatial_scenario is None
+            or opportunity_evaluation is None
+            or attention_evaluation is None
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail="spatial attention evidence not configured",
+            )
+        return {
+            "schema_version": 1,
+            "scenario_id": spatial_scenario.scenario_id,
+            "scenario_name": spatial_scenario.name,
+            "scenario_sha256": spatial_scenario.fingerprint,
+            "attention_model_id": attention_evaluation.model_id,
+            "claim_scope": attention_evaluation.claim_scope,
+            "notice_probability": attention_evaluation.notice_probability,
+            "counts": attention_evaluation.counts.model_dump(mode="json"),
+        }
+
+    @app.get("/api/attention-events")
+    def attention_events(
+        minute: int = Query(ge=0),
+        agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
+        offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_ATTENTION_EVENTS),
+        limit: int = Query(default=100, ge=1, le=100),
+    ) -> dict[str, object]:
+        if attention_evaluation is None:
+            raise HTTPException(
+                status_code=404,
+                detail="spatial attention evidence not configured",
+            )
+        if minute >= simulation.days * 1_440:
+            raise HTTPException(status_code=422, detail="minute is outside the saved run")
+        if agent_id is not None and all(agent.agent_id != agent_id for agent in simulation.agents):
+            raise HTTPException(status_code=400, detail="unknown city agent")
+        start = bisect_left(attention_minutes, minute)
+        stop = bisect_right(attention_minutes, minute)
+        matching = attention_evaluation.events[start:stop]
+        if agent_id is not None:
+            matching = tuple(item for item in matching if item.agent_id == agent_id)
+        total = len(matching)
+        event_type_counts = {
+            "spatial.impression": sum(item.event_type == "spatial.impression" for item in matching),
+            "spatial.noticed": sum(item.event_type == "spatial.noticed" for item in matching),
+        }
+        channel_counts = {
+            "roadside-billboard": sum(item.channel == "roadside-billboard" for item in matching),
+            "mobile-feed": sum(item.channel == "mobile-feed" for item in matching),
+        }
+        agent_counts = {
+            known_agent.agent_id: sum(item.agent_id == known_agent.agent_id for item in matching)
+            for known_agent in simulation.agents
+            if any(item.agent_id == known_agent.agent_id for item in matching)
+        }
+        page = matching[offset : offset + limit]
+        consumed = offset + len(page)
+        return {
+            "schema_version": 1,
+            "attention_model_id": attention_evaluation.model_id,
+            "claim_scope": attention_evaluation.claim_scope,
+            "minute": minute,
+            "agent_id": agent_id,
+            "offset": offset,
+            "limit": limit,
+            "total": total,
+            "event_type_counts": event_type_counts,
             "channel_counts": channel_counts,
             "agent_counts": agent_counts,
             "next_offset": consumed if consumed < total else None,

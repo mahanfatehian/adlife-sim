@@ -14,6 +14,10 @@ from playwright.sync_api import Route, expect, sync_playwright
 from adlife.city.web import create_city_app
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.simulation.city_mobility import CityMobility
+from adlife.core.simulation.spatial_attention import (
+    SpatialAttentionEvaluation,
+    evaluate_spatial_attention,
+)
 from adlife.core.simulation.spatial_opportunity import SpatialOpportunityEvaluation
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
@@ -114,6 +118,38 @@ def _spatial_viewer() -> Iterator[
     )
     with _serve(application) as base_url:
         yield base_url, scenario, evaluation
+
+
+@contextmanager
+def _attention_viewer() -> Iterator[
+    tuple[
+        str,
+        SpatialCampaignScenario,
+        SpatialOpportunityEvaluation,
+        SpatialAttentionEvaluation,
+    ]
+]:
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack, agent_count=2)
+    scenario = _scenario(
+        pack,
+        [
+            _billboard(),
+            _phone(windows=[{"start_minute": 0, "end_minute": 2}], cap=2),
+        ],
+    )
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+    application = create_city_app(
+        simulation,
+        run_id="browser-attention-study",
+        run_schema_version=5,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    with _serve(application) as base_url:
+        yield base_url, scenario, opportunities, attention
 
 
 def test_place_viewer_renders_provenance_and_scrubs_without_external_requests(
@@ -259,6 +295,97 @@ def test_spatial_viewer_renders_minute_evidence_without_calling_it_an_impression
         page.set_viewport_size({"width": 700, "height": 900})
         assert page.locator("#opportunity-panel").is_visible()
         assert page.locator("#opportunity-claim").is_visible()
+        assert not external_requests
+        assert not console_errors
+        assert not page_errors
+        browser.close()
+
+
+def test_attention_viewer_renders_causal_timeline_without_external_requests(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    external_requests: list[str] = []
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    with (
+        _attention_viewer() as (
+            base_url,
+            _scenario_value,
+            _opportunities,
+            attention,
+        ),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 1440, "height": 1100})
+
+        def route_request(route: Route) -> None:
+            if route.request.url.startswith(base_url):
+                route.continue_()
+            else:
+                external_requests.append(route.request.url)
+                route.abort()
+
+        page.route("**/*", route_request)
+        page.on(
+            "console",
+            lambda message: (
+                console_errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.goto(base_url, wait_until="networkidle")
+
+        minute_zero = tuple(event for event in attention.events if event.model_minute == 0)
+        selected_zero = tuple(event for event in minute_zero if event.agent_id == "person-001")
+        assert page.locator("#saved-run-label").inner_text().endswith("V5")
+        assert page.locator("#attention-panel").is_visible()
+        assert page.locator("#attention-impressions").inner_text() == str(
+            attention.counts.impression_count
+        )
+        assert page.locator("#attention-notices").inner_text() == str(
+            attention.counts.noticed_count
+        )
+        assert page.locator("#attention-probability").inner_text() == "50%"
+        assert (
+            page.locator("#attention-claim").inner_text()
+            == "SYNTHETIC ATTENTION \u00b7 NOT OBSERVED BEHAVIOR"
+        )
+        assert page.locator("#attention-current").inner_text() == (
+            f"{len(minute_zero)} EVENTS AT THIS MINUTE \u00b7 "
+            f"{len(selected_zero)} FOR SELECTED AGENT"
+        )
+        assert page.locator(".attention-card").count() == len(minute_zero)
+        assert page.locator(".attention-card.selected").count() == len(selected_zero)
+        assert page.locator(".attention-key:visible").count() == 2
+        assert page.locator("#attention-list").get_attribute("aria-live") == "polite"
+        assert "IMPRESSION" in page.locator(".attention-card").first.inner_text()
+        assert "CAUSE" in page.locator(".attention-card").first.inner_text()
+
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = '481'; "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        minute_481 = tuple(event for event in attention.events if event.model_minute == 481)
+        expect(page.locator("#attention-current")).to_have_text(
+            f"{len(minute_481)} EVENTS AT THIS MINUTE \u00b7 0 FOR SELECTED AGENT"
+        )
+        assert page.locator(".attention-card").count() == len(minute_481)
+        page.locator(".attention-card").first.click()
+        expect(page.locator("#selected-id")).to_have_text("PERSON-002")
+        assert page.locator(".attention-card.selected").count() == len(minute_481)
+
+        screenshot = tmp_path / "city-spatial-attention-viewer.png"
+        page.screenshot(path=screenshot, full_page=True)
+        assert screenshot.stat().st_size > 25_000
+        page.set_viewport_size({"width": 700, "height": 950})
+        assert page.locator("#attention-panel").is_visible()
+        assert page.locator("#attention-claim").is_visible()
         assert not external_requests
         assert not console_errors
         assert not page_errors
