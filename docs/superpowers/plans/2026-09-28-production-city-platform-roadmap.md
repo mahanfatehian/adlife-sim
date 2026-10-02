@@ -216,6 +216,14 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   these opportunities do not yet drive cognition, agent state, purchases, metrics,
   or reports. A subsequent bounded UI slice exposes validated current-minute opportunity
   evidence in the read-only saved-run viewer without adding any causal transition.
+
+  **C3b evidence (2026-10-02):** schema-v5 adds a second immutable, replay-verified
+  evidence layer: one synthetic impression per opportunity and a deterministic noticed
+  label from a fixed 0.5 keyed draw. Canonical `spatial-attention.jsonl` and
+  `attention-summary.json` are manifest-bound and exposed through bounded read-only API/UI
+  views. Every record says `synthetic-attention-not-observed-behavior`; the model is
+  uncalibrated and cannot affect cognition, state, budget, movement, purchase logic,
+  metrics or reports. C3 remains open for that response/state bridge, and C4 remains open.
 - [ ] **C4 — Extend spatial metrics, comparison and reports.** Derive opportunity,
   impression, notice, recall/social and proxy metrics from persisted events with
   provenance; implement matched geographic A/A and paired A/B with common random

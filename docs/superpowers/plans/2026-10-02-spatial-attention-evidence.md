@@ -144,10 +144,22 @@ FastAPI, vanilla JavaScript, pytest/Hypothesis, Ruff, mypy and uv/Hatch.
 **Interfaces:**
 - Produces: truthful C3b public documentation and exact-wheel v5 run/replay smoke.
 
-- [ ] Write failing documentation and smoke assertions for v5 attention provenance.
-- [ ] Document modeled attention, fixed neutral probability and all deferred boundaries.
-- [ ] Extend clean-room smoke to assert installed v5 creation and replay.
-- [ ] Run lock sync, Ruff, mypy, full/hash-seed/coverage suites, build, exact-wheel smoke,
+- [x] Write failing documentation and smoke assertions for v5 attention provenance.
+- [x] Document modeled attention, fixed neutral probability and all deferred boundaries.
+- [x] Extend clean-room smoke to assert installed v5 creation and replay.
+- [x] Run lock sync, Ruff, mypy, full/hash-seed/coverage suites, build, exact-wheel smoke,
   doctor/demo and `git diff --check`.
-- [ ] Record exact evidence; commit and push
+- [x] Record exact evidence; commit and push
   `docs(city): document spatial attention evidence`.
+
+**Certification evidence (2026-10-02, Windows/Python 3.12.11):** locked all-group sync
+passed; Ruff format checked 269 files and lint passed; strict mypy checked 112 source files;
+the full suite passed 3,548 tests with 18 platform skips in 7m06s, with the same counts at
+`PYTHONHASHSEED=0` (7m09s) and `PYTHONHASHSEED=12345` (7m20s). Branch coverage was 90.94%
+against the unchanged 85% floor. `uv build --no-sources` produced both distributions; the
+exact wheel clean-room smoke passed with a 4,862,319-byte self-contained report and verified
+catalog spatial creation/replay. Version, both offline-doctor formats and both headless-demo
+formats exited 0; doctor disclosed only this host's cp1252 stdout limitation. The maximum
+30-agent/seven-day rules run completed in 13.56s with 5,685 events, 2 MiB traced peak memory,
+a 3,629,056-byte database and 4,862,947-byte report. The maximum spatial denominator test
+processed 6,048,000 eligible agent-minutes in 8.57s and retained 4,200 opportunities.

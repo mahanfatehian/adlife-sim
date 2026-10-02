@@ -9,11 +9,16 @@ The opt-in city mobility viewer is a separate prototype, not a spatial extension
 the advertising results. Its packaged, content-addressed catalog currently contains
 only the `fictional-grid-v2` fixture; a rights-reviewed real city has not shipped. A
 street pack acquired under appropriate rights can provide real geography, but the
-agents, schedules and speeds remain synthetic and uncalibrated. No campaign or provider
-result is plotted on that map in this release. Spatial campaign documents can be
-validated against roads, and the pure core can derive bounded synthetic opportunity
-records. A schema-v4 `city-run` can freeze those records and their funnel summary; they
-are persisted and replayed as evidence, not impressions, attention, responses or outcomes.
+agents, schedules and speeds remain synthetic and uncalibrated. Spatial campaign documents
+can be validated against roads, and the pure core can derive bounded synthetic opportunity
+records. A schema-v5 `city-run` freezes those records plus a separate attention evidence
+stream: one synthetic impression per opportunity and noticed when an independent keyed draw
+is below the fixed 0.5 probability. The records say
+`synthetic-attention-not-observed-behavior`; the probability is not calibrated or observed.
+The read-only map can display current-minute opportunity and current-minute attention
+evidence, but neither reaches cognition, state, budget or purchase logic and neither is a
+response or outcome. Both evidence layers are persisted and replayed from frozen inputs;
+older schema-v4 runs remain opportunity-only.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -83,7 +88,7 @@ source provenance, but it contains no real-person trajectories. Its IANA time zo
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
 pilot can optionally assign synthetic home, workplace and leisure points supplied in a
 pack-hash-bound place set. Those points must be routable road nodes, carry explicit
-authored/source-derived/inferred provenance, and are frozen for v3/v4 replay; they are
+authored/source-derived/inferred provenance, and are frozen for v3/v4/v5 replay; they are
 scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
 sunrise/sunset calculation, measured demand or calibrated traffic. Import validation
@@ -104,10 +109,13 @@ opportunities. Each stage has a separate count. Phone draws are counter-based an
 seed/campaign/placement/fictional agent/minute; roadside timing comes from illustrative
 free-flow routes. Every record is explicitly a synthetic opportunity, not a verified
 impression, through the literal claim scope `synthetic-opportunity-not-impression`.
-Schema-v4 city artifacts persist and replay that stream and its independent summary. No
-spatial opportunity currently reaches cognition, agent state, purchase logic, metrics or
-reports. The read-only city viewer presents persisted current-minute opportunity evidence
-alongside mobility, explicitly as synthetic evidence rather than an impression or outcome.
+Schema-v4 city artifacts persist and replay that stream and its independent summary.
+Schema-v5 additionally persists deterministic attention model v1 at the fixed 0.5 notice
+probability. Every opportunity creates one model impression; a threshold success creates a
+noticed label carrying `synthetic-attention-not-observed-behavior`. This uncalibrated layer
+excludes campaign/provider inputs from its draw and cannot reach cognition, agent state,
+purchase logic, metrics or reports. The read-only city viewer presents persisted
+current-minute opportunity and current-minute attention evidence alongside mobility.
 
 ## Metrics
 

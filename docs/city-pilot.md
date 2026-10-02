@@ -236,15 +236,21 @@ Evaluation exposes matching, active, proximity, approximate-facing, phone-eligib
 threshold-success, capped and emitted counts so a later metric cannot silently substitute
 its denominator.
 
-Every output record says `synthetic-opportunity-not-impression`. The probability is not
-observed phone behavior; road proximity is not an impression; orientation and distance
-are not measured visibility or attention. C2 remains pure; C3a adds a schema-v4 storage
-adapter that freezes its exact canonical stream and summary when `city-run` receives
-`--spatial-campaign`. The saved-run viewer can inspect persisted current-minute opportunity
-evidence without changing it; no cognition, state or purchase transition consumes the
-records and no report treats them as outcomes. The remaining C3 causal bridge and C4
-artifact-backed metrics are required before AdLife can run a complete geographic campaign
-study.
+Every opportunity record says `synthetic-opportunity-not-impression`. The phone probability
+is not observed phone behavior; road proximity and approximate orientation are not measured
+visibility or attention. C2 remains pure; C3a added a schema-v4 storage adapter for the
+canonical opportunity stream and summary. C3b now adds a separate schema-v5 attention
+evidence layer: every opportunity becomes one synthetic impression and an
+order-independent keyed draw below the fixed 0.5 threshold is labeled noticed. The neutral
+probability is uncalibrated, identical across channels, and does not use campaign copy,
+campaign/creative identity or provider output. Every record says
+`synthetic-attention-not-observed-behavior`.
+
+The saved-run viewer can inspect persisted current-minute opportunity and current-minute
+attention evidence without changing it. No cognition, agent state, memory, social, budget,
+movement or purchase transition consumes these records, and no report treats them as
+outcomes. The remaining C3 response/state bridge and C4 artifact-backed metrics are required
+before AdLife can run a complete geographic campaign study.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
@@ -274,7 +280,7 @@ catalog entry:
 uv run adlife city-run city.json --output-root ./city-output --run-id study-42 --agents 20 --days 3 --seed 42
 # alternatively: uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42
 # place-aware: add --places places.json (uses run manifest v3)
-# spatial opportunity evidence: add --spatial-campaign spatial-campaign.json (uses schema-v4)
+# spatial opportunity + attention evidence: add --spatial-campaign spatial-campaign.json (uses schema-v5)
 uv run adlife city-replay ./city-output study-42
 uv run adlife city-view ./city-output study-42
 ```
@@ -284,16 +290,21 @@ home/work/leisure assignments, seed, model/runtime identity, and hashes of every
 minute's normalized positions. Saved runs are limited to 30 agents and seven days;
 the ephemeral preview retains its wider bounds. With `--places`, v3 also freezes the
 canonical place set and assignment document and binds both hashes in the final manifest.
-With `--spatial-campaign`, schema-v4 also freezes `inputs/spatial-campaign.json`,
+With `--spatial-campaign`, schema-v5 freezes `inputs/spatial-campaign.json`,
 `outputs/spatial-opportunities.jsonl`, and `outputs/opportunity-summary.json`; its final
-manifest binds the scenario, stream and summary hashes plus exact stream bytes/count.
-Earlier v1/v2/v3 runs remain readable. `city-replay` refuses a changed,
+manifest binds the scenario, stream and summary hashes plus exact stream bytes/count. It
+also freezes `outputs/spatial-attention.jsonl` and `outputs/attention-summary.json` and
+binds the attention model, fixed 0.5 probability, claim scope, hashes, bytes and counts.
+Earlier v1/v2/v3 runs and schema-v4 opportunity-only runs remain readable. `city-replay`
+refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
-API has no path or run-selection endpoint. For v4, a bounded summary endpoint and a
+API has no path or run-selection endpoint. For v4 and v5, a bounded summary endpoint and a
 canonical page of current-minute opportunity records drive the read-only evidence rail
-and map markers. Selecting a record changes presentation only. The panel always labels
-the evidence `synthetic-opportunity-not-impression` and creates no downstream event.
+and map markers. V5 adds bounded summary and page endpoints for current-minute attention;
+noticed markers reflect only persisted model evidence. Selecting a record changes
+presentation only. The panels retain both literal synthetic claim scopes and create no
+downstream event.
 The header shows the saved ID and schema version. A crash during publication can leave an
 incomplete, reserved run directory: inspect it and choose a new ID; no command overwrites
 it silently. Integrity hashes
@@ -302,6 +313,7 @@ against an owner who rewrites the entire artifact consistently.
 
 This is an early product-track slice. Authentication, provider/OAuth settings,
 spatial downstream campaign decisions, traffic data and population calibration are not
-implemented. Schema-v4 saved runs add opportunity evidence to mobility; they are not
+implemented. Schema-v5 saved runs add opportunity and uncalibrated synthetic attention
+evidence to mobility; they do not affect cognition or purchase behavior and are not
 geographic advertising-outcome studies. Adding MBTI labels without
 evidence would not make behavior realistic and is deliberately deferred.

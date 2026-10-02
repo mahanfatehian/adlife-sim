@@ -69,18 +69,21 @@ What this model cannot support. Read alongside the
   Optional place sets constrain synthetic home, workplace and leisure nodes with stated
   provenance and deterministic assignment. They do not model land-use capacity, household
   composition, job matching, venue preference or observed origin-destination demand.
-- **Spatial opportunities are bounded model evidence.** `city-campaign validate` checks
+- **Spatial opportunity and attention are bounded model evidence.** `city-campaign validate` checks
   hashes, references, windows, caps, direction and road-coordinate consistency. C2 can
   derive typed opportunities and explicit funnel denominators. C3a schema-v4 city runs
   persist and replay that canonical stream and its summary. Every record retains the
-  literal claim `synthetic-opportunity-not-impression`; no geographic
-  impression/notice/response event exists.
-  The read-only saved-run viewer can display persisted current-minute opportunity evidence,
-  but this presentation adds no causal event or outcome semantics.
+  literal claim `synthetic-opportunity-not-impression`. C3b schema-v5 runs add one synthetic
+  impression per opportunity and a keyed noticed/ignored label using a fixed 0.5 probability;
+  each carries `synthetic-attention-not-observed-behavior`. This threshold is uncalibrated
+  and is not observed attention. The read-only saved-run viewer can display persisted
+  current-minute opportunity and attention evidence, but this presentation adds no response
+  or outcome semantics. Neither evidence layer affects cognition, agent state, budget,
+  movement, purchase probability, metrics or reports.
   Road proximity and the half-plane orientation heuristic omit occlusion, lanes,
   buildings, traffic, speed variation and measured viewability. Phone probability is an
-  analyst assumption, not an observed usage rate. The remaining C3/C4 work must still
-  define causal downstream events, metrics and reports.
+  analyst assumption, not an observed usage rate. The remaining C3 response/state bridge
+  and C4 work must still define causal downstream events, metrics and reports.
 - **Time-zone metadata is not a civil-time model.** City-pack v2 records an IANA time
   zone, but the fixed schedule treats day 1 as Monday, has no start date, holidays or
   daylight-saving transition policy, and uses fixed light/dark hours rather than local

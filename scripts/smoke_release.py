@@ -4,8 +4,8 @@ The wheel is the canonical distribution, so release verification never happens i
 the development checkout. This script creates a temporary virtual environment, installs
 exactly the wheel it was handed, changes to a scratch directory outside the checkout,
 and runs the documented workflow — including the verified packaged city catalog,
-validated fictional place and spatial-campaign inputs, a schema-v4 spatial opportunity
-run and its replay — validating the JSON output contract along the way. Every temporary
+validated fictional place and spatial-campaign inputs, a schema-v5 spatial opportunity and
+attention run and its replay — validating the JSON output contract along the way. Every temporary
 artifact is cleaned up on success and on failure.
 """
 

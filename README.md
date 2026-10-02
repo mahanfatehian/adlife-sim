@@ -210,31 +210,40 @@ use activity-filtered keyed draws. It reports every pre/post-filter denominator 
 each record `synthetic-opportunity-not-impression`.
 
 The validation command alone writes no run artifact. Passing the validated document to
-`city-run --spatial-campaign` creates a schema-v4 artifact that freezes the scenario,
-canonical opportunity stream, funnel summary, and their hashes. `city-replay` recomputes
-and verifies all of that evidence without changing the source. These records remain
-`synthetic-opportunity-not-impression`. For a verified schema-v4 run, `city-view` shows
-read-only current-minute opportunity evidence on the map and in a bounded evidence rail;
-it does not convert it into impressions/notice/responses, send it to cognition, apply it
-to agent state or purchases, or include it in metrics and reports. C3's causal bridge and
-C4 remain open.
-Nothing claims observed device use, real viewability, attention, traffic, people, or sales.
+`city-run --spatial-campaign` creates a schema-v5 artifact that freezes the scenario,
+canonical opportunity stream and summary, and a separate deterministic attention stream
+and summary. The additional files are `outputs/spatial-attention.jsonl` and
+`outputs/attention-summary.json`; their hashes, byte counts and record counts are bound by
+the manifest. Every opportunity creates one synthetic impression, then an
+order-independent keyed draw records noticed when it is below the fixed neutral probability
+0.5. That value is an uncalibrated research assumption, not observed attention, and every
+attention record says `synthetic-attention-not-observed-behavior`.
+
+`city-replay` recomputes and verifies both evidence layers without changing the source. For
+a verified schema-v5 run, `city-view` shows read-only current-minute opportunity and
+current-minute attention evidence on the map and in bounded evidence rails. Neither layer
+is sent to cognition or applied to agent state, memory, social propagation, budget,
+purchase probability, metrics or reports. Campaign copy, identity, creative content and
+provider configuration are not inputs to the attention draw. Older schema-v4 artifacts
+remain readable as opportunity-only evidence and do not fabricate attention. The remaining
+C3 response/state bridge and C4 metrics work remain open. Nothing here claims observed
+device use, viewability, attention, traffic, people, purchases, or sales.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
 terminal window for you.
 
 `city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
-schema-v4 spatial runs additionally persist opportunity evidence. `city-replay` verifies
-the selected contract without changing source artifacts, and `city-view` opens its
-verified mobility projection plus persisted current-minute opportunity evidence in the
-same read-only local timeline.
+schema-v5 spatial runs additionally persist opportunity and attention evidence. `city-replay`
+verifies the selected contract without changing source artifacts, and `city-view` opens its
+verified mobility projection plus persisted current-minute opportunity and current-minute
+attention evidence in the same read-only local timeline.
 
 This remains an early geographic research slice, not a calibrated advertising outcome
-model: it persists bounded opportunity evidence but does not infer impressions, simulate
-calibrated residents or traffic, or predict sales. A real street network improves spatial
-fidelity but does not validate agent behavior. City-pack format and scientific boundaries
-are in [docs/city-pilot.md](docs/city-pilot.md).
+model: its synthetic impression and fixed-0.5 notice labels are model evidence, not measured
+behavior. It does not simulate calibrated residents or traffic or predict purchases or
+sales. A real street network improves spatial fidelity but does not validate agent behavior.
+City-pack format and scientific boundaries are in [docs/city-pilot.md](docs/city-pilot.md).
 
 ---
 

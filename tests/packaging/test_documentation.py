@@ -233,6 +233,48 @@ def test_spatial_opportunity_docs_describe_c3a_artifacts_without_claiming_outcom
         assert stale_claim not in combined
 
 
+def test_spatial_attention_docs_describe_c3b_without_claiming_observed_behavior() -> None:
+    readme = _read("README.md").lower()
+    architecture = _read("docs", "architecture.md").lower()
+    cli = _read("docs", "cli-reference.md").lower()
+    city_pilot = _read("docs", "city-pilot.md").lower()
+    reproducibility = _read("docs", "reproducibility.md").lower()
+    model_card = _read("docs", "methodology", "model-card.md").lower()
+    limitations = _read("docs", "methodology", "limitations.md").lower()
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    ).lower()
+
+    public = (readme, architecture, cli, city_pilot, reproducibility, model_card, limitations)
+    for text in public:
+        assert "synthetic-attention-not-observed-behavior" in text
+        assert "0.5" in text
+    for text in (readme, cli, city_pilot, reproducibility):
+        assert "schema-v5" in text
+        assert "attention-summary.json" in text
+        assert "spatial-attention.jsonl" in text
+    for text in (readme, architecture, cli, city_pilot, reproducibility, model_card):
+        assert "current-minute attention" in text
+    for text in (readme, architecture, city_pilot, reproducibility, model_card, limitations):
+        assert "not calibrated" in text or "uncalibrated" in text
+        assert "purchase" in text
+        assert "cognition" in text
+    assert "c3b evidence" in roadmap
+    assert "[ ] **c3" in roadmap
+    assert "[ ] **c4" in roadmap
+    assert "schema-v5" in roadmap
+
+    combined = "\n".join(public)
+    for stale_claim in (
+        "schema-v4 artifact that freezes",
+        "schema-v4 spatial runs additionally persist",
+        "they are persisted and replayed as evidence, not impressions, attention",
+        "does not infer impressions",
+        "does not convert it into impressions/notice",
+    ):
+        assert stale_claim not in combined
+
+
 # ---------------------------------------------------------------------------
 # Governance files
 # ---------------------------------------------------------------------------

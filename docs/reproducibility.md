@@ -115,9 +115,10 @@ schema-v1 scenario fingerprint is canonical across campaign, placement, window a
 eligible-activity input order, and its geometry evidence is derived from the selected
 immutable city pack. The command writes no artifact and its fingerprint is not an
 advertising outcome. Passing the same validated document to
-`city-run --spatial-campaign` creates a schema-v4 artifact; the validation command by
-itself is still not a saved run. The remaining C3 and C4 work is responsible for causal
-downstream events and metrics.
+`city-run --spatial-campaign` creates a schema-v5 artifact; the validation command by
+itself is still not a saved run. Older schema-v4 artifacts remain readable as
+opportunity-only evidence. The remaining C3 response/state work and C4 are responsible for
+causal downstream outcomes and metrics.
 
 The pure C2 evaluator is nevertheless deterministic evidence. Continuous route crossings
 come from the same frozen paths and speeds as the unchanged minute trace. Crossing time is
@@ -129,9 +130,17 @@ upper 53 bits form the `[0,1)` draw. Probability and cap are not part of that st
 so paired variants reuse common random numbers. Records are ordered by continuous time,
 agent, campaign, placement and channel; IDs hash scenario/city fingerprints and that
 canonical identity. Campaign, placement, window and activity input order and
-`PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4 runs this same
+`PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4 and schema-v5 runs this same
 computation is also artifact replay: the frozen scenario is re-evaluated and the canonical
 stream and independently derived summary must match their manifest-bound evidence.
+
+Schema-v5 then derives one attention record per opportunity. The draw is the upper 53 bits
+of SHA-256 over canonical model ID, root seed, agent, placement, channel and absolute model
+millisecond; scenario/campaign/creative/provider data are not draw inputs. A draw below
+the fixed 0.5 probability records noticed. Records are canonically ordered and carry
+`synthetic-attention-not-observed-behavior`. This is deterministic, uncalibrated evidence,
+not observed behavior, and it cannot affect cognition, state, budget, movement or purchase
+probability.
 
 `adlife city-run PACK --output-root ROOT --run-id ID` or the catalog form
 `adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at
@@ -149,20 +158,25 @@ packs with the v2 model; incompatible pairings are refused rather than coerced. 
 `--places` is supplied, manifest v3 additionally freezes canonical `places.json` and
 `place-assignments.json`, records both SHA-256 digests, and reconstructs the assignment
 document during load. Editing, omitting or swapping either file is therefore refused
-before replay or viewing. With `--spatial-campaign`, schema-v4 additionally freezes
+before replay or viewing. With `--spatial-campaign`, schema-v5 additionally freezes
 `inputs/spatial-campaign.json`, streams canonical opportunity records to
 `outputs/spatial-opportunities.jsonl`, and writes
 `outputs/opportunity-summary.json`. The manifest records the scenario, stream and summary
 hashes plus exact stream bytes/count, and is published last. The fixed claim scope remains
-`synthetic-opportunity-not-impression`.
+`synthetic-opportunity-not-impression`. V5 also freezes
+`outputs/spatial-attention.jsonl` and `outputs/attention-summary.json`, binding their hashes,
+sizes, counts and the fixed model metadata. Schema-v4 is the retained opportunity-only
+predecessor.
 
 `adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
-without changing source files; for v4 it also recomputes and compares the normalized
-opportunity stream and summary. A mismatch, partial publication or incompatible artifact
+without changing source files; for v4 and v5 it also recomputes and compares the normalized
+opportunity stream and summary, and for v5 it independently recomputes attention. A
+mismatch, partial publication or incompatible artifact
 is refused. `adlife city-view ROOT ID` performs the same load verification before
 opening the read-only mobility timeline. For schema-v4 it also presents canonical,
 persisted current-minute opportunity evidence; scrubbing or selecting an evidence record
-does not recompute, append to or mutate the source artifact. A
+does not recompute, append to or mutate the source artifact. Schema-v5 additionally presents
+persisted current-minute attention evidence with the synthetic claim and 0.5 assumption. A
 digest proves equality against that artifact, not authenticity against an owner rewriting
 all files. Identical frames are expected on a compatible implementation/runtime;
 cross-platform bitwise identity of floating-point interpolation is not claimed.

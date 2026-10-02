@@ -73,6 +73,16 @@ mobility trace in the final manifest. Replay re-evaluates the frozen inputs and 
 the normalized stream and summary. This storage boundary is not the remaining C3 causal
 bridge: no opportunity reaches cognition, agent state, purchase logic, metrics or reports.
 
+`core/simulation/spatial_attention.py` is the separate C3b evidence boundary. For each
+validated opportunity it emits exactly one synthetic impression and uses an
+order-independent SHA-256 keyed draw to record notice when the draw is below the fixed 0.5
+probability. The probability is deliberately neutral and uncalibrated. Campaign copy,
+campaign identity, creative content, channel and provider configuration are excluded from
+the draw key, so they cannot control notice. Records carry the literal claim
+`synthetic-attention-not-observed-behavior`. The pure evaluator cannot call cognition,
+create arbitrary domain events, mutate agent state or budget, change movement, or affect
+purchase probability.
+
 The city adapter owns file and package-resource loading. Its packaged catalog is an
 offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
 matching ID/schema/metadata before selection. The only bundled entry is
@@ -83,19 +93,24 @@ viewing do not contact a public tile service or geocoder and do not accept an ar
 resource URL.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4
+misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5
 `CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
 `CityRunStore`; v1-v3 remain mobility-only.
 V3 freezes the canonical place set and its generated assignment document alongside the
 pack under `city-runs/<run-id>/`; their hashes are part of the final manifest.
 V4 additionally freezes the validated spatial scenario, opportunity stream and summary.
+V5 adds canonical `outputs/spatial-attention.jsonl` and
+`outputs/attention-summary.json`, with their hashes, sizes, counts, fixed model identity,
+0.5 probability and claim scope bound into the manifest.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute before reporting equality, and `city-view`
-validates before serving one immutable mobility projection. For V4, the same loopback-only
-adapter also serves a bounded summary and canonical, paged current-minute opportunity
-evidence to the read-only browser. It does not create or mutate evidence. V4 remains
-auditable opportunity evidence, not an event-sourced advertising-outcome run; C3 still
-must define and test the causal downstream contract.
+validates before serving one immutable mobility projection. For V4 and V5, the same
+loopback-only adapter serves a bounded summary and canonical, paged
+current-minute opportunity evidence; V5 additionally serves current-minute attention
+evidence. It does not create or mutate evidence. V4 remains opportunity-only evidence,
+while V5 adds bounded synthetic attention evidence. Neither is an event-sourced
+advertising-outcome run; the remaining C3 response/state bridge and C4 still require
+separate contracts and tests.
 
 ## The cognition seam
 
@@ -148,8 +163,9 @@ The runner and engine process each tick of 15 simulated minutes in a fixed order
 (96 ticks per simulated day; a timestamp is an absolute simulated minute):
 
 1. **Movement** — two-phase planning and resolution along world routes.
-2. **Advertising eligibility and attention** (planned) — exposure opportunities render
-   impressions; the attention policy decides noticed/ignored.
+2. **Advertising eligibility and attention** — the zone engine plans its existing
+   exposure/notice events. The separate city C3b evaluator is artifact evidence only and
+   is not injected into this tick pipeline.
 3. **Cognition resolution** — every planned request must have its resolved answer before
    the engine commits the tick.
 4. **Response and memory** — the rule-bounded state change with its episodic memory.

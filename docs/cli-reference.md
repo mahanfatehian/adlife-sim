@@ -113,13 +113,18 @@ The command hashes every minute frame and the generated fictional assignments. A
 completed artifact contains `run.json`, `inputs/city.json`, and `inputs/agents.json`.
 With `--places`, schema-v3 artifacts also freeze `inputs/places.json` and
 `inputs/place-assignments.json` plus both content hashes.
-With `--spatial-campaign`, schema-v4 artifacts additionally freeze
+With `--spatial-campaign`, schema-v5 artifacts additionally freeze
 `inputs/spatial-campaign.json`, `outputs/spatial-opportunities.jsonl`, and
-`outputs/opportunity-summary.json`. The command validates the scenario against the exact
-selected city and duration before reserving the run ID. JSON output includes scenario,
-stream and summary hashes, stream bytes/count, all funnel counts, and the literal claim
-scope `synthetic-opportunity-not-impression`. These are opportunity records, not verified
-impressions or advertising outcomes; they do not affect cognition, state or purchases.
+`outputs/opportunity-summary.json`, then derive `outputs/spatial-attention.jsonl` and
+`outputs/attention-summary.json`. The command validates the scenario against the exact
+selected city and duration before reserving the run ID. JSON output includes both claim
+scopes, model/probability metadata, hashes, bytes/counts and funnel totals. Opportunity
+records retain `synthetic-opportunity-not-impression`; attention records say
+`synthetic-attention-not-observed-behavior`. Every opportunity becomes one synthetic
+impression and an order-independent draw below the fixed 0.5 probability becomes noticed.
+This is an uncalibrated assumption. It does not affect cognition, state, budget, movement,
+purchase probability, metrics or reports. Older schema-v4 artifacts remain readable as
+opportunity-only evidence.
 Interrupted or failed publication may leave an incomplete, reserved directory; use a
 new run ID after examining it. JSON mode emits one result document on stdout.
 
@@ -127,7 +132,9 @@ new run ID after examining it. JSON mode emits one result document on stdout.
 
 Load the frozen inputs, regenerate every minute frame, and compare the full trace hash and
 counts. For schema-v4, also re-evaluate and compare the canonical opportunity stream and
-independent summary. Success emits `"identical": true`; missing, damaged,
+independent summary. For schema-v5, additionally recompute and compare the canonical
+attention stream and summary, including the fixed 0.5 model contract. Success emits
+`"identical": true`; missing, damaged,
 partial, or incompatible artifacts exit 4 without modifying the source files. This
 proves replay against the saved artifact on a compatible implementation/runtime; it
 is not cryptographic authentication against an owner rewriting all artifact files.
@@ -140,13 +147,17 @@ Open a **validated saved** city mobility run in the same read-only browser timel
 at `http://127.0.0.1:8765` (loopback only). The run is fully verified before the
 server binds; a corrupt or partial run exits 4. The HTTP API cannot select another
 run or open a filesystem path. The header displays the saved run ID and artifact
-schema version. For schema-v4 runs, the viewer adds a read-only current-minute opportunity
+schema version. For schema-v4 and schema-v5 runs, the viewer adds a read-only current-minute opportunity
 panel with persisted totals, channel counts and canonical records for the timeline
 scrubber. Its bounded `/api/opportunities` endpoint accepts a required minute, optional
 saved agent ID, offset and a maximum page size of 100; `/api/opportunity-summary` exposes
 only validated scenario metadata and aggregate counts. Neither endpoint accepts a path or
 changes the run. Every record remains `synthetic-opportunity-not-impression`; the viewer
-does not infer an impression, response or outcome. `--port` accepts 1–65535. Like
+does not invent a response or outcome. Schema-v5 also adds bounded
+`/api/attention-events` and `/api/attention-summary` endpoints and displays persisted
+current-minute attention evidence. Those records remain
+`synthetic-attention-not-observed-behavior`; noticed means only that the deterministic draw
+was below the uncalibrated 0.5 threshold. `--port` accepts 1–65535. Like
 `adlife city`, this interactive command accepts human output mode only and does not launch
 a browser automatically.
 
