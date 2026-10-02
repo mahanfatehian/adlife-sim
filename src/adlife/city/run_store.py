@@ -28,6 +28,7 @@ from adlife.core.domain.city_run import (
     CityRunManifestV2,
     CityRunManifestV3,
     CityRunManifestV4,
+    CityRunManifestV5,
     parse_city_run_manifest_json,
 )
 from adlife.core.domain.serialization import DocumentNotSerialisable, canonical_json
@@ -49,6 +50,14 @@ from adlife.core.simulation.city_mobility import (
     CityPlaceAssignment,
 )
 from adlife.core.simulation.city_trace import summarize_city_trace
+from adlife.core.simulation.spatial_attention import (
+    MAX_SPATIAL_ATTENTION_STREAM_BYTES,
+    SpatialAttentionArtifactSummary,
+    SpatialAttentionEvaluation,
+    evaluate_spatial_attention,
+    spatial_attention_lines,
+    summarize_spatial_attention_artifact,
+)
 from adlife.core.simulation.spatial_opportunity import (
     MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES,
     SpatialOpportunityArtifactSummary,
@@ -62,6 +71,7 @@ MAX_CITY_MANIFEST_BYTES = 65_536
 MAX_CITY_AGENTS_BYTES = 65_536
 MAX_CITY_PLACE_ASSIGNMENTS_BYTES = 65_536
 MAX_CITY_OPPORTUNITY_SUMMARY_BYTES = 65_536
+MAX_CITY_ATTENTION_SUMMARY_BYTES = 65_536
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +82,7 @@ class StoredCityRun:
     directory: Path
     spatial_scenario: SpatialCampaignScenario | None = None
     opportunity_evaluation: SpatialOpportunityEvaluation | None = None
+    attention_evaluation: SpatialAttentionEvaluation | None = None
 
 
 def _runtime_version() -> str:
@@ -84,6 +95,7 @@ def _canonical_bytes(
         | CityPlaceSet
         | CityRunManifestDocument
         | SpatialCampaignScenario
+        | SpatialAttentionArtifactSummary
         | SpatialOpportunityArtifactSummary
         | dict[str, object]
     ),
@@ -100,7 +112,7 @@ def _validate_schema_pair(
     pack: CityPackDocument,
     places: CityPlaceSet | None,
 ) -> None:
-    if isinstance(manifest, CityRunManifestV4):
+    if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5)):
         if manifest.city_schema_version != pack.schema_version:
             raise CorruptRunArtifact("city run manifest and city pack schemas do not match")
         if manifest.place_schema_version is None:
@@ -148,6 +160,15 @@ def _write_opportunity_stream(path: Path, evaluation: SpatialOpportunityEvaluati
         os.fsync(target.fileno())
 
 
+def _write_attention_stream(path: Path, evaluation: SpatialAttentionEvaluation) -> None:
+    with path.open("xb") as target:
+        for line in spatial_attention_lines(evaluation):
+            if target.write(line) != len(line):
+                raise OSError("short city attention stream write")
+        target.flush()
+        os.fsync(target.fileno())
+
+
 class CityRunStore:
     """A city run is complete only when its final manifest exists and verifies."""
 
@@ -190,6 +211,7 @@ class CityRunStore:
         place_assignments: tuple[CityPlaceAssignment, ...] = (),
         spatial_scenario: SpatialCampaignScenario | None = None,
         opportunity_evaluation: SpatialOpportunityEvaluation | None = None,
+        attention_evaluation: SpatialAttentionEvaluation | None = None,
     ) -> Path:
         """Reserve a fresh ID; publish the completion manifest only after frozen inputs."""
         try:
@@ -210,7 +232,7 @@ class CityRunStore:
                 manifest
                 if isinstance(manifest, CityRunManifestV3)
                 or (
-                    isinstance(manifest, CityRunManifestV4)
+                    isinstance(manifest, (CityRunManifestV4, CityRunManifestV5))
                     and manifest.place_schema_version is not None
                 )
                 else None
@@ -228,8 +250,10 @@ class CityRunStore:
                 raise CorruptRunArtifact("legacy city run cannot contain place assignments")
             spatial_scenario_bytes: bytes | None = None
             opportunity_summary_bytes: bytes | None = None
+            attention_summary_bytes: bytes | None = None
             verified_evaluation: SpatialOpportunityEvaluation | None = None
-            if isinstance(manifest, CityRunManifestV4):
+            verified_attention: SpatialAttentionEvaluation | None = None
+            if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5)):
                 if spatial_scenario is None or opportunity_evaluation is None:
                     raise CorruptRunArtifact("spatial city run inputs are incomplete")
                 spatial_scenario = parse_spatial_campaign_scenario_json(
@@ -259,7 +283,40 @@ class CityRunStore:
                     raise CorruptRunArtifact(
                         "city run manifest does not match spatial opportunity inputs"
                     )
-            elif spatial_scenario is not None or opportunity_evaluation is not None:
+                if isinstance(manifest, CityRunManifestV5):
+                    if not isinstance(attention_evaluation, SpatialAttentionEvaluation):
+                        raise CorruptRunArtifact("spatial attention evaluation is incomplete")
+                    verified_attention = evaluate_spatial_attention(
+                        verified_evaluation,
+                        seed=manifest.seed,
+                    )
+                    if verified_attention != attention_evaluation:
+                        raise CorruptRunArtifact(
+                            "spatial attention evaluation does not match frozen inputs"
+                        )
+                    attention_summary = summarize_spatial_attention_artifact(verified_attention)
+                    attention_summary_bytes = _canonical_bytes(attention_summary)
+                    if (
+                        manifest.spatial_attention_schema_version
+                        != verified_attention.schema_version
+                        or manifest.spatial_attention_model_id != verified_attention.model_id
+                        or manifest.attention_stream_sha256 != attention_summary.stream_sha256
+                        or manifest.attention_summary_sha256
+                        != sha256(attention_summary_bytes).hexdigest()
+                        or manifest.attention_stream_bytes != attention_summary.stream_bytes
+                        or manifest.impression_count != attention_summary.counts.impression_count
+                        or manifest.noticed_count != attention_summary.counts.noticed_count
+                    ):
+                        raise CorruptRunArtifact(
+                            "city run manifest does not match spatial attention inputs"
+                        )
+                elif attention_evaluation is not None:
+                    raise CorruptRunArtifact("v4 city run cannot contain attention evidence")
+            elif (
+                spatial_scenario is not None
+                or opportunity_evaluation is not None
+                or attention_evaluation is not None
+            ):
                 raise CorruptRunArtifact("legacy city run cannot contain spatial inputs")
             if (
                 pack.fingerprint != manifest.city_sha256
@@ -293,6 +350,10 @@ class CityRunStore:
             or (
                 opportunity_summary_bytes is not None
                 and len(opportunity_summary_bytes) > MAX_CITY_OPPORTUNITY_SUMMARY_BYTES
+            )
+            or (
+                attention_summary_bytes is not None
+                and len(attention_summary_bytes) > MAX_CITY_ATTENTION_SUMMARY_BYTES
             )
             or (
                 assignments_bytes is not None
@@ -363,6 +424,29 @@ class CityRunStore:
                     raise StorageError(
                         "city run staged opportunity stream did not match expected bytes"
                     ) from None
+            if attention_summary_bytes is not None and verified_attention is not None:
+                outputs = directory / "outputs"
+                summary_path = outputs / "attention-summary.json"
+                stream_path = outputs / "spatial-attention.jsonl"
+                _write_new(summary_path, attention_summary_bytes)
+                if (
+                    self._read_document(
+                        summary_path,
+                        limit=len(attention_summary_bytes),
+                        label="attention summary",
+                    )
+                    != attention_summary_bytes
+                ):
+                    raise StorageError(
+                        "city run staged attention summary did not match expected bytes"
+                    )
+                _write_attention_stream(stream_path, verified_attention)
+                try:
+                    self._verify_attention_stream(stream_path, verified_attention)
+                except CorruptRunArtifact:
+                    raise StorageError(
+                        "city run staged attention stream did not match expected bytes"
+                    ) from None
             temporary = directory / ".run.json.tmp"
             try:
                 _write_new(temporary, manifest_bytes)
@@ -422,6 +506,36 @@ class CityRunStore:
         except OSError:
             raise CorruptRunArtifact("city run opportunity stream is unreadable") from None
 
+    def _verify_attention_stream(
+        self,
+        path: Path,
+        evaluation: SpatialAttentionEvaluation,
+    ) -> None:
+        if path.is_symlink() or not path.resolve().is_relative_to(self.root):
+            raise UnsafeRunLocation("city run attention stream has an unsafe location")
+        expected_summary = summarize_spatial_attention_artifact(evaluation)
+        try:
+            stream_size = path.stat().st_size
+            if (
+                stream_size != expected_summary.stream_bytes
+                or stream_size > MAX_SPATIAL_ATTENTION_STREAM_BYTES
+            ):
+                raise CorruptRunArtifact("city run attention stream size does not match")
+            with path.open("rb") as source:
+                for expected_line in spatial_attention_lines(evaluation):
+                    if source.read(len(expected_line)) != expected_line:
+                        raise CorruptRunArtifact(
+                            "city run attention stream does not match frozen inputs"
+                        )
+                if source.read(1) != b"":
+                    raise CorruptRunArtifact(
+                        "city run attention stream does not match frozen inputs"
+                    )
+        except FileNotFoundError:
+            raise CorruptRunArtifact("city run attention stream is missing") from None
+        except OSError:
+            raise CorruptRunArtifact("city run attention stream is unreadable") from None
+
     def load(self, run_id: str) -> StoredCityRun:
         """Refuse any missing, damaged, incompatible or partial city artifact."""
         directory = self.run_directory(run_id)
@@ -452,7 +566,7 @@ class CityRunStore:
             manifest
             if isinstance(manifest, CityRunManifestV3)
             or (
-                isinstance(manifest, CityRunManifestV4)
+                isinstance(manifest, (CityRunManifestV4, CityRunManifestV5))
                 and manifest.place_schema_version is not None
             )
             else None
@@ -470,7 +584,8 @@ class CityRunStore:
             )
         spatial_scenario_bytes: bytes | None = None
         opportunity_summary_bytes: bytes | None = None
-        if isinstance(manifest, CityRunManifestV4):
+        attention_summary_bytes: bytes | None = None
+        if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5)):
             outputs = directory / "outputs"
             if not outputs.is_dir():
                 raise CorruptRunArtifact("city run outputs directory is incomplete")
@@ -486,6 +601,12 @@ class CityRunStore:
                 limit=MAX_CITY_OPPORTUNITY_SUMMARY_BYTES,
                 label="opportunity summary",
             )
+            if isinstance(manifest, CityRunManifestV5):
+                attention_summary_bytes = self._read_document(
+                    outputs / "attention-summary.json",
+                    limit=MAX_CITY_ATTENTION_SUMMARY_BYTES,
+                    label="attention summary",
+                )
         try:
             pack = parse_city_pack_json(city_bytes)
             places = None if places_bytes is None else parse_city_place_set_json(places_bytes)
@@ -525,7 +646,8 @@ class CityRunStore:
                     raise CorruptRunArtifact("city run place inputs do not match")
             spatial_scenario: SpatialCampaignScenario | None = None
             opportunity_evaluation: SpatialOpportunityEvaluation | None = None
-            if isinstance(manifest, CityRunManifestV4):
+            attention_evaluation: SpatialAttentionEvaluation | None = None
+            if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5)):
                 if spatial_scenario_bytes is None or opportunity_summary_bytes is None:
                     raise CorruptRunArtifact("city run spatial inputs are missing")
                 spatial_scenario = parse_spatial_campaign_scenario_json(spatial_scenario_bytes)
@@ -550,6 +672,34 @@ class CityRunStore:
                     directory / "outputs" / "spatial-opportunities.jsonl",
                     opportunity_evaluation,
                 )
+                if isinstance(manifest, CityRunManifestV5):
+                    if attention_summary_bytes is None:
+                        raise CorruptRunArtifact("city run attention inputs are missing")
+                    attention_evaluation = evaluate_spatial_attention(
+                        opportunity_evaluation,
+                        seed=manifest.seed,
+                    )
+                    attention_summary = summarize_spatial_attention_artifact(attention_evaluation)
+                    expected_attention_summary_bytes = _canonical_bytes(attention_summary)
+                    if (
+                        attention_summary_bytes != expected_attention_summary_bytes
+                        or manifest.spatial_attention_schema_version
+                        != attention_evaluation.schema_version
+                        or manifest.spatial_attention_model_id != attention_evaluation.model_id
+                        or manifest.attention_stream_sha256 != attention_summary.stream_sha256
+                        or manifest.attention_summary_sha256
+                        != sha256(expected_attention_summary_bytes).hexdigest()
+                        or manifest.attention_stream_bytes != attention_summary.stream_bytes
+                        or manifest.impression_count != attention_summary.counts.impression_count
+                        or manifest.noticed_count != attention_summary.counts.noticed_count
+                    ):
+                        raise CorruptRunArtifact(
+                            "city run spatial attention artifacts do not match"
+                        )
+                    self._verify_attention_stream(
+                        directory / "outputs" / "spatial-attention.jsonl",
+                        attention_evaluation,
+                    )
             summary = summarize_city_trace(mobility)
             if (
                 summary.agents_sha256 != manifest.agents_sha256
@@ -567,6 +717,7 @@ class CityRunStore:
             directory,
             spatial_scenario=spatial_scenario,
             opportunity_evaluation=opportunity_evaluation,
+            attention_evaluation=attention_evaluation,
         )
 
 

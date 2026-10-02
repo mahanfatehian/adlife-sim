@@ -65,6 +65,21 @@ def valid_manifest_v4() -> dict[str, object]:
     }
 
 
+def valid_manifest_v5() -> dict[str, object]:
+    return {
+        **valid_manifest_v4(),
+        "schema_version": 5,
+        "model_id": "illustrative-road-spatial-attention-study-v1",
+        "spatial_attention_schema_version": 1,
+        "spatial_attention_model_id": "spatial-attention-v1",
+        "attention_stream_sha256": "1" * 64,
+        "attention_summary_sha256": "2" * 64,
+        "attention_stream_bytes": 8192,
+        "impression_count": 7,
+        "noticed_count": 3,
+    }
+
+
 def test_valid_manifest_round_trips_and_is_immutable() -> None:
     manifest = CityRunManifest.model_validate(valid_manifest())
     assert CityRunManifest.model_validate_json(manifest.model_dump_json()) == manifest
@@ -206,6 +221,78 @@ def test_v4_manifest_accepts_only_a_complete_place_binding() -> None:
             model.model_validate(document)
 
 
+def test_v5_manifest_binds_attention_artifacts_and_funnel_counts() -> None:
+    model = getattr(city_run, "CityRunManifestV5", None)
+    assert model is not None, "CityRunManifestV5 is not implemented"
+
+    manifest = city_run.parse_city_run_manifest_json(json.dumps(valid_manifest_v5()))
+
+    assert isinstance(manifest, model)
+    assert manifest.model_id == "illustrative-road-spatial-attention-study-v1"
+    assert manifest.spatial_attention_schema_version == 1
+    assert manifest.spatial_attention_model_id == "spatial-attention-v1"
+    assert manifest.attention_stream_sha256 == "1" * 64
+    assert manifest.attention_summary_sha256 == "2" * 64
+    assert manifest.attention_stream_bytes == 8192
+    assert manifest.impression_count == manifest.opportunity_count == 7
+    assert manifest.noticed_count == 3
+    assert manifest.place_schema_version is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("model_id", "illustrative-road-spatial-study-v1"),
+        ("city_schema_version", True),
+        ("city_schema_version", 3),
+        ("spatial_scenario_schema_version", True),
+        ("spatial_opportunity_schema_version", 2),
+        ("spatial_attention_schema_version", True),
+        ("spatial_attention_schema_version", 2),
+        ("spatial_attention_model_id", "other-model"),
+        ("attention_stream_sha256", "A" * 64),
+        ("attention_summary_sha256", "short"),
+        ("attention_stream_bytes", -1),
+        ("attention_stream_bytes", 1_073_741_825),
+        ("impression_count", -1),
+        ("impression_count", 520_801),
+        ("impression_count", 6),
+        ("noticed_count", -1),
+        ("noticed_count", 520_801),
+        ("noticed_count", 8),
+    ],
+)
+def test_v5_manifest_refuses_incompatible_or_incoherent_attention_fields(
+    field: str, value: object
+) -> None:
+    model = getattr(city_run, "CityRunManifestV5", None)
+    assert model is not None, "CityRunManifestV5 is not implemented"
+    with pytest.raises(ValidationError):
+        model.model_validate({**valid_manifest_v5(), field: value})
+
+
+def test_v5_manifest_accepts_only_a_complete_place_binding() -> None:
+    model = city_run.CityRunManifestV5
+    with_places = {
+        **valid_manifest_v5(),
+        "place_schema_version": 1,
+        "place_set_sha256": "3" * 64,
+        "place_assignments_sha256": "4" * 64,
+    }
+    manifest = model.model_validate(with_places)
+    assert manifest.place_set_sha256 == "3" * 64
+
+    for missing in (
+        "place_schema_version",
+        "place_set_sha256",
+        "place_assignments_sha256",
+    ):
+        document = dict(with_places)
+        del document[missing]
+        with pytest.raises(ValidationError, match="place"):
+            model.model_validate(document)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -232,7 +319,7 @@ def test_v4_manifest_refuses_incompatible_or_unbounded_fields(field: str, value:
         model.model_validate({**valid_manifest_v4(), field: value})
 
 
-@pytest.mark.parametrize("version", [None, True, 1.0, 0, 5])
+@pytest.mark.parametrize("version", [None, True, 1.0, 0, 6])
 def test_run_manifest_version_dispatch_fails_closed(version: object) -> None:
     parser = getattr(city_run, "parse_city_run_manifest_json", None)
     assert parser is not None, "run manifest version dispatch is not implemented"

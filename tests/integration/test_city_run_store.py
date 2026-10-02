@@ -28,6 +28,12 @@ from adlife.core.ports.run_store import (
 )
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
+from adlife.core.simulation.spatial_attention import (
+    SpatialAttentionEvaluation,
+    evaluate_spatial_attention,
+    spatial_attention_lines,
+    summarize_spatial_attention_artifact,
+)
 from adlife.core.simulation.spatial_opportunity import (
     SpatialOpportunityEvaluation,
     evaluate_spatial_opportunities,
@@ -125,6 +131,67 @@ def _spatial_manifest(
         **place_fields,
     )
     return manifest, mobility, scenario, evaluation
+
+
+def attention_specimen(
+    *, probability: float = 1.0
+) -> tuple[
+    object,
+    CityMobility,
+    SpatialCampaignScenario,
+    SpatialOpportunityEvaluation,
+    SpatialAttentionEvaluation,
+]:
+    pack = load_pack(pack_data())
+    mobility = CityMobility(pack, seed=42, agent_count=1, days=1)
+    scenario = _scenario(
+        pack,
+        [
+            _phone(
+                windows=[{"start_minute": 0, "end_minute": 2}],
+                probability=probability,
+                cap=2,
+            )
+        ],
+    )
+    trace = summarize_city_trace(mobility)
+    opportunity_evaluation = evaluate_spatial_opportunities(mobility, scenario)
+    opportunity = summarize_spatial_opportunity_artifact(opportunity_evaluation)
+    opportunity_summary_bytes = (canonical_json(opportunity) + "\n").encode("utf-8")
+    attention_evaluation = evaluate_spatial_attention(opportunity_evaluation, seed=42)
+    attention = summarize_spatial_attention_artifact(attention_evaluation)
+    attention_summary_bytes = (canonical_json(attention) + "\n").encode("utf-8")
+    manifest_model = getattr(city_run, "CityRunManifestV5", None)
+    assert manifest_model is not None, "CityRunManifestV5 is not implemented"
+    manifest = manifest_model(
+        run_id="attention-study",
+        package_version=__version__,
+        python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        city_sha256=pack.fingerprint,
+        agents_sha256=trace.agents_sha256,
+        trace_sha256=trace.trace_sha256,
+        scenario_sha256=scenario.fingerprint,
+        opportunity_stream_sha256=opportunity.stream_sha256,
+        opportunity_summary_sha256=sha256(opportunity_summary_bytes).hexdigest(),
+        opportunity_stream_bytes=opportunity.stream_bytes,
+        opportunity_count=opportunity.counts.opportunity_count,
+        attention_stream_sha256=attention.stream_sha256,
+        attention_summary_sha256=sha256(attention_summary_bytes).hexdigest(),
+        attention_stream_bytes=attention.stream_bytes,
+        impression_count=attention.counts.impression_count,
+        noticed_count=attention.counts.noticed_count,
+        seed=42,
+        agent_count=1,
+        days=1,
+        frame_count=trace.frame_count,
+        position_count=trace.position_count,
+        city_schema_version=pack.schema_version,
+        spatial_scenario_schema_version=scenario.schema_version,
+        spatial_opportunity_schema_version=opportunity_evaluation.schema_version,
+        spatial_attention_schema_version=attention_evaluation.schema_version,
+        spatial_attention_model_id=attention_evaluation.model_id,
+    )
+    return manifest, mobility, scenario, opportunity_evaluation, attention_evaluation
 
 
 def test_save_freezes_inputs_and_loads_an_identical_trace(tmp_path: Path) -> None:
@@ -287,6 +354,213 @@ def test_v4_save_supports_places_and_mixed_channel_evidence(tmp_path: Path) -> N
     assert (directory / "inputs" / "places.json").is_file()
     assert loaded.mobility.places == mobility.places
     assert loaded.opportunity_evaluation == evaluation
+
+
+def test_v5_save_freezes_and_loads_exact_attention_evidence(tmp_path: Path) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    loaded = store.load("attention-study")
+
+    assert loaded.manifest == manifest
+    assert loaded.opportunity_evaluation == opportunities
+    assert loaded.attention_evaluation == attention
+    summary = summarize_spatial_attention_artifact(attention)
+    assert (directory / "outputs" / "attention-summary.json").read_bytes() == (
+        canonical_json(summary) + "\n"
+    ).encode("utf-8")
+    assert (directory / "outputs" / "spatial-attention.jsonl").read_bytes() == b"".join(
+        spatial_attention_lines(attention)
+    )
+
+
+def test_v5_save_supports_empty_attention_evidence(tmp_path: Path) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen(probability=0.0)
+    store = CityRunStore(tmp_path)
+
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    loaded = store.load("attention-study")
+
+    assert manifest.opportunity_count == manifest.impression_count == manifest.noticed_count == 0
+    assert manifest.attention_stream_bytes == 0
+    assert (directory / "outputs" / "spatial-attention.jsonl").read_bytes() == b""
+    assert loaded.attention_evaluation == attention
+
+
+def test_v5_attention_input_is_required_and_recomputed_before_reserving_id(
+    tmp_path: Path,
+) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+
+    with pytest.raises(CorruptRunArtifact):
+        store.save(
+            manifest,
+            mobility.pack,
+            mobility.agents,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+        )
+    assert not (tmp_path / "city-runs" / "attention-study").exists()
+
+    changed = attention.model_copy(update={"seed": 43})
+    with pytest.raises(CorruptRunArtifact):
+        store.save(
+            manifest,
+            mobility.pack,
+            mobility.agents,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=changed,
+        )
+    assert not (tmp_path / "city-runs" / "attention-study").exists()
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    ["outputs/attention-summary.json", "outputs/spatial-attention.jsonl"],
+)
+def test_missing_v5_attention_artifact_is_refused(tmp_path: Path, artifact: str) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    (directory / artifact).unlink()
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("attention-study")
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    ["outputs/attention-summary.json", "outputs/spatial-attention.jsonl"],
+)
+def test_changed_v5_attention_artifact_is_refused(tmp_path: Path, artifact: str) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    path = directory / artifact
+    path.write_bytes(path.read_bytes() + b" \n")
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("attention-study")
+
+
+def test_appended_valid_attention_record_is_refused(tmp_path: Path) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    stream = directory / "outputs" / "spatial-attention.jsonl"
+    first_line = stream.read_bytes().splitlines(keepends=True)[0]
+    with stream.open("ab") as target:
+        target.write(first_line)
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("attention-study")
+
+
+@pytest.mark.parametrize(
+    ("artifact", "size"),
+    [
+        ("outputs/attention-summary.json", 65_537),
+        ("outputs/spatial-attention.jsonl", 1_073_741_825),
+    ],
+)
+def test_oversized_v5_attention_artifact_is_refused(
+    tmp_path: Path, artifact: str, size: int
+) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    with (directory / artifact).open("wb") as target:
+        target.truncate(size)
+
+    with pytest.raises(CorruptRunArtifact):
+        store.load("attention-study")
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    ["outputs/attention-summary.json", "outputs/spatial-attention.jsonl"],
+)
+def test_v5_attention_artifact_cannot_follow_a_symlink(tmp_path: Path, artifact: str) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+    directory = store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+    )
+    target = directory / artifact
+    outside = tmp_path / f"outside-{target.name}"
+    outside.write_bytes(target.read_bytes())
+    target.unlink()
+    try:
+        target.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create file symlinks")
+
+    with pytest.raises(UnsafeRunLocation):
+        store.load("attention-study")
+
+
+def test_v4_load_does_not_fabricate_attention(tmp_path: Path) -> None:
+    manifest, mobility, scenario, evaluation = spatial_specimen()
+    store = CityRunStore(tmp_path)
+    store.save(
+        manifest,
+        mobility.pack,
+        mobility.agents,
+        spatial_scenario=scenario,
+        opportunity_evaluation=evaluation,
+    )
+
+    assert store.load("spatial-study").attention_evaluation is None
 
 
 def test_v4_spatial_inputs_are_required_as_one_pair_before_reserving_id(
@@ -755,6 +1029,34 @@ def test_failed_v4_stream_write_cannot_publish_a_completed_manifest(
     assert (directory / "outputs" / "opportunity-summary.json").is_file()
     with pytest.raises(CorruptRunArtifact):
         store.load("spatial-study")
+
+
+def test_failed_v5_attention_stream_write_cannot_publish_a_completed_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    store = CityRunStore(tmp_path)
+
+    def fail_stream(path: Path, value: SpatialAttentionEvaluation) -> None:
+        raise OSError("injected attention stream failure")
+
+    monkeypatch.setattr(city_store_module, "_write_attention_stream", fail_stream)
+    with pytest.raises(StorageError):
+        store.save(
+            manifest,
+            mobility.pack,
+            mobility.agents,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=attention,
+        )
+
+    directory = tmp_path / "city-runs" / "attention-study"
+    assert directory.exists()
+    assert not (directory / "run.json").exists()
+    assert (directory / "outputs" / "attention-summary.json").is_file()
+    with pytest.raises(CorruptRunArtifact):
+        store.load("attention-study")
 
 
 @pytest.mark.parametrize("short_file", ["city.json", "agents.json", ".run.json.tmp"])

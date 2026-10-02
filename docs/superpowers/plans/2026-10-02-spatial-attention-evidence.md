@@ -70,13 +70,13 @@ FastAPI, vanilla JavaScript, pytest/Hypothesis, Ruff, mypy and uv/Hatch.
   `StoredCityRun.attention_evaluation`.
 - Extends: `CityRunStore.save(..., attention_evaluation=...)` for v5 only.
 
-- [ ] Write failing strict manifest and save/load tests, including legacy-v4 behavior.
-- [ ] Add failing missing/changed/appended/oversized/symlink/fault-injection cases.
-- [ ] Confirm RED because v5 and attention paths are unsupported.
-- [ ] Implement exact schema validation, independent recomputation, exclusive streaming
+- [x] Write failing strict manifest and save/load tests, including legacy-v4 behavior.
+- [x] Add failing missing/changed/appended/oversized/symlink/fault-injection cases.
+- [x] Confirm RED because v5 and attention paths are unsupported.
+- [x] Implement exact schema validation, independent recomputation, exclusive streaming
   writes, incremental comparison and final-manifest publication.
-- [ ] Run manifest/storage/security/architecture suites, Ruff and mypy.
-- [ ] Commit and push `feat(city): persist spatial attention runs`.
+- [x] Run manifest/storage/security/architecture suites, Ruff and mypy.
+- [x] Commit and push `feat(city): persist spatial attention runs`.
 
 ### Task 3: Create, replay and expose v5 through the CLI
 
