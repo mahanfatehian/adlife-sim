@@ -1,12 +1,16 @@
 """Saved mobility artifacts are versioned and have strict cross-field invariants."""
 
 import json
+from collections.abc import Callable
+from hashlib import sha256
 
 import pytest
 from pydantic import ValidationError
 
 from adlife.core.domain import city_run
 from adlife.core.domain.city_run import CityRunManifest, CityTraceSummary
+from adlife.core.domain.person import DomainModel
+from adlife.core.domain.serialization import canonical_json
 
 
 def valid_manifest() -> dict[str, object]:
@@ -77,6 +81,25 @@ def valid_manifest_v5() -> dict[str, object]:
         "attention_stream_bytes": 8192,
         "impression_count": 7,
         "noticed_count": 3,
+    }
+
+
+def valid_manifest_v6() -> dict[str, object]:
+    return {
+        **valid_manifest_v5(),
+        "schema_version": 6,
+        "model_id": "illustrative-road-spatial-response-study-v1",
+        "spatial_response_schema_version": 1,
+        "spatial_response_model_id": "spatial-response-v1",
+        "response_input_sha256": "3" * 64,
+        "response_stream_sha256": "4" * 64,
+        "response_state_sha256": "5" * 64,
+        "response_summary_sha256": "6" * 64,
+        "response_stream_bytes": 12_288,
+        "response_count": 3,
+        "state_update_count": 2,
+        "response_campaign_count": 2,
+        "final_state_count": 4,
     }
 
 
@@ -293,6 +316,139 @@ def test_v5_manifest_accepts_only_a_complete_place_binding() -> None:
             model.model_validate(document)
 
 
+def test_v6_manifest_binds_complete_response_artifacts_and_parser_dispatch() -> None:
+    model = getattr(city_run, "CityRunManifestV6", None)
+    assert model is not None, "CityRunManifestV6 is not implemented"
+
+    manifest = city_run.parse_city_run_manifest_json(json.dumps(valid_manifest_v6()))
+
+    assert isinstance(manifest, model)
+    assert not isinstance(manifest, city_run.CityRunManifestV5)
+    assert manifest.model_id == "illustrative-road-spatial-response-study-v1"
+    assert manifest.response_input_sha256 == "3" * 64
+    assert manifest.spatial_response_model_id == "spatial-response-v1"
+    assert manifest.response_count == manifest.noticed_count == 3
+    assert manifest.state_update_count == 2
+    assert manifest.response_campaign_count == 2
+    assert manifest.final_state_count == 4
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("model_id", "illustrative-road-spatial-attention-study-v1"),
+        ("spatial_response_schema_version", True),
+        ("spatial_response_schema_version", 2),
+        ("spatial_response_model_id", "other-model"),
+        ("response_input_sha256", "short"),
+        ("response_stream_sha256", "A" * 64),
+        ("response_state_sha256", "short"),
+        ("response_summary_sha256", "short"),
+        ("response_stream_bytes", -1),
+        ("response_stream_bytes", 2_147_483_649),
+        ("response_count", 2),
+        ("state_update_count", 4),
+        ("response_campaign_count", 0),
+        ("response_campaign_count", 21),
+        ("final_state_count", 3),
+        ("final_state_count", 601),
+    ],
+)
+def test_v6_manifest_refuses_incompatible_or_incoherent_response_fields(
+    field: str, value: object
+) -> None:
+    model = getattr(city_run, "CityRunManifestV6", None)
+    assert model is not None, "CityRunManifestV6 is not implemented"
+    with pytest.raises(ValidationError):
+        model.model_validate({**valid_manifest_v6(), field: value})
+
+
+def test_v6_manifest_allows_zero_notices_only_with_zero_state_updates() -> None:
+    document = {
+        **valid_manifest_v6(),
+        "noticed_count": 0,
+        "response_count": 0,
+        "state_update_count": 0,
+    }
+    assert city_run.CityRunManifestV6.model_validate(document).response_count == 0
+
+    with pytest.raises(ValidationError, match="updates"):
+        city_run.CityRunManifestV6.model_validate({**document, "state_update_count": 1})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("city_schema_version", True),
+        ("spatial_scenario_schema_version", 1.0),
+        ("spatial_opportunity_schema_version", "1"),
+        ("spatial_attention_schema_version", True),
+        ("frame_count", 1439),
+        ("position_count", 1),
+        ("impression_count", 6),
+        ("noticed_count", 8),
+        ("place_schema_version", 1),
+        ("place_set_sha256", "7" * 64),
+        ("place_assignments_sha256", "8" * 64),
+    ],
+)
+def test_v6_manifest_preserves_complete_mobility_attention_and_place_invariants(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        city_run.CityRunManifestV6.model_validate({**valid_manifest_v6(), field: value})
+
+
+@pytest.mark.parametrize(
+    ("model", "factory", "byte_count", "digest"),
+    [
+        (
+            city_run.CityRunManifest,
+            valid_manifest,
+            480,
+            "f8ed6e685f8cb9bd9975aa3e5f3d7c727f5e27842d073f411aefaea307e60fb6",
+        ),
+        (
+            city_run.CityRunManifestV2,
+            valid_manifest_v2,
+            504,
+            "e056b5e81efff43923116eda572955d56604a686a7c2a2dbf87fb189671b8b41",
+        ),
+        (
+            city_run.CityRunManifestV3,
+            valid_manifest_v3,
+            709,
+            "b15cf1ca7e6bcef735813e217ea94fe06d32b50fbdd546bf1eec823047235a01",
+        ),
+        (
+            city_run.CityRunManifestV4,
+            valid_manifest_v4,
+            998,
+            "b0aadebe08c27b85090cd5f382b0bae3c99789814956f9d94c73257138b231a9",
+        ),
+        (
+            city_run.CityRunManifestV5,
+            valid_manifest_v5,
+            1_353,
+            "03081287daf54116505a22a56366da683631b4d49a61a2e26d92e4a8b305cb5a",
+        ),
+    ],
+)
+def test_legacy_manifest_canonical_bytes_remain_frozen(
+    model: type[DomainModel],
+    factory: Callable[[], dict[str, object]],
+    byte_count: int,
+    digest: str,
+) -> None:
+    document = factory()
+    manifest = model.model_validate(document)
+    frozen = (canonical_json(manifest) + "\n").encode("utf-8")
+
+    assert len(frozen) == byte_count
+    assert sha256(frozen).hexdigest() == digest
+    assert city_run.parse_city_run_manifest_json(frozen) == manifest
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -319,7 +475,7 @@ def test_v4_manifest_refuses_incompatible_or_unbounded_fields(field: str, value:
         model.model_validate({**valid_manifest_v4(), field: value})
 
 
-@pytest.mark.parametrize("version", [None, True, 1.0, 0, 6])
+@pytest.mark.parametrize("version", [None, True, 1.0, 0, 7])
 def test_run_manifest_version_dispatch_fails_closed(version: object) -> None:
     parser = getattr(city_run, "parse_city_run_manifest_json", None)
     assert parser is not None, "run manifest version dispatch is not implemented"

@@ -9,7 +9,7 @@ import pytest
 
 from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
-from adlife.city.runs import create_city_run, replay_city_run
+from adlife.city.runs import CityReplayResult, create_city_run, replay_city_run
 from adlife.core.domain.city_run import CityRunManifestV5
 from adlife.core.ports.run_store import CorruptRunArtifact
 from tests.unit.city.test_city_catalog_contract import write_catalog_root
@@ -24,6 +24,21 @@ def _file_hashes(directory: Path) -> dict[str, str]:
         for path in directory.rglob("*")
         if path.is_file()
     }
+
+
+def _assert_no_response_evidence(result: CityReplayResult) -> None:
+    assert result.response_model_id is None
+    assert result.response_claim_scope is None
+    assert result.response_input_sha256 is None
+    assert result.response_stream_sha256 is None
+    assert result.response_state_sha256 is None
+    assert result.response_summary_sha256 is None
+    assert result.response_stream_bytes is None
+    assert result.response_count is None
+    assert result.state_update_count is None
+    assert result.response_campaign_count is None
+    assert result.final_state_count is None
+    assert result.response_counts is None
 
 
 def test_fresh_city_runs_have_the_same_trace_and_replay_never_mutates_source(
@@ -44,6 +59,7 @@ def test_fresh_city_runs_have_the_same_trace_and_replay_never_mutates_source(
     assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
     assert result.frame_count == 1440
     assert result.position_count == 4320
+    _assert_no_response_evidence(result)
     assert _file_hashes(first.directory) == before
     assert _file_hashes(second.directory) == before
 
@@ -76,6 +92,7 @@ def test_v2_replay_is_identical_and_preserves_every_source_artifact(tmp_path: Pa
     assert result.identical is True
     assert first.manifest.schema_version == 2
     assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
+    _assert_no_response_evidence(result)
     assert _file_hashes(first.directory) == first_before
     assert _file_hashes(second.directory) == second_before
 
@@ -108,6 +125,7 @@ def test_v3_place_replay_is_identical_and_preserves_every_source_artifact(
     assert result.identical is True
     assert first.manifest.schema_version == 3
     assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
+    _assert_no_response_evidence(result)
     assert _file_hashes(first.directory) == before == _file_hashes(second.directory)
 
 
@@ -191,6 +209,7 @@ def test_spatial_city_run_replays_exact_attention_artifacts_without_mutation(
     assert result.impression_count == first.manifest.impression_count == 4
     assert result.noticed_count == first.manifest.noticed_count
     assert result.attention_counts == first.attention_evaluation.counts
+    _assert_no_response_evidence(result)
     assert _file_hashes(first.directory) == before == _file_hashes(second.directory)
 
 

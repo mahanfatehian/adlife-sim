@@ -19,9 +19,14 @@ from adlife.core.domain.city_run import (
     CityRunManifestV3,
     CityRunManifestV4,
     CityRunManifestV5,
+    CityRunManifestV6,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
+from adlife.core.domain.spatial_response import (
+    SpatialResponseInput,
+    parse_spatial_response_input_json,
+)
 from adlife.core.ports.run_store import CorruptRunArtifact
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
@@ -36,6 +41,12 @@ from adlife.core.simulation.spatial_opportunity import (
     SpatialOpportunityEvaluation,
     evaluate_spatial_opportunities,
     summarize_spatial_opportunity_artifact,
+)
+from adlife.core.simulation.spatial_response import (
+    SpatialResponseCounts,
+    SpatialResponseEvaluation,
+    evaluate_spatial_responses,
+    summarize_spatial_response_artifact,
 )
 
 
@@ -65,6 +76,18 @@ class CityReplayResult:
     impression_count: int | None
     noticed_count: int | None
     attention_counts: SpatialAttentionCounts | None
+    response_model_id: str | None
+    response_claim_scope: str | None
+    response_input_sha256: str | None
+    response_stream_sha256: str | None
+    response_state_sha256: str | None
+    response_summary_sha256: str | None
+    response_stream_bytes: int | None
+    response_count: int | None
+    state_update_count: int | None
+    response_campaign_count: int | None
+    final_state_count: int | None
+    response_counts: SpatialResponseCounts | None
 
 
 def _document_sha256(value: Mapping[str, object]) -> str:
@@ -81,6 +104,7 @@ def create_city_run(
     days: int,
     places: CityPlaceSet | None = None,
     spatial_scenario: SpatialCampaignScenario | None = None,
+    spatial_response: SpatialResponseInput | None = None,
 ) -> StoredCityRun:
     """Freeze a bounded mobility trace under a fresh, never-reused city run ID."""
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
@@ -89,6 +113,10 @@ def create_city_run(
         raise ValueError("saved city runs require 1 to 30 agents")
     if type(days) is not int or not 1 <= days <= 7:
         raise ValueError("saved city runs require 1 to 7 days")
+    if spatial_response is not None and spatial_scenario is None:
+        raise ValueError("spatial response input requires a spatial campaign scenario")
+    if spatial_response is not None:
+        spatial_response = parse_spatial_response_input_json(canonical_json(spatial_response))
     mobility = CityMobility(
         pack,
         seed=seed,
@@ -101,6 +129,7 @@ def create_city_run(
     manifest: CityRunManifestDocument
     opportunity_evaluation: SpatialOpportunityEvaluation | None = None
     attention_evaluation: SpatialAttentionEvaluation | None = None
+    response_evaluation: SpatialResponseEvaluation | None = None
     if spatial_scenario is not None:
         opportunity_evaluation = evaluate_spatial_opportunities(mobility, spatial_scenario)
         opportunity_summary = summarize_spatial_opportunity_artifact(opportunity_evaluation)
@@ -113,37 +142,65 @@ def create_city_run(
         place_assignments_sha256 = (
             None if places is None else _document_sha256(mobility.place_assignment_document())
         )
-        manifest = CityRunManifestV5(
-            run_id=run_id,
-            city_schema_version=pack.schema_version,
-            spatial_scenario_schema_version=spatial_scenario.schema_version,
-            spatial_opportunity_schema_version=opportunity_evaluation.schema_version,
-            place_schema_version=place_schema_version,
-            place_set_sha256=place_set_sha256,
-            place_assignments_sha256=place_assignments_sha256,
-            package_version=__version__,
-            python_version=python_version,
-            city_sha256=pack.fingerprint,
-            agents_sha256=summary.agents_sha256,
-            trace_sha256=summary.trace_sha256,
-            scenario_sha256=spatial_scenario.fingerprint,
-            opportunity_stream_sha256=opportunity_summary.stream_sha256,
-            opportunity_summary_sha256=sha256(opportunity_summary_bytes).hexdigest(),
-            opportunity_stream_bytes=opportunity_summary.stream_bytes,
-            opportunity_count=opportunity_summary.counts.opportunity_count,
-            spatial_attention_schema_version=attention_evaluation.schema_version,
-            spatial_attention_model_id=attention_evaluation.model_id,
-            attention_stream_sha256=attention_summary.stream_sha256,
-            attention_summary_sha256=sha256(attention_summary_bytes).hexdigest(),
-            attention_stream_bytes=attention_summary.stream_bytes,
-            impression_count=attention_summary.counts.impression_count,
-            noticed_count=attention_summary.counts.noticed_count,
-            seed=seed,
-            agent_count=agent_count,
-            days=days,
-            frame_count=summary.frame_count,
-            position_count=summary.position_count,
-        )
+        common_spatial_receipt = {
+            "run_id": run_id,
+            "city_schema_version": pack.schema_version,
+            "spatial_scenario_schema_version": spatial_scenario.schema_version,
+            "spatial_opportunity_schema_version": opportunity_evaluation.schema_version,
+            "place_schema_version": place_schema_version,
+            "place_set_sha256": place_set_sha256,
+            "place_assignments_sha256": place_assignments_sha256,
+            "package_version": __version__,
+            "python_version": python_version,
+            "city_sha256": pack.fingerprint,
+            "agents_sha256": summary.agents_sha256,
+            "trace_sha256": summary.trace_sha256,
+            "scenario_sha256": spatial_scenario.fingerprint,
+            "opportunity_stream_sha256": opportunity_summary.stream_sha256,
+            "opportunity_summary_sha256": sha256(opportunity_summary_bytes).hexdigest(),
+            "opportunity_stream_bytes": opportunity_summary.stream_bytes,
+            "opportunity_count": opportunity_summary.counts.opportunity_count,
+            "spatial_attention_schema_version": attention_evaluation.schema_version,
+            "spatial_attention_model_id": attention_evaluation.model_id,
+            "attention_stream_sha256": attention_summary.stream_sha256,
+            "attention_summary_sha256": sha256(attention_summary_bytes).hexdigest(),
+            "attention_stream_bytes": attention_summary.stream_bytes,
+            "impression_count": attention_summary.counts.impression_count,
+            "noticed_count": attention_summary.counts.noticed_count,
+            "seed": seed,
+            "agent_count": agent_count,
+            "days": days,
+            "frame_count": summary.frame_count,
+            "position_count": summary.position_count,
+        }
+        if spatial_response is None:
+            manifest = CityRunManifestV5.model_validate(common_spatial_receipt)
+        else:
+            response_evaluation = evaluate_spatial_responses(
+                spatial_response,
+                spatial_scenario,
+                opportunity_evaluation,
+                attention_evaluation,
+                agent_ids=tuple(agent.agent_id for agent in mobility.agents),
+            )
+            response_summary = summarize_spatial_response_artifact(response_evaluation)
+            response_summary_bytes = (canonical_json(response_summary) + "\n").encode("utf-8")
+            manifest = CityRunManifestV6.model_validate(
+                {
+                    **common_spatial_receipt,
+                    "spatial_response_schema_version": response_evaluation.schema_version,
+                    "spatial_response_model_id": response_evaluation.model_id,
+                    "response_input_sha256": response_evaluation.response_input_sha256,
+                    "response_stream_sha256": response_summary.stream_sha256,
+                    "response_state_sha256": response_summary.state_document_sha256,
+                    "response_summary_sha256": sha256(response_summary_bytes).hexdigest(),
+                    "response_stream_bytes": response_summary.stream_bytes,
+                    "response_count": response_summary.counts.response_count,
+                    "state_update_count": response_summary.counts.state_update_count,
+                    "response_campaign_count": response_summary.counts.campaign_count,
+                    "final_state_count": response_summary.counts.final_state_count,
+                }
+            )
     elif places is not None:
         assignments = mobility.place_assignment_document()
         manifest = CityRunManifestV3(
@@ -201,6 +258,8 @@ def create_city_run(
         spatial_scenario=spatial_scenario,
         opportunity_evaluation=opportunity_evaluation,
         attention_evaluation=attention_evaluation,
+        response_input=spatial_response,
+        response_evaluation=response_evaluation,
     )
     return StoredCityRun(
         manifest,
@@ -210,6 +269,8 @@ def create_city_run(
         spatial_scenario=spatial_scenario,
         opportunity_evaluation=opportunity_evaluation,
         attention_evaluation=attention_evaluation,
+        response_input=spatial_response,
+        response_evaluation=response_evaluation,
     )
 
 
@@ -223,7 +284,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         manifest
         if isinstance(manifest, CityRunManifestV3)
         or (
-            isinstance(manifest, (CityRunManifestV4, CityRunManifestV5))
+            isinstance(manifest, (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6))
             and manifest.place_schema_version is not None
         )
         else None
@@ -248,7 +309,19 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     impression_count: int | None = None
     noticed_count: int | None = None
     attention_counts: SpatialAttentionCounts | None = None
-    if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5)):
+    response_model_id: str | None = None
+    response_claim_scope: str | None = None
+    response_input_sha256: str | None = None
+    response_stream_sha256: str | None = None
+    response_state_sha256: str | None = None
+    response_summary_sha256: str | None = None
+    response_stream_bytes: int | None = None
+    response_count: int | None = None
+    state_update_count: int | None = None
+    response_campaign_count: int | None = None
+    final_state_count: int | None = None
+    response_counts: SpatialResponseCounts | None = None
+    if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6)):
         if stored.spatial_scenario is None or stored.opportunity_evaluation is None:
             raise CorruptRunArtifact("city run is missing its frozen spatial evidence")
         opportunity_evaluation = evaluate_spatial_opportunities(
@@ -264,7 +337,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         opportunity_counts = opportunity_summary.counts
         if opportunity_evaluation != stored.opportunity_evaluation:
             raise CorruptRunArtifact("city run spatial evidence does not replay identically")
-        if isinstance(manifest, CityRunManifestV5):
+        if isinstance(manifest, (CityRunManifestV5, CityRunManifestV6)):
             if stored.attention_evaluation is None:
                 raise CorruptRunArtifact("city run is missing its frozen attention evidence")
             attention_evaluation = evaluate_spatial_attention(
@@ -284,6 +357,34 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             attention_counts = attention_summary.counts
             if attention_evaluation != stored.attention_evaluation:
                 raise CorruptRunArtifact("city run attention evidence does not replay identically")
+            if isinstance(manifest, CityRunManifestV6):
+                if stored.response_input is None or stored.response_evaluation is None:
+                    raise CorruptRunArtifact("city run is missing its frozen response evidence")
+                response_evaluation = evaluate_spatial_responses(
+                    stored.response_input,
+                    stored.spatial_scenario,
+                    opportunity_evaluation,
+                    attention_evaluation,
+                    agent_ids=tuple(agent.agent_id for agent in stored.mobility.agents),
+                )
+                response_summary = summarize_spatial_response_artifact(response_evaluation)
+                response_summary_bytes = (canonical_json(response_summary) + "\n").encode("utf-8")
+                response_model_id = response_evaluation.model_id
+                response_claim_scope = response_evaluation.claim_scope
+                response_input_sha256 = stored.response_input.fingerprint
+                response_stream_sha256 = response_summary.stream_sha256
+                response_state_sha256 = response_summary.state_document_sha256
+                response_summary_sha256 = sha256(response_summary_bytes).hexdigest()
+                response_stream_bytes = response_summary.stream_bytes
+                response_count = response_summary.counts.response_count
+                state_update_count = response_summary.counts.state_update_count
+                response_campaign_count = response_summary.counts.campaign_count
+                final_state_count = response_summary.counts.final_state_count
+                response_counts = response_summary.counts
+                if response_evaluation != stored.response_evaluation:
+                    raise CorruptRunArtifact(
+                        "city run response evidence does not replay identically"
+                    )
     if (
         stored.pack.fingerprint != manifest.city_sha256
         or summary.agents_sha256 != manifest.agents_sha256
@@ -298,7 +399,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             )
         )
         or (
-            isinstance(manifest, (CityRunManifestV4, CityRunManifestV5))
+            isinstance(manifest, (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6))
             and (
                 scenario_sha256 != manifest.scenario_sha256
                 or opportunity_stream_sha256 != manifest.opportunity_stream_sha256
@@ -308,7 +409,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             )
         )
         or (
-            isinstance(manifest, CityRunManifestV5)
+            isinstance(manifest, (CityRunManifestV5, CityRunManifestV6))
             and (
                 attention_model_id != manifest.spatial_attention_model_id
                 or attention_stream_sha256 != manifest.attention_stream_sha256
@@ -316,6 +417,21 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
                 or attention_stream_bytes != manifest.attention_stream_bytes
                 or impression_count != manifest.impression_count
                 or noticed_count != manifest.noticed_count
+            )
+        )
+        or (
+            isinstance(manifest, CityRunManifestV6)
+            and (
+                response_model_id != manifest.spatial_response_model_id
+                or response_input_sha256 != manifest.response_input_sha256
+                or response_stream_sha256 != manifest.response_stream_sha256
+                or response_state_sha256 != manifest.response_state_sha256
+                or response_summary_sha256 != manifest.response_summary_sha256
+                or response_stream_bytes != manifest.response_stream_bytes
+                or response_count != manifest.response_count
+                or state_update_count != manifest.state_update_count
+                or response_campaign_count != manifest.response_campaign_count
+                or final_state_count != manifest.final_state_count
             )
         )
     ):
@@ -345,6 +461,18 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         impression_count=impression_count,
         noticed_count=noticed_count,
         attention_counts=attention_counts,
+        response_model_id=response_model_id,
+        response_claim_scope=response_claim_scope,
+        response_input_sha256=response_input_sha256,
+        response_stream_sha256=response_stream_sha256,
+        response_state_sha256=response_state_sha256,
+        response_summary_sha256=response_summary_sha256,
+        response_stream_bytes=response_stream_bytes,
+        response_count=response_count,
+        state_update_count=state_update_count,
+        response_campaign_count=response_campaign_count,
+        final_state_count=final_state_count,
+        response_counts=response_counts,
     )
 
 

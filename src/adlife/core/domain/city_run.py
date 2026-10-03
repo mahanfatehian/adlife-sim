@@ -330,8 +330,126 @@ class CityRunManifestV5(DomainModel):
         return self
 
 
+class CityRunManifestV6(DomainModel):
+    """A spatial city trace with frozen bounded response-state evidence."""
+
+    schema_version: Literal[6] = 6
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    status: Literal["completed"] = "completed"
+    model_id: Literal["illustrative-road-spatial-response-study-v1"] = (
+        "illustrative-road-spatial-response-study-v1"
+    )
+    package_version: str = Field(min_length=1, max_length=40)
+    python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    agents_sha256: str = Field(pattern=_HASH_PATTERN)
+    trace_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario_sha256: str = Field(pattern=_HASH_PATTERN)
+    opportunity_stream_sha256: str = Field(pattern=_HASH_PATTERN)
+    opportunity_summary_sha256: str = Field(pattern=_HASH_PATTERN)
+    opportunity_stream_bytes: int = Field(ge=0, le=536_870_912)
+    opportunity_count: int = Field(ge=0, le=520_800)
+    attention_stream_sha256: str = Field(pattern=_HASH_PATTERN)
+    attention_summary_sha256: str = Field(pattern=_HASH_PATTERN)
+    attention_stream_bytes: int = Field(ge=0, le=1_073_741_824)
+    impression_count: int = Field(ge=0, le=520_800)
+    noticed_count: int = Field(ge=0, le=520_800)
+    spatial_response_schema_version: Literal[1]
+    spatial_response_model_id: Literal["spatial-response-v1"]
+    response_input_sha256: str = Field(pattern=_HASH_PATTERN)
+    response_stream_sha256: str = Field(pattern=_HASH_PATTERN)
+    response_state_sha256: str = Field(pattern=_HASH_PATTERN)
+    response_summary_sha256: str = Field(pattern=_HASH_PATTERN)
+    response_stream_bytes: int = Field(ge=0, le=2_147_483_648)
+    response_count: int = Field(ge=0, le=520_800)
+    state_update_count: int = Field(ge=0, le=520_800)
+    response_campaign_count: int = Field(ge=1, le=20)
+    final_state_count: int = Field(ge=1, le=600)
+    seed: int = Field(ge=0, le=2**63 - 1)
+    agent_count: int = Field(ge=1, le=30)
+    days: int = Field(ge=1, le=7)
+    frame_count: int = Field(ge=1, le=10_080)
+    position_count: int = Field(ge=1, le=302_400)
+    city_schema_version: Literal[1, 2]
+    spatial_scenario_schema_version: Literal[1]
+    spatial_opportunity_schema_version: Literal[1]
+    spatial_attention_schema_version: Literal[1]
+    spatial_attention_model_id: Literal["spatial-attention-v1"]
+    place_schema_version: Literal[1] | None = None
+    place_set_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
+    place_assignments_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
+
+    @field_validator("city_schema_version", mode="before")
+    @classmethod
+    def exact_city_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value not in {1, 2}:
+            raise ValueError("city_schema_version must be integer 1 or 2")
+        return value
+
+    @field_validator(
+        "spatial_scenario_schema_version",
+        "spatial_opportunity_schema_version",
+        "spatial_attention_schema_version",
+        "spatial_response_schema_version",
+        mode="before",
+    )
+    @classmethod
+    def exact_spatial_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("spatial schema versions must be integer 1")
+        return value
+
+    @field_validator("place_schema_version", mode="before")
+    @classmethod
+    def exact_optional_place_schema_version(cls, value: object) -> object:
+        if value is not None and (type(value) is not int or value != 1):
+            raise ValueError("place_schema_version must be integer 1 when present")
+        return value
+
+    @field_validator("run_id")
+    @classmethod
+    def portable_run_id(cls, value: str) -> str:
+        if value in _RESERVED_RUN_IDS:
+            raise ValueError("run identifier is reserved on Windows")
+        return value
+
+    @model_validator(mode="after")
+    def complete_response_bindings(self) -> Self:
+        if self.frame_count != self.days * 1_440:
+            raise ValueError("frame count does not match run duration")
+        if self.position_count != self.frame_count * self.agent_count:
+            raise ValueError("position count does not match run population")
+        if self.impression_count != self.opportunity_count:
+            raise ValueError("attention impressions must match spatial opportunities")
+        if self.noticed_count > self.impression_count:
+            raise ValueError("attention notices cannot exceed impressions")
+        if self.response_count != self.noticed_count:
+            raise ValueError("response count must match spatial notices")
+        if self.response_count == 0 and self.state_update_count != 0:
+            raise ValueError("response state updates require responses")
+        if self.response_count > 0 and not (1 <= self.state_update_count <= self.response_count):
+            raise ValueError("response state update count does not match responses")
+        if self.final_state_count != self.agent_count * self.response_campaign_count:
+            raise ValueError("final response state count does not cover agents and campaigns")
+        place_values = (
+            self.place_schema_version,
+            self.place_set_sha256,
+            self.place_assignments_sha256,
+        )
+        if any(value is None for value in place_values) and any(
+            value is not None for value in place_values
+        ):
+            raise ValueError("spatial city run place binding must be complete when present")
+        return self
+
+
 CityRunManifestDocument: TypeAlias = (
-    CityRunManifest | CityRunManifestV2 | CityRunManifestV3 | CityRunManifestV4 | CityRunManifestV5
+    CityRunManifest
+    | CityRunManifestV2
+    | CityRunManifestV3
+    | CityRunManifestV4
+    | CityRunManifestV5
+    | CityRunManifestV6
 )
 
 
@@ -374,6 +492,8 @@ def parse_city_run_manifest_json(document: str | bytes) -> CityRunManifestDocume
         return CityRunManifestV4.model_validate_json(normalized)
     if version == 5:
         return CityRunManifestV5.model_validate_json(normalized)
+    if version == 6:
+        return CityRunManifestV6.model_validate_json(normalized)
     raise ValueError("unsupported city run manifest schema_version")
 
 
@@ -384,6 +504,7 @@ __all__ = [
     "CityRunManifestV3",
     "CityRunManifestV4",
     "CityRunManifestV5",
+    "CityRunManifestV6",
     "CityTraceSummary",
     "parse_city_run_manifest_json",
 ]

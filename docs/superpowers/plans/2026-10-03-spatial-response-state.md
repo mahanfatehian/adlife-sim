@@ -159,25 +159,25 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
 - Extends: `create_city_run(..., spatial_response=...)` and `CityReplayResult` with exact
   response input/model/stream/state/summary hashes, stream bytes and counts.
 
-- [ ] **Step 1: Write failing v6 manifest tests.** Pin strict schema/model/hash/count fields,
+- [x] **Step 1: Write failing v6 manifest tests.** Pin strict schema/model/hash/count fields,
   `response_count == noticed_count`, update-count bounds, full final-state projection and
   parser dispatch. Add golden canonical-byte/hash regression evidence for schemas v1-v5.
-- [ ] **Step 2: Write failing store/replay tests.** Cover normal and zero-notice v6 runs,
+- [x] **Step 2: Write failing store/replay tests.** Cover normal and zero-notice v6 runs,
   v5 unchanged without response input, all-or-none inputs before reservation, manifest-last
   publication, duplicate preservation, every missing/changed/appended/reordered/oversized/
   symlinked response artifact, short-write/fault injection at every new file, exact stream
   EOF, fresh-run equality and before/after source hashes on replay.
-- [ ] **Step 3: Run focused tests and confirm RED.**
+- [x] **Step 3: Run focused tests and confirm RED.**
   Run: `uv run pytest -q tests/unit/city/test_city_run_contract.py tests/integration/test_city_response_run.py tests/integration/test_city_run_store.py tests/integration/test_city_run_replay.py`
   Expected: v6 cases fail because schema/store/replay support is absent; legacy cases pass.
-- [ ] **Step 4: Implement v6 without changing v1-v5 models.** Independently recompute all
+- [x] **Step 4: Implement v6 without changing v1-v5 models.** Independently recompute all
   response evidence before reserving the ID; exclusively write/fsync/verify fixed files;
   publish `run.json` last; load via bounded canonical reads plus incremental stream compare;
   replay from frozen inputs only.
-- [ ] **Step 5: Run all city store/replay/security suites and verify old artifact bytes.**
+- [x] **Step 5: Run all city store/replay/security suites and verify old artifact bytes.**
   Run: `uv run pytest -q tests/unit/city/test_city_run_contract.py tests/integration/test_city_response_run.py tests/integration/test_city_run_store.py tests/integration/test_city_run_replay.py tests/security`
   Expected: all pass.
-- [ ] **Step 6: Run Ruff/mypy, commit and push.**
+- [x] **Step 6: Run Ruff/mypy, commit and push.**
   Commit: `feat(city): persist spatial response studies`
 
 ### Task 4: Expose explicit CLI activation and keep spatial analysis usable

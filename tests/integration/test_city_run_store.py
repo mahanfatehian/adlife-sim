@@ -560,7 +560,10 @@ def test_v4_load_does_not_fabricate_attention(tmp_path: Path) -> None:
         opportunity_evaluation=evaluation,
     )
 
-    assert store.load("spatial-study").attention_evaluation is None
+    loaded = store.load("spatial-study")
+    assert loaded.attention_evaluation is None
+    assert loaded.response_input is None
+    assert loaded.response_evaluation is None
 
 
 def test_v4_spatial_inputs_are_required_as_one_pair_before_reserving_id(
