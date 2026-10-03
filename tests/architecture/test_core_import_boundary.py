@@ -49,6 +49,9 @@ FORBIDDEN_ROOTS: frozenset[str] = frozenset(
         "http.client",
         "socket",
         "jinja2",
+        "fastapi",
+        "starlette",
+        "uvicorn",
         # Model-provider SDKs.
         "openai",
         "anthropic",
@@ -94,6 +97,8 @@ def _is_forbidden(module: str) -> bool:
         ("from ...adapters.cognition import mock", "adlife.adapters.cognition"),
         ("from ... import cli", "adlife.cli"),
         ("from importlib import import_module as load", "importlib.import_module"),
+        ("from fastapi import FastAPI", "fastapi"),
+        ("import uvicorn", "uvicorn"),
     ],
 )
 def test_boundary_detector_covers_outer_layers_and_import_aliases(
