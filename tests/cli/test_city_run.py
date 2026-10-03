@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from adlife.city.catalog import select_catalog_city
@@ -424,7 +425,7 @@ def test_city_run_help_exposes_response_dependency() -> None:
     result = CliRunner().invoke(app, ["city-run", "--help"])
 
     assert result.exit_code == 0, result.output
-    normalized = " ".join(result.stdout.split())
+    normalized = " ".join(strip_ansi(result.stdout).split())
     assert "--spatial-response" in normalized
     assert "requires" in normalized
     assert normalized.count("--spatial-campaign") >= 2
