@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 import uvicorn
 
+from adlife.city.analysis import metrics_for_stored_city_run
 from adlife.city.run_store import CityRunStore
 from adlife.city.web import create_city_app
 from adlife.cli.errors import CommandError, command_boundary, output_format
@@ -29,6 +30,9 @@ def command(
     except UnsafeRunLocation:
         raise CommandError("invalid city run identifier") from None
     stored = CityRunStore(root).load(run_id)
+    spatial_metrics = (
+        metrics_for_stored_city_run(stored) if stored.manifest.schema_version == 5 else None
+    )
     info(f"saved city run: http://127.0.0.1:{port} ({stored.manifest.run_id})")
     uvicorn.run(
         create_city_app(
@@ -38,6 +42,7 @@ def command(
             spatial_scenario=stored.spatial_scenario,
             opportunity_evaluation=stored.opportunity_evaluation,
             attention_evaluation=stored.attention_evaluation,
+            spatial_metrics=spatial_metrics,
         ),
         host="127.0.0.1",
         port=port,

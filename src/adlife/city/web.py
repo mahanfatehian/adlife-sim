@@ -13,6 +13,7 @@ from adlife.core.domain.spatial_campaign import (
     SpatialCampaignScenario,
     validate_spatial_scenario_against_city,
 )
+from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.spatial_attention import (
     MAX_SPATIAL_ATTENTION_EVENTS,
@@ -50,6 +51,7 @@ def create_city_app(
     spatial_scenario: SpatialCampaignScenario | None = None,
     opportunity_evaluation: SpatialOpportunityEvaluation | None = None,
     attention_evaluation: SpatialAttentionEvaluation | None = None,
+    spatial_metrics: SpatialMetrics | None = None,
 ) -> FastAPI:
     """Serve only this loaded immutable city and its derived, deterministic frames."""
     if run_id is None and run_schema_version is not None:
@@ -73,6 +75,8 @@ def create_city_app(
         raise ValueError(
             "spatial attention evidence is only valid for a saved schema version 5 run"
         )
+    if spatial_metrics is not None and (run_id is None or run_schema_version != 5):
+        raise ValueError("spatial metrics are only valid for a saved schema version 5 run")
     if spatial_scenario is not None and opportunity_evaluation is not None:
         spatial_scenario = SpatialCampaignScenario.model_validate(
             spatial_scenario.model_dump(mode="python")
@@ -97,6 +101,20 @@ def create_city_app(
             seed=simulation.seed,
         ):
             raise ValueError("spatial attention evidence does not match its saved inputs")
+    if spatial_metrics is not None:
+        if opportunity_evaluation is None or attention_evaluation is None:
+            raise ValueError("spatial metrics require opportunity and attention evidence")
+        spatial_metrics = SpatialMetrics.model_validate(spatial_metrics.model_dump(mode="python"))
+        expected_metrics = derive_spatial_metrics(
+            opportunity_evaluation,
+            attention_evaluation,
+            agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+            agents_sha256=spatial_metrics.agents_sha256,
+            trace_sha256=spatial_metrics.trace_sha256,
+            days=simulation.days,
+        )
+        if spatial_metrics != expected_metrics:
+            raise ValueError("spatial metrics do not match their saved inputs")
     opportunity_minutes = (
         tuple(item.model_minute for item in opportunity_evaluation.opportunities)
         if opportunity_evaluation is not None
@@ -153,6 +171,8 @@ def create_city_app(
             document["attention_notice_probability"] = attention_evaluation.notice_probability
             document["impression_count"] = attention_evaluation.counts.impression_count
             document["noticed_count"] = attention_evaluation.counts.noticed_count
+        if spatial_metrics is not None:
+            document["spatial_metrics"] = True
         return document
 
     @app.get("/api/city")
@@ -262,6 +282,12 @@ def create_city_app(
             "notice_probability": attention_evaluation.notice_probability,
             "counts": attention_evaluation.counts.model_dump(mode="json"),
         }
+
+    @app.get("/api/spatial-metrics")
+    def metrics() -> dict[str, object]:
+        if spatial_metrics is None:
+            raise HTTPException(status_code=404, detail="spatial metrics not configured")
+        return spatial_metrics.model_dump(mode="json")
 
     @app.get("/api/attention-events")
     def attention_events(

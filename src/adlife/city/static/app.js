@@ -1,7 +1,7 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
+const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, spatialMetrics: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -392,6 +392,35 @@ function renderAttentionEvidence() {
   }
 }
 
+function metricValueText(name, value) {
+  if (!Number.isFinite(value)) throw new Error(`Metric ${name} is not finite`);
+  if (name.endsWith("_reach") || name === "notice_rate") {
+    const percentage = value * 100;
+    return `${Number.isInteger(percentage) ? percentage : Number(percentage.toFixed(1))}%`;
+  }
+  return String(Number(value.toFixed(3)));
+}
+
+function renderSpatialMetrics() {
+  if (!state.spatialMetrics) return;
+  if (state.spatialMetrics.claim_scope !== "synthetic-metrics-not-observed-outcomes") {
+    throw new Error("Spatial metrics claim scope is invalid");
+  }
+  const series = [state.spatialMetrics.overall, ...state.spatialMetrics.channels];
+  const names = ["opportunity_reach", "impression_reach", "noticed_reach", "impression_frequency", "notice_rate"];
+  for (const group of series) {
+    for (const name of names) {
+      const receipt = group[name];
+      const token = name.replaceAll("_", "-");
+      const prefix = `metrics-${group.channel}-${token}`;
+      byId(`${prefix}-value`).textContent = metricValueText(name, receipt.value);
+      byId(`${prefix}-receipt`).textContent = `${receipt.numerator} / ${receipt.denominator}`;
+      byId(prefix).title = `Numerator ${receipt.numerator}; denominator ${receipt.denominator}. Sources: ${receipt.source_artifacts.join(", ")} (${receipt.source_event_types.join(", ")}).`;
+    }
+  }
+  byId("metrics-panel").hidden = false;
+}
+
 async function setMinute(minute) {
   if (!state.meta) return;
   const next = Math.max(0, Math.min(state.meta.days * 1440 - 1, Math.floor(minute)));
@@ -471,6 +500,10 @@ async function boot() {
       byId("attention-probability").textContent = `${Math.round(state.attentionSummary.notice_probability * 100)}%`;
       byId("attention-panel").hidden = false;
       for (const key of document.querySelectorAll(".attention-key")) key.hidden = false;
+    }
+    if (meta.spatial_metrics === true) {
+      state.spatialMetrics = await fetchJson("/api/spatial-metrics");
+      renderSpatialMetrics();
     }
     byId("city-name").textContent = meta.city_name;
     if (meta.saved === true && typeof meta.run_id === "string") {

@@ -13,6 +13,7 @@ from playwright.sync_api import Route, expect, sync_playwright
 
 from adlife.city.web import create_city_app
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
+from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.spatial_attention import (
     SpatialAttentionEvaluation,
@@ -108,6 +109,9 @@ def _spatial_viewer() -> Iterator[
             _phone(windows=[{"start_minute": 0, "end_minute": 2}], cap=2),
         ],
     )
+    scenario = scenario.model_copy(
+        update={"name": "پویش آزمایشی شهر </script><img src=x onerror=alert(1)>"}
+    )
     evaluation = _evaluate(simulation, scenario)
     application = create_city_app(
         simulation,
@@ -127,6 +131,7 @@ def _attention_viewer() -> Iterator[
         SpatialCampaignScenario,
         SpatialOpportunityEvaluation,
         SpatialAttentionEvaluation,
+        SpatialMetrics,
     ]
 ]:
     pack = load_pack(pack_data())
@@ -138,8 +143,19 @@ def _attention_viewer() -> Iterator[
             _phone(windows=[{"start_minute": 0, "end_minute": 2}], cap=2),
         ],
     )
+    scenario = scenario.model_copy(
+        update={"name": "پویش آزمایشی شهر </script><img src=x onerror=alert(1)>"}
+    )
     opportunities = _evaluate(simulation, scenario)
     attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+    metrics = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+        agents_sha256="a" * 64,
+        trace_sha256="b" * 64,
+        days=simulation.days,
+    )
     application = create_city_app(
         simulation,
         run_id="browser-attention-study",
@@ -147,9 +163,10 @@ def _attention_viewer() -> Iterator[
         spatial_scenario=scenario,
         opportunity_evaluation=opportunities,
         attention_evaluation=attention,
+        spatial_metrics=metrics,
     )
     with _serve(application) as base_url:
-        yield base_url, scenario, opportunities, attention
+        yield base_url, scenario, opportunities, attention, metrics
 
 
 def test_place_viewer_renders_provenance_and_scrubs_without_external_requests(
@@ -311,9 +328,10 @@ def test_attention_viewer_renders_causal_timeline_without_external_requests(
     with (
         _attention_viewer() as (
             base_url,
-            _scenario_value,
+            scenario,
             _opportunities,
             attention,
+            metrics,
         ),
         sync_playwright() as playwright,
     ):
@@ -345,6 +363,28 @@ def test_attention_viewer_renders_causal_timeline_without_external_requests(
         selected_zero = tuple(event for event in minute_zero if event.agent_id == "person-001")
         assert page.locator("#saved-run-label").inner_text().endswith("V5")
         assert page.locator("#attention-panel").is_visible()
+        assert page.locator("#metrics-panel").is_visible()
+        assert page.locator("#metrics-panel").get_attribute("tabindex") == "0"
+        assert page.locator("#metrics-claim").inner_text() == (
+            "SYNTHETIC METRICS \u00b7 NOT OBSERVED OUTCOMES"
+        )
+        assert page.locator("#metrics-overall-opportunity-reach-value").inner_text() == "100%"
+        assert page.locator("#metrics-overall-opportunity-reach-receipt").inner_text() == "2 / 2"
+        assert page.locator("#metrics-overall-impression-frequency-value").inner_text() == (
+            f"{metrics.overall.impression_frequency.value:g}"
+        )
+        assert "outputs/spatial-attention.jsonl" in (
+            page.locator("#metrics-overall-notice-rate").get_attribute("title") or ""
+        )
+        page.locator("#metrics-panel").focus()
+        assert page.locator("#metrics-panel").evaluate(
+            "element => document.activeElement === element"
+        )
+        assert page.locator("#opportunity-scenario").inner_text() == scenario.name
+        assert page.locator("#opportunity-scenario img").count() == 0
+        metrics_screenshot = tmp_path / "city-spatial-metrics-viewer.png"
+        page.screenshot(path=metrics_screenshot, full_page=True)
+        assert metrics_screenshot.stat().st_size > 25_000
         assert page.locator("#attention-impressions").inner_text() == str(
             attention.counts.impression_count
         )
@@ -386,7 +426,61 @@ def test_attention_viewer_renders_causal_timeline_without_external_requests(
         page.set_viewport_size({"width": 700, "height": 950})
         assert page.locator("#attention-panel").is_visible()
         assert page.locator("#attention-claim").is_visible()
+        assert page.locator("#metrics-panel").is_visible()
         assert not external_requests
         assert not console_errors
         assert not page_errors
+        browser.close()
+
+
+def test_metrics_viewer_renders_zero_denominators_without_nan_or_infinity(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack, agent_count=2)
+    scenario = _scenario(
+        pack,
+        [_phone(windows=[{"start_minute": 0, "end_minute": 1}], probability=0.0)],
+    )
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+    metrics = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+        agents_sha256="c" * 64,
+        trace_sha256="d" * 64,
+        days=1,
+    )
+    application = create_city_app(
+        simulation,
+        run_id="zero-metrics-study",
+        run_schema_version=5,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        spatial_metrics=metrics,
+    )
+
+    with _serve(application) as base_url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 700, "height": 950})
+        page.goto(base_url, wait_until="networkidle")
+
+        assert page.locator("#metrics-overall-impression-frequency-value").inner_text() == "0"
+        assert page.locator("#metrics-overall-impression-frequency-receipt").inner_text() == (
+            "0 / 0"
+        )
+        assert page.locator("#metrics-overall-notice-rate-value").inner_text() == "0%"
+        assert page.locator("#metrics-overall-notice-rate-receipt").inner_text() == "0 / 0"
+        assert "NaN" not in page.locator("#metrics-panel").inner_text()
+        assert "Infinity" not in page.locator("#metrics-panel").inner_text()
+        screenshot = tmp_path / "city-zero-metrics-viewer.png"
+        page.screenshot(path=screenshot, full_page=True)
+        assert screenshot.stat().st_size > 20_000
         browser.close()

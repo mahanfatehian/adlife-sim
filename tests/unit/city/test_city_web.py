@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from adlife.city.web import create_city_app
+from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.spatial_attention import evaluate_spatial_attention
 from tests.unit.city.test_city_mobility import mobility_place_set
@@ -134,9 +135,13 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'id="attention-panel"' in html.text
     assert 'id="attention-claim"' in html.text
     assert 'id="attention-list" aria-live="polite"' in html.text
+    assert 'id="metrics-panel"' in html.text
+    assert 'id="metrics-claim"' in html.text
+    assert 'id="metrics-overall-notice-rate-receipt"' in html.text
     assert 'fetchJson("/api/places")' in js.text
     assert 'fetchJson("/api/place-assignments")' in js.text
     assert 'fetchJson("/api/attention-summary")' in js.text
+    assert 'fetchJson("/api/spatial-metrics")' in js.text
     assert "fetchJson(`/api/attention-events?minute=${next}`)" in js.text
     assert "drawAttentionMarker" in js.text
     assert 'byId("model-label").textContent' in js.text
@@ -249,6 +254,7 @@ async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> 
         write = await web.post("/api/opportunities?minute=0")
         attention_summary = await web.get("/api/attention-summary")
         attention_events = await web.get("/api/attention-events?minute=0")
+        metrics = await web.get("/api/spatial-metrics")
     assert metadata["saved"] is True
     assert metadata["run_id"] == "saved-spatial-study"
     assert metadata["run_schema_version"] == 4
@@ -282,6 +288,7 @@ async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> 
     assert invalid_minute.status_code == 422
     assert write.status_code == 405
     assert attention_summary.status_code == attention_events.status_code == 404
+    assert metrics.status_code == 404
     assert (
         attention_summary.json()
         == attention_events.json()
@@ -395,6 +402,113 @@ def test_saved_v5_view_requires_matching_attention_evidence() -> None:
             spatial_scenario=scenario,
             opportunity_evaluation=opportunities,
             attention_evaluation=evaluate_spatial_attention(opportunities, seed=43),
+        )
+
+
+@pytest.mark.asyncio
+async def test_saved_v5_view_exposes_exact_prevalidated_metrics_read_only() -> None:
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack, agent_count=2)
+    scenario = _scenario(
+        pack,
+        [
+            _billboard(),
+            _phone(windows=[{"start_minute": 0, "end_minute": 2}], cap=2),
+        ],
+    )
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+    metrics = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+        agents_sha256="a" * 64,
+        trace_sha256="b" * 64,
+        days=simulation.days,
+    )
+    application = create_city_app(
+        simulation,
+        run_id="saved-metrics-study",
+        run_schema_version=5,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        spatial_metrics=metrics,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://city.test",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        response = await web.get("/api/spatial-metrics")
+        write = await web.post("/api/spatial-metrics", json={})
+
+    assert metadata["spatial_metrics"] is True
+    assert response.status_code == 200
+    assert response.json() == metrics.model_dump(mode="json")
+    assert write.status_code == 405
+
+
+@pytest.mark.asyncio
+async def test_metrics_endpoint_is_absent_without_prevalidated_v5_metrics() -> None:
+    async with client() as legacy:
+        legacy_response = await legacy.get("/api/spatial-metrics")
+
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack)
+    scenario = _scenario(pack, [_phone(windows=[{"start_minute": 0, "end_minute": 1}])])
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(
+            app=create_city_app(
+                simulation,
+                run_id="v5-without-metrics",
+                run_schema_version=5,
+                spatial_scenario=scenario,
+                opportunity_evaluation=opportunities,
+                attention_evaluation=attention,
+            )
+        ),
+        base_url="http://city.test",
+    ) as v5_without_metrics:
+        omitted_response = await v5_without_metrics.get("/api/spatial-metrics")
+
+    assert legacy_response.status_code == omitted_response.status_code == 404
+    assert (
+        legacy_response.json()
+        == omitted_response.json()
+        == {"detail": "spatial metrics not configured"}
+    )
+
+
+def test_saved_view_refuses_metrics_outside_v5_or_mismatched_with_evidence() -> None:
+    pack = load_pack(pack_data())
+    simulation = _mobility(pack)
+    scenario = _scenario(pack, [_phone(windows=[{"start_minute": 0, "end_minute": 1}])])
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=simulation.seed)
+    metrics = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=("person-001",),
+        agents_sha256="a" * 64,
+        trace_sha256="b" * 64,
+        days=1,
+    )
+
+    with pytest.raises(ValueError, match="only valid for a saved schema version 5"):
+        create_city_app(simulation, spatial_metrics=metrics)
+    with pytest.raises(ValueError, match="do not match their saved inputs"):
+        create_city_app(
+            simulation,
+            run_id="mismatched-metrics",
+            run_schema_version=5,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=attention,
+            spatial_metrics=metrics.model_copy(update={"scenario_sha256": "f" * 64}),
         )
 
 

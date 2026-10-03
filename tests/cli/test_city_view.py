@@ -154,6 +154,7 @@ async def test_city_view_serves_verified_v5_opportunity_evidence_without_mutatio
         opportunities = (await web.get("/api/opportunities?minute=0")).json()
         attention_summary = (await web.get("/api/attention-summary")).json()
         attention_events = (await web.get("/api/attention-events?minute=0")).json()
+        metrics = (await web.get("/api/spatial-metrics")).json()
     assert metadata["run_schema_version"] == 5
     assert metadata["opportunity_count"] == 4
     assert metadata["spatial_attention"] is True
@@ -172,6 +173,8 @@ async def test_city_view_serves_verified_v5_opportunity_evidence_without_mutatio
         for event in stored.attention_evaluation.events
         if event.model_minute == 0
     ]
+    assert metrics["claim_scope"] == "synthetic-metrics-not-observed-outcomes"
+    assert metrics["overall"]["opportunity_count"]["value"] == 4.0
     assert before == {
         path.relative_to(stored.directory): path.read_bytes()
         for path in stored.directory.rglob("*")
