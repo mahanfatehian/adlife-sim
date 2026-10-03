@@ -122,6 +122,36 @@ def test_city_run_refuses_invalid_pack_bounds_and_run_id(tmp_path: Path) -> None
     assert not (tmp_path / "city-runs" / "study").exists()
 
 
+def test_city_run_refuses_a_credential_shaped_id_without_persisting_or_echoing_it(
+    tmp_path: Path,
+) -> None:
+    pack = _pack(tmp_path)
+    secret_run_id = "sk-live-abcdefghij"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-run",
+            str(pack),
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            secret_run_id,
+            "--agents",
+            "2",
+            "--days",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout)["error"]["exit_code"] == 2
+    assert secret_run_id not in result.output
+    assert not (tmp_path / "city-runs" / secret_run_id).exists()
+
+
 def test_city_run_interrupt_exits_130_without_an_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

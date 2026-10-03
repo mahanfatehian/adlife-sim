@@ -33,7 +33,7 @@ from typing import Literal, Protocol, Self, runtime_checkable
 from pydantic import Field, model_validator
 
 from adlife.core.domain.events import DomainEvent
-from adlife.core.domain.person import DomainModel
+from adlife.core.domain.person import DomainModel, contains_secret_or_email_text
 from adlife.core.domain.results import RunManifest, SimulationResult
 from adlife.core.domain.scenario import Scenario
 from adlife.core.domain.serialization import (
@@ -135,6 +135,11 @@ def validate_run_id(run_id: object) -> str:
         raise UnsafeRunLocation(f"{run_id!r} is not a run identifier")
     if run_id in WINDOWS_RESERVED_NAMES:
         raise UnsafeRunLocation(f"{run_id!r} is a reserved device name on Windows")
+    if contains_secret_or_email_text(run_id):
+        # Run IDs are copied into directory names, manifests, event IDs, diagnostics,
+        # reports, and replay receipts.  Never echo a rejected value here: this branch
+        # exists specifically because the apparently valid slug may be a credential.
+        raise UnsafeRunLocation("run identifier carries credential-shaped text")
     return run_id
 
 

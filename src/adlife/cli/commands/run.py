@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -27,7 +26,7 @@ from adlife.core.domain.events import DomainEvent
 from adlife.core.domain.results import SimulationResult
 from adlife.core.ports.cognition import CognitionProvider
 from adlife.core.ports.event_sink import EventSink
-from adlife.core.ports.run_store import StorageError
+from adlife.core.ports.run_store import StorageError, UnsafeRunLocation, validate_run_id
 from adlife.core.simulation.runner import InterruptedRun, RunIdentity, SimulationRunner
 
 RUN_ID_PATTERN_HELP = "[a-z0-9][a-z0-9-]{0,39}"
@@ -44,20 +43,12 @@ class StdoutJsonlSink:
 
 
 def _validate_run_id(run_id: str) -> str:
-    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", run_id) is None:
+    try:
+        return validate_run_id(run_id)
+    except UnsafeRunLocation:
         raise CommandError(
-            f"run id {run_id!r} must match {RUN_ID_PATTERN_HELP}",
-        )
-    if run_id in {
-        "con",
-        "prn",
-        "aux",
-        "nul",
-        *(f"com{i}" for i in range(1, 10)),
-        *(f"lpt{i}" for i in range(1, 10)),
-    }:
-        raise CommandError("run id is a reserved Windows device name")
-    return run_id
+            f"run id must match {RUN_ID_PATTERN_HELP}, be portable, and contain no credential"
+        ) from None
 
 
 def _sinks(fmt: str) -> tuple[EventSink, ...]:

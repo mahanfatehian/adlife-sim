@@ -47,6 +47,7 @@ from adlife.core.ports.run_store import (
     UnsafeRunLocation,
     batch_run_id,
     parse_stable_event_id,
+    validate_run_id,
 )
 from adlife.core.simulation.engine import stable_event_id
 
@@ -122,6 +123,23 @@ def test_every_storage_failure_is_one_typed_family() -> None:
         UnsafeRunLocation,
     ):
         assert issubclass(error, StorageError)
+
+
+@pytest.mark.parametrize(
+    "secret_run_id",
+    [
+        "sk-live-abcdefghij",
+        "xoxb-1234567890-abcdefghij",
+    ],
+)
+def test_a_credential_shaped_run_identifier_is_refused_without_echo(
+    secret_run_id: str,
+) -> None:
+    """An identifier is persisted widely, so it must not become a credential channel."""
+    with pytest.raises(UnsafeRunLocation) as caught:
+        validate_run_id(secret_run_id)
+
+    assert secret_run_id not in str(caught.value)
 
 
 def test_an_appended_batch_is_all_or_nothing_when_a_statement_fails(
