@@ -27,8 +27,10 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
 - All state remains campaign-scoped, finite and bounded; same-minute planning is atomic.
 - Add no provider call, prose cognition, memory, social propagation, budget mutation,
   purchase event, movement change, authentication, remote data or network requirement.
-- Use model ID `spatial-response-v1` and claim scope
-  `synthetic-response-not-observed-behavior` everywhere.
+- Use run model ID `illustrative-road-spatial-response-study-v1`, evaluator model ID
+  `spatial-response-v1`, artifact model ID `spatial-response-artifact-v1`, state-document
+  model ID `spatial-response-state-v1`, and claim scope
+  `synthetic-response-not-observed-behavior`; never conflate these identities.
 - Keep publication no-clobber and manifest-last; replay never repairs or mutates source.
 - Keep machine stdout exactly parseable and redact/refuse sensitive input text.
 - Commit locally after every task; push only because the repository owner explicitly
@@ -225,8 +227,9 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
 
 **Interfaces:**
 - Adds prevalidated schema-v6 response evidence to `create_city_app(...)`.
-- Adds GET-only `/api/response-summary` and bounded
-  `/api/response-events?minute=&agent_id=&offset=&limit=`.
+- Adds GET-only `/api/response-summary`, bounded
+  `/api/response-events?minute=&agent_id=&offset=&limit=`, and bounded/paginated
+  `/api/response-state?agent_id=&offset=&limit=` explicitly labeled as final state.
 - Adds a timeline rail labeled `NOTICE -> RULE RESPONSE -> STATE UPDATE`, using safe DOM
   text for direct deltas and before/after synthetic state proxies.
 
@@ -234,7 +237,8 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
   established dashboard language and hierarchy; do not redesign unrelated surfaces.
 - [ ] **Step 2: Write failing constructor/API tests.** Pin v6 coherence revalidation, exact
   summary/page/filter/order/status/method behavior, v1-v5 404, maximum page 100, unknown
-  agent/minute errors, no path selector, and source immutability.
+  agent/minute errors, complete zero-response final-state visibility, final-not-scrubbed
+  labeling, no path selector, and source immutability.
 - [ ] **Step 3: Run API tests and confirm RED.**
   Run: `uv run pytest -q tests/unit/city/test_city_web.py tests/cli/test_city_view.py`
   Expected: response API cases fail because inputs/routes are absent.

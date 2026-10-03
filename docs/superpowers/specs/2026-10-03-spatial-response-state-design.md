@@ -76,6 +76,12 @@ held constant across repeated-seed mobility runs. Each saved run still freezes a
 its exact generated home/work/leisure assignments independently, and matched comparison
 rules continue to reject assignment drift inside one treatment/control pair.
 
+Interest strings are operator-authored synthetic labels. The parser applies the
+repository's documented best-effort known credential, contact and sensitive-identifier
+screens, but no string detector can prove that an opaque token is not a secret or that an
+arbitrary name is fictional. Operators remain responsible for supplying fictional,
+non-sensitive labels; the model never imports real resident identity data on its own.
+
 ## Deterministic response rule
 
 `core/simulation/spatial_response.py` is pure and adapter-free. Its response model ID is
@@ -140,10 +146,21 @@ causal response ID in canonical order. Cumulative notice count increases by the 
 size. No response record can name an agent, campaign, placement, time or cause that was
 not present in the validated attention stream. Campaign copy cannot alter any formula.
 
-Records are canonically ordered by minute, agent, campaign, source notice evidence and
-record kind, with the state update after all responses in its group. Input permutations,
-agent iteration order, dictionary/set order and `PYTHONHASHSEED` cannot alter canonical
-bytes. The model uses no wall clock, ambient random generator or network.
+`SpatialResponseState` contains schema version, agent ID, campaign ID, brand sentiment,
+recall strength, purchase intention, cumulative `response_count`, and
+`last_response_minute`. Initial input creates the first five values plus counters fixed to
+`0` and `null`; only a committed rule update changes them. A state-update event ID is
+SHA-256 over canonical `{model_id, event_type, response_input_sha256, model_minute,
+agent_id, campaign_id, caused_by_event_ids}`. Response IDs in `caused_by_event_ids` are
+unique and sorted by their source-notice order.
+
+The exact record order key is `(model_minute, agent_id, campaign_id, record_kind,
+millisecond_within_minute, placement_id, event_id)`, where response kind is `0` and its
+source time/placement are retained, while state-update kind is `1` with zero millisecond
+and an empty placement sentinel. Thus every update follows all responses in its group.
+Input permutations, agent iteration order, dictionary/set order and `PYTHONHASHSEED`
+cannot alter canonical bytes. The model uses no wall clock, ambient random generator or
+network.
 
 ## Artifact and schema-v6 contract
 
@@ -162,9 +179,12 @@ outputs/response-state.json
 outputs/response-summary.json
 ```
 
-The manifest binds the response input, stream, final-state document and summary by exact
-SHA-256; it records response schema version, response model ID, stream byte count, response
-count, state-update count, campaign count and final-state count. Exactly
+The evaluator model is `spatial-response-v1`, the artifact-summary model is
+`spatial-response-artifact-v1`, and the final-state document model is
+`spatial-response-state-v1`; none is interchangeable with the run model ID. The manifest
+binds the response input, stream, final-state document and summary by exact SHA-256; it
+records response schema version, evaluator model ID, stream byte count, response count,
+state-update count, campaign count and final-state count. Exactly
 one response must exist per notice. Final state count must equal population times response
 campaign count. State updates are zero exactly when responses are zero and otherwise are
 between one and the response count.
@@ -209,12 +229,13 @@ machine-readable document.
 repair command is added.
 
 The existing loopback `city-view` may receive a fully prevalidated schema-v6 evaluation.
-It adds a read-only summary, bounded minute/agent response page, and final campaign-state
-view. The browser shows direct response evidence and bounded state proxies alongside the
-timeline using text-only DOM construction. It does not derive formulas in JavaScript,
-choose a new artifact, mutate the run, claim a purchase, or expose arbitrary paths.
-Legacy runs receive 404 for response resources. All HTTP methods that would mutate state
-remain unavailable.
+It adds a read-only summary, bounded minute/agent response page, and a separately labeled,
+bounded/paginated final campaign-state resource. The browser shows direct response
+evidence and bounded state proxies alongside the timeline using text-only DOM construction;
+final state is explicitly not presented as state at the scrubbed minute. It does not derive
+formulas in JavaScript, choose a new artifact, mutate the run, claim a purchase, or expose
+arbitrary paths. Legacy runs receive 404 for response resources. All HTTP methods that
+would mutate state remain unavailable.
 
 Spatial self-contained reports and repeated-seed uncertainty remain C4b. Provider settings,
 OAuth, authentication, multi-user workspaces and remote writes remain D/E work and must
@@ -222,10 +243,10 @@ not be smuggled into this local scientific slice.
 
 ## Security, scientific and compatibility boundaries
 
-- Response inputs describe synthetic fictional agents only and carry no real resident
-  identity.
-- No provider, API credential, prompt, raw response, cache or outbound request enters the
-  model or artifacts.
+- Response inputs are required to describe synthetic fictional agents; known sensitive
+  patterns are refused, and operators must not supply opaque secrets or real identities.
+- The application does not source a provider credential, prompt, raw response or cache for
+  this model, and performs no outbound request.
 - No campaign text is evaluated numerically; changing name/copy/creative hash alone does
   not change numeric response values.
 - The model cannot create movement, opportunity, impression, notice, social or purchase
