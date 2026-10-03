@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator, Mapping
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
 from adlife.core.experiments.spatial_response_metrics import (
+    SpatialResponseMetrics,
     derive_spatial_response_metrics,
 )
 from tests.unit.city.test_city_pack import load_pack, pack_data
@@ -94,6 +96,44 @@ def _response_metrics(
         phone_cap=phone_cap,
         initial_sentiment=initial_sentiment,
     )[1]
+
+
+def test_valid_campaign_regrouping_does_not_reject_response_metrics() -> None:
+    result = _response_metrics(initial_sentiment=0.0, phone_end_minute=1)
+
+    overall = result.overall.purchase_intention_proxy.final_total
+    grouped = math.fsum(
+        campaign.purchase_intention_proxy.final_total for campaign in result.campaigns
+    )
+    assert overall == 1.1040866666666669
+    assert grouped == 1.1040866666666667
+    assert overall - grouped == math.ulp(overall)
+
+
+def test_response_metrics_still_refuse_material_campaign_total_tampering() -> None:
+    result = _response_metrics(initial_sentiment=-0.5, phone_end_minute=1)
+    document = result.model_dump(mode="python")
+    receipt = document["overall"]["purchase_intention_proxy"]
+    receipt["final_total"] += 1e-12
+    receipt["change_total"] = receipt["final_total"] - receipt["initial_total"]
+    receipt["final_mean"] = receipt["final_total"] / receipt["denominator"]
+    receipt["mean_change"] = receipt["change_total"] / receipt["denominator"]
+
+    with pytest.raises(ValidationError, match="campaign state totals"):
+        SpatialResponseMetrics.model_validate(document)
+
+
+def test_response_metrics_refuse_subnormal_tampering_of_exact_zero_total() -> None:
+    result = _response_metrics(initial_sentiment=0.0, phone_end_minute=1)
+    document = result.model_dump(mode="python")
+    receipt = document["overall"]["brand_sentiment"]
+    receipt["initial_total"] = math.ulp(0.0)
+    receipt["change_total"] = receipt["final_total"] - receipt["initial_total"]
+    receipt["initial_mean"] = receipt["initial_total"] / receipt["denominator"]
+    receipt["mean_change"] = receipt["change_total"] / receipt["denominator"]
+
+    with pytest.raises(ValidationError, match="campaign state totals"):
+        SpatialResponseMetrics.model_validate(document)
 
 
 def _number_leaves(

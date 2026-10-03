@@ -7,6 +7,7 @@ observed outcomes nor purchase, sales, population, or causal-effect estimates.
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Collection, Mapping, Sequence
 from hashlib import sha256
 from typing import Literal, Self, TypeAlias, TypedDict
@@ -93,6 +94,24 @@ class _EventSeriesValues(TypedDict):
 
 def _positive_zero(value: float) -> float:
     return 0.0 if value == 0.0 else value
+
+
+def _matches_partitioned_fsum(total: float, parts: Sequence[float]) -> bool:
+    """Compare direct and partitioned ``fsum`` results within their rounding budget."""
+    regrouped = math.fsum(parts)
+    if total == regrouped:
+        return True
+    if len(parts) <= 1 or all(abs(part) < sys.float_info.min for part in parts):
+        # A singleton performs no regrouping. A sum of only zero/subnormal binary64
+        # values is exactly representable, so neither case has a rounding budget.
+        return False
+    # Each persisted partition and each of the two final sums may be rounded by at
+    # most half an ulp.  This is the narrow error bound implied by regrouping the
+    # same finite inputs; a general relative tolerance would admit material changes.
+    rounding_budget = (
+        math.fsum((math.ulp(total), math.ulp(regrouped), *(math.ulp(part) for part in parts))) / 2.0
+    )
+    return abs(total - regrouped) <= rounding_budget
 
 
 class SpatialResponseMetricReceipt(DomainModel):
@@ -304,8 +323,9 @@ class SpatialResponseMetrics(DomainModel):
         for name in ("mean_rule_sentiment_delta", "mean_rule_recall_delta"):
             overall = getattr(self.overall, name)
             for slices in (self.channels, self.campaigns):
-                if overall.numerator != math.fsum(
-                    float(getattr(item, name).numerator) for item in slices
+                numerators = tuple(float(getattr(item, name).numerator) for item in slices)
+                if not _matches_partitioned_fsum(
+                    float(overall.numerator), numerators
                 ) or overall.denominator != sum(getattr(item, name).denominator for item in slices):
                     raise ValueError("response slice means do not add up to overall evidence")
 
@@ -317,11 +337,11 @@ class SpatialResponseMetrics(DomainModel):
             campaign_states = tuple(getattr(item, name) for item in self.campaigns)
             if any(item.denominator != self.population_size for item in campaign_states):
                 raise ValueError("campaign state denominator must cover every agent")
-            if overall_state.initial_total != math.fsum(
-                item.initial_total for item in campaign_states
-            ) or overall_state.final_total != math.fsum(
-                item.final_total for item in campaign_states
-            ):
+            initial_totals = tuple(item.initial_total for item in campaign_states)
+            final_totals = tuple(item.final_total for item in campaign_states)
+            if not _matches_partitioned_fsum(
+                overall_state.initial_total, initial_totals
+            ) or not _matches_partitioned_fsum(overall_state.final_total, final_totals):
                 raise ValueError("campaign state totals do not add up to overall state")
         return self
 

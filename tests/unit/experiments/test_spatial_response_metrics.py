@@ -296,6 +296,29 @@ def test_one_notice_response_metrics_have_exact_provenance_values_and_receipts()
     assert result.campaigns[0].brand_sentiment == result.overall.brand_sentiment
 
 
+def test_single_campaign_state_total_requires_exact_equality() -> None:
+    scenario, opportunities, attention, response_input, response, attention_metrics = (
+        _billboard_bundle(attention_seed=0)
+    )
+    result = _derive(
+        response_input,
+        response,
+        scenario=scenario,
+        opportunities=opportunities,
+        attention=attention,
+        attention_metrics=attention_metrics,
+    )
+    document = result.model_dump(mode="python")
+    receipt = document["overall"]["brand_sentiment"]
+    receipt["initial_total"] = math.nextafter(receipt["initial_total"], math.inf)
+    receipt["change_total"] = receipt["final_total"] - receipt["initial_total"]
+    receipt["initial_mean"] = receipt["initial_total"] / receipt["denominator"]
+    receipt["mean_change"] = receipt["change_total"] / receipt["denominator"]
+
+    with pytest.raises(ValidationError, match="campaign state totals"):
+        SpatialResponseMetrics.model_validate(document)
+
+
 def test_zero_responses_keep_finite_positive_zero_receipts_and_nonzero_state() -> None:
     scenario, opportunities, attention, response_input, response, attention_metrics = (
         _billboard_bundle(attention_seed=2)
