@@ -2,9 +2,23 @@ import httpx
 import pytest
 
 from adlife.city.web import create_city_app
+from adlife.core.domain.serialization import canonical_json
+from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
+from adlife.core.domain.spatial_response import SpatialResponseInput
 from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
 from adlife.core.simulation.city_mobility import CityMobility
-from adlife.core.simulation.spatial_attention import evaluate_spatial_attention
+from adlife.core.simulation.spatial_attention import (
+    SpatialAttentionEvaluation,
+    evaluate_spatial_attention,
+)
+from adlife.core.simulation.spatial_opportunity import SpatialOpportunityEvaluation
+from adlife.core.simulation.spatial_response import (
+    MAX_SPATIAL_RESPONSE_RECORDS,
+    SpatialResponseEvaluation,
+    evaluate_spatial_responses,
+    spatial_response_state_document,
+    summarize_spatial_response_artifact,
+)
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 from tests.unit.city.test_spatial_opportunity import (
@@ -14,6 +28,54 @@ from tests.unit.city.test_spatial_opportunity import (
     _phone,
     _scenario,
 )
+from tests.unit.city.test_spatial_response import _response_input
+
+
+def _response_view_case(
+    *,
+    seed: int = 42,
+) -> tuple[
+    CityMobility,
+    SpatialCampaignScenario,
+    SpatialOpportunityEvaluation,
+    SpatialAttentionEvaluation,
+    SpatialResponseInput,
+    SpatialResponseEvaluation,
+]:
+    pack = load_pack(pack_data())
+    fixture_mobility = _mobility(pack, agent_count=2)
+    simulation = CityMobility(
+        pack,
+        seed=seed,
+        agent_count=2,
+        days=1,
+        places=fixture_mobility.places,
+    )
+    scenario = _scenario(
+        pack,
+        [
+            _billboard(),
+            _phone(
+                windows=[{"start_minute": 0, "end_minute": 3}],
+                probability=1.0,
+                cap=3,
+            ),
+        ],
+    )
+    opportunities = _evaluate(simulation, scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=seed)
+    response_input = _response_input(
+        scenario,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+    )
+    responses = evaluate_spatial_responses(
+        response_input,
+        scenario,
+        opportunities,
+        attention,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+    )
+    return simulation, scenario, opportunities, attention, response_input, responses
 
 
 def client() -> httpx.AsyncClient:
@@ -134,7 +196,13 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'id="model-label"' in html.text
     assert 'id="attention-panel"' in html.text
     assert 'id="attention-claim"' in html.text
-    assert 'id="attention-list" aria-live="polite"' in html.text
+    for list_id in (
+        "opportunity-list",
+        "attention-list",
+        "response-list",
+        "response-state-list",
+    ):
+        assert f'id="{list_id}" aria-live=' not in html.text
     assert 'id="metrics-panel"' in html.text
     assert 'id="metrics-claim"' in html.text
     assert 'id="metrics-overall-notice-rate-receipt"' in html.text
@@ -385,7 +453,7 @@ def test_saved_v5_view_requires_matching_attention_evidence() -> None:
             spatial_scenario=scenario,
             opportunity_evaluation=opportunities,
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 5 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 5 or 6 run"):
         create_city_app(
             simulation,
             run_id="wrong-attention-schema",
@@ -540,7 +608,7 @@ def test_spatial_view_requires_a_complete_schema_v4_saved_run() -> None:
             run_id="incomplete-spatial-study",
             run_schema_version=4,
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 4 or 5 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 4, 5 or 6 run"):
         create_city_app(
             simulation,
             run_id="wrong-schema-study",
@@ -548,3 +616,405 @@ def test_spatial_view_requires_a_complete_schema_v4_saved_run() -> None:
             spatial_scenario=scenario,
             opportunity_evaluation=evaluation,
         )
+
+
+@pytest.mark.asyncio
+async def test_saved_v6_view_exposes_exact_response_resources_without_mutating_sources() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    metrics = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+        agents_sha256="a" * 64,
+        trace_sha256="b" * 64,
+        days=simulation.days,
+        source_run_schema_version=6,
+    )
+    source_before = tuple(
+        canonical_json(item)
+        for item in (
+            scenario,
+            opportunities,
+            attention,
+            response_input,
+            responses,
+            metrics,
+        )
+    )
+    frame_before = simulation.frame_document(0)
+    minute_records = tuple(record for record in responses.records if record.model_minute == 0)
+    assert [record.event_type for record in minute_records] == [
+        "spatial.response",
+        "spatial.state-updated",
+    ]
+    state_document = spatial_response_state_document(responses)
+    summary_document = summarize_spatial_response_artifact(responses)
+    application = create_city_app(
+        simulation,
+        run_id="saved-response-study",
+        run_schema_version=6,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        spatial_metrics=metrics,
+        response_input=response_input,
+        response_evaluation=responses,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://city.test",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        summary = await web.get("/api/response-summary")
+        first = await web.get("/api/response-events?minute=0&limit=1")
+        second = await web.get("/api/response-events?minute=0&offset=1&limit=100")
+        selected = await web.get("/api/response-events?minute=0&agent_id=person-002")
+        empty = await web.get("/api/response-events?minute=0&agent_id=person-001")
+        ignored_path = await web.get("/api/response-events?minute=0&limit=1&path=../../run.json")
+        first_state = await web.get("/api/response-state?limit=1")
+        second_state = await web.get("/api/response-state?offset=1&limit=100")
+        selected_state = await web.get("/api/response-state?agent_id=person-002")
+        metrics_response = await web.get("/api/spatial-metrics")
+
+    assert metadata["run_schema_version"] == 6
+    assert metadata["spatial_response"] is True
+    assert metadata["response_model_id"] == "spatial-response-v1"
+    assert metadata["response_claim_scope"] == "synthetic-response-not-observed-behavior"
+    assert metadata["response_count"] == 2
+    assert metadata["state_update_count"] == 2
+    assert metadata["response_campaign_count"] == 1
+    assert metadata["final_state_count"] == 2
+    assert summary.status_code == 200
+    assert summary.json() == summary_document.model_dump(mode="json")
+    assert set(summary.json()) == {
+        "schema_version",
+        "model_id",
+        "claim_scope",
+        "response_model_id",
+        "response_input_sha256",
+        "scenario_sha256",
+        "city_sha256",
+        "attention_seed",
+        "stream_sha256",
+        "stream_bytes",
+        "state_document_sha256",
+        "state_document_bytes",
+        "counts",
+    }
+    assert first.status_code == second.status_code == selected.status_code == 200
+    assert first.json() == {
+        "schema_version": 1,
+        "response_model_id": "spatial-response-v1",
+        "claim_scope": "synthetic-response-not-observed-behavior",
+        "minute": 0,
+        "agent_id": None,
+        "offset": 0,
+        "limit": 1,
+        "total": 2,
+        "event_type_counts": {
+            "spatial.response": 1,
+            "spatial.state-updated": 1,
+        },
+        "channel_counts": {
+            "roadside-billboard": 0,
+            "mobile-feed": 1,
+        },
+        "agent_counts": {"person-002": 2},
+        "next_offset": 1,
+        "items": [minute_records[0].model_dump(mode="json")],
+    }
+    assert second.json() == {
+        **first.json(),
+        "offset": 1,
+        "limit": 100,
+        "next_offset": None,
+        "items": [minute_records[1].model_dump(mode="json")],
+    }
+    assert selected.json() == {
+        **first.json(),
+        "agent_id": "person-002",
+        "limit": 100,
+        "next_offset": None,
+        "items": [record.model_dump(mode="json") for record in minute_records],
+    }
+    assert empty.json() == {
+        **first.json(),
+        "agent_id": "person-001",
+        "limit": 100,
+        "total": 0,
+        "event_type_counts": {
+            "spatial.response": 0,
+            "spatial.state-updated": 0,
+        },
+        "channel_counts": {
+            "roadside-billboard": 0,
+            "mobile-feed": 0,
+        },
+        "agent_counts": {},
+        "next_offset": None,
+        "items": [],
+    }
+    assert ignored_path.json() == first.json()
+
+    state_header = {
+        "schema_version": 1,
+        "model_id": "spatial-response-state-v1",
+        "claim_scope": "synthetic-response-not-observed-behavior",
+        "response_input_sha256": state_document.response_input_sha256,
+        "scenario_sha256": state_document.scenario_sha256,
+        "city_sha256": state_document.city_sha256,
+        "state_scope": "final-end-of-run-not-scrubbed-minute",
+    }
+    assert first_state.status_code == second_state.status_code == selected_state.status_code == 200
+    assert first_state.json() == {
+        **state_header,
+        "agent_id": None,
+        "offset": 0,
+        "limit": 1,
+        "total": 2,
+        "next_offset": 1,
+        "items": [state_document.states[0].model_dump(mode="json")],
+    }
+    assert second_state.json() == {
+        **state_header,
+        "agent_id": None,
+        "offset": 1,
+        "limit": 100,
+        "total": 2,
+        "next_offset": None,
+        "items": [state_document.states[1].model_dump(mode="json")],
+    }
+    assert selected_state.json() == {
+        **state_header,
+        "agent_id": "person-002",
+        "offset": 0,
+        "limit": 100,
+        "total": 1,
+        "next_offset": None,
+        "items": [state_document.states[1].model_dump(mode="json")],
+    }
+    assert metrics_response.status_code == 200
+    assert metrics_response.json() == metrics.model_dump(mode="json")
+    assert (
+        tuple(
+            canonical_json(item)
+            for item in (
+                scenario,
+                opportunities,
+                attention,
+                response_input,
+                responses,
+                metrics,
+            )
+        )
+        == source_before
+    )
+    assert simulation.frame_document(0) == frame_before
+
+
+@pytest.mark.asyncio
+async def test_saved_v6_response_routes_enforce_filters_bounds_and_get_only_semantics() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    application = create_city_app(
+        simulation,
+        run_id="saved-response-study",
+        run_schema_version=6,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        response_input=response_input,
+        response_evaluation=responses,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://city.test",
+    ) as web:
+        missing_minute = await web.get("/api/response-events")
+        negative_minute = await web.get("/api/response-events?minute=-1")
+        outside_minute = await web.get("/api/response-events?minute=1440")
+        malformed_agent = await web.get("/api/response-events?minute=0&agent_id=person-1")
+        unknown_agent = await web.get("/api/response-events?minute=0&agent_id=person-999")
+        zero_limit = await web.get("/api/response-events?minute=0&limit=0")
+        large_limit = await web.get("/api/response-events?minute=0&limit=101")
+        large_offset = await web.get(
+            f"/api/response-events?minute=0&offset={MAX_SPATIAL_RESPONSE_RECORDS + 1}"
+        )
+        empty_page = await web.get("/api/response-events?minute=0&offset=100")
+        malformed_state_agent = await web.get("/api/response-state?agent_id=person-1")
+        unknown_state_agent = await web.get("/api/response-state?agent_id=person-999")
+        large_state_limit = await web.get("/api/response-state?limit=101")
+        large_state_offset = await web.get("/api/response-state?offset=601")
+        writes = [
+            await web.post("/api/response-summary", json={}),
+            await web.post("/api/response-events?minute=0", json={}),
+            await web.post("/api/response-state", json={}),
+        ]
+
+    assert missing_minute.status_code == negative_minute.status_code == 422
+    assert outside_minute.status_code == 422
+    assert outside_minute.json() == {"detail": "minute is outside the saved run"}
+    assert malformed_agent.status_code == malformed_state_agent.status_code == 422
+    assert unknown_agent.status_code == unknown_state_agent.status_code == 400
+    assert unknown_agent.json() == unknown_state_agent.json() == {"detail": "unknown city agent"}
+    assert zero_limit.status_code == large_limit.status_code == large_offset.status_code == 422
+    assert large_state_limit.status_code == large_state_offset.status_code == 422
+    assert empty_page.status_code == 200
+    assert empty_page.json()["total"] == 2
+    assert empty_page.json()["next_offset"] is None
+    assert empty_page.json()["items"] == []
+    assert [response.status_code for response in writes] == [405, 405, 405]
+
+
+@pytest.mark.asyncio
+async def test_saved_v6_zero_response_view_still_exposes_every_final_campaign_state() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = _response_view_case(
+        seed=27
+    )
+    assert responses.counts.response_count == 0
+    assert responses.counts.state_update_count == 0
+    assert responses.counts.final_state_count == 2
+    application = create_city_app(
+        simulation,
+        run_id="zero-response-study",
+        run_schema_version=6,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        response_input=response_input,
+        response_evaluation=responses,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://city.test",
+    ) as web:
+        summary = await web.get("/api/response-summary")
+        events = await web.get("/api/response-events?minute=0")
+        states = await web.get("/api/response-state")
+
+    assert summary.status_code == events.status_code == states.status_code == 200
+    assert summary.json()["counts"] == {
+        "schema_version": 1,
+        "response_count": 0,
+        "state_update_count": 0,
+        "roadside_response_count": 0,
+        "phone_response_count": 0,
+        "campaign_count": 1,
+        "final_state_count": 2,
+    }
+    assert events.json()["total"] == 0
+    assert events.json()["items"] == []
+    assert states.json()["state_scope"] == "final-end-of-run-not-scrubbed-minute"
+    assert states.json()["total"] == 2
+    assert states.json()["items"] == [
+        state.model_dump(mode="json") for state in responses.final_states
+    ]
+    assert all(item["response_count"] == 0 for item in states.json()["items"])
+    assert all(item["last_response_minute"] is None for item in states.json()["items"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_schema_version", [1, 2, 3, 4, 5])
+async def test_schema_v1_through_v5_views_have_no_response_resources(
+    run_schema_version: int,
+) -> None:
+    simulation, scenario, opportunities, attention, _, _ = _response_view_case()
+    kwargs: dict[str, object] = {
+        "run_id": f"legacy-v{run_schema_version}",
+        "run_schema_version": run_schema_version,
+    }
+    if run_schema_version >= 4:
+        kwargs.update(
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+        )
+    if run_schema_version >= 5:
+        kwargs["attention_evaluation"] = attention
+    application = create_city_app(simulation, **kwargs)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://city.test",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        results = [
+            await web.get("/api/response-summary"),
+            await web.get("/api/response-events?minute=0"),
+            await web.get("/api/response-state"),
+        ]
+
+    assert "spatial_response" not in metadata
+    assert not any(key.startswith("response_") for key in metadata)
+    assert "state_update_count" not in metadata
+    assert "final_state_count" not in metadata
+    assert [response.status_code for response in results] == [404, 404, 404]
+    assert [response.json() for response in results] == [
+        {"detail": "spatial response evidence not configured"},
+        {"detail": "spatial response evidence not configured"},
+        {"detail": "spatial response evidence not configured"},
+    ]
+
+
+def test_saved_v6_view_requires_complete_matching_revalidated_response_evidence() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    common: dict[str, object] = {
+        "run_id": "saved-response-study",
+        "run_schema_version": 6,
+        "spatial_scenario": scenario,
+        "opportunity_evaluation": opportunities,
+        "attention_evaluation": attention,
+    }
+
+    with pytest.raises(ValueError, match="schema version 6 requires spatial response evidence"):
+        create_city_app(simulation, **common)
+    for partial in (
+        {"response_input": response_input},
+        {"response_evaluation": responses},
+    ):
+        with pytest.raises(ValueError, match="must be supplied together"):
+            create_city_app(simulation, **common, **partial)
+    with pytest.raises(ValueError, match="only valid for a saved schema version 6 run"):
+        create_city_app(
+            simulation,
+            **(common | {"run_schema_version": 5}),
+            response_input=response_input,
+            response_evaluation=responses,
+        )
+
+    changed_input = _response_input(
+        scenario,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+        sentiment=-0.5,
+    )
+    with pytest.raises(ValueError, match="does not match its saved inputs"):
+        create_city_app(
+            simulation,
+            **common,
+            response_input=changed_input,
+            response_evaluation=responses,
+        )
+    poisoned = responses.model_copy()
+    object.__setattr__(poisoned, "claim_scope", "observed-behavior")
+    with pytest.raises(ValueError):
+        create_city_app(
+            simulation,
+            **common,
+            response_input=response_input,
+            response_evaluation=poisoned,
+        )
+    for invalid_version in (True, 6.0):
+        with pytest.raises(ValueError, match="unsupported city run schema version"):
+            create_city_app(
+                simulation,
+                **(common | {"run_schema_version": invalid_version}),
+                response_input=response_input,
+                response_evaluation=responses,
+            )

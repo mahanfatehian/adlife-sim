@@ -63,8 +63,8 @@
           <div class="opportunity-heading"><div><span class="eyebrow">PERSISTED EVIDENCE / CURRENT MINUTE</span><h2 id="opportunity-scenario">Spatial study</h2></div><span class="evidence-seal" aria-hidden="true">E</span></div>
           <div class="opportunity-totals" aria-label="Spatial opportunity totals"><div><span>ALL</span><strong id="opportunity-total">0</strong></div><div><span>ROADSIDE</span><strong id="opportunity-roadside">0</strong></div><div><span>PHONE</span><strong id="opportunity-phone">0</strong></div></div>
           <p class="opportunity-claim" id="opportunity-claim">SYNTHETIC OPPORTUNITY · NOT AN IMPRESSION</p>
-          <div class="opportunity-now"><span>AT THE SCRUBBER</span><strong id="opportunity-current">0 AT THIS MINUTE · 0 FOR SELECTED AGENT</strong></div>
-          <div class="opportunity-list" id="opportunity-list" aria-live="polite"></div>
+          <div class="opportunity-now"><span>AT THE SCRUBBER</span><strong id="opportunity-current" role="status" aria-live="polite" aria-atomic="true">0 AT THIS MINUTE · 0 FOR SELECTED AGENT</strong></div>
+          <div class="opportunity-list" id="opportunity-list"></div>
           <p class="opportunity-empty" id="opportunity-empty">No opportunity evidence at this minute.</p>
           <p class="opportunity-page-note" id="opportunity-page-note" hidden></p>
         </section>
@@ -73,10 +73,29 @@
           <div class="attention-causal" aria-label="Opportunity causes impression; impression may cause notice"><span>OPPORTUNITY</span><i aria-hidden="true">&rarr;</i><span>IMPRESSION</span><i aria-hidden="true">&rarr;</i><span>NOTICE</span></div>
           <div class="attention-totals" aria-label="Synthetic attention totals"><div><span>IMPRESSIONS</span><strong id="attention-impressions">0</strong></div><div><span>NOTICES</span><strong id="attention-notices">0</strong></div><div><span>FIXED P</span><strong id="attention-probability">0%</strong></div></div>
           <p class="attention-claim" id="attention-claim">SYNTHETIC ATTENTION &middot; NOT OBSERVED BEHAVIOR</p>
-          <div class="attention-now"><span>AT THE SCRUBBER</span><strong id="attention-current">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
-          <div class="attention-list" id="attention-list" aria-live="polite"></div>
+          <div class="attention-now"><span>AT THE SCRUBBER</span><strong id="attention-current" role="status" aria-live="polite" aria-atomic="true">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
+          <div class="attention-list" id="attention-list"></div>
           <p class="attention-empty" id="attention-empty">No attention evidence at this minute.</p>
           <p class="attention-page-note" id="attention-page-note" hidden></p>
+        </section>
+        <section class="response-panel" id="response-panel" aria-labelledby="response-title" aria-describedby="response-claim" hidden>
+          <div class="response-heading"><div><span class="eyebrow">RULE EVIDENCE / CURRENT MINUTE</span><h2 id="response-title">Campaign response ledger</h2><p id="response-scenario"></p></div><span class="response-seal" aria-hidden="true">R</span></div>
+          <div class="response-causal" id="response-causal" aria-label="Notice causes a rule response; responses are atomically committed as a state update"><span>NOTICE</span><i aria-hidden="true">&rarr;</i><span>RULE RESPONSE</span><i aria-hidden="true">&rarr;</i><span>STATE UPDATE</span></div>
+          <div class="response-totals" aria-label="Synthetic response totals"><div><span>RESPONSES</span><strong id="response-responses">0</strong></div><div><span>UPDATES</span><strong id="response-updates">0</strong></div><div><span>CAMPAIGNS</span><strong id="response-campaigns">0</strong></div></div>
+          <p class="response-claim" id="response-claim">SYNTHETIC RESPONSE &middot; NOT OBSERVED BEHAVIOR</p>
+          <div class="response-now"><span>AT THE SCRUBBER</span><strong id="response-current" role="status" aria-live="polite" aria-atomic="true">0 RECORDS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
+          <div class="response-list" id="response-list"></div>
+          <p class="response-empty" id="response-empty">No response evidence at this minute.</p>
+          <p class="response-page-note" id="response-page-note" hidden></p>
+          <section class="response-state-panel" id="response-state-panel" aria-labelledby="response-state-time" aria-describedby="response-state-warning response-state-claim" tabindex="0" hidden>
+            <div class="response-state-heading"><div><span class="eyebrow" id="response-state-time">FINAL STATE / END OF RUN</span><h3>Campaign state ledger</h3></div><span class="state-seal" aria-hidden="true">S</span></div>
+            <p class="response-state-warning" id="response-state-warning">NOT STATE AT THE SCRUBBED MINUTE</p>
+            <p class="response-state-claim" id="response-state-claim">UNCALIBRATED SYNTHETIC PROXIES &middot; PURCHASE INTENTION IS NOT PURCHASE PROBABILITY OR SALES</p>
+            <p class="response-state-current" id="response-state-current" role="status" aria-live="polite" aria-atomic="true">0 FINAL CAMPAIGN STATES FOR SELECTED AGENT</p>
+            <div class="response-state-list" id="response-state-list"></div>
+            <p class="response-state-empty" id="response-state-empty">No final campaign state for the selected agent.</p>
+            <p class="response-state-page-note" id="response-state-page-note" hidden></p>
+          </section>
         </section>
         <div class="section-title"><span>SELECTED AGENT</span><span id="selected-id">—</span></div>
         <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose an agent</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
@@ -91,7 +110,7 @@
 
     <footer class="timeline" aria-label="Simulation timeline">
       <div class="timeline-controls"><button id="play-button" type="button" aria-label="Play timeline">▶</button><div><span class="eyebrow">SIMULATED TIME</span><strong id="timeline-time">DAY 01 · 00:00</strong></div></div>
-      <div class="timeline-track"><input id="time-slider" type="range" min="0" max="1439" value="0" aria-label="Simulation minute"><div class="time-marks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div></div>
+      <div class="timeline-track"><input id="time-slider" type="range" min="0" max="1439" value="0" aria-label="Simulation minute" aria-valuetext="Day 1, 00:00"><div class="time-marks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div></div>
       <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-MINUTE MOBILITY FRAMES</span></div>
     </footer>
   </div>

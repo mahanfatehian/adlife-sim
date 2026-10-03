@@ -31,19 +31,22 @@ def command(
         raise CommandError("invalid city run identifier") from None
     stored = CityRunStore(root).load(run_id)
     spatial_metrics = (
-        metrics_for_stored_city_run(stored) if stored.manifest.schema_version == 5 else None
+        metrics_for_stored_city_run(stored) if stored.manifest.schema_version in {5, 6} else None
+    )
+    application = create_city_app(
+        stored.mobility,
+        run_id=stored.manifest.run_id,
+        run_schema_version=stored.manifest.schema_version,
+        spatial_scenario=stored.spatial_scenario,
+        opportunity_evaluation=stored.opportunity_evaluation,
+        attention_evaluation=stored.attention_evaluation,
+        spatial_metrics=spatial_metrics,
+        response_input=stored.response_input,
+        response_evaluation=stored.response_evaluation,
     )
     info(f"saved city run: http://127.0.0.1:{port} ({stored.manifest.run_id})")
     uvicorn.run(
-        create_city_app(
-            stored.mobility,
-            run_id=stored.manifest.run_id,
-            run_schema_version=stored.manifest.schema_version,
-            spatial_scenario=stored.spatial_scenario,
-            opportunity_evaluation=stored.opportunity_evaluation,
-            attention_evaluation=stored.attention_evaluation,
-            spatial_metrics=spatial_metrics,
-        ),
+        application,
         host="127.0.0.1",
         port=port,
         log_level="warning",

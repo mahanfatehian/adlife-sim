@@ -237,25 +237,25 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
 - Adds a timeline rail labeled `NOTICE -> RULE RESPONSE -> STATE UPDATE`, using safe DOM
   text for direct deltas and before/after synthetic state proxies.
 
-- [ ] **Step 1: Read and apply `frontend-design` before changing the UI.** Preserve the
+- [x] **Step 1: Read and apply `frontend-design` before changing the UI.** Preserve the
   established dashboard language and hierarchy; do not redesign unrelated surfaces.
-- [ ] **Step 2: Write failing constructor/API tests.** Pin v6 coherence revalidation, exact
+- [x] **Step 2: Write failing constructor/API tests.** Pin v6 coherence revalidation, exact
   summary/page/filter/order/status/method behavior, v1-v5 404, maximum page 100, unknown
   agent/minute errors, complete zero-response final-state visibility, final-not-scrubbed
   labeling, no path selector, and source immutability.
-- [ ] **Step 3: Run API tests and confirm RED.**
+- [x] **Step 3: Run API tests and confirm RED.**
   Run: `uv run pytest -q tests/unit/city/test_city_web.py tests/cli/test_city_view.py`
   Expected: response API cases fail because inputs/routes are absent.
-- [ ] **Step 4: Implement prevalidated read-only API support.** Build minute indexes at app
+- [x] **Step 4: Implement prevalidated read-only API support.** Build minute indexes at app
   construction; request handlers only slice immutable evidence.
-- [ ] **Step 5: Write failing browser tests.** Pin current-minute response/state values,
+- [x] **Step 5: Write failing browser tests.** Pin current-minute response/state values,
   selected-agent filtering, pagination disclosure, prominent synthetic/unobserved and
   uncalibrated-proxy language, keyboard/narrow layout, Persian/hostile safe text, no
   `innerHTML`, no external request and no presentation effect on simulation state.
-- [ ] **Step 6: Implement the compact response rail and run browser/API suites.**
+- [x] **Step 6: Implement the compact response rail and run browser/API suites.**
   Run: `uv run pytest -q tests/unit/city/test_city_web.py tests/cli/test_city_view.py tests/browser/test_city_places_browser.py`
   Expected: all pass.
-- [ ] **Step 7: Run Ruff/mypy, inspect desktop/narrow screenshots, commit and push.**
+- [x] **Step 7: Run Ruff/mypy, inspect desktop/narrow screenshots, commit and push.**
   Commit: `feat(city): present spatial response evidence`
 
 ### Task 6: Reconcile public contracts and certify installed behavior

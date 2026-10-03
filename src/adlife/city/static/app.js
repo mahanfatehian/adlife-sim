@@ -1,7 +1,7 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, spatialMetrics: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
+const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -39,7 +39,12 @@ function updateLabels() {
   byId("clock-label").textContent = clockText(minute);
   byId("timeline-time").textContent = `${dayText(minute)} · ${clockText(minute)}`;
   byId("light-label").textContent = night ? "NIGHT" : "DAYLIGHT";
-  byId("time-slider").value = String(minute);
+  const slider = byId("time-slider");
+  slider.value = String(minute);
+  slider.setAttribute(
+    "aria-valuetext",
+    `Day ${Math.floor(minute / 1440) + 1}, ${clockText(minute)}`,
+  );
   document.body.classList.toggle("night", night);
 }
 
@@ -350,7 +355,8 @@ function renderOpportunityEvidence() {
     card.append(channel, at, identity, detail);
     card.addEventListener("click", () => {
       state.selected = opportunity.agent_id;
-      renderPeople(); renderSelected(); renderOpportunityEvidence(); renderAttentionEvidence(); renderMap();
+      renderPeople();
+      setMinute(state.minute);
     });
     list.append(card);
   }
@@ -386,8 +392,96 @@ function renderAttentionEvidence() {
     card.append(stageLabel, at, identity, decision);
     card.addEventListener("click", () => {
       state.selected = event.agent_id;
-      renderPeople(); renderSelected(); renderOpportunityEvidence(); renderAttentionEvidence(); renderMap();
+      renderPeople();
+      setMinute(state.minute);
     });
+    list.append(card);
+  }
+}
+
+function proxyText(value, label) {
+  if (!Number.isFinite(value)) throw new Error(`${label} is not finite`);
+  return String(Number(value.toFixed(4)));
+}
+
+function signedProxyText(value, label) {
+  const formatted = proxyText(value, label);
+  return value >= 0 ? `+${formatted}` : formatted;
+}
+
+function renderResponseEvidence() {
+  if (!state.responseSummary || !state.responsePage) return;
+  const page = state.responsePage;
+  const list = byId("response-list");
+  while (list.firstChild) list.removeChild(list.firstChild);
+  const selectedCount = page.agent_counts[state.selected] || 0;
+  byId("response-current").textContent = `${page.total} RECORDS AT THIS MINUTE \u00b7 ${selectedCount} FOR SELECTED AGENT`;
+  byId("response-empty").hidden = page.total !== 0;
+  const pageNote = byId("response-page-note");
+  pageNote.hidden = page.next_offset === null;
+  pageNote.textContent = `Showing the first ${page.items.length} of ${page.total} canonical response records.`;
+  for (const record of page.items) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "response-card";
+    card.classList.toggle("selected", record.agent_id === state.selected);
+    const stageLabel = document.createElement("span");
+    stageLabel.className = "response-stage";
+    const at = document.createElement("span");
+    at.className = "response-at";
+    at.textContent = clockText(record.model_minute);
+    const identity = document.createElement("strong");
+    identity.textContent = `${record.agent_id.toUpperCase()} \u00b7 ${record.campaign_id.toUpperCase()}`;
+    const detail = document.createElement("small");
+    if (record.event_type === "spatial.response") {
+      card.classList.add("rule-response");
+      stageLabel.textContent = "RULE RESPONSE";
+      at.textContent += `:${String(Math.floor(record.millisecond_within_minute / 1000)).padStart(2, "0")}`;
+      detail.textContent = `SENTIMENT \u0394 ${signedProxyText(record.sentiment_delta, "Sentiment delta")} \u00b7 RECALL \u0394 ${signedProxyText(record.recall_delta, "Recall delta")} \u00b7 VALUE MATCH ${proxyText(record.value_match, "Value match")} \u00b7 CAUSE ${record.caused_by.slice(0, 10).toUpperCase()}`;
+    } else if (record.event_type === "spatial.state-updated") {
+      card.classList.add("state-update");
+      stageLabel.textContent = "STATE UPDATE";
+      detail.textContent = `SENTIMENT ${proxyText(record.previous_state.brand_sentiment, "Previous sentiment")} \u2192 ${proxyText(record.state.brand_sentiment, "Updated sentiment")} \u00b7 RECALL ${proxyText(record.previous_state.recall_strength, "Previous recall")} \u2192 ${proxyText(record.state.recall_strength, "Updated recall")} \u00b7 INTENTION PROXY ${proxyText(record.previous_state.purchase_intention, "Previous intention proxy")} \u2192 ${proxyText(record.state.purchase_intention, "Updated intention proxy")} \u00b7 ${record.caused_by_event_ids.length} CAUSES`;
+    } else {
+      throw new Error("Unknown spatial response record type");
+    }
+    card.append(stageLabel, at, identity, detail);
+    card.addEventListener("click", () => {
+      state.selected = record.agent_id;
+      renderPeople();
+      setMinute(state.minute);
+    });
+    list.append(card);
+  }
+}
+
+function renderResponseState() {
+  if (!state.responseStatePage) return;
+  const page = state.responseStatePage;
+  if (page.state_scope !== "final-end-of-run-not-scrubbed-minute") {
+    throw new Error("Spatial response state scope is invalid");
+  }
+  const list = byId("response-state-list");
+  while (list.firstChild) list.removeChild(list.firstChild);
+  byId("response-state-current").textContent = `${page.total} FINAL CAMPAIGN STATES FOR SELECTED AGENT`;
+  byId("response-state-empty").hidden = page.total !== 0;
+  const pageNote = byId("response-state-page-note");
+  pageNote.hidden = page.next_offset === null;
+  pageNote.textContent = `Showing the first ${page.items.length} of ${page.total} final campaign states.`;
+  for (const item of page.items) {
+    const card = document.createElement("article");
+    card.className = "response-state-card";
+    const identity = document.createElement("strong");
+    identity.textContent = `${item.agent_id.toUpperCase()} \u00b7 ${item.campaign_id.toUpperCase()}`;
+    const count = document.createElement("span");
+    count.textContent = `${item.response_count} RESPONSES`;
+    const values = document.createElement("small");
+    values.textContent = `SENTIMENT ${proxyText(item.brand_sentiment, "Final sentiment")} \u00b7 RECALL ${proxyText(item.recall_strength, "Final recall")} \u00b7 INTENTION PROXY ${proxyText(item.purchase_intention, "Final intention proxy")}`;
+    const timing = document.createElement("small");
+    timing.textContent = item.last_response_minute === null
+      ? "NO RESPONSE COMMITTED"
+      : `LAST RESPONSE ${dayText(item.last_response_minute)} \u00b7 ${clockText(item.last_response_minute)}`;
+    card.append(identity, count, values, timing);
     list.append(card);
   }
 }
@@ -413,9 +507,17 @@ function renderSpatialMetrics() {
       const receipt = group[name];
       const token = name.replaceAll("_", "-");
       const prefix = `metrics-${group.channel}-${token}`;
-      byId(`${prefix}-value`).textContent = metricValueText(name, receipt.value);
+      const valueText = metricValueText(name, receipt.value);
+      byId(`${prefix}-value`).textContent = valueText;
       byId(`${prefix}-receipt`).textContent = `${receipt.numerator} / ${receipt.denominator}`;
-      byId(prefix).title = `Numerator ${receipt.numerator}; denominator ${receipt.denominator}. Sources: ${receipt.source_artifacts.join(", ")} (${receipt.source_event_types.join(", ")}).`;
+      const cell = byId(prefix);
+      const provenance = `Numerator ${receipt.numerator}; denominator ${receipt.denominator}. Sources: ${receipt.source_artifacts.join(", ")} (${receipt.source_event_types.join(", ")}).`;
+      cell.title = provenance;
+      cell.tabIndex = 0;
+      cell.setAttribute(
+        "aria-label",
+        `${group.channel} ${name.replaceAll("_", " ")}: ${valueText}. ${provenance}`,
+      );
     }
   }
   byId("metrics-panel").hidden = false;
@@ -431,14 +533,24 @@ async function setMinute(minute) {
     if (opportunityIndex !== null) requests.push(fetchJson(`/api/opportunities?minute=${next}`));
     const attentionIndex = state.attentionSummary ? requests.length : null;
     if (attentionIndex !== null) requests.push(fetchJson(`/api/attention-events?minute=${next}`));
+    const responseIndex = state.responseSummary ? requests.length : null;
+    if (responseIndex !== null) requests.push(fetchJson(`/api/response-events?minute=${next}`));
+    const responseStateIndex = state.responseSummary ? requests.length : null;
+    if (responseStateIndex !== null) requests.push(fetchJson(`/api/response-state?agent_id=${encodeURIComponent(state.selected)}`));
     const responses = await Promise.all(requests);
     const frame = responses[0];
     const opportunityPage = opportunityIndex === null ? null : responses[opportunityIndex];
     const attentionPage = attentionIndex === null ? null : responses[attentionIndex];
+    const responsePage = responseIndex === null ? null : responses[responseIndex];
+    const responseStatePage = responseStateIndex === null ? null : responses[responseStateIndex];
     if (request !== state.request) return;
-    state.frame = frame; state.opportunityPage = opportunityPage; state.attentionPage = attentionPage; state.minute = next;
-    updateLabels(); renderPeople(); renderSelected(); renderOpportunityEvidence(); renderAttentionEvidence(); renderMap();
-  } catch (error) { showError(String(error)); stopPlayback(); }
+    state.frame = frame; state.opportunityPage = opportunityPage; state.attentionPage = attentionPage; state.responsePage = responsePage; state.responseStatePage = responseStatePage; state.minute = next;
+    updateLabels(); renderPeople(); renderSelected(); renderOpportunityEvidence(); renderAttentionEvidence(); renderResponseEvidence(); renderResponseState(); renderMap();
+  } catch (error) {
+    if (request !== state.request) return;
+    showError(String(error));
+    stopPlayback();
+  }
 }
 
 function stopPlayback() {
@@ -500,6 +612,20 @@ async function boot() {
       byId("attention-probability").textContent = `${Math.round(state.attentionSummary.notice_probability * 100)}%`;
       byId("attention-panel").hidden = false;
       for (const key of document.querySelectorAll(".attention-key")) key.hidden = false;
+    }
+    if (meta.spatial_response === true) {
+      state.responseSummary = await fetchJson("/api/response-summary");
+      if (state.responseSummary.claim_scope !== "synthetic-response-not-observed-behavior") {
+        throw new Error("Spatial response claim scope is invalid");
+      }
+      byId("response-scenario").textContent = state.opportunitySummary
+        ? state.opportunitySummary.scenario_name
+        : "Spatial response study";
+      byId("response-responses").textContent = String(state.responseSummary.counts.response_count);
+      byId("response-updates").textContent = String(state.responseSummary.counts.state_update_count);
+      byId("response-campaigns").textContent = String(state.responseSummary.counts.campaign_count);
+      byId("response-panel").hidden = false;
+      byId("response-state-panel").hidden = false;
     }
     if (meta.spatial_metrics === true) {
       state.spatialMetrics = await fetchJson("/api/spatial-metrics");
