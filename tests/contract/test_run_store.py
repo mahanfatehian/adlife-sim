@@ -142,6 +142,19 @@ def test_a_credential_shaped_run_identifier_is_refused_without_echo(
     assert secret_run_id not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    "secret_run_id",
+    ["person@example.com", "api_key=topsecret123"],
+)
+def test_run_identifier_screens_credentials_before_echoing_invalid_grammar(
+    secret_run_id: str,
+) -> None:
+    with pytest.raises(UnsafeRunLocation) as caught:
+        validate_run_id(secret_run_id)
+
+    assert secret_run_id not in str(caught.value)
+
+
 def test_an_appended_batch_is_all_or_nothing_when_a_statement_fails(
     store: SQLiteRunStore,
     run_manifest: RunManifest,

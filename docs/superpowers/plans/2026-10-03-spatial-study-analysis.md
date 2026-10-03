@@ -128,25 +128,25 @@ def spatial_metric_observations(
 ) -> tuple[SpatialMetricObservation, ...]: ...
 ```
 
-- [ ] **Step 1: Write RED golden receipt tests.** Pin one-notice literals, zero-notice with
+- [x] **Step 1: Write RED golden receipt tests.** Pin one-notice literals, zero-notice with
   nonzero initial state, a no-response campaign, multi-campaign weighting, saturation,
   planned-versus-committed recall, and mixed-channel response without channel state fields.
-- [ ] **Step 2: Write RED integrity/property tests.** Cover strict/bounded models, all
+- [x] **Step 2: Write RED integrity/property tests.** Cover strict/bounded models, all
   response-input/attention anchors, tampered first/untouched states, response/notice count
   mismatch, canonical order, assumption-hash sensitivity to channel/frequency cap and
   invariance to purely physical placement changes, credential-shaped copied identifiers,
   hash seeds and input permutations.
-- [ ] **Step 3: Implement minimal pure response receipts.** Use separate count/reach/
+- [x] **Step 3: Implement minimal pure response receipts.** Use separate count/reach/
   frequency/direct-mean/state receipt types, `math.fsum`, exact sources, positive-zero
   normalization and independent revalidation.
-- [ ] **Step 4: Write RED comparison/observation tests.** Pin exact A/A, arm-swap negation,
+- [x] **Step 4: Write RED comparison/observation tests.** Pin exact A/A, arm-swap negation,
   campaign-set refusal, independent opportunity/assumption classifications, canonical key
   grammar, state-channel exclusion and exact source receipts.
-- [ ] **Step 5: Implement comparison and typed observation seams.** Keep C4a unchanged.
-- [ ] **Step 6: Add read-only application, CLI layer switches and API.** Defaults retain
+- [x] **Step 5: Implement comparison and typed observation seams.** Keep C4a unchanged.
+- [x] **Step 6: Add read-only application, CLI layer switches and API.** Defaults retain
   exact attention output; response requires v6; constructor rederives supplied response
   metrics; older viewer runs return 404; all mutation methods return 405.
-- [ ] **Step 7: Run focused/related suites, Ruff/mypy, inspect diff, commit and push.**
+- [x] **Step 7: Run focused/related suites, Ruff/mypy, inspect diff, commit and push.**
   Commit: `feat(city): derive spatial response metrics`.
 
 ### Task 2: Define and safely load repeated-seed study inputs
@@ -179,17 +179,17 @@ def parse_spatial_study_definition_json(
 def load_spatial_study_definition(path: Path) -> SpatialStudyDefinition: ...
 ```
 
-- [ ] **Step 1: Write RED strict contract tests.** Pin exact schemas/enums, two-to-100
+- [x] **Step 1: Write RED strict contract tests.** Pin exact schemas/enums, two-to-100
   pairs, contiguous `0..N-1` seeds, canonical sorting, reuse rules, A/A versus contrast
   identity, fingerprint stability, portable/reserved/credential IDs and absence of free
   prose/path fields.
-- [ ] **Step 2: Write RED parser/loader/security tests.** Cover duplicate JSON keys,
+- [x] **Step 2: Write RED parser/loader/security tests.** Cover duplicate JSON keys,
   bool/version/NaN/Infinity, extra fields, invalid UTF-8, nesting, 64 KiB bound, safe generic
   errors and secret non-echo.
-- [ ] **Step 3: Implement minimum frozen strict domain and bounded adapter loader.** Reuse
+- [x] **Step 3: Implement minimum frozen strict domain and bounded adapter loader.** Reuse
   shared run-ID validation without leaking adapter errors into core.
-- [ ] **Step 4: Run focused/domain/security/architecture suites plus Ruff/mypy.**
-- [ ] **Step 5: Inspect diff, commit and push.**
+- [x] **Step 4: Run focused/domain/security/architecture suites plus Ruff/mypy.**
+- [x] **Step 5: Inspect diff, commit and push.**
   Commit: `feat(city): define repeated-seed studies`.
 
 ### Task 3: Analyze verified run pairs with independently keyed statistics

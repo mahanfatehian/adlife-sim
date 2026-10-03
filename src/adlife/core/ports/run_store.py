@@ -33,7 +33,13 @@ from typing import Literal, Protocol, Self, runtime_checkable
 from pydantic import Field, model_validator
 
 from adlife.core.domain.events import DomainEvent
-from adlife.core.domain.person import DomainModel, contains_secret_or_email_text
+from adlife.core.domain.identifiers import (
+    PORTABLE_RUN_ID_PATTERN,
+    WINDOWS_RESERVED_RUN_IDS,
+    PortableRunIdentifierError,
+    validate_portable_run_identifier,
+)
+from adlife.core.domain.person import DomainModel
 from adlife.core.domain.results import RunManifest, SimulationResult
 from adlife.core.domain.scenario import Scenario
 from adlife.core.domain.serialization import (
@@ -43,7 +49,7 @@ from adlife.core.domain.serialization import (
 from adlife.core.domain.state import ConsumerState
 from adlife.core.ports.cognition import ProviderUsage
 
-RUN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+RUN_ID_PATTERN = PORTABLE_RUN_ID_PATTERN
 """The same shape :class:`~adlife.core.domain.results.RunManifest` validates."""
 
 STABLE_EVENT_ID_PATTERN = re.compile(r"^([a-z0-9][a-z0-9-]{0,39}):event-([0-9]{8})$")
@@ -63,10 +69,7 @@ MAX_PROVIDER_USAGE_RECORDS = 1_000
 MAX_CHECKPOINTS = 8
 """One per simulated day boundary, for the 7-day maximum, plus the start of the run."""
 
-WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
-    {"con", "prn", "aux", "nul", *(f"com{digit}" for digit in range(1, 10))}
-    | {f"lpt{digit}" for digit in range(1, 10)}
-)
+WINDOWS_RESERVED_NAMES = WINDOWS_RESERVED_RUN_IDS
 """Names that match the run-identifier shape but cannot be a directory on Windows.
 
 The quality gates require the same artifact to be readable on Linux, macOS and Windows,
@@ -131,16 +134,16 @@ class UnsafeRunLocation(StorageError):
 
 def validate_run_id(run_id: object) -> str:
     """Return the run identifier, or refuse it. Every artifact path is built from one."""
-    if not isinstance(run_id, str) or RUN_ID_PATTERN.match(run_id) is None:
-        raise UnsafeRunLocation(f"{run_id!r} is not a run identifier")
-    if run_id in WINDOWS_RESERVED_NAMES:
-        raise UnsafeRunLocation(f"{run_id!r} is a reserved device name on Windows")
-    if contains_secret_or_email_text(run_id):
+    try:
+        return validate_portable_run_identifier(run_id)
+    except PortableRunIdentifierError as error:
+        if error.reason == "shape":
+            raise UnsafeRunLocation(f"{run_id!r} is not a run identifier") from None
+        if error.reason == "reserved":
+            raise UnsafeRunLocation(f"{run_id!r} is a reserved device name on Windows") from None
         # Run IDs are copied into directory names, manifests, event IDs, diagnostics,
-        # reports, and replay receipts.  Never echo a rejected value here: this branch
-        # exists specifically because the apparently valid slug may be a credential.
-        raise UnsafeRunLocation("run identifier carries credential-shaped text")
-    return run_id
+        # reports, and replay receipts. Never echo a credential-shaped rejected value.
+        raise UnsafeRunLocation("run identifier carries credential-shaped text") from None
 
 
 def parse_stable_event_id(event_id: object) -> tuple[str, int] | None:
