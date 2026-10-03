@@ -30,6 +30,12 @@ from adlife.core.experiments.metrics import (
     MetricValue,
     RunMetrics,
 )
+from adlife.core.experiments.spatial_comparison import (
+    SpatialComparisonError,
+    SpatialMetricDeltaSeries,
+    SpatialMetricsComparison,
+    compare_spatial_metrics,
+)
 from adlife.core.experiments.spatial_metrics import (
     SpatialMetricReceipt,
     SpatialMetrics,
@@ -52,9 +58,13 @@ __all__ = [
     "MetricsCalculator",
     "PairedStatistic",
     "RunMetrics",
+    "SpatialComparisonError",
+    "SpatialMetricDeltaSeries",
     "SpatialMetricReceipt",
     "SpatialMetricSeries",
     "SpatialMetrics",
+    "SpatialMetricsComparison",
+    "compare_spatial_metrics",
     "derive_spatial_metrics",
     "paired_statistics",
     "spatial_opportunity_structure_sha256",
