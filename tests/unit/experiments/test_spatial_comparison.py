@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from adlife.core.experiments.spatial_comparison import (
     SpatialComparisonError,
     SpatialMetricDeltaSeries,
+    SpatialMetricsComparison,
     compare_spatial_metrics,
 )
 from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
@@ -172,6 +173,34 @@ def test_comparison_refuses_population_mismatch() -> None:
             control_run_id="control",
             treatment_run_id="treatment",
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("city_sha256", "c" * 64),
+        ("trace_sha256", "c" * 64),
+        ("agents_sha256", "c" * 64),
+        ("seed", 43),
+        ("days", 2),
+    ],
+)
+def test_comparison_document_refuses_unmatched_treatment_provenance(
+    field: str,
+    value: str | int,
+) -> None:
+    metrics = _derive()
+    result = compare_spatial_metrics(
+        metrics,
+        metrics,
+        control_run_id="control",
+        treatment_run_id="treatment",
+    )
+    document = result.model_dump(mode="python")
+    document["treatment"][field] = value
+
+    with pytest.raises(ValidationError, match="differs between the spatial runs"):
+        SpatialMetricsComparison.model_validate(document)
 
 
 def test_equal_counts_with_different_timing_remain_opportunity_confounded() -> None:

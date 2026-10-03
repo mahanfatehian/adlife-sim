@@ -1,4 +1,4 @@
-"""Inspect receipt-backed synthetic metrics for a verified schema-v5 city run."""
+"""Inspect receipt-backed synthetic metrics for a verified schema-v5 or v6 city run."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _series_line(series: SpatialMetricSeries) -> str:
 @command_boundary
 def command(
     root: Annotated[Path, typer.Argument(help="Root containing city-runs/.")],
-    run_id: Annotated[str, typer.Argument(help="Saved schema-v5 city run ID.")],
+    run_id: Annotated[str, typer.Argument(help="Saved schema-v5 or schema-v6 city run ID.")],
 ) -> None:
     """Derive synthetic reach, frequency and notice metrics from verified artifacts."""
     try:

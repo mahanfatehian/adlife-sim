@@ -63,6 +63,39 @@ def command(
             noticed_count=result.noticed_count,
             attention_counts=result.attention_counts.model_dump(mode="json"),
         )
+    if result.response_model_id is not None:
+        response_counts = result.response_counts
+        response_values = (
+            result.response_claim_scope,
+            result.response_input_sha256,
+            result.response_stream_sha256,
+            result.response_state_sha256,
+            result.response_summary_sha256,
+            result.response_stream_bytes,
+            result.response_count,
+            result.state_update_count,
+            result.response_campaign_count,
+            result.final_state_count,
+            response_counts,
+        )
+        if any(value is None for value in response_values):
+            raise RuntimeError("spatial replay result is missing response evidence")
+        if response_counts is None:
+            raise RuntimeError("spatial replay result is missing response evidence")
+        document.update(
+            response_model_id=result.response_model_id,
+            response_claim_scope=result.response_claim_scope,
+            response_input_sha256=result.response_input_sha256,
+            response_stream_sha256=result.response_stream_sha256,
+            response_state_sha256=result.response_state_sha256,
+            response_summary_sha256=result.response_summary_sha256,
+            response_stream_bytes=result.response_stream_bytes,
+            response_count=result.response_count,
+            state_update_count=result.state_update_count,
+            response_campaign_count=result.response_campaign_count,
+            final_state_count=result.final_state_count,
+            response_counts=response_counts.model_dump(mode="json"),
+        )
     if output_format() == "human":
         suffix = ""
         if result.impression_count is not None and result.noticed_count is not None:
@@ -72,9 +105,39 @@ def command(
             )
         elif result.opportunity_count is not None:
             suffix = f", {result.opportunity_count} synthetic opportunities"
-        document["_lines"] = [
+        lines = [
             f"city replay identical: {result.run_id} ({result.frame_count} minute frames{suffix})"
         ]
+        if result.response_model_id is not None:
+            human_response_values = (
+                result.response_claim_scope,
+                result.response_input_sha256,
+                result.response_stream_sha256,
+                result.response_state_sha256,
+                result.response_summary_sha256,
+                result.response_stream_bytes,
+                result.response_count,
+                result.state_update_count,
+                result.response_campaign_count,
+                result.final_state_count,
+            )
+            if any(value is None for value in human_response_values):
+                raise RuntimeError("spatial replay result is missing response evidence")
+            lines.extend(
+                (
+                    f"response evidence: {result.response_count} rule responses, "
+                    f"{result.state_update_count} state updates, "
+                    f"{result.response_campaign_count} campaigns, "
+                    f"{result.final_state_count} final campaign states",
+                    f"response contract: {result.response_model_id}; {result.response_claim_scope}",
+                    f"response input SHA-256: {result.response_input_sha256}",
+                    f"response stream SHA-256: {result.response_stream_sha256} "
+                    f"({result.response_stream_bytes} bytes)",
+                    f"response state SHA-256: {result.response_state_sha256}",
+                    f"response summary SHA-256: {result.response_summary_sha256}",
+                )
+            )
+        document["_lines"] = lines
     emit_result(document)
 
 

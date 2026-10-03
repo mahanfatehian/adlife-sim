@@ -97,6 +97,7 @@ class SpatialMetricsComparison(DomainModel):
 
     @model_validator(mode="after")
     def coherent_comparison(self) -> Self:
+        _validate_matched_provenance(self.control, self.treatment)
         if tuple(item.channel for item in self.channels) != ("roadside", "mobile"):
             raise ValueError("comparison channels must be ordered roadside then mobile")
         if self.overall.channel != "overall":

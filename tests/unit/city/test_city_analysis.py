@@ -6,11 +6,12 @@ import pytest
 
 from adlife.city.analysis import compare_stored_city_runs, metrics_for_stored_city_run
 from adlife.city.runs import create_city_run
-from adlife.core.domain.city_run import CityRunManifestV5
+from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6
 from adlife.core.experiments.spatial_comparison import SpatialComparisonError
 from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatch
 from tests.unit.city.test_city_pack import load_pack, pack_data
 from tests.unit.city.test_spatial_opportunity import _phone, _scenario
+from tests.unit.city.test_spatial_response import _response_input
 
 
 def _spatial_run(
@@ -20,6 +21,7 @@ def _spatial_run(
     start: int = 0,
     end: int = 2,
     seed: int = 42,
+    response: bool = False,
 ):
     pack = load_pack(pack_data())
     scenario = _scenario(
@@ -32,6 +34,14 @@ def _spatial_run(
             )
         ],
     )
+    response_input = (
+        _response_input(
+            scenario,
+            agent_ids=("person-001", "person-002"),
+        )
+        if response
+        else None
+    )
     return create_city_run(
         pack,
         root=root,
@@ -40,6 +50,7 @@ def _spatial_run(
         agent_count=2,
         days=1,
         spatial_scenario=scenario,
+        spatial_response=response_input,
     )
 
 
@@ -97,6 +108,36 @@ def test_metrics_refuse_legacy_run_and_incomplete_v5_evidence(tmp_path: Path) ->
         metrics_for_stored_city_run(incomplete)
 
 
+def test_metrics_project_verified_v6_attention_only_without_mutating_artifacts(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    metrics = metrics_for_stored_city_run(stored)
+
+    assert isinstance(stored.manifest, CityRunManifestV6)
+    assert metrics.source_run_schema_version == 6
+    assert metrics.overall.opportunity_count.value == 4.0
+    assert metrics.overall.impression_count.value == 4.0
+    assert all(
+        "response" not in artifact
+        for series in (metrics.overall, *metrics.channels)
+        for receipt in (
+            series.opportunity_count,
+            series.impression_count,
+            series.noticed_count,
+            series.opportunity_reach,
+            series.impression_reach,
+            series.noticed_reach,
+            series.impression_frequency,
+            series.notice_rate,
+        )
+        for artifact in receipt.source_artifacts
+    )
+    assert _artifact_bytes(stored.directory) == before
+
+
 def test_compare_projects_both_runs_without_mutating_either_source(tmp_path: Path) -> None:
     control = _spatial_run(tmp_path, "control", end=2)
     treatment = _spatial_run(tmp_path, "treatment", end=3)
@@ -111,6 +152,28 @@ def test_compare_projects_both_runs_without_mutating_either_source(tmp_path: Pat
     assert result.overall.opportunity_count == 2.0
     assert _artifact_bytes(control.directory) == before_control
     assert _artifact_bytes(treatment.directory) == before_treatment
+
+
+def test_compare_v6_run_with_itself_is_exact_aa_zero_and_read_only(tmp_path: Path) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = compare_stored_city_runs(stored, stored)
+
+    assert result.control.source_run_schema_version == 6
+    assert result.treatment.source_run_schema_version == 6
+    assert result.classification == "matched-opportunity-structure"
+    assert result.overall.model_dump(exclude={"schema_version", "channel"}) == {
+        "opportunity_count": 0.0,
+        "impression_count": 0.0,
+        "noticed_count": 0.0,
+        "opportunity_reach": 0.0,
+        "impression_reach": 0.0,
+        "noticed_reach": 0.0,
+        "impression_frequency": 0.0,
+        "notice_rate": 0.0,
+    }
+    assert _artifact_bytes(stored.directory) == before
 
 
 def test_compare_refuses_valid_runs_with_different_mobility_provenance(tmp_path: Path) -> None:

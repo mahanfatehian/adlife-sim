@@ -28,6 +28,74 @@ def test_city_metrics_emits_exact_machine_document_and_is_read_only(tmp_path: Pa
     assert _artifact_bytes(stored.directory) == before
 
 
+def test_city_metrics_v6_json_preserves_schema_and_attention_only_receipts(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        ["--format", "json", "city-metrics", str(tmp_path), "response-study"],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert set(document) == {
+        "schema_version",
+        "model_id",
+        "claim_scope",
+        "source_run_schema_version",
+        "opportunity_model_id",
+        "attention_model_id",
+        "scenario_sha256",
+        "city_sha256",
+        "agents_sha256",
+        "trace_sha256",
+        "opportunity_structure_sha256",
+        "seed",
+        "population_size",
+        "days",
+        "overall",
+        "channels",
+    }
+    assert document["source_run_schema_version"] == 6
+    assert document["claim_scope"] == "synthetic-metrics-not-observed-outcomes"
+    assert document["overall"]["opportunity_count"]["numerator"] == 4
+    assert document["overall"]["impression_count"]["numerator"] == 4
+    assert document["overall"]["noticed_count"]["numerator"] == 1
+
+    metric_names = {
+        "opportunity_count",
+        "impression_count",
+        "noticed_count",
+        "opportunity_reach",
+        "impression_reach",
+        "noticed_reach",
+        "impression_frequency",
+        "notice_rate",
+    }
+    artifacts = {
+        artifact
+        for series in (document["overall"], *document["channels"])
+        for name in metric_names
+        for artifact in series[name]["source_artifacts"]
+    }
+    assert artifacts == {
+        "outputs/spatial-opportunities.jsonl",
+        "outputs/spatial-attention.jsonl",
+    }
+    assert all(
+        set(series) == {"schema_version", "channel"} | metric_names
+        for series in (document["overall"], *document["channels"])
+    )
+    assert stored.response_evaluation is not None
+    assert "_lines" not in document
+    assert result.stdout.count("\n") == 1
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
 def test_city_metrics_human_output_leads_with_claim_and_receipts(tmp_path: Path) -> None:
     _spatial_run(tmp_path, "study")
 
@@ -44,6 +112,30 @@ def test_city_metrics_human_output_leads_with_claim_and_receipts(tmp_path: Path)
         "opportunity reach 2/2=1; impression frequency 4/2=2; notice rate 1/4=0.25",
     ]
     assert result.stderr == ""
+
+
+def test_city_metrics_v6_human_output_stays_attention_only_and_read_only(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(app, ["city-metrics", str(tmp_path), "response-study"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "synthetic metrics, not observed outcomes: response-study",
+        "overall: opportunities 4/1=4; impressions 4/1=4; noticed 1/1=1; "
+        "opportunity reach 2/2=1; impression frequency 4/2=2; notice rate 1/4=0.25",
+        "roadside: opportunities 0/1=0; impressions 0/1=0; noticed 0/1=0; "
+        "opportunity reach 0/2=0; impression frequency 0/0=0; notice rate 0/0=0",
+        "mobile: opportunities 4/1=4; impressions 4/1=4; noticed 1/1=1; "
+        "opportunity reach 2/2=1; impression frequency 4/2=2; notice rate 1/4=0.25",
+    ]
+    assert "response" not in result.stdout.lower().replace("response-study", "")
+    assert "purchase" not in result.stdout.lower()
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
 
 
 def test_city_metrics_maps_invalid_missing_legacy_and_corrupt_runs(tmp_path: Path) -> None:

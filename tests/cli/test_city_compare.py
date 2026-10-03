@@ -45,6 +45,72 @@ def test_city_compare_json_is_exact_confounded_and_read_only(tmp_path: Path) -> 
     assert _artifact_bytes(treatment.directory) == before_treatment
 
 
+def test_city_compare_v6_json_is_exact_aa_zero_attention_only_and_read_only(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-compare",
+            str(tmp_path),
+            "response-study",
+            "response-study",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["claim_scope"] == "synthetic-comparison-not-causal-or-observed-effect"
+    assert document["classification"] == "matched-opportunity-structure"
+    assert document["control"]["source_run_schema_version"] == 6
+    assert document["treatment"]["source_run_schema_version"] == 6
+    zero_deltas = {
+        "opportunity_count": 0.0,
+        "impression_count": 0.0,
+        "noticed_count": 0.0,
+        "opportunity_reach": 0.0,
+        "impression_reach": 0.0,
+        "noticed_reach": 0.0,
+        "impression_frequency": 0.0,
+        "notice_rate": 0.0,
+    }
+    assert document["overall"] == {
+        "schema_version": 1,
+        "channel": "overall",
+        **zero_deltas,
+    }
+    assert document["channels"] == [
+        {"schema_version": 1, "channel": "roadside", **zero_deltas},
+        {"schema_version": 1, "channel": "mobile", **zero_deltas},
+    ]
+
+    metric_names = set(zero_deltas)
+    for arm in (document["control"], document["treatment"]):
+        assert all(
+            set(series) == {"schema_version", "channel"} | metric_names
+            for series in (arm["overall"], *arm["channels"])
+        )
+        artifacts = {
+            artifact
+            for series in (arm["overall"], *arm["channels"])
+            for name in metric_names
+            for artifact in series[name]["source_artifacts"]
+        }
+        assert artifacts == {
+            "outputs/spatial-opportunities.jsonl",
+            "outputs/spatial-attention.jsonl",
+        }
+    assert "_lines" not in document
+    assert result.stdout.count("\n") == 1
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
 def test_city_compare_same_run_is_exact_aa_zero_in_human_output(tmp_path: Path) -> None:
     _spatial_run(tmp_path, "study")
 
@@ -66,6 +132,33 @@ def test_city_compare_same_run_is_exact_aa_zero_in_human_output(tmp_path: Path) 
         "mobile deltas: opportunities +0; impressions +0; noticed +0; "
         "opportunity reach +0; impression frequency +0; notice rate +0",
     ]
+
+
+def test_city_compare_v6_human_aa_output_is_clean_and_read_only(tmp_path: Path) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        ["city-compare", str(tmp_path), "response-study", "response-study"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "synthetic comparison, not a causal or observed-world result: "
+        "response-study -> response-study",
+        "classification: matched-opportunity-structure",
+        "Normalized model opportunity structure is identical; deltas remain synthetic "
+        "and non-causal.",
+        "overall deltas: opportunities +0; impressions +0; noticed +0; "
+        "opportunity reach +0; impression frequency +0; notice rate +0",
+        "roadside deltas: opportunities +0; impressions +0; noticed +0; "
+        "opportunity reach +0; impression frequency +0; notice rate +0",
+        "mobile deltas: opportunities +0; impressions +0; noticed +0; "
+        "opportunity reach +0; impression frequency +0; notice rate +0",
+    ]
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
 
 
 def test_city_compare_maps_incompatible_pair_to_input_error(tmp_path: Path) -> None:

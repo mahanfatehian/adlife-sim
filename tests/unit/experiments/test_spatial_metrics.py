@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.experiments.spatial_metrics import (
     SpatialMetricReceipt,
+    SpatialMetrics,
     derive_spatial_metrics,
     spatial_opportunity_structure_sha256,
 )
@@ -216,6 +217,34 @@ def test_spatial_metrics_golden_contract_has_exact_values_and_receipts() -> None
     }
     with pytest.raises(ValidationError, match="frozen"):
         result.__setattr__("days", 2)
+
+
+@pytest.mark.parametrize("version", [5, 6])
+def test_spatial_metrics_records_exact_supported_source_run_schema(version: int) -> None:
+    opportunities, attention = _mixed_evidence()
+
+    result = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=("person-001", "person-002"),
+        agents_sha256=AGENTS_SHA256,
+        trace_sha256=TRACE_SHA256,
+        days=1,
+        source_run_schema_version=version,
+    )
+
+    assert result.source_run_schema_version == version
+
+
+@pytest.mark.parametrize("version", [True, 5.0, 6.0, "6", 4, 7])
+def test_spatial_metrics_refuses_noninteger_or_unsupported_source_schema(
+    version: object,
+) -> None:
+    document = _derive().model_dump(mode="python")
+    document["source_run_schema_version"] = version
+
+    with pytest.raises(ValidationError, match="source run schema version"):
+        SpatialMetrics.model_validate(document)
 
 
 def test_structure_hash_is_exact_and_excludes_campaign_identity() -> None:

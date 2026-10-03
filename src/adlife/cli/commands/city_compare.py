@@ -31,8 +31,12 @@ def _delta_line(series: SpatialMetricDeltaSeries) -> str:
 @command_boundary
 def command(
     root: Annotated[Path, typer.Argument(help="Root containing city-runs/.")],
-    control_run_id: Annotated[str, typer.Argument(help="Control schema-v5 city run ID.")],
-    treatment_run_id: Annotated[str, typer.Argument(help="Treatment schema-v5 city run ID.")],
+    control_run_id: Annotated[
+        str, typer.Argument(help="Control schema-v5 or schema-v6 city run ID.")
+    ],
+    treatment_run_id: Annotated[
+        str, typer.Argument(help="Treatment schema-v5 or schema-v6 city run ID.")
+    ],
 ) -> None:
     """Emit treatment-minus-control metrics for two matched saved city runs."""
     for run_id in (control_run_id, treatment_run_id):

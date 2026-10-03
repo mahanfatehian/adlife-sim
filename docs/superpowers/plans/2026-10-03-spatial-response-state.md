@@ -72,21 +72,21 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
   city/scenario hashes, campaign IDs/creative hashes, population IDs and the complete
   agent-by-campaign initial-state product to match.
 
-- [ ] **Step 1: Write failing contract and loader tests.** Pin strict version tokens,
+- [x] **Step 1: Write failing contract and loader tests.** Pin strict version tokens,
   extra-field/nonfinite/bool/duplicate-key refusal, canonical tuple/set ordering, sensitive
   interest refusal, all numeric bounds, fingerprint stability, exact cross-reference and
   Cartesian-product validation, 2 MiB bounded reads, safe diagnostics and input-order/hash-
   seed invariance. Name the production mutation each test catches.
-- [ ] **Step 2: Run the focused tests and confirm RED.**
+- [x] **Step 2: Run the focused tests and confirm RED.**
   Run: `uv run pytest -q tests/unit/city/test_spatial_response_contract.py tests/unit/city/test_spatial_response_loader.py tests/property/test_spatial_response_input_order.py`
   Expected: collection/import failure because the response contract is absent.
-- [ ] **Step 3: Implement the minimum strict domain and loader contract.** Use frozen,
+- [x] **Step 3: Implement the minimum strict domain and loader contract.** Use frozen,
   extra-forbidden, strict `DomainModel` types, stable frozenset serializers, bounded UTF-8
   reads, canonical SHA-256 and diagnostics that never echo input contents or paths.
-- [ ] **Step 4: Run focused, domain-security and architecture tests.**
+- [x] **Step 4: Run focused, domain-security and architecture tests.**
   Run: `uv run pytest -q tests/unit/city/test_spatial_response_contract.py tests/unit/city/test_spatial_response_loader.py tests/property/test_spatial_response_input_order.py tests/architecture/test_core_import_boundary.py tests/security/test_redaction_corpus.py`
   Expected: all pass.
-- [ ] **Step 5: Run Ruff/mypy, commit and push.**
+- [x] **Step 5: Run Ruff/mypy, commit and push.**
   Commit: `feat(city): define spatial response inputs`
 
 ### Task 2: Evaluate atomic rule responses and state updates in the core
@@ -201,20 +201,20 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
   only for v6. Existing spatial metrics accept source schema 5 or 6 but remain strictly
   opportunity/attention metrics and comparisons.
 
-- [ ] **Step 1: Write failing CLI and analysis tests.** Cover the flag dependency, schema-v5
+- [x] **Step 1: Write failing CLI and analysis tests.** Cover the flag dependency, schema-v5
   unchanged path, exact v6 JSON/human output, malformed/oversized/mismatched input before
   reservation, safe redacted diagnostics, exit codes 1/2/3/4/130, replay equality, metrics
   and exact-zero A/A comparison on verified v6, and source-byte immutability.
-- [ ] **Step 2: Run focused tests and confirm RED.**
+- [x] **Step 2: Run focused tests and confirm RED.**
   Run: `uv run pytest -q tests/cli/test_city_run.py tests/cli/test_city_replay.py tests/cli/test_city_metrics.py tests/cli/test_city_compare.py tests/unit/city/test_city_analysis.py`
   Expected: response option/output and v6 analysis cases fail.
-- [ ] **Step 3: Implement the narrow CLI/analysis surface.** Load and validate before run
+- [x] **Step 3: Implement the narrow CLI/analysis surface.** Load and validate before run
   reservation; omit response keys entirely for v1-v5; keep stdout/stderr contracts; pass
   source schema into existing metric provenance without adding response-effect metrics.
-- [ ] **Step 4: Run CLI/analysis/error/output suites.**
+- [x] **Step 4: Run CLI/analysis/error/output suites.**
   Run: `uv run pytest -q tests/cli tests/unit/city/test_city_analysis.py tests/unit/experiments/test_spatial_metrics.py tests/unit/experiments/test_spatial_comparison.py`
   Expected: all pass.
-- [ ] **Step 5: Run Ruff/mypy, commit and push.**
+- [x] **Step 5: Run Ruff/mypy, commit and push.**
   Commit: `feat(cli): expose spatial response studies`
 
 ### Task 5: Present response causality in the read-only loopback viewer
