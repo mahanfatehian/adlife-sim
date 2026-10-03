@@ -122,7 +122,9 @@ recall_delta = clamp(
 after a notice has already occurred. It cannot create or suppress a notice. Each
 `spatial.response` record carries the exact notice ID, opportunity/campaign/placement/
 agent/channel/time evidence and the bounded intermediate scores above. Its ID is SHA-256
-over model identity, event type and causal notice ID.
+over model identity, event type, the response-input fingerprint and causal notice ID. The
+input fingerprint prevents two evaluations of the same notice under different frozen
+response assumptions from reusing an event identity.
 
 At the end of an agent/campaign/model-minute group, the model commits one
 `spatial.state-updated` record. It sums planned sentiment deltas, applies recall

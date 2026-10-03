@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import weakref
 from collections.abc import Mapping
 from decimal import Decimal
@@ -15,12 +14,33 @@ from adlife.core.domain.campaign import BillboardPlacement, PhonePlacement, Plac
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 # Revalidation verdicts for models already proven valid, keyed by object identity.
-# Pydantic BaseModel instances are weakref-able, so a WeakKeyDictionary caches the
-# verdict without keeping any model alive. Pydantic models are declared frozen - a
-# validated object cannot change out from under its memo - and bypass-constructed
-# models are distinct objects with their own verdicts, so tampering can never
-# inherit another object's clean bill of health.
-_REVALIDATED: weakref.WeakKeyDictionary[BaseModel, None] = weakref.WeakKeyDictionary()
+# Pydantic BaseModel instances are weakref-able. Cache by ``id`` and then verify
+# ``ref() is value`` because weak references otherwise inherit the referent's
+# structural equality: a strict integer ``1`` model can compare equal to a bypass-
+# constructed boolean ``True`` model. The callback prevents the identity table from
+# keeping stale IDs after a validated model is collected.
+_REVALIDATED: dict[int, weakref.ReferenceType[BaseModel]] = {}
+
+
+def _is_revalidated(value: BaseModel) -> bool:
+    object_id = id(value)
+    reference = _REVALIDATED.get(object_id)
+    if reference is None:
+        return False
+    if reference() is value:
+        return True
+    _REVALIDATED.pop(object_id, None)
+    return False
+
+
+def _remember_revalidated(value: BaseModel) -> None:
+    object_id = id(value)
+
+    def remove(reference: weakref.ReferenceType[BaseModel]) -> None:
+        if _REVALIDATED.get(object_id) is reference:
+            _REVALIDATED.pop(object_id, None)
+
+    _REVALIDATED[object_id] = weakref.ref(value, remove)
 
 
 def _raw_python(value: object) -> object:
@@ -74,18 +94,14 @@ def revalidate_model(
 ) -> _ModelT:
     if not isinstance(value, model_type):
         raise TypeError(f"{label} must be a {model_type.__name__}")
-    try:
-        if value in _REVALIDATED:
-            return value
-    except TypeError:
-        pass  # unhashable field payloads (e.g. event mappings) skip the memo
+    if _is_revalidated(value):
+        return value
     raw = _raw_python(value)
     if not isinstance(raw, Mapping):
         raise TypeError(f"{label} must contain model field data")
     _reject_non_finite(raw, label=label)
     validated = model_type.model_validate(raw)
-    with contextlib.suppress(TypeError):
-        _REVALIDATED[validated] = None
+    _remember_revalidated(validated)
     return validated
 
 

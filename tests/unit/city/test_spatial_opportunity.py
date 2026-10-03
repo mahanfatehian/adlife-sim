@@ -229,6 +229,24 @@ def test_forward_roadside_opportunity_is_typed_auditable_and_stable() -> None:
         event.__setattr__("model_minute", 0)
 
 
+def test_evaluation_refuses_an_opportunity_with_a_forged_causal_identity() -> None:
+    pack = load_pack(pack_data())
+    result = _evaluate(_mobility(pack), _scenario(pack, [_billboard()]))
+    forged = result.opportunities[0].model_copy(update={"opportunity_id": "0" * 64})
+
+    with pytest.raises(ValidationError, match="causal identity"):
+        type(result).model_validate(result.model_dump() | {"opportunities": (forged,)})
+
+    swapped_channels = result.counts.model_copy(
+        update={
+            "roadside_opportunity_count": 0,
+            "phone_opportunity_count": 1,
+        }
+    )
+    with pytest.raises(ValidationError, match="channel counts"):
+        type(result).model_validate(result.model_dump() | {"counts": swapped_channels})
+
+
 def test_roadside_stage_counts_distinguish_time_and_facing_refusals() -> None:
     pack = load_pack(pack_data())
     mobility = _mobility(pack)

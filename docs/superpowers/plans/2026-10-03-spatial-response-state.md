@@ -95,7 +95,10 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
 - Create: `src/adlife/core/simulation/spatial_response.py`
 - Create: `tests/unit/city/test_spatial_response.py`
 - Create: `tests/property/test_spatial_response_invariants.py`
-- Modify: `src/adlife/core/simulation/__init__.py`
+- Create: `tests/unit/simulation/test_validation.py`
+- Modify: `src/adlife/core/simulation/_validation.py`
+- Modify: `src/adlife/core/simulation/spatial_attention.py`
+- Modify: `src/adlife/core/simulation/spatial_opportunity.py`
 
 **Interfaces:**
 - Consumes: `SpatialResponseInput`, `SpatialCampaignScenario`,
@@ -109,26 +112,27 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
   `spatial_response_state_document(evaluation) -> SpatialResponseStateDocument` and
   `summarize_spatial_response_artifact(evaluation) -> SpatialResponseArtifactSummary`.
 
-- [ ] **Step 1: Write failing golden rule and causality tests.** Hand-calculate literal
+- [x] **Step 1: Write failing golden rule and causality tests.** Hand-calculate literal
   Jaccard, affordability, placement/day fatigue, channel recall encoding, value, sentiment,
   recall and intention proxy results. Pin exact causal hashes, one response per notice,
   ignored-impression no-op, state bounds and copy/creative numerical independence.
-- [ ] **Step 2: Write failing atomicity/property tests.** Prove two same-minute notices share
+- [x] **Step 2: Write failing atomicity/property tests.** Prove two same-minute notices share
   one snapshot and one commutative state update; a next-minute notice intentionally differs;
-  campaigns remain isolated; input/notice/agent permutations and hash seeds preserve bytes;
-  malformed causes/IDs and tampered records are refused; no output contains budget,
+  campaigns remain isolated; response-input and agent permutations plus hash seeds preserve
+  bytes; noncanonical notice ordering, malformed causes/IDs and tampered records are refused;
+  no output contains budget,
   movement, provider, prose, purchase event or arbitrary text fields.
-- [ ] **Step 3: Run focused tests and confirm RED.**
+- [x] **Step 3: Run focused tests and confirm RED.**
   Run: `uv run pytest -q tests/unit/city/test_spatial_response.py tests/property/test_spatial_response_invariants.py`
   Expected: collection/import failure because the evaluator is absent.
-- [ ] **Step 4: Implement the pure evaluator and artifact projections.** Plan a complete
+- [x] **Step 4: Implement the pure evaluator and artifact projections.** Plan a complete
   minute from immutable state, validate all groups before updating the working map, use
   canonical causal ordering, saturating commutative recall, exact 2 GiB streaming bound
   and the formulas fixed by the spec.
-- [ ] **Step 5: Run response, opportunity, attention, property and architecture suites.**
+- [x] **Step 5: Run response, opportunity, attention, property and architecture suites.**
   Run: `uv run pytest -q tests/unit/city/test_spatial_response.py tests/property/test_spatial_response_invariants.py tests/unit/city/test_spatial_opportunity.py tests/unit/city/test_spatial_attention.py tests/architecture/test_core_import_boundary.py`
   Expected: all pass.
-- [ ] **Step 6: Run Ruff/mypy, commit and push.**
+- [x] **Step 6: Run Ruff/mypy, commit and push.**
   Commit: `feat(city): evaluate spatial campaign responses`
 
 ### Task 3: Persist and replay schema-v6 response artifacts

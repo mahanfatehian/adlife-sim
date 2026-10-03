@@ -405,7 +405,7 @@ def test_v5_save_supports_empty_attention_evidence(tmp_path: Path) -> None:
 def test_v5_attention_input_is_required_and_recomputed_before_reserving_id(
     tmp_path: Path,
 ) -> None:
-    manifest, mobility, scenario, opportunities, attention = attention_specimen()
+    manifest, mobility, scenario, opportunities, _attention = attention_specimen()
     store = CityRunStore(tmp_path)
 
     with pytest.raises(CorruptRunArtifact):
@@ -418,7 +418,7 @@ def test_v5_attention_input_is_required_and_recomputed_before_reserving_id(
         )
     assert not (tmp_path / "city-runs" / "attention-study").exists()
 
-    changed = attention.model_copy(update={"seed": 43})
+    changed = evaluate_spatial_attention(opportunities, seed=43)
     with pytest.raises(CorruptRunArtifact):
         store.save(
             manifest,

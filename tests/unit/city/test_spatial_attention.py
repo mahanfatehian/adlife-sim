@@ -169,6 +169,19 @@ def test_attention_contract_rejects_invalid_seed_events_and_causal_chains() -> N
         )
     with pytest.raises(ValidationError, match="records do not match"):
         type(result).model_validate(result.model_dump() | {"events": result.events[:-1]})
+    changed_impression = result.events[-2].model_copy(update={"notice_draw": 0.1})
+    changed_notice = result.events[-1].model_copy(update={"notice_draw": 0.1})
+    with pytest.raises(ValidationError, match="keyed draw"):
+        type(result).model_validate(
+            result.model_dump()
+            | {
+                "events": (
+                    *result.events[:-2],
+                    changed_impression,
+                    changed_notice,
+                )
+            }
+        )
     with pytest.raises(ValidationError, match="frozen"):
         impression.__setattr__("noticed", True)
 

@@ -54,6 +54,12 @@ class _SpatialOpportunity(DomainModel):
     millisecond_within_minute: int = Field(ge=0, lt=60_000)
     ordinal_for_agent_placement_day: int = Field(ge=1, le=100)
 
+    @model_validator(mode="after")
+    def coherent_time(self) -> Self:
+        if self.day_index != self.model_minute // 1_440:
+            raise ValueError("opportunity day does not match model minute")
+        return self
+
 
 class RoadsideOpportunity(_SpatialOpportunity):
     """A synthetic directional passage that satisfied the v1 facing heuristic."""
@@ -135,6 +141,12 @@ class SpatialOpportunityEvaluation(DomainModel):
     def coherent_records(self) -> Self:
         if len(self.opportunities) != self.counts.opportunity_count:
             raise ValueError("opportunity records do not match count")
+        if self.counts.roadside_opportunity_count != sum(
+            isinstance(item, RoadsideOpportunity) for item in self.opportunities
+        ) or self.counts.phone_opportunity_count != sum(
+            isinstance(item, PhoneOpportunity) for item in self.opportunities
+        ):
+            raise ValueError("opportunity channel counts do not match records")
         if len({item.opportunity_id for item in self.opportunities}) != len(self.opportunities):
             raise ValueError("opportunity identifiers must be unique")
         if any(
@@ -145,6 +157,18 @@ class SpatialOpportunityEvaluation(DomainModel):
         keys = tuple(_opportunity_sort_key(item) for item in self.opportunities)
         if keys != tuple(sorted(keys)):
             raise ValueError("opportunity records must be in canonical order")
+        for item in self.opportunities:
+            expected_id = spatial_opportunity_id(
+                scenario_sha256=item.scenario_sha256,
+                city_sha256=item.city_sha256,
+                campaign_id=item.campaign_id,
+                placement_id=item.placement_id,
+                agent_id=item.agent_id,
+                channel=item.channel,
+                at_millisecond=(item.model_minute * 60_000 + item.millisecond_within_minute),
+            )
+            if item.opportunity_id != expected_id:
+                raise ValueError("opportunity causal identity does not match opportunity ID")
         return self
 
 
@@ -363,7 +387,7 @@ def _opportunity_sort_key(opportunity: _SpatialOpportunity) -> tuple[object, ...
     )
 
 
-def _opportunity_id(
+def spatial_opportunity_id(
     *,
     scenario_sha256: str,
     city_sha256: str,
@@ -534,7 +558,7 @@ def evaluate_spatial_opportunities(
         ordinal = prior + 1
         cap_counts[cap_key] = ordinal
         model_minute, millisecond = divmod(candidate.at_millisecond, 60_000)
-        opportunity_id = _opportunity_id(
+        opportunity_id = spatial_opportunity_id(
             scenario_sha256=scenario.fingerprint,
             city_sha256=mobility.pack.fingerprint,
             campaign_id=candidate_placement.campaign_id,
@@ -620,6 +644,7 @@ __all__ = [
     "SpatialOpportunityCounts",
     "SpatialOpportunityEvaluation",
     "evaluate_spatial_opportunities",
+    "spatial_opportunity_id",
     "spatial_opportunity_lines",
     "summarize_spatial_opportunity_artifact",
 ]

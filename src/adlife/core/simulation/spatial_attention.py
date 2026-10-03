@@ -148,13 +148,22 @@ class SpatialAttentionEvaluation(DomainModel):
         impressions: dict[str, SpatialImpression] = {}
         notices: dict[str, SpatialNotice] = {}
         for event in self.events:
-            expected_id = _attention_event_id(
+            expected_id = spatial_attention_event_id(
                 event_type=event.event_type,
                 caused_by=event.caused_by,
             )
             if event.event_id != expected_id:
                 raise ValueError("attention event causal identity does not match event ID")
             if isinstance(event, SpatialImpression):
+                expected_draw = spatial_notice_draw(
+                    agent_id=event.agent_id,
+                    at_millisecond=(event.model_minute * 60_000 + event.millisecond_within_minute),
+                    channel=event.channel,
+                    placement_id=event.placement_id,
+                    seed=self.seed,
+                )
+                if event.notice_draw != expected_draw:
+                    raise ValueError("attention notice draw does not match its keyed draw")
                 if event.caused_by != event.opportunity_id:
                     raise ValueError("impression causal predecessor must be its opportunity")
                 if event.opportunity_id in impressions:
@@ -202,7 +211,7 @@ class SpatialAttentionArtifactSummary(DomainModel):
     counts: SpatialAttentionCounts
 
 
-def _attention_event_id(*, event_type: str, caused_by: str) -> str:
+def spatial_attention_event_id(*, event_type: str, caused_by: str) -> str:
     identity = {
         "caused_by": caused_by,
         "event_type": event_type,
@@ -211,18 +220,34 @@ def _attention_event_id(*, event_type: str, caused_by: str) -> str:
     return sha256(canonical_json(identity).encode("utf-8")).hexdigest()
 
 
-def _notice_draw(opportunity: SpatialOpportunity, *, seed: int) -> float:
-    at_millisecond = opportunity.model_minute * 60_000 + opportunity.millisecond_within_minute
+def spatial_notice_draw(
+    *,
+    agent_id: str,
+    at_millisecond: int,
+    channel: str,
+    placement_id: str,
+    seed: int,
+) -> float:
     material = {
-        "agent_id": opportunity.agent_id,
+        "agent_id": agent_id,
         "at_millisecond": at_millisecond,
-        "channel": opportunity.channel,
+        "channel": channel,
         "model_id": _MODEL_ID,
-        "placement_id": opportunity.placement_id,
+        "placement_id": placement_id,
         "seed": seed,
     }
     digest = sha256(canonical_json(material).encode("utf-8")).digest()
     return (int.from_bytes(digest[:8], "big") >> 11) / (1 << 53)
+
+
+def _notice_draw(opportunity: SpatialOpportunity, *, seed: int) -> float:
+    return spatial_notice_draw(
+        agent_id=opportunity.agent_id,
+        at_millisecond=(opportunity.model_minute * 60_000 + opportunity.millisecond_within_minute),
+        channel=opportunity.channel,
+        placement_id=opportunity.placement_id,
+        seed=seed,
+    )
 
 
 def _shared_event_evidence(event: _SpatialAttentionEvent) -> tuple[object, ...]:
@@ -305,7 +330,7 @@ def evaluate_spatial_attention(
     for opportunity in opportunities.opportunities:
         draw = _notice_draw(opportunity, seed=seed)
         noticed = draw < _NOTICE_PROBABILITY
-        impression_id = _attention_event_id(
+        impression_id = spatial_attention_event_id(
             event_type="spatial.impression",
             caused_by=opportunity.opportunity_id,
         )
@@ -325,7 +350,7 @@ def evaluate_spatial_attention(
             events.append(
                 SpatialNotice.model_validate(
                     {
-                        "event_id": _attention_event_id(
+                        "event_id": spatial_attention_event_id(
                             event_type="spatial.noticed",
                             caused_by=impression_id,
                         ),
@@ -385,6 +410,8 @@ __all__ = [
     "SpatialImpression",
     "SpatialNotice",
     "evaluate_spatial_attention",
+    "spatial_attention_event_id",
     "spatial_attention_lines",
+    "spatial_notice_draw",
     "summarize_spatial_attention_artifact",
 ]
