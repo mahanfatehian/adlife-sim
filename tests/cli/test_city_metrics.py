@@ -5,6 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from adlife.city import analysis as city_analysis
 from adlife.city.analysis import metrics_for_stored_city_run
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
@@ -93,6 +94,131 @@ def test_city_metrics_v6_json_preserves_schema_and_attention_only_receipts(
     assert "_lines" not in document
     assert result.stdout.count("\n") == 1
     assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_city_metrics_default_and_explicit_attention_layers_have_identical_output(
+    tmp_path: Path,
+) -> None:
+    _spatial_run(tmp_path, "response-study", response=True)
+    runner = CliRunner()
+
+    default = runner.invoke(
+        app,
+        ["--format", "json", "city-metrics", str(tmp_path), "response-study"],
+    )
+    explicit = runner.invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-metrics",
+            str(tmp_path),
+            "response-study",
+            "--layer",
+            "attention",
+        ],
+    )
+
+    assert default.exit_code == explicit.exit_code == 0
+    assert (explicit.stdout, explicit.stderr) == (default.stdout, default.stderr)
+
+
+def test_city_metrics_response_layer_emits_exact_machine_document_and_is_read_only(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+    helper = getattr(city_analysis, "response_metrics_for_stored_city_run", None)
+    assert callable(helper), "stored schema-v6 response metric projection is not implemented"
+    expected = helper(stored).model_dump(mode="json")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-metrics",
+            str(tmp_path),
+            "response-study",
+            "--layer",
+            "response",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document == expected
+    assert document["model_id"] == "spatial-response-metrics-v1"
+    assert document["claim_scope"] == "synthetic-response-metrics-not-observed-outcomes"
+    assert document["source_run_schema_version"] == 6
+    assert document["overall"]["response_count"]["numerator"] == 1
+    assert document["overall"]["purchase_intention_proxy"]["denominator"] == 2
+    assert document["channels"][0]["channel"] == "roadside"
+    assert document["channels"][1]["channel"] == "mobile"
+    assert document["campaigns"][0]["campaign_id"] == "fictional-launch"
+    assert "_lines" not in document
+    assert result.stdout.count("\n") == 1
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_city_metrics_response_layer_human_output_exposes_event_and_state_metrics(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        ["city-metrics", str(tmp_path), "response-study", "--layer", "response"],
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[0] == "synthetic response metrics, not observed outcomes: response-study"
+    assert any(line.startswith("overall:") for line in lines)
+    assert any(line.startswith("roadside:") for line in lines)
+    assert any(line.startswith("mobile:") for line in lines)
+    assert any(line.startswith("fictional-launch:") for line in lines)
+    normalized = result.stdout.lower()
+    for label in (
+        "responses",
+        "response reach",
+        "response frequency",
+        "rule sentiment delta",
+        "rule recall delta",
+        "brand sentiment",
+        "recall strength",
+        "purchase intention proxy",
+    ):
+        assert label in normalized
+    assert "purchase probability" not in normalized
+    assert "sales" not in normalized
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_city_metrics_response_layer_requires_schema_v6(tmp_path: Path) -> None:
+    stored = _spatial_run(tmp_path, "attention-study")
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-metrics",
+            str(tmp_path),
+            "attention-study",
+            "--layer",
+            "response",
+        ],
+    )
+
+    assert result.exit_code == 4
+    assert "schema-v6" in json.loads(result.stdout)["error"]["message"]
+    assert "Traceback" not in result.output
     assert _artifact_bytes(stored.directory) == before
 
 

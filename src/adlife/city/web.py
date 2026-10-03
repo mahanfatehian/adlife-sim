@@ -16,6 +16,10 @@ from adlife.core.domain.spatial_campaign import (
 )
 from adlife.core.domain.spatial_response import SpatialResponseInput
 from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
+from adlife.core.experiments.spatial_response_metrics import (
+    SpatialResponseMetrics,
+    derive_spatial_response_metrics,
+)
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.spatial_attention import (
     MAX_SPATIAL_ATTENTION_EVENTS,
@@ -65,6 +69,7 @@ def create_city_app(
     spatial_metrics: SpatialMetrics | None = None,
     response_input: SpatialResponseInput | None = None,
     response_evaluation: SpatialResponseEvaluation | None = None,
+    spatial_response_metrics: SpatialResponseMetrics | None = None,
 ) -> FastAPI:
     """Serve only this loaded immutable city and its derived, deterministic frames."""
     if run_id is None and run_schema_version is not None:
@@ -97,6 +102,8 @@ def create_city_app(
         raise ValueError("schema version 6 requires spatial response evidence")
     if has_response_evidence and (run_id is None or run_schema_version != 6):
         raise ValueError("spatial response evidence is only valid for a saved schema version 6 run")
+    if spatial_response_metrics is not None and (run_id is None or run_schema_version != 6):
+        raise ValueError("spatial response metrics are only valid for a saved schema version 6 run")
     if spatial_scenario is not None and opportunity_evaluation is not None:
         spatial_scenario = SpatialCampaignScenario.model_validate(
             spatial_scenario.model_dump(mode="python")
@@ -159,6 +166,38 @@ def create_city_app(
         )
         if response_evaluation != expected_response:
             raise ValueError("spatial response evidence does not match its saved inputs")
+    if spatial_response_metrics is not None:
+        if (
+            spatial_scenario is None
+            or opportunity_evaluation is None
+            or attention_evaluation is None
+            or response_input is None
+            or response_evaluation is None
+        ):
+            raise ValueError("spatial response metrics require complete response evidence")
+        spatial_response_metrics = SpatialResponseMetrics.model_validate(
+            spatial_response_metrics.model_dump(mode="python")
+        )
+        response_attention_metrics = spatial_metrics or derive_spatial_metrics(
+            opportunity_evaluation,
+            attention_evaluation,
+            agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+            agents_sha256=spatial_response_metrics.agents_sha256,
+            trace_sha256=spatial_response_metrics.trace_sha256,
+            days=simulation.days,
+            source_run_schema_version=6,
+        )
+        expected_response_metrics = derive_spatial_response_metrics(
+            response_input,
+            response_evaluation,
+            scenario=spatial_scenario,
+            opportunities=opportunity_evaluation,
+            attention=attention_evaluation,
+            agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+            attention_metrics=response_attention_metrics,
+        )
+        if spatial_response_metrics != expected_response_metrics:
+            raise ValueError("spatial response metrics do not match their saved inputs")
     opportunity_minutes = (
         tuple(item.model_minute for item in opportunity_evaluation.opportunities)
         if opportunity_evaluation is not None
@@ -232,6 +271,8 @@ def create_city_app(
             document["noticed_count"] = attention_evaluation.counts.noticed_count
         if spatial_metrics is not None:
             document["spatial_metrics"] = True
+        if spatial_response_metrics is not None:
+            document["spatial_response_metrics"] = True
         if response_evaluation is not None:
             document["spatial_response"] = True
             document["response_model_id"] = response_evaluation.model_id
@@ -355,6 +396,15 @@ def create_city_app(
         if spatial_metrics is None:
             raise HTTPException(status_code=404, detail="spatial metrics not configured")
         return spatial_metrics.model_dump(mode="json")
+
+    @app.get("/api/spatial-response-metrics")
+    def response_metrics() -> dict[str, object]:
+        if spatial_response_metrics is None:
+            raise HTTPException(
+                status_code=404,
+                detail="spatial response metrics not configured",
+            )
+        return spatial_response_metrics.model_dump(mode="json")
 
     @app.get("/api/attention-events")
     def attention_events(

@@ -6,6 +6,7 @@ from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.domain.spatial_response import SpatialResponseInput
 from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
+from adlife.core.experiments.spatial_response_metrics import derive_spatial_response_metrics
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.spatial_attention import (
     SpatialAttentionEvaluation,
@@ -76,6 +77,35 @@ def _response_view_case(
         agent_ids=tuple(agent.agent_id for agent in simulation.agents),
     )
     return simulation, scenario, opportunities, attention, response_input, responses
+
+
+def _response_view_metrics(
+    simulation: CityMobility,
+    scenario: SpatialCampaignScenario,
+    opportunities: SpatialOpportunityEvaluation,
+    attention: SpatialAttentionEvaluation,
+    response_input: SpatialResponseInput,
+    responses: SpatialResponseEvaluation,
+):
+    attention_metrics = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+        agents_sha256="a" * 64,
+        trace_sha256="b" * 64,
+        days=simulation.days,
+        source_run_schema_version=6,
+    )
+    response_metrics = derive_spatial_response_metrics(
+        response_input,
+        responses,
+        scenario=scenario,
+        opportunities=opportunities,
+        attention=attention,
+        attention_metrics=attention_metrics,
+        agent_ids=tuple(agent.agent_id for agent in simulation.agents),
+    )
+    return attention_metrics, response_metrics
 
 
 def client() -> httpx.AsyncClient:
@@ -816,6 +846,142 @@ async def test_saved_v6_view_exposes_exact_response_resources_without_mutating_s
 
 
 @pytest.mark.asyncio
+async def test_saved_v6_view_exposes_exact_prevalidated_response_metrics_get_only() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    attention_metrics, response_metrics = _response_view_metrics(
+        simulation,
+        scenario,
+        opportunities,
+        attention,
+        response_input,
+        responses,
+    )
+    source_before = tuple(
+        canonical_json(item)
+        for item in (
+            scenario,
+            opportunities,
+            attention,
+            response_input,
+            responses,
+            attention_metrics,
+            response_metrics,
+        )
+    )
+    application = create_city_app(
+        simulation,
+        run_id="saved-response-study",
+        run_schema_version=6,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        spatial_metrics=attention_metrics,
+        response_input=response_input,
+        response_evaluation=responses,
+        spatial_response_metrics=response_metrics,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://city.test",
+    ) as web:
+        response = await web.get("/api/spatial-response-metrics")
+        ignored_path = await web.get("/api/spatial-response-metrics?path=../../run.json")
+        write = await web.post("/api/spatial-response-metrics", json={})
+
+    assert response.status_code == ignored_path.status_code == 200
+    assert response.json() == ignored_path.json() == response_metrics.model_dump(mode="json")
+    assert write.status_code == 405
+    assert (
+        tuple(
+            canonical_json(item)
+            for item in (
+                scenario,
+                opportunities,
+                attention,
+                response_input,
+                responses,
+                attention_metrics,
+                response_metrics,
+            )
+        )
+        == source_before
+    )
+
+
+@pytest.mark.asyncio
+async def test_response_metrics_endpoint_is_absent_for_legacy_or_omitted_v6_metrics() -> None:
+    async with client() as legacy:
+        legacy_response = await legacy.get("/api/spatial-response-metrics")
+
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    application = create_city_app(
+        simulation,
+        run_id="v6-without-response-metrics",
+        run_schema_version=6,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        response_input=response_input,
+        response_evaluation=responses,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://city.test",
+    ) as without_metrics:
+        omitted_response = await without_metrics.get("/api/spatial-response-metrics")
+
+    assert legacy_response.status_code == omitted_response.status_code == 404
+
+
+def test_saved_view_rederives_response_metrics_and_rejects_wrong_schema() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    attention_metrics, response_metrics = _response_view_metrics(
+        simulation,
+        scenario,
+        opportunities,
+        attention,
+        response_input,
+        responses,
+    )
+    common = {
+        "run_id": "saved-response-study",
+        "run_schema_version": 6,
+        "spatial_scenario": scenario,
+        "opportunity_evaluation": opportunities,
+        "attention_evaluation": attention,
+        "spatial_metrics": attention_metrics,
+        "response_input": response_input,
+        "response_evaluation": responses,
+    }
+
+    with pytest.raises(ValueError, match="response metrics do not match their saved inputs"):
+        create_city_app(
+            simulation,
+            **common,
+            spatial_response_metrics=response_metrics.model_copy(
+                update={"scenario_sha256": "f" * 64}
+            ),
+        )
+    with pytest.raises(ValueError, match="only valid for a saved schema version 6 run"):
+        create_city_app(
+            simulation,
+            run_id="wrong-response-metrics-schema",
+            run_schema_version=5,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=attention,
+            spatial_response_metrics=response_metrics,
+        )
+
+
+@pytest.mark.asyncio
 async def test_saved_v6_response_routes_enforce_filters_bounds_and_get_only_semantics() -> None:
     simulation, scenario, opportunities, attention, response_input, responses = (
         _response_view_case()
@@ -947,14 +1113,15 @@ async def test_schema_v1_through_v5_views_have_no_response_resources(
             await web.get("/api/response-summary"),
             await web.get("/api/response-events?minute=0"),
             await web.get("/api/response-state"),
+            await web.get("/api/spatial-response-metrics"),
         ]
 
     assert "spatial_response" not in metadata
     assert not any(key.startswith("response_") for key in metadata)
     assert "state_update_count" not in metadata
     assert "final_state_count" not in metadata
-    assert [response.status_code for response in results] == [404, 404, 404]
-    assert [response.json() for response in results] == [
+    assert [response.status_code for response in results] == [404, 404, 404, 404]
+    assert [response.json() for response in results[:3]] == [
         {"detail": "spatial response evidence not configured"},
         {"detail": "spatial response evidence not configured"},
         {"detail": "spatial response evidence not configured"},

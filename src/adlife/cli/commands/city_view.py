@@ -8,7 +8,10 @@ from typing import Annotated
 import typer
 import uvicorn
 
-from adlife.city.analysis import metrics_for_stored_city_run
+from adlife.city.analysis import (
+    metrics_for_stored_city_run,
+    response_metrics_for_stored_city_run,
+)
 from adlife.city.run_store import CityRunStore
 from adlife.city.web import create_city_app
 from adlife.cli.errors import CommandError, command_boundary, output_format
@@ -33,6 +36,11 @@ def command(
     spatial_metrics = (
         metrics_for_stored_city_run(stored) if stored.manifest.schema_version in {5, 6} else None
     )
+    spatial_response_metrics = (
+        response_metrics_for_stored_city_run(stored)
+        if stored.manifest.schema_version == 6
+        else None
+    )
     application = create_city_app(
         stored.mobility,
         run_id=stored.manifest.run_id,
@@ -43,6 +51,7 @@ def command(
         spatial_metrics=spatial_metrics,
         response_input=stored.response_input,
         response_evaluation=stored.response_evaluation,
+        spatial_response_metrics=spatial_response_metrics,
     )
     info(f"saved city run: http://127.0.0.1:{port} ({stored.manifest.run_id})")
     uvicorn.run(

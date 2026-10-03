@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from typer.testing import CliRunner
 
+from adlife.city import analysis as city_analysis
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
 from adlife.core.domain.city_run import CityRunManifestV6
@@ -43,11 +44,13 @@ async def test_city_view_loads_saved_run_before_binding_and_serves_exact_core_fr
     ) as web:
         metadata = await web.get("/api/meta")
         frame = await web.get("/api/frame?minute=480")
+        response_metrics = await web.get("/api/spatial-response-metrics")
         other = await web.get("/api/run?run_id=another")
         path = await web.get("/api/frame?minute=480&path=../run.json")
     assert metadata.json()["run_id"] == "saved-study"
     assert metadata.json()["saved"] is True
     assert frame.json() == stored.mobility.frame_document(480)
+    assert response_metrics.status_code == 404
     assert other.status_code == 404
     assert path.json() == frame.json()
     assert before == {
@@ -189,6 +192,7 @@ async def test_city_view_serves_verified_v5_opportunity_evidence_without_mutatio
         attention_summary = (await web.get("/api/attention-summary")).json()
         attention_events = (await web.get("/api/attention-events?minute=0")).json()
         metrics = (await web.get("/api/spatial-metrics")).json()
+        response_metrics = await web.get("/api/spatial-response-metrics")
     assert metadata["run_schema_version"] == 5
     assert metadata["opportunity_count"] == 4
     assert metadata["spatial_attention"] is True
@@ -209,6 +213,7 @@ async def test_city_view_serves_verified_v5_opportunity_evidence_without_mutatio
     ]
     assert metrics["claim_scope"] == "synthetic-metrics-not-observed-outcomes"
     assert metrics["overall"]["opportunity_count"]["value"] == 4.0
+    assert response_metrics.status_code == 404
     assert before == {
         path.relative_to(stored.directory): path.read_bytes()
         for path in stored.directory.rglob("*")
@@ -248,6 +253,15 @@ async def test_city_view_passes_verified_v6_response_evidence_and_metrics_read_o
     )
     assert isinstance(stored.manifest, CityRunManifestV6)
     assert stored.response_evaluation is not None
+    response_metrics_helper = getattr(
+        city_analysis,
+        "response_metrics_for_stored_city_run",
+        None,
+    )
+    assert callable(response_metrics_helper), (
+        "stored schema-v6 response metric projection is not implemented"
+    )
+    expected_response_metrics = response_metrics_helper(stored).model_dump(mode="json")
     before = {
         path.relative_to(stored.directory): path.read_bytes()
         for path in stored.directory.rglob("*")
@@ -278,6 +292,8 @@ async def test_city_view_passes_verified_v6_response_evidence_and_metrics_read_o
         events = await web.get("/api/response-events?minute=0")
         final_state = await web.get("/api/response-state")
         metrics = await web.get("/api/spatial-metrics")
+        response_metrics = await web.get("/api/spatial-response-metrics")
+        response_metrics_write = await web.post("/api/spatial-response-metrics", json={})
 
     evaluation = stored.response_evaluation
     assert metadata["run_schema_version"] == stored.manifest.schema_version == 6
@@ -315,6 +331,9 @@ async def test_city_view_passes_verified_v6_response_evidence_and_metrics_read_o
     assert metrics.status_code == 200
     assert metrics.json()["source_run_schema_version"] == 6
     assert metrics.json()["claim_scope"] == "synthetic-metrics-not-observed-outcomes"
+    assert response_metrics.status_code == 200
+    assert response_metrics.json() == expected_response_metrics
+    assert response_metrics_write.status_code == 405
     assert "Traceback" not in result.output
     assert before == {
         path.relative_to(stored.directory): path.read_bytes()

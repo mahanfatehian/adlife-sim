@@ -43,6 +43,30 @@ from adlife.core.experiments.spatial_metrics import (
     derive_spatial_metrics,
     spatial_opportunity_structure_sha256,
 )
+from adlife.core.experiments.spatial_observations import (
+    SpatialMetricObservation,
+    SpatialStudyMetricArtifact,
+    spatial_metric_observations,
+)
+from adlife.core.experiments.spatial_response_comparison import (
+    SpatialResponseAggregateDeltaSeries,
+    SpatialResponseCampaignDeltaSeries,
+    SpatialResponseChannelDeltaSeries,
+    SpatialResponseComparisonError,
+    SpatialResponseEventDeltaSeries,
+    SpatialResponseMetricsComparison,
+    SpatialResponseStateDelta,
+    compare_spatial_response_metrics,
+)
+from adlife.core.experiments.spatial_response_metrics import (
+    SpatialResponseCampaignSeries,
+    SpatialResponseChannelSeries,
+    SpatialResponseMetricReceipt,
+    SpatialResponseMetrics,
+    SpatialResponseStateReceipt,
+    derive_spatial_response_metrics,
+    spatial_response_assumption_structure_sha256,
+)
 
 __all__ = [
     "BOOTSTRAP_RESAMPLES",
@@ -60,14 +84,32 @@ __all__ = [
     "RunMetrics",
     "SpatialComparisonError",
     "SpatialMetricDeltaSeries",
+    "SpatialMetricObservation",
     "SpatialMetricReceipt",
     "SpatialMetricSeries",
     "SpatialMetrics",
     "SpatialMetricsComparison",
+    "SpatialResponseAggregateDeltaSeries",
+    "SpatialResponseCampaignDeltaSeries",
+    "SpatialResponseCampaignSeries",
+    "SpatialResponseChannelDeltaSeries",
+    "SpatialResponseChannelSeries",
+    "SpatialResponseComparisonError",
+    "SpatialResponseEventDeltaSeries",
+    "SpatialResponseMetricReceipt",
+    "SpatialResponseMetrics",
+    "SpatialResponseMetricsComparison",
+    "SpatialResponseStateDelta",
+    "SpatialResponseStateReceipt",
+    "SpatialStudyMetricArtifact",
     "compare_spatial_metrics",
+    "compare_spatial_response_metrics",
     "derive_spatial_metrics",
+    "derive_spatial_response_metrics",
     "paired_statistics",
+    "spatial_metric_observations",
     "spatial_opportunity_structure_sha256",
+    "spatial_response_assumption_structure_sha256",
     "validate_paired_design",
     "validate_paired_manifests",
 ]

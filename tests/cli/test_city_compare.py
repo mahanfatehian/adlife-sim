@@ -5,6 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from adlife.city import analysis as city_analysis
 from adlife.city.analysis import compare_stored_city_runs
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
@@ -108,6 +109,133 @@ def test_city_compare_v6_json_is_exact_aa_zero_attention_only_and_read_only(
     assert "_lines" not in document
     assert result.stdout.count("\n") == 1
     assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_city_compare_default_and_explicit_attention_layers_have_identical_output(
+    tmp_path: Path,
+) -> None:
+    _spatial_run(tmp_path, "response-study", response=True)
+    runner = CliRunner()
+    base = [
+        "--format",
+        "json",
+        "city-compare",
+        str(tmp_path),
+        "response-study",
+        "response-study",
+    ]
+
+    default = runner.invoke(app, base)
+    explicit = runner.invoke(app, [*base, "--layer", "attention"])
+
+    assert default.exit_code == explicit.exit_code == 0
+    assert (explicit.stdout, explicit.stderr) == (default.stdout, default.stderr)
+
+
+def test_city_compare_response_layer_emits_exact_aa_document_and_is_read_only(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+    helper = getattr(city_analysis, "compare_stored_city_response_runs", None)
+    assert callable(helper), "stored schema-v6 response metric comparison is not implemented"
+    expected = helper(stored, stored).model_dump(mode="json")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-compare",
+            str(tmp_path),
+            "response-study",
+            "response-study",
+            "--layer",
+            "response",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document == expected
+    assert document["model_id"] == "spatial-response-metrics-comparison-v1"
+    assert document["claim_scope"] == (
+        "synthetic-response-comparison-not-causal-or-observed-effect"
+    )
+    assert document["opportunity_classification"] == "matched-opportunity-structure"
+    assert document["response_assumption_classification"] == "matched-response-assumptions"
+    assert document["control"]["source_run_schema_version"] == 6
+    assert document["treatment"]["source_run_schema_version"] == 6
+    assert "_lines" not in document
+    assert result.stdout.count("\n") == 1
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_city_compare_response_layer_human_output_discloses_both_classifications(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "city-compare",
+            str(tmp_path),
+            "response-study",
+            "response-study",
+            "--layer",
+            "response",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[0] == (
+        "synthetic response comparison, not a causal or observed-world result: "
+        "response-study -> response-study"
+    )
+    assert "opportunity classification: matched-opportunity-structure" in lines
+    assert "response assumption classification: matched-response-assumptions" in lines
+    normalized = result.stdout.lower()
+    for label in (
+        "responses",
+        "rule sentiment delta",
+        "rule recall delta",
+        "brand sentiment",
+        "recall strength",
+        "purchase intention proxy",
+    ):
+        assert label in normalized
+    assert "purchase probability" not in normalized
+    assert "sales" not in normalized
+    assert result.stderr == ""
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_city_compare_response_layer_requires_schema_v6(tmp_path: Path) -> None:
+    stored = _spatial_run(tmp_path, "attention-study")
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-compare",
+            str(tmp_path),
+            "attention-study",
+            "attention-study",
+            "--layer",
+            "response",
+        ],
+    )
+
+    assert result.exit_code == 4
+    assert "schema-v6" in json.loads(result.stdout)["error"]["message"]
+    assert "Traceback" not in result.output
     assert _artifact_bytes(stored.directory) == before
 
 

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from adlife.city import analysis as city_analysis
 from adlife.city.analysis import compare_stored_city_runs, metrics_for_stored_city_run
 from adlife.city.runs import create_city_run
 from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6
@@ -60,6 +61,18 @@ def _artifact_bytes(directory: Path) -> dict[str, bytes]:
         for path in sorted(directory.rglob("*"))
         if path.is_file()
     }
+
+
+def _response_metrics_for_stored_city_run(stored):
+    helper = getattr(city_analysis, "response_metrics_for_stored_city_run", None)
+    assert callable(helper), "stored schema-v6 response metric projection is not implemented"
+    return helper(stored)
+
+
+def _compare_stored_city_response_runs(control, treatment):
+    helper = getattr(city_analysis, "compare_stored_city_response_runs", None)
+    assert callable(helper), "stored schema-v6 response metric comparison is not implemented"
+    return helper(control, treatment)
 
 
 def test_metrics_project_verified_v5_run_without_mutating_artifacts(tmp_path: Path) -> None:
@@ -138,6 +151,54 @@ def test_metrics_project_verified_v6_attention_only_without_mutating_artifacts(
     assert _artifact_bytes(stored.directory) == before
 
 
+def test_response_metrics_project_verified_v6_run_without_mutating_artifacts(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    metrics = _response_metrics_for_stored_city_run(stored)
+
+    assert isinstance(stored.manifest, CityRunManifestV6)
+    assert metrics.model_id == "spatial-response-metrics-v1"
+    assert metrics.claim_scope == "synthetic-response-metrics-not-observed-outcomes"
+    assert metrics.source_run_schema_version == 6
+    assert metrics.scenario_sha256 == stored.manifest.scenario_sha256
+    assert metrics.city_sha256 == stored.manifest.city_sha256
+    assert metrics.agents_sha256 == stored.manifest.agents_sha256
+    assert metrics.trace_sha256 == stored.manifest.trace_sha256
+    assert metrics.response_input_sha256 == stored.manifest.response_input_sha256
+    assert metrics.response_stream_sha256 == stored.manifest.response_stream_sha256
+    assert metrics.response_state_sha256 == stored.manifest.response_state_sha256
+    assert metrics.population_size == stored.manifest.agent_count == 2
+    assert metrics.days == stored.manifest.days
+    assert metrics.campaign_count == stored.manifest.response_campaign_count
+    assert metrics.overall.response_count.numerator == stored.manifest.response_count == 1
+    assert metrics.overall.purchase_intention_proxy.denominator == stored.manifest.final_state_count
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_response_metrics_refuse_legacy_and_incomplete_v6_evidence(tmp_path: Path) -> None:
+    legacy = _spatial_run(tmp_path, "attention-study")
+    with pytest.raises(SchemaVersionMismatch, match="schema-v6"):
+        _response_metrics_for_stored_city_run(legacy)
+
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    incomplete = type(stored)(
+        stored.manifest,
+        stored.pack,
+        stored.mobility,
+        stored.directory,
+        spatial_scenario=stored.spatial_scenario,
+        opportunity_evaluation=stored.opportunity_evaluation,
+        attention_evaluation=stored.attention_evaluation,
+        response_input=stored.response_input,
+        response_evaluation=None,
+    )
+    with pytest.raises(CorruptRunArtifact, match="incomplete"):
+        _response_metrics_for_stored_city_run(incomplete)
+
+
 def test_compare_projects_both_runs_without_mutating_either_source(tmp_path: Path) -> None:
     control = _spatial_run(tmp_path, "control", end=2)
     treatment = _spatial_run(tmp_path, "treatment", end=3)
@@ -173,6 +234,23 @@ def test_compare_v6_run_with_itself_is_exact_aa_zero_and_read_only(tmp_path: Pat
         "impression_frequency": 0.0,
         "notice_rate": 0.0,
     }
+    assert _artifact_bytes(stored.directory) == before
+
+
+def test_compare_stored_v6_response_runs_is_exact_aa_zero_and_read_only(
+    tmp_path: Path,
+) -> None:
+    stored = _spatial_run(tmp_path, "response-study", response=True)
+    before = _artifact_bytes(stored.directory)
+
+    result = _compare_stored_city_response_runs(stored, stored)
+
+    assert result.model_id == "spatial-response-metrics-comparison-v1"
+    assert result.claim_scope == "synthetic-response-comparison-not-causal-or-observed-effect"
+    assert result.control_run_id == result.treatment_run_id == "response-study"
+    assert result.opportunity_classification == "matched-opportunity-structure"
+    assert result.response_assumption_classification == "matched-response-assumptions"
+    assert result.control == result.treatment
     assert _artifact_bytes(stored.directory) == before
 
 

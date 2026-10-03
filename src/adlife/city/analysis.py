@@ -9,6 +9,14 @@ from adlife.core.experiments.spatial_comparison import (
     compare_spatial_metrics,
 )
 from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
+from adlife.core.experiments.spatial_response_comparison import (
+    SpatialResponseMetricsComparison,
+    compare_spatial_response_metrics,
+)
+from adlife.core.experiments.spatial_response_metrics import (
+    SpatialResponseMetrics,
+    derive_spatial_response_metrics,
+)
 from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatch
 
 
@@ -46,4 +54,50 @@ def compare_stored_city_runs(
     )
 
 
-__all__ = ["compare_stored_city_runs", "metrics_for_stored_city_run"]
+def response_metrics_for_stored_city_run(stored: StoredCityRun) -> SpatialResponseMetrics:
+    """Project response metrics from one verified schema-v6 run without writing."""
+    if not isinstance(stored, StoredCityRun):
+        raise TypeError("stored must be a StoredCityRun")
+    if not isinstance(stored.manifest, CityRunManifestV6):
+        raise SchemaVersionMismatch("spatial response metrics require a schema-v6 city run")
+    if (
+        stored.spatial_scenario is None
+        or stored.opportunity_evaluation is None
+        or stored.attention_evaluation is None
+        or stored.response_input is None
+        or stored.response_evaluation is None
+    ):
+        raise CorruptRunArtifact("schema-v6 city run has incomplete spatial response evidence")
+    attention_metrics = metrics_for_stored_city_run(stored)
+    return derive_spatial_response_metrics(
+        stored.response_input,
+        stored.response_evaluation,
+        scenario=stored.spatial_scenario,
+        opportunities=stored.opportunity_evaluation,
+        attention=stored.attention_evaluation,
+        agent_ids=tuple(agent.agent_id for agent in stored.mobility.agents),
+        attention_metrics=attention_metrics,
+    )
+
+
+def compare_stored_city_response_runs(
+    control: StoredCityRun,
+    treatment: StoredCityRun,
+) -> SpatialResponseMetricsComparison:
+    """Compare response metrics from two verified schema-v6 runs without writing."""
+    control_metrics = response_metrics_for_stored_city_run(control)
+    treatment_metrics = response_metrics_for_stored_city_run(treatment)
+    return compare_spatial_response_metrics(
+        control_metrics,
+        treatment_metrics,
+        control_run_id=control.manifest.run_id,
+        treatment_run_id=treatment.manifest.run_id,
+    )
+
+
+__all__ = [
+    "compare_stored_city_response_runs",
+    "compare_stored_city_runs",
+    "metrics_for_stored_city_run",
+    "response_metrics_for_stored_city_run",
+]
