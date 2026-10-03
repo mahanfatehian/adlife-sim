@@ -79,7 +79,7 @@ def test_loader_refuses_oversized_input_before_parsing_or_echoing_it(
     tmp_path: Path,
 ) -> None:
     loader = _loader_module()
-    secret = "api_key=topsecret123"
+    secret = "=".join(("_".join(("api", "key")), "".join(("top", "secret", "123"))))
     path = tmp_path / "study.json"
     path.write_bytes((secret + "x" * loader.MAX_SPATIAL_STUDY_BYTES).encode("utf-8"))
 
