@@ -64,6 +64,26 @@ def _expect_value(document: dict[str, object], key: str, expected: object, label
         _refuse(label, f"expected {key}={expected!r}, got {actual!r}")
 
 
+def _artifact_hashes(directory: Path) -> dict[str, str]:
+    """Hash every regular file in a bounded smoke artifact without following links."""
+    if not directory.is_dir() or directory.is_symlink():
+        _refuse("city artifact", "expected a non-symlink saved run directory")
+    hashes: dict[str, str] = {}
+    for path in sorted(directory.rglob("*")):
+        if path.is_symlink():
+            _refuse("city artifact", "saved run contains a symlink")
+        if not path.is_file():
+            continue
+        digest = sha256()
+        with path.open("rb") as source:
+            while chunk := source.read(64 * 1024):
+                digest.update(chunk)
+        hashes[path.relative_to(directory).as_posix()] = digest.hexdigest()
+    if not hashes:
+        _refuse("city artifact", "saved run contains no files")
+    return hashes
+
+
 def _write_fictional_place_set(path: Path, *, city_sha256: str) -> None:
     """Create the clean-room fixture without reading from the source checkout."""
     provenance = {"method": "operator-authored-fictional"}
@@ -518,6 +538,105 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
         _expect_value(city_run, "frame_count", 1_440, "city-run --city-id")
         _expect_value(city_run, "position_count", 2_880, "city-run --city-id")
 
+        city_run_directory = scratch / "city-output" / "city-runs" / "catalog-smoke"
+        source_hashes = _artifact_hashes(city_run_directory)
+        metrics = _expect_json(
+            _run(
+                [
+                    str(adlife),
+                    "--format",
+                    "json",
+                    "city-metrics",
+                    "city-output",
+                    "catalog-smoke",
+                ],
+                cwd=scratch,
+            ),
+            "city-metrics",
+        )
+        _expect_value(metrics, "model_id", "spatial-metrics-v1", "city-metrics")
+        _expect_value(
+            metrics,
+            "claim_scope",
+            "synthetic-metrics-not-observed-outcomes",
+            "city-metrics",
+        )
+        _expect_value(metrics, "source_run_schema_version", 5, "city-metrics")
+        for key in ("scenario_sha256", "city_sha256", "trace_sha256"):
+            _expect_value(metrics, key, city_run.get(key), "city-metrics")
+        structure_sha256 = metrics.get("opportunity_structure_sha256")
+        if not isinstance(structure_sha256, str) or len(structure_sha256) != 64:
+            _refuse("city-metrics", "opportunity structure hash is not a SHA-256 digest")
+        overall = metrics.get("overall")
+        if not isinstance(overall, dict):
+            _refuse("city-metrics", "overall metric series is missing")
+        for name, expected in (
+            ("opportunity_count", opportunity_count),
+            ("impression_count", impression_count),
+            ("noticed_count", noticed_count),
+        ):
+            receipt = overall.get(name)
+            if not isinstance(receipt, dict) or receipt.get("numerator") != expected:
+                _refuse("city-metrics", f"{name} numerator does not match persisted evidence")
+            if receipt.get("denominator") != 1 or receipt.get("value") != float(expected):
+                _refuse("city-metrics", f"{name} receipt is invalid")
+
+        comparison = _expect_json(
+            _run(
+                [
+                    str(adlife),
+                    "--format",
+                    "json",
+                    "city-compare",
+                    "city-output",
+                    "catalog-smoke",
+                    "catalog-smoke",
+                ],
+                cwd=scratch,
+            ),
+            "city-compare A/A",
+        )
+        _expect_value(
+            comparison,
+            "model_id",
+            "spatial-metrics-comparison-v1",
+            "city-compare A/A",
+        )
+        _expect_value(
+            comparison,
+            "claim_scope",
+            "synthetic-comparison-not-causal-or-observed-effect",
+            "city-compare A/A",
+        )
+        _expect_value(
+            comparison,
+            "classification",
+            "matched-opportunity-structure",
+            "city-compare A/A",
+        )
+        for key in ("control_run_id", "treatment_run_id"):
+            _expect_value(comparison, key, "catalog-smoke", "city-compare A/A")
+        if comparison.get("control") != metrics or comparison.get("treatment") != metrics:
+            _refuse("city-compare A/A", "source metric snapshots do not match city-metrics")
+        zero_names = (
+            "opportunity_count",
+            "impression_count",
+            "noticed_count",
+            "opportunity_reach",
+            "impression_reach",
+            "noticed_reach",
+            "impression_frequency",
+            "notice_rate",
+        )
+        delta_series = [comparison.get("overall")]
+        channels = comparison.get("channels")
+        if not isinstance(channels, list) or len(channels) != 2:
+            _refuse("city-compare A/A", "canonical channel deltas are missing")
+        delta_series.extend(channels)
+        for series in delta_series:
+            if not isinstance(series, dict) or any(series.get(name) != 0.0 for name in zero_names):
+                _refuse("city-compare A/A", "A/A comparison contains a nonzero delta")
+
         replay = _expect_json(
             _run(
                 [
@@ -559,11 +678,13 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
             "position_count",
         ):
             _expect_value(replay, key, city_run.get(key), "city-replay")
+        if _artifact_hashes(city_run_directory) != source_hashes:
+            _refuse("city analysis", "metrics, comparison, or replay modified source artifacts")
         _ = doctor_document  # parsed: the JSON contract held
         print(
             "smoke ok: "
             f"report at {html.stat().st_size} bytes; "
-            "catalog fictional-grid-v2 spatial run and replay verified"
+            "catalog fictional-grid-v2 spatial metrics, A/A comparison, and replay verified"
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)

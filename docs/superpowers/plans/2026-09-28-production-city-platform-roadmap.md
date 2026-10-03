@@ -222,14 +222,24 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   label from a fixed 0.5 keyed draw. Canonical `spatial-attention.jsonl` and
   `attention-summary.json` are manifest-bound and exposed through bounded read-only API/UI
   views. Every record says `synthetic-attention-not-observed-behavior`; the model is
-  uncalibrated and cannot affect cognition, state, budget, movement, purchase logic,
-  metrics or reports. C3 remains open for that response/state bridge, and C4 remains open.
+  uncalibrated and cannot affect cognition, state, budget, movement or purchase logic.
+  C3 remains open for that response/state bridge.
 - [ ] **C4 — Extend spatial metrics, comparison and reports.** Derive opportunity,
   impression, notice, recall/social and proxy metrics from persisted events with
   provenance; implement matched geographic A/A and paired A/B with common random
   numbers. Hold opportunity structure constant when claiming a channel effect or
   label its confounding. Tests verify exact A/A zero, input-order invariance,
   replay equivalence, zero denominators and artifact-derived report values.
+
+  **C4a evidence (2026-10-03):** verified schema-v5 artifacts now have a pure read-only
+  spatial metrics projection with exact numerator/denominator/source receipts and literal
+  `synthetic-metrics-not-observed-outcomes` scope. `city-metrics`, a bounded viewer API/UI
+  ledger, and installed-wheel smoke expose the same deterministic model without adding a
+  cache or artifact schema. Matched `city-compare` requires city/assignment/trace/seed/
+  duration/population parity, guarantees exact-zero same-run A/A deltas, labels changed
+  normalized opportunity structure `opportunity-confounded`, and carries
+  `synthetic-comparison-not-causal-or-observed-effect`. C4 remains open for C4b repeated-seed
+  uncertainty, recall/social proxy integration, and self-contained spatial reports.
 
 **Exit gate:** An operator can place a fictional billboard on a qualified road,
 run a spatial study offline, inspect the causal event on that road/time, replay it,

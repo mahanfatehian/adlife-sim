@@ -114,8 +114,8 @@ Schema-v5 additionally persists deterministic attention model v1 at the fixed 0.
 probability. Every opportunity creates one model impression; a threshold success creates a
 noticed label carrying `synthetic-attention-not-observed-behavior`. This uncalibrated layer
 excludes campaign/provider inputs from its draw and cannot reach cognition, agent state,
-purchase logic, metrics or reports. The read-only city viewer presents persisted
-current-minute opportunity and current-minute attention evidence alongside mobility.
+or purchase logic. The read-only city viewer presents persisted current-minute opportunity
+and current-minute attention evidence alongside mobility.
 
 ## Metrics
 
@@ -124,6 +124,15 @@ rate, sentiment, recall, fatigue, direct/indirect awareness, word-of-mouth reach
 intention delta, high-intention count, purchases, and cognition counters — each with its
 numerator, denominator, and event/state sources recorded, so provenance is re-derivable
 from the artifact.
+
+For schema-v5 city runs, the separate spatial-metrics fold derives exact opportunity,
+impression, and noticed receipts from verified persisted evidence. Each value exposes its
+numerator, denominator, and source paths and carries
+`synthetic-metrics-not-observed-outcomes`. These uncalibrated values are model summaries,
+not observed outcomes. Matched city comparisons require identical city, assignments,
+mobility trace, seed, duration, and population provenance; a changed normalized opportunity
+structure is labeled `opportunity-confounded`. Every comparison carries
+`synthetic-comparison-not-causal-or-observed-effect`, so it is not a causal effect estimate.
 
 ## Ethical risks and mitigations
 

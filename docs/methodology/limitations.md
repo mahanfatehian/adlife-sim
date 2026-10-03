@@ -79,11 +79,17 @@ What this model cannot support. Read alongside the
   and is not observed attention. The read-only saved-run viewer can display persisted
   current-minute opportunity and attention evidence, but this presentation adds no response
   or outcome semantics. Neither evidence layer affects cognition, agent state, budget,
-  movement, purchase probability, metrics or reports.
+  movement, or purchase probability. The C4a read-only metrics projection summarizes those
+  verified files with exact numerator, denominator, and source paths under
+  `synthetic-metrics-not-observed-outcomes`; it remains uncalibrated and is not an observed
+  outcome.
   Road proximity and the half-plane orientation heuristic omit occlusion, lanes,
   buildings, traffic, speed variation and measured viewability. Phone probability is an
-  analyst assumption, not an observed usage rate. The remaining C3 response/state bridge
-  and C4 work must still define causal downstream events, metrics and reports.
+  analyst assumption, not an observed usage rate. Matched comparisons carry
+  `synthetic-comparison-not-causal-or-observed-effect`; if the normalized placement/channel
+  structure differs they are labeled `opportunity-confounded`, not interpreted as a channel
+  effect. The remaining C3 response/state bridge and C4b repeated-seed uncertainty and
+  spatial reporting work are intentionally unresolved.
 - **Time-zone metadata is not a civil-time model.** City-pack v2 records an IANA time
   zone, but the fixed schedule treats day 1 as Monday, has no start date, holidays or
   daylight-saving transition policy, and uses fixed light/dark hours rather than local

@@ -275,6 +275,46 @@ def test_spatial_attention_docs_describe_c3b_without_claiming_observed_behavior(
         assert stale_claim not in combined
 
 
+def test_spatial_metrics_docs_describe_c4a_receipts_and_confounding_honestly() -> None:
+    readme = _read("README.md").lower()
+    architecture = _read("docs", "architecture.md").lower()
+    cli = _read("docs", "cli-reference.md").lower()
+    city_pilot = _read("docs", "city-pilot.md").lower()
+    reproducibility = _read("docs", "reproducibility.md").lower()
+    model_card = _read("docs", "methodology", "model-card.md").lower()
+    limitations = _read("docs", "methodology", "limitations.md").lower()
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    ).lower()
+
+    public = (readme, architecture, cli, city_pilot, reproducibility, model_card, limitations)
+    for text in public:
+        assert "synthetic-metrics-not-observed-outcomes" in text
+        assert "numerator" in text and "denominator" in text
+        assert "uncalibrated" in text or "not calibrated" in text
+    for text in (readme, cli, city_pilot, reproducibility):
+        assert "city-metrics" in text
+        assert "city-compare" in text
+    for text in (readme, architecture, cli, city_pilot, reproducibility, limitations):
+        assert "opportunity-confounded" in text
+        assert "synthetic-comparison-not-causal-or-observed-effect" in text
+    assert "c4a evidence" in roadmap
+    assert "[ ] **c4" in roadmap
+    assert "c4b" in roadmap
+
+    combined = "\n".join(public)
+    for stale_claim in (
+        "cannot affect cognition, state, budget, movement, purchase probability, "
+        "metrics or reports",
+        "cannot reach cognition, agent state, purchase logic, metrics or reports",
+        "neither evidence layer affects cognition, agent state, budget, movement, "
+        "purchase probability, metrics or reports",
+        "c4 artifact-backed metrics are required",
+        "c4 are responsible for causal downstream outcomes and metrics",
+    ):
+        assert stale_claim not in combined
+
+
 # ---------------------------------------------------------------------------
 # Governance files
 # ---------------------------------------------------------------------------

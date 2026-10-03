@@ -99,6 +99,7 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     opportunity_summary_sha256 = "1" * 64
     attention_stream_sha256 = "2" * 64
     attention_summary_sha256 = "3" * 64
+    structure_sha256 = "4" * 64
     opportunity_counts = {
         "opportunity_count": 4,
         "roadside_billboard_count": 0,
@@ -112,6 +113,21 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         "roadside_noticed_count": 0,
         "phone_impression_count": 4,
         "phone_noticed_count": 2,
+    }
+    receipt = {"numerator": 4, "denominator": 1, "value": 4.0}
+    metrics_document: dict[str, object] = {
+        "model_id": "spatial-metrics-v1",
+        "claim_scope": "synthetic-metrics-not-observed-outcomes",
+        "source_run_schema_version": 5,
+        "scenario_sha256": scenario_sha256,
+        "city_sha256": city_sha256,
+        "trace_sha256": trace_sha256,
+        "opportunity_structure_sha256": structure_sha256,
+        "overall": {
+            "opportunity_count": receipt,
+            "impression_count": receipt,
+            "noticed_count": {"numerator": 2, "denominator": 1, "value": 2.0},
+        },
     }
 
     monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: str(workspace))
@@ -201,6 +217,14 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "max_billboard_binding_error_meters": 0.0,
             }
         elif arguments[:3] == ["--format", "json", "city-run"]:
+            run_directory = scratch / "city-output" / "city-runs" / "catalog-smoke"
+            (run_directory / "inputs").mkdir(parents=True)
+            (run_directory / "outputs").mkdir()
+            (run_directory / "run.json").write_text("manifest", encoding="utf-8")
+            (run_directory / "inputs" / "city.json").write_text("city", encoding="utf-8")
+            (run_directory / "outputs" / "spatial-attention.jsonl").write_text(
+                "attention", encoding="utf-8"
+            )
             document = {
                 "run_id": "catalog-smoke",
                 "run_schema_version": 5,
@@ -228,6 +252,48 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "frame_count": 1_440,
                 "position_count": 2_880,
                 "directory": str(scratch / "city-output" / "city-runs" / "catalog-smoke"),
+            }
+        elif arguments == [
+            "--format",
+            "json",
+            "city-metrics",
+            "city-output",
+            "catalog-smoke",
+        ]:
+            document = metrics_document
+        elif arguments == [
+            "--format",
+            "json",
+            "city-compare",
+            "city-output",
+            "catalog-smoke",
+            "catalog-smoke",
+        ]:
+            zero_series = {
+                "opportunity_count": 0.0,
+                "impression_count": 0.0,
+                "noticed_count": 0.0,
+                "opportunity_reach": 0.0,
+                "impression_reach": 0.0,
+                "noticed_reach": 0.0,
+                "impression_frequency": 0.0,
+                "notice_rate": 0.0,
+            }
+            document = {
+                "model_id": "spatial-metrics-comparison-v1",
+                "claim_scope": "synthetic-comparison-not-causal-or-observed-effect",
+                "classification": "matched-opportunity-structure",
+                "control_run_id": "catalog-smoke",
+                "treatment_run_id": "catalog-smoke",
+                "control_opportunity_structure_sha256": structure_sha256,
+                "treatment_opportunity_structure_sha256": structure_sha256,
+                "control": metrics_document,
+                "treatment": metrics_document,
+                "overall": zero_series,
+                "channels": [
+                    {"channel": "roadside", **zero_series},
+                    {"channel": "mobile", **zero_series},
+                ],
             }
         elif arguments == [
             "--format",
@@ -327,6 +393,21 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         "json",
         "city-replay",
         "city-output",
+        "catalog-smoke",
+    ] in invoked
+    assert [
+        "--format",
+        "json",
+        "city-metrics",
+        "city-output",
+        "catalog-smoke",
+    ] in invoked
+    assert [
+        "--format",
+        "json",
+        "city-compare",
+        "city-output",
+        "catalog-smoke",
         "catalog-smoke",
     ] in invoked
     assert all(cwd == scratch for _arguments, cwd in calls)

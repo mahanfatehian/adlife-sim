@@ -123,7 +123,8 @@ records retain `synthetic-opportunity-not-impression`; attention records say
 `synthetic-attention-not-observed-behavior`. Every opportunity becomes one synthetic
 impression and an order-independent draw below the fixed 0.5 probability becomes noticed.
 This is an uncalibrated assumption. It does not affect cognition, state, budget, movement,
-purchase probability, metrics or reports. Older schema-v4 artifacts remain readable as
+or purchase probability. A separate read-only command may summarize the persisted evidence;
+it does not turn it into an observed outcome. Older schema-v4 artifacts remain readable as
 opportunity-only evidence.
 Interrupted or failed publication may leave an incomplete, reserved directory; use a
 new run ID after examining it. JSON mode emits one result document on stdout.
@@ -140,6 +141,25 @@ proves replay against the saved artifact on a compatible implementation/runtime;
 is not cryptographic authentication against an owner rewriting all artifact files.
 Saved city runs are not zone advertising runs and do not claim measured traffic,
 real-person behavior, or geographic campaign effects.
+
+## `adlife city-metrics ROOT ID`
+
+Validate a schema-v5 saved run and derive its deterministic spatial metrics without
+changing or caching anything in the artifact. JSON and human output both carry
+`synthetic-metrics-not-observed-outcomes`. Every metric includes its exact numerator,
+denominator, and source paths, including explicit zero-denominator behavior. The values
+summarize an uncalibrated synthetic evidence model; they are not observed outcomes.
+Corrupt, partial, older, or incompatible artifacts exit 4.
+
+## `adlife city-compare ROOT CONTROL_ID TREATMENT_ID`
+
+Compare two fully verified schema-v5 runs only when city, place assignments, trace model,
+seed, duration, and population match. The command never modifies either run. Same-run A/A
+comparison produces exact-zero deltas. If normalized placement/channel opportunity
+structure differs, classification is `opportunity-confounded`; callers must not describe
+that result as a channel effect. Every response carries
+`synthetic-comparison-not-causal-or-observed-effect`. Provenance mismatch is invalid input
+and corrupt or incompatible artifacts exit 4.
 
 ## `adlife city-view ROOT ID [--port N]`
 
@@ -159,7 +179,9 @@ current-minute attention evidence. Those records remain
 `synthetic-attention-not-observed-behavior`; noticed means only that the deterministic draw
 was below the uncalibrated 0.5 threshold. `--port` accepts 1–65535. Like
 `adlife city`, this interactive command accepts human output mode only and does not launch
-a browser automatically.
+a browser automatically. Schema-v5 runs also expose a read-only `/api/spatial-metrics`
+receipt ledger. It uses the same exact numerator, denominator, and source paths as
+`city-metrics` and does not write to the artifact.
 
 ## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--schema-version 1|2] [--largest-component]`
 

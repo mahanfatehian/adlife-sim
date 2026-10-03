@@ -109,8 +109,18 @@ loopback-only adapter serves a bounded summary and canonical, paged
 current-minute opportunity evidence; V5 additionally serves current-minute attention
 evidence. It does not create or mutate evidence. V4 remains opportunity-only evidence,
 while V5 adds bounded synthetic attention evidence. Neither is an event-sourced
-advertising-outcome run; the remaining C3 response/state bridge and C4 still require
-separate contracts and tests.
+advertising-outcome run; the remaining C3 response/state bridge requires a separate
+contract and tests.
+
+The adapter-free core also exposes a read-only spatial-metrics projection over a verified
+V5 artifact. Each value has an exact numerator, denominator, and source paths and carries
+`synthetic-metrics-not-observed-outcomes`; it is deterministic and uncalibrated, not an
+observed outcome. The matched comparison layer requires identical city, assignment, trace,
+seed, duration, and population provenance. It guarantees exact-zero A/A deltas and labels
+different normalized placement/channel structures `opportunity-confounded`. Comparisons
+carry `synthetic-comparison-not-causal-or-observed-effect`. These projections do not mutate
+or cache data, do not drive cognition or agent state, and do not turn evidence into a
+causal effect. C4b repeated-seed uncertainty and spatial report integration remain open.
 
 ## The cognition seam
 

@@ -249,8 +249,12 @@ campaign/creative identity or provider output. Every record says
 The saved-run viewer can inspect persisted current-minute opportunity and current-minute
 attention evidence without changing it. No cognition, agent state, memory, social, budget,
 movement or purchase transition consumes these records, and no report treats them as
-outcomes. The remaining C3 response/state bridge and C4 artifact-backed metrics are required
-before AdLife can run a complete geographic campaign study.
+outcomes. A separate read-only projection now summarizes them as receipt-bearing spatial
+metrics. Every value records its exact numerator, denominator, and source paths under
+`synthetic-metrics-not-observed-outcomes`; the fixed assumptions remain uncalibrated and
+the metrics are not observed outcomes. The remaining C3 response/state bridge and C4b
+repeated-seed uncertainty and spatial reporting work are still required before AdLife can
+run a complete geographic campaign study.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
@@ -282,6 +286,8 @@ uv run adlife city-run city.json --output-root ./city-output --run-id study-42 -
 # place-aware: add --places places.json (uses run manifest v3)
 # spatial opportunity + attention evidence: add --spatial-campaign spatial-campaign.json (uses schema-v5)
 uv run adlife city-replay ./city-output study-42
+uv run adlife city-metrics ./city-output study-42
+uv run adlife city-compare ./city-output study-42 study-42
 uv run adlife city-view ./city-output study-42
 ```
 
@@ -304,7 +310,13 @@ canonical page of current-minute opportunity records drive the read-only evidenc
 and map markers. V5 adds bounded summary and page endpoints for current-minute attention;
 noticed markers reflect only persisted model evidence. Selecting a record changes
 presentation only. The panels retain both literal synthetic claim scopes and create no
-downstream event.
+downstream event. Schema-v5 runs also expose `/api/spatial-metrics` and a metrics evidence
+ledger. The response is derived only after full artifact validation and has exact
+numerator/denominator/source receipts; it is not written back to the run.
+`city-compare` requires matched city, assignment, trace, seed, duration, and population
+provenance. Identical A/A inputs produce exact-zero deltas. A different normalized
+placement/channel structure is labeled `opportunity-confounded`, and every result carries
+`synthetic-comparison-not-causal-or-observed-effect` rather than a causal or observed claim.
 The header shows the saved ID and schema version. A crash during publication can leave an
 incomplete, reserved run directory: inspect it and choose a new ID; no command overwrites
 it silently. Integrity hashes

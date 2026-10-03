@@ -71,7 +71,11 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     ):
         assert resource in names, resource
     assert 'id="saved-run-label" hidden' in html
+    assert 'id="metrics-panel"' in html
+    assert 'id="metrics-overall-notice-rate-receipt"' in html
     assert 'byId("saved-run-label").textContent =' in script
+    assert 'fetchJson("/api/spatial-metrics")' in script
+    assert "innerHTML" not in script
     assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
 
 

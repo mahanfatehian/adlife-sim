@@ -56,17 +56,17 @@ vanilla JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy and uv/Hatch.
 - Produces: `SpatialMetricReceipt`, `SpatialMetricSeries`, `SpatialMetrics`,
   `derive_spatial_metrics(...)` and `spatial_opportunity_structure_sha256(...)`.
 
-- [ ] Write failing golden tests for all overall/channel numerators, denominators, values,
+- [x] Write failing golden tests for all overall/channel numerators, denominators, values,
   fixed sources, claim/model identity and exact normalized structure hash.
-- [ ] Write failing boundary/property tests for empty streams, zero denominators, unknown or
+- [x] Write failing boundary/property tests for empty streams, zero denominators, unknown or
   duplicate agents, mismatched evaluations, tampered causality, input permutation and
   structure changes hidden by equal aggregate counts.
-- [ ] Run the focused tests and confirm RED because the module/API does not exist.
-- [ ] Implement frozen extra-forbidden models, canonical structure projection and the pure
+- [x] Run the focused tests and confirm RED because the module/API does not exist.
+- [x] Implement frozen extra-forbidden models, canonical structure projection and the pure
   fold. Validate all inputs at the seam and use fixed roadside/mobile ordering.
-- [ ] Run focused, spatial attention/opportunity, property and architecture suites; run Ruff
+- [x] Run focused, spatial attention/opportunity, property and architecture suites; run Ruff
   and strict mypy.
-- [ ] Commit and push `feat(city): derive spatial study metrics`.
+- [x] Commit and push `feat(city): derive spatial study metrics`.
 
 ### Task 2: Compare matched spatial runs without overstating causality
 
@@ -81,15 +81,15 @@ vanilla JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy and uv/Hatch.
 - Produces: `SpatialMetricDeltaSeries`, `SpatialMetricsComparison`,
   `SpatialComparisonError` and `compare_spatial_metrics(...)`.
 
-- [ ] Write failing tests proving exact A/A zero, treatment-minus-control signs, canonical
+- [x] Write failing tests proving exact A/A zero, treatment-minus-control signs, canonical
   channel deltas, claim scope and matched/confounded classifications.
-- [ ] Write failing refusal tests for city, trace, assignment, seed, duration and population
+- [x] Write failing refusal tests for city, trace, assignment, seed, duration and population
   mismatch; prove equal counts with different structure remains confounded.
-- [ ] Confirm RED on the missing comparison module.
-- [ ] Implement the strict pure comparison, preserving both source snapshots and forbidding
+- [x] Confirm RED on the missing comparison module.
+- [x] Implement the strict pure comparison, preserving both source snapshots and forbidding
   non-finite deltas or causal-effect wording.
-- [ ] Run focused/property/experiment/architecture suites, Ruff and strict mypy.
-- [ ] Commit and push `feat(city): compare matched spatial metrics`.
+- [x] Run focused/property/experiment/architecture suites, Ruff and strict mypy.
+- [x] Commit and push `feat(city): compare matched spatial metrics`.
 
 ### Task 3: Add the read-only city analysis adapter and CLI commands
 
@@ -108,16 +108,16 @@ vanilla JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy and uv/Hatch.
 - Adds: `adlife city-metrics ROOT RUN_ID` and
   `adlife city-compare ROOT CONTROL_RUN_ID TREATMENT_RUN_ID`.
 
-- [ ] Write failing adapter tests for v5 projection, legacy refusal and no artifact mutation.
-- [ ] Write failing CLI tests for exact human/JSON output, invalid IDs, missing/corrupt runs,
+- [x] Write failing adapter tests for v5 projection, legacy refusal and no artifact mutation.
+- [x] Write failing CLI tests for exact human/JSON output, invalid IDs, missing/corrupt runs,
   incompatible pairs, A/A zero, confounded labeling and clean stderr/stdout boundaries.
-- [ ] Confirm RED because the adapter and commands are absent.
-- [ ] Implement the adapter and register both commands. Map valid comparison incompatibility
+- [x] Confirm RED because the adapter and commands are absent.
+- [x] Implement the adapter and register both commands. Map valid comparison incompatibility
   to exit 2 and artifact failures to exit 4 through existing command boundaries.
-- [ ] Hash source artifacts before and after metrics/comparison in integration tests and
+- [x] Hash source artifacts before and after metrics/comparison in integration tests and
   assert exact equality.
-- [ ] Run city store/replay/CLI/security/hash-seed suites, Ruff and strict mypy.
-- [ ] Commit and push `feat(cli): inspect and compare spatial metrics`.
+- [x] Run city store/replay/CLI/security/hash-seed suites, Ruff and strict mypy.
+- [x] Commit and push `feat(cli): inspect and compare spatial metrics`.
 
 ### Task 4: Present metrics through the read-only local viewer
 
@@ -137,16 +137,16 @@ vanilla JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy and uv/Hatch.
 - Adds a safe-DOM metrics panel with overall/channel reach, frequency, notice rate,
   numerator/denominator receipts and the synthetic claim.
 
-- [ ] Write failing API tests for exact response, v1-v4 404, method refusal, offline/path-free
+- [x] Write failing API tests for exact response, v1-v4 404, method refusal, offline/path-free
   behavior and source immutability.
-- [ ] Confirm RED on the missing endpoint/app input.
-- [ ] Implement the prevalidated API response without filesystem access inside requests.
-- [ ] Write failing browser tests for metric values, receipt labels, disclosure, keyboard
+- [x] Confirm RED on the missing endpoint/app input.
+- [x] Implement the prevalidated API response without filesystem access inside requests.
+- [x] Write failing browser tests for metric values, receipt labels, disclosure, keyboard
   access, narrow layout, Persian/unicode safety and zero denominators.
-- [ ] Add the compact panel using text-only safe DOM operations; preserve play/scrub/selection
+- [x] Add the compact panel using text-only safe DOM operations; preserve play/scrub/selection
   as presentation-only behavior and existing CSP/offline operation.
-- [ ] Run API/CLI/browser/TUI suites, Ruff and strict mypy; inspect desktop/narrow screenshots.
-- [ ] Commit and push `feat(city): present spatial study metrics`.
+- [x] Run API/CLI/browser/TUI suites, Ruff and strict mypy; inspect desktop/narrow screenshots.
+- [x] Commit and push `feat(city): present spatial study metrics`.
 
 ### Task 5: Reconcile contracts and certify the installed workflow
 
@@ -168,13 +168,41 @@ vanilla JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy and uv/Hatch.
 **Interfaces:**
 - Produces truthful C4a documentation and exact-wheel metrics/A/A comparison smoke.
 
-- [ ] Write failing documentation/smoke assertions for metric receipts, synthetic claims,
+- [x] Write failing documentation/smoke assertions for metric receipts, synthetic claims,
   confounding disclosure and the two installed commands.
-- [ ] Document C4a without marking response, repeated-seed experiments or spatial reports
+- [x] Document C4a without marking response, repeated-seed experiments or spatial reports
   complete; retain all calibration/external-validity limitations.
-- [ ] Extend clean-room smoke to run `city-metrics` and same-run `city-compare`, assert exact
+- [x] Extend clean-room smoke to run `city-metrics` and same-run `city-compare`, assert exact
   A/A zero and prove source hashes are unchanged.
-- [ ] Run locked sync, Ruff, mypy, full/hash-seed/coverage suites, build, exact-wheel smoke,
+- [x] Run locked sync, Ruff, mypy, full/hash-seed/coverage suites, build, exact-wheel smoke,
   doctor/demo, performance gates and `git diff --check`.
-- [ ] Record exact evidence; commit and push
+- [x] Record exact evidence; commit and push
   `docs(city): document spatial metrics comparison`.
+
+## Completion Evidence — 2026-10-03
+
+- RED/green regression coverage was recorded for each task in
+  `.superpowers/sdd/2026-10-03-spatial-metrics-comparison/progress.md`.
+- Focused implementation commits: `ff21daa`, `28650a1`, `e4cdbd6`, and `8f12b63`.
+- `uv sync --locked --all-groups`: resolved 78 packages; checked 68 packages.
+- `uv run ruff format --check .`: 283 files already formatted.
+- `uv run ruff check .`: all checks passed.
+- `uv run mypy src`: no issues in 117 source files.
+- `uv run pytest -q`: 3,592 passed, 18 skipped in 469.60 seconds.
+- `PYTHONHASHSEED=0 uv run pytest -q`: 3,592 passed, 18 skipped in 456.01 seconds.
+- `PYTHONHASHSEED=12345 uv run pytest -q`: 3,592 passed, 18 skipped in 454.35 seconds.
+- Branch coverage: 3,592 passed, 18 skipped; 90.86% total against the 85% floor.
+- `uv build --no-sources`: built the sdist and exact `0.1.0` wheel.
+- Exact-wheel smoke: installed outside the checkout; produced a 4,862,319-byte report;
+  verified city metrics, exact-zero A/A comparison, source-preserving replay, and packaged
+  resources.
+- Windows x86-64 PyInstaller build completed with PyInstaller 6.22.3. Its exact executable
+  passed version, offline doctor, packaged catalog list/show, city run/replay, project init,
+  rules run, and a 4,863,286-byte self-contained report smoke.
+- Offline CLI: version succeeded; human/JSON doctor completed with 7/8 checks because this
+  Windows host advertises `cp1252` stdout; human/JSON headless demos each completed 4,320
+  model minutes with 2,042 events and no credentials.
+- Maximum 30-agent/7-day rules run: 13.98 seconds, 5,685 events, 2 MiB peak traced memory,
+  3,629,056-byte database, and 4,862,947-byte report.
+- Maximum spatial phone evaluation: 8.61 seconds for 6,048,000 eligible agent-minutes and
+  4,200 retained opportunities.

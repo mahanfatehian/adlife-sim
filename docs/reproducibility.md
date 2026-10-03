@@ -117,8 +117,9 @@ immutable city pack. The command writes no artifact and its fingerprint is not a
 advertising outcome. Passing the same validated document to
 `city-run --spatial-campaign` creates a schema-v5 artifact; the validation command by
 itself is still not a saved run. Older schema-v4 artifacts remain readable as
-opportunity-only evidence. The remaining C3 response/state work and C4 are responsible for
-causal downstream outcomes and metrics.
+opportunity-only evidence. The remaining C3 response/state work is responsible for any
+future causal downstream transition; the current metrics layer only summarizes persisted
+evidence.
 
 The pure C2 evaluator is nevertheless deterministic evidence. Continuous route crossings
 come from the same frozen paths and speeds as the unchanged minute trace. Crossing time is
@@ -141,6 +142,17 @@ the fixed 0.5 probability records noticed. Records are canonically ordered and c
 `synthetic-attention-not-observed-behavior`. This is deterministic, uncalibrated evidence,
 not observed behavior, and it cannot affect cognition, state, budget, movement or purchase
 probability.
+
+`adlife city-metrics ROOT ID` derives a canonical read-only projection only after complete
+schema-v5 artifact verification. Every value carries its exact numerator, denominator, and
+source paths plus `synthetic-metrics-not-observed-outcomes`. The projection is deterministic
+and uncalibrated; it is neither stored in the artifact nor presented as an observed outcome.
+`adlife city-compare ROOT CONTROL_ID TREATMENT_ID` requires identical city, assignment,
+trace model, seed, duration, and population provenance. Same-run A/A deltas are exactly zero.
+Different normalized placement/channel opportunity structure is classified
+`opportunity-confounded`, and every comparison carries
+`synthetic-comparison-not-causal-or-observed-effect`. Thus a differing structure cannot be
+silently interpreted as a channel effect.
 
 `adlife city-run PACK --output-root ROOT --run-id ID` or the catalog form
 `adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at
@@ -177,6 +189,8 @@ opening the read-only mobility timeline. For schema-v4 it also presents canonica
 persisted current-minute opportunity evidence; scrubbing or selecting an evidence record
 does not recompute, append to or mutate the source artifact. Schema-v5 additionally presents
 persisted current-minute attention evidence with the synthetic claim and 0.5 assumption. A
+schema-v5 viewer also derives the same receipt-bearing spatial metrics ledger in memory;
+viewing, scrubbing, metrics, and comparison never modify the saved artifact. A
 digest proves equality against that artifact, not authenticity against an owner rewriting
 all files. Identical frames are expected on a compatible implementation/runtime;
 cross-platform bitwise identity of floating-point interpolation is not claimed.

@@ -198,6 +198,8 @@ uv run adlife city-run --city-id fictional-grid-v2 --places places.json \
   --spatial-campaign spatial-campaign.json --output-root ./city-output \
   --run-id spatial-42 --agents 20 --days 3 --seed 42
 uv run adlife city-replay ./city-output spatial-42
+uv run adlife city-metrics ./city-output spatial-42
+uv run adlife city-compare ./city-output spatial-42 spatial-42
 ```
 
 The schema binds a scenario to the exact city hash, validates creative hashes, active
@@ -221,13 +223,24 @@ attention record says `synthetic-attention-not-observed-behavior`.
 
 `city-replay` recomputes and verifies both evidence layers without changing the source. For
 a verified schema-v5 run, `city-view` shows read-only current-minute opportunity and
-current-minute attention evidence on the map and in bounded evidence rails. Neither layer
-is sent to cognition or applied to agent state, memory, social propagation, budget,
-purchase probability, metrics or reports. Campaign copy, identity, creative content and
-provider configuration are not inputs to the attention draw. Older schema-v4 artifacts
-remain readable as opportunity-only evidence and do not fabricate attention. The remaining
-C3 response/state bridge and C4 metrics work remain open. Nothing here claims observed
-device use, viewability, attention, traffic, people, purchases, or sales.
+current-minute attention evidence on the map and in bounded evidence rails. The viewer also
+shows a read-only metrics ledger derived from those verified artifacts. Every metric carries
+its exact numerator, denominator, and source paths under the literal claim
+`synthetic-metrics-not-observed-outcomes`; no metric is calibrated to observed behavior.
+Neither evidence layer is sent to cognition or applied to agent state, memory, social
+propagation, budget, movement, or purchase probability. Campaign copy, identity, creative
+content and provider configuration are not inputs to the attention draw.
+
+`city-metrics` prints the same deterministic receipt-bearing projection without writing a
+cache or changing the run. `city-compare` accepts only matched city, assignment, trace,
+seed, duration, and population provenance. A same-run A/A comparison is exactly zero. When
+the normalized placement/channel opportunity structure differs, the result is explicitly
+`opportunity-confounded`, not a channel effect. Every comparison carries
+`synthetic-comparison-not-causal-or-observed-effect`. Older schema-v4 artifacts remain
+readable as opportunity-only evidence and do not fabricate attention. The C3 response/state
+bridge and C4b repeated-seed uncertainty and spatial reporting work remain open. Nothing
+here claims observed device use, viewability, attention, traffic, people, purchases, sales,
+or causal effects.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
