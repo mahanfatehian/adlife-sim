@@ -30,6 +30,13 @@ from adlife.core.experiments.metrics import (
     MetricValue,
     RunMetrics,
 )
+from adlife.core.experiments.spatial_metrics import (
+    SpatialMetricReceipt,
+    SpatialMetrics,
+    SpatialMetricSeries,
+    derive_spatial_metrics,
+    spatial_opportunity_structure_sha256,
+)
 
 __all__ = [
     "BOOTSTRAP_RESAMPLES",
@@ -45,7 +52,12 @@ __all__ = [
     "MetricsCalculator",
     "PairedStatistic",
     "RunMetrics",
+    "SpatialMetricReceipt",
+    "SpatialMetricSeries",
+    "SpatialMetrics",
+    "derive_spatial_metrics",
     "paired_statistics",
+    "spatial_opportunity_structure_sha256",
     "validate_paired_design",
     "validate_paired_manifests",
 ]
