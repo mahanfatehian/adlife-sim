@@ -116,10 +116,10 @@ eligible-activity input order, and its geometry evidence is derived from the sel
 immutable city pack. The command writes no artifact and its fingerprint is not an
 advertising outcome. Passing the same validated document to
 `city-run --spatial-campaign` creates a schema-v5 artifact; the validation command by
-itself is still not a saved run. Older schema-v4 artifacts remain readable as
-opportunity-only evidence. The remaining C3 response/state work is responsible for any
-future causal downstream transition; the current metrics layer only summarizes persisted
-evidence.
+itself is still not a saved run. C3a names schema-v4 opportunity persistence, C3b names the
+schema-v5 attention addition, and C3c adds a validated `--spatial-response` document to
+create a schema-v6 artifact with deterministic bounded response/state evidence. Older
+schema-v4 artifacts remain readable as opportunity-only evidence.
 
 The pure C2 evaluator is nevertheless deterministic evidence. Continuous route crossings
 come from the same frozen paths and speeds as the unchanged minute trace. Crossing time is
@@ -131,9 +131,10 @@ upper 53 bits form the `[0,1)` draw. Probability and cap are not part of that st
 so paired variants reuse common random numbers. Records are ordered by continuous time,
 agent, campaign, placement and channel; IDs hash scenario/city fingerprints and that
 canonical identity. Campaign, placement, window and activity input order and
-`PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4 and schema-v5 runs this same
-computation is also artifact replay: the frozen scenario is re-evaluated and the canonical
-stream and independently derived summary must match their manifest-bound evidence.
+`PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4, schema-v5, and
+schema-v6 runs this same computation is also artifact replay: the frozen scenario is
+re-evaluated and the canonical stream and independently derived summary must match their
+manifest-bound evidence.
 
 Schema-v5 then derives one attention record per opportunity. The draw is the upper 53 bits
 of SHA-256 over canonical model ID, root seed, agent, placement, channel and absolute model
@@ -143,10 +144,30 @@ the fixed 0.5 probability records noticed. Records are canonically ordered and c
 not observed behavior, and it cannot affect cognition, state, budget, movement or purchase
 probability.
 
+Schema-v6 then evaluates only the persisted noticed records against the canonical
+`inputs/spatial-response.json`. Response-input collection permutations are canonicalized and
+cannot change the result. The persisted attention stream must already have canonical record
+order: noncanonical persisted notice order is corruption and is refused rather than silently
+reordered. The response input binds the exact agent-ID set generated for the run but is not
+bound to one mobility assignment, which permits fixed response assumptions across mobility seeds; every
+saved run separately freezes and hashes its generated assignments. All notices for one
+agent/campaign in the same minute read one immutable pre-minute state and the same pre-minute
+fatigue counters; the evaluator combines their deltas canonically and commits one
+commutative, atomic state update. State remains campaign-scoped, finite, and bounded. The run
+model ID is
+`illustrative-road-spatial-response-study-v1`, the evaluator is `spatial-response-v1`, the
+summary is `spatial-response-artifact-v1`, and the final-state document is
+`spatial-response-state-v1`. Records carry
+`synthetic-response-not-observed-behavior`; purchase intention is an uncalibrated proxy, not
+purchase probability, sales, or a transaction.
+
 `adlife city-metrics ROOT ID` derives a canonical read-only projection only after complete
-schema-v5 artifact verification. Every value carries its exact numerator, denominator, and
-source paths plus `synthetic-metrics-not-observed-outcomes`. The projection is deterministic
-and uncalibrated; it is neither stored in the artifact nor presented as an observed outcome.
+schema-v5 or schema-v6 artifact verification. It remains attention-only for both schemas:
+the fold reads opportunity and attention evidence, records the exact source schema version,
+and does not consume response records or final campaign state. Every value carries its exact
+numerator, denominator, and source paths plus `synthetic-metrics-not-observed-outcomes`. The
+projection is deterministic and uncalibrated; it is neither stored in the artifact nor
+presented as an observed outcome.
 `adlife city-compare ROOT CONTROL_ID TREATMENT_ID` requires identical city, assignment,
 trace model, seed, duration, and population provenance. Same-run A/A deltas are exactly zero.
 Different normalized placement/channel opportunity structure is classified
@@ -178,19 +199,32 @@ hashes plus exact stream bytes/count, and is published last. The fixed claim sco
 `synthetic-opportunity-not-impression`. V5 also freezes
 `outputs/spatial-attention.jsonl` and `outputs/attention-summary.json`, binding their hashes,
 sizes, counts and the fixed model metadata. Schema-v4 is the retained opportunity-only
-predecessor.
+predecessor. When `--spatial-response` is also supplied, schema-v6 retains every v5 file and
+adds `inputs/spatial-response.json`, `outputs/spatial-responses.jsonl`,
+`outputs/response-state.json`, and `outputs/response-summary.json`. The final manifest binds
+the response input, stream, state, and summary receipts. `response_input_sha256` is the
+canonical response-input fingerprint excluding the saved file's trailing newline;
+`response_stream_sha256`, `response_state_sha256`, and `response_summary_sha256` hash exact
+persisted bytes, including JSONL line endings and the trailing newline in each
+single-document state/summary file. It also records exact stream bytes, response and
+state-update counts, campaign count, and complete final-state count. All files are written
+and verified before the final manifest is atomically published; a failed publication leaves
+a reserved, non-loadable directory rather than a partially trusted run.
 
 `adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
-without changing source files; for v4 and v5 it also recomputes and compares the normalized
-opportunity stream and summary, and for v5 it independently recomputes attention. A
-mismatch, partial publication or incompatible artifact
-is refused. `adlife city-view ROOT ID` performs the same load verification before
+without changing source files; for v4, v5, and v6 it also recomputes and compares the
+normalized opportunity stream and summary, for v5 and v6 it independently recomputes
+attention, and for v6 it re-evaluates the response stream, final-state document, and
+summary. A mismatch, partial publication, or incompatible artifact is refused.
+`adlife city-view ROOT ID` performs the same load verification before
 opening the read-only mobility timeline. For schema-v4 it also presents canonical,
 persisted current-minute opportunity evidence; scrubbing or selecting an evidence record
 does not recompute, append to or mutate the source artifact. Schema-v5 additionally presents
-persisted current-minute attention evidence with the synthetic claim and 0.5 assumption. A
-schema-v5 viewer also derives the same receipt-bearing spatial metrics ledger in memory;
-viewing, scrubbing, metrics, and comparison never modify the saved artifact. A
+persisted current-minute attention evidence with the synthetic claim and 0.5 assumption.
+Schema-v6 also presents persisted current-minute response/state-update records and complete
+final end-of-run state explicitly labeled as not state at the scrubbed minute. Schema-v5 and
+schema-v6 viewers derive the same attention-only, receipt-bearing spatial metrics ledger in
+memory; viewing, scrubbing, metrics, and comparison never modify the saved artifact. A
 digest proves equality against that artifact, not authenticity against an owner rewriting
 all files. Identical frames are expected on a compatible implementation/runtime;
 cross-platform bitwise identity of floating-point interpolation is not claimed.

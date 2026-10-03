@@ -192,7 +192,7 @@ Place input order does not change the fingerprint or keyed assignments. A workpl
 leisure selection cannot equal that agent's home node. The viewer presents place glyphs,
 the selected agent's three labels and provenance, but stays read-only.
 
-## Spatial campaign inputs (validation only)
+## Spatial campaign and response inputs
 
 A separate schema-v1 spatial campaign document can be checked against a local or catalog
 city before any advertising model exists:
@@ -239,22 +239,129 @@ its denominator.
 Every opportunity record says `synthetic-opportunity-not-impression`. The phone probability
 is not observed phone behavior; road proximity and approximate orientation are not measured
 visibility or attention. C2 remains pure; C3a added a schema-v4 storage adapter for the
-canonical opportunity stream and summary. C3b now adds a separate schema-v5 attention
-evidence layer: every opportunity becomes one synthetic impression and an
-order-independent keyed draw below the fixed 0.5 threshold is labeled noticed. The neutral
-probability is uncalibrated, identical across channels, and does not use campaign copy,
+canonical opportunity stream and summary. C3b adds a separate schema-v5 attention evidence
+layer: every opportunity becomes one synthetic impression and an order-independent keyed
+draw below the fixed 0.5 threshold is labeled noticed. The neutral probability is
+uncalibrated, identical across channels, and does not use campaign copy,
 campaign/creative identity or provider output. Every record says
 `synthetic-attention-not-observed-behavior`.
 
-The saved-run viewer can inspect persisted current-minute opportunity and current-minute
-attention evidence without changing it. No cognition, agent state, memory, social, budget,
-movement or purchase transition consumes these records, and no report treats them as
-outcomes. A separate read-only projection now summarizes them as receipt-bearing spatial
-metrics. Every value records its exact numerator, denominator, and source paths under
-`synthetic-metrics-not-observed-outcomes`; the fixed assumptions remain uncalibrated and
-the metrics are not observed outcomes. The remaining C3 response/state bridge and C4b
-repeated-seed uncertainty and spatial reporting work are still required before AdLife can
-run a complete geographic campaign study.
+C3c is an opt-in deterministic response layer. `--spatial-response` requires
+`--spatial-campaign`: supplying only `--spatial-campaign` preserves the schema-v5
+opportunity/attention contract, while supplying both creates schema-v6. The strict response
+JSON is bound to the exact city and scenario fingerprints. It contains one bounded trait
+profile for every member of the exact agent-ID set generated for the run, one set of
+relative-price/target-interest assumptions per scenario campaign, and a complete initial
+campaign-scoped state for every agent/campaign pair. It is not bound to one mobility
+assignment; each saved run separately freezes and hashes its generated assignments. Campaign
+and creative hashes must match the scenario. Only persisted `spatial.noticed` records produce
+responses; ignored impressions remain no-ops.
+
+This is the exact minimal schema-v1 JSON shape for one fictional agent and one campaign.
+Replace the hashes and IDs with the matching city/scenario values, then include one profile
+for every generated agent, one campaign entry for every scenario campaign, and the complete
+agent-by-campaign `initial_states` product. All six trait values, `recall_strength`, and
+`purchase_intention` are in `[0, 1]`; `brand_sentiment` is in `[-1, 1]`.
+
+<!-- spatial-response-input:start -->
+```json
+{
+  "schema_version": 1,
+  "city_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "scenario_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "profiles": [
+    {
+      "agent_id": "person-001",
+      "fictional": true,
+      "interests": ["coffee"],
+      "traits": {
+        "price_sensitivity": 0.5,
+        "novelty_seeking": 0.5,
+        "advertising_skepticism": 0.5,
+        "mobile_recall_encoding": 0.5,
+        "roadside_recall_encoding": 0.5,
+        "impulsivity": 0.5
+      }
+    }
+  ],
+  "campaigns": [
+    {
+      "campaign_id": "demo-campaign",
+      "creative_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "target_interests": ["coffee"],
+      "relative_price": 1.0
+    }
+  ],
+  "initial_states": [
+    {
+      "agent_id": "person-001",
+      "campaign_id": "demo-campaign",
+      "brand_sentiment": 0.0,
+      "recall_strength": 0.0,
+      "purchase_intention": 0.0
+    }
+  ]
+}
+```
+<!-- spatial-response-input:end -->
+
+`relative_price` is the dimensionless advertised price divided by an analyst-declared
+category reference price and must be in `(0, 100]`; this slice models neither currency nor a
+consumer budget. In the recall formula, `channel_recall_encoding` selects
+`mobile_recall_encoding` for `mobile-feed` and `roadside_recall_encoding` for
+`roadside-billboard`, after the attention model has already emitted a notice.
+
+The transparent `spatial-response-v1` evaluator uses these exact formulas (`clamp` limits a
+value to the stated interval and Jaccard is set intersection divided by set union):
+
+```text
+interest_match = Jaccard(profile interests, campaign target interests)
+affordability = clamp(1.25 - relative_price * price_sensitivity, 0, 1)
+value_match = 0.55 * interest_match + 0.25 * novelty_seeking + 0.20 * affordability
+frequency_fatigue = min(1, prior_notices_today / frequency_cap_per_agent_per_day)
+sentiment_delta = clamp(
+  0.18 * value_match - 0.12 * advertising_skepticism - 0.06 * frequency_fatigue,
+  -0.2, 0.2
+)
+recall_delta = clamp(
+  0.22 * channel_recall_encoding + 0.12 * novelty_seeking - 0.08 * frequency_fatigue,
+  0, 0.3
+)
+sentiment_after = clamp(sentiment_before + sum(sentiment_delta), -1, 1)
+recall_after = 1 - (1 - recall_before) * product(1 - recall_delta)
+purchase_intention_after = clamp(
+  0.40 * ((sentiment_after + 1) / 2) + 0.25 * value_match +
+  0.20 * recall_after + 0.15 * impulsivity,
+  0, 1
+)
+```
+
+All notices for an agent/campaign in the same minute read one immutable pre-minute state and
+the same pre-minute fatigue counters; they cannot affect one another while planning. Their
+bounded deltas are combined in canonical order and commit as one commutative, atomic state
+update. State is isolated by campaign. A later minute intentionally reads the committed
+state, and the daily placement notice counter resets by day without silently resetting the
+campaign state.
+
+Every response and state-update record says
+`synthetic-response-not-observed-behavior`. The run model is
+`illustrative-road-spatial-response-study-v1`; the evaluator is `spatial-response-v1`, the
+artifact summary is `spatial-response-artifact-v1`, and the final-state document is
+`spatial-response-state-v1`. Purchase intention is an uncalibrated bounded proxy, not
+purchase probability, sales, or a transaction. The slice adds no cognition, prose provider
+output, memory, social propagation, budget mutation, purchase event, or movement change.
+
+The saved-run viewer can inspect persisted current-minute opportunity and
+current-minute attention evidence without changing it. Schema-v6 additionally exposes current-minute
+response/state-update records and complete final end-of-run campaign state. A separate
+read-only projection summarizes opportunity and attention as receipt-bearing spatial
+metrics. For schema-v5 and schema-v6 this projection remains attention-only: it never folds
+response scores or final state into metrics. Every value records its exact numerator,
+denominator, and source paths under `synthetic-metrics-not-observed-outcomes`; the fixed
+assumptions remain uncalibrated and the metrics are not observed outcomes. C3 remains open
+for bounded cognition, memory, social propagation, and separately specified rule-owned
+purchase semantics. C4b repeated-seed uncertainty and self-contained spatial reporting
+also remain open.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
@@ -285,6 +392,7 @@ uv run adlife city-run city.json --output-root ./city-output --run-id study-42 -
 # alternatively: uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42
 # place-aware: add --places places.json (uses run manifest v3)
 # spatial opportunity + attention evidence: add --spatial-campaign spatial-campaign.json (uses schema-v5)
+# bounded response/state evidence: also add --spatial-response spatial-response.json (uses schema-v6)
 uv run adlife city-replay ./city-output study-42
 uv run adlife city-metrics ./city-output study-42
 uv run adlife city-compare ./city-output study-42 study-42
@@ -301,18 +409,31 @@ With `--spatial-campaign`, schema-v5 freezes `inputs/spatial-campaign.json`,
 manifest binds the scenario, stream and summary hashes plus exact stream bytes/count. It
 also freezes `outputs/spatial-attention.jsonl` and `outputs/attention-summary.json` and
 binds the attention model, fixed 0.5 probability, claim scope, hashes, bytes and counts.
-Earlier v1/v2/v3 runs and schema-v4 opportunity-only runs remain readable. `city-replay`
-refuses a changed,
+With `--spatial-response`, schema-v6 retains all v5 files and additionally freezes
+`inputs/spatial-response.json`, `outputs/spatial-responses.jsonl`,
+`outputs/response-state.json`, and `outputs/response-summary.json`. The v6 manifest binds
+their hash and count receipts before it is published last. `response_input_sha256` is the
+canonical response-input fingerprint excluding the saved file's trailing newline.
+`response_stream_sha256`, `response_state_sha256`, and `response_summary_sha256` hash exact
+persisted bytes, including the JSONL line endings and the trailing newline in each
+single-document state/summary file; the manifest also records stream bytes,
+response/state-update counts, campaign count, and complete final-state count. Earlier
+v1/v2/v3 runs and schema-v4 opportunity-only runs remain readable. `city-replay` refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
-API has no path or run-selection endpoint. For v4 and v5, a bounded summary endpoint and a
-canonical page of current-minute opportunity records drive the read-only evidence rail
-and map markers. V5 adds bounded summary and page endpoints for current-minute attention;
-noticed markers reflect only persisted model evidence. Selecting a record changes
-presentation only. The panels retain both literal synthetic claim scopes and create no
-downstream event. Schema-v5 runs also expose `/api/spatial-metrics` and a metrics evidence
-ledger. The response is derived only after full artifact validation and has exact
-numerator/denominator/source receipts; it is not written back to the run.
+API has no path or run-selection endpoint. For v4, v5, and v6, a bounded summary endpoint
+and a canonical page of current-minute opportunity records drive the read-only evidence rail
+and map markers. V5 and v6 add bounded summary and page endpoints for current-minute
+attention; noticed markers reflect only persisted model evidence. Selecting a record changes
+presentation only. The panels retain the literal synthetic claim scopes and create no
+downstream event. V6 adds `/api/response-summary`, paged `/api/response-events`, and paged
+`/api/response-state`. The state endpoint always labels its values
+`final-end-of-run-not-scrubbed-minute`: changing the timeline does not pretend that final
+state belongs to the scrubbed minute. Schema-v5 and schema-v6 runs also expose
+`/api/spatial-metrics` and a metrics evidence ledger. The projection is derived only after
+full artifact validation and has exact
+numerator/denominator/source receipts; it remains attention-only and is not written back to
+the run.
 `city-compare` requires matched city, assignment, trace, seed, duration, and population
 provenance. Identical A/A inputs produce exact-zero deltas. A different normalized
 placement/channel structure is labeled `opportunity-confounded`, and every result carries
@@ -323,9 +444,9 @@ it silently. Integrity hashes
 detect accidental or adversarial edits to individual files but do not authenticate
 against an owner who rewrites the entire artifact consistently.
 
-This is an early product-track slice. Authentication, provider/OAuth settings,
-spatial downstream campaign decisions, traffic data and population calibration are not
-implemented. Schema-v5 saved runs add opportunity and uncalibrated synthetic attention
-evidence to mobility; they do not affect cognition or purchase behavior and are not
+This is an early product-track slice. Authentication, provider/OAuth settings, traffic data
+and population calibration are not implemented. Schema-v6 saved runs add bounded,
+uncalibrated rule response and campaign-state evidence to schema-v5 opportunity/attention
+evidence; they do not add cognition, memory, social or purchase events and are not validated
 geographic advertising-outcome studies. Adding MBTI labels without
 evidence would not make behavior realistic and is deliberately deferred.

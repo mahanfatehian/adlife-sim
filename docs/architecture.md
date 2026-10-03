@@ -70,8 +70,8 @@ freezes `inputs/spatial-campaign.json`, streams canonical records to
 `outputs/spatial-opportunities.jsonl`, writes the independently derived
 `outputs/opportunity-summary.json`, and binds all three hashes, byte/count bounds and the
 mobility trace in the final manifest. Replay re-evaluates the frozen inputs and compares
-the normalized stream and summary. This storage boundary is not the remaining C3 causal
-bridge: no opportunity reaches cognition, agent state, purchase logic, metrics or reports.
+the normalized stream and summary. An opportunity alone does not reach cognition, agent
+state, purchase logic, or the later response rules.
 
 `core/simulation/spatial_attention.py` is the separate C3b evidence boundary. For each
 validated opportunity it emits exactly one synthetic impression and uses an
@@ -83,6 +83,31 @@ the draw key, so they cannot control notice. Records carry the literal claim
 create arbitrary domain events, mutate agent state or budget, change movement, or affect
 purchase probability.
 
+`core/domain/spatial_response.py` and `core/simulation/spatial_response.py` form the C3c
+rules-only response boundary. `--spatial-response` supplies strict, finite fictional agent
+traits, campaign assumptions, and complete initial campaign-scoped state bound to the exact
+agent-ID set generated for the run and to the exact city, scenario, campaign IDs, and
+creative hashes. It is deliberately not bound to one mobility assignment; every saved run
+separately freezes and hashes its generated assignments. Only a validated persisted
+`spatial.noticed` record can cause a `spatial.response`; ignored impressions are no-ops.
+All notices for the same agent and campaign in the same minute read the same immutable
+pre-minute state, then commit one commutative, atomic state update. The evaluator is
+`spatial-response-v1`; the run model is `illustrative-road-spatial-response-study-v1`, the
+summary model is `spatial-response-artifact-v1`, and the final-state document model is
+`spatial-response-state-v1`. Every response and state-update JSONL record carries
+`synthetic-response-not-observed-behavior`; the final-state document carries the claim at its
+top level rather than on each state entry.
+
+Schema-v6 freezes `inputs/spatial-response.json`, canonical response and state-update
+records in `outputs/spatial-responses.jsonl`, complete end-of-run campaign state in
+`outputs/response-state.json`, and its independent receipt document in
+`outputs/response-summary.json`. Manifest-last publication binds the canonical response-input
+fingerprint plus exact persisted stream, state-document, and summary hashes, bytes, and
+counts; replay re-evaluates frozen v6 inputs and refuses any mismatch. Purchase intention is
+a bounded, uncalibrated proxy, not purchase probability or sales. This boundary creates no
+provider call, prose cognition, memory, social propagation, budget mutation, purchase event,
+movement decision, or arbitrary identity.
+
 The city adapter owns file and package-resource loading. Its packaged catalog is an
 offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
 matching ID/schema/metadata before selection. The only bundled entry is
@@ -93,7 +118,7 @@ viewing do not contact a public tile service or geocoder and do not accept an ar
 resource URL.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5
+misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6
 `CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
 `CityRunStore`; v1-v3 remain mobility-only.
 V3 freezes the canonical place set and its generated assignment document alongside the
@@ -102,18 +127,23 @@ V4 additionally freezes the validated spatial scenario, opportunity stream and s
 V5 adds canonical `outputs/spatial-attention.jsonl` and
 `outputs/attention-summary.json`, with their hashes, sizes, counts, fixed model identity,
 0.5 probability and claim scope bound into the manifest.
+V6 retains all v5 evidence and adds the four manifest-bound C3c response artifacts described
+above; ordinary `--spatial-campaign` runs remain v5, while `--spatial-response` selects v6.
 `city-run` publishes the manifest last,
-`city-replay` regenerates every minute before reporting equality, and `city-view`
-validates before serving one immutable mobility projection. For V4 and V5, the same
+`city-replay` regenerates every minute and each applicable evidence layer before reporting
+equality, and `city-view`
+validates before serving one immutable mobility projection. For V4 through V6, the same
 loopback-only adapter serves a bounded summary and canonical, paged
-current-minute opportunity evidence; V5 additionally serves current-minute attention
-evidence. It does not create or mutate evidence. V4 remains opportunity-only evidence,
-while V5 adds bounded synthetic attention evidence. Neither is an event-sourced
-advertising-outcome run; the remaining C3 response/state bridge requires a separate
-contract and tests.
+current-minute opportunity evidence; V5 and V6 additionally serve current-minute attention
+evidence. V6 adds bounded current-minute response records plus final end-of-run campaign
+state, explicitly not state at the scrubbed minute. It does not create or mutate evidence.
+V4 remains opportunity-only evidence, V5 adds bounded synthetic attention evidence, and V6
+adds bounded rules-only response evidence; none is an observed advertising-outcome run.
 
-The adapter-free core also exposes a read-only spatial-metrics projection over a verified
-V5 artifact. Each value has an exact numerator, denominator, and source paths and carries
+The adapter-free core also exposes a read-only spatial-metrics projection over verified V5
+and V6 artifacts. The projection is deliberately attention-only in both schemas: it folds
+opportunity and attention evidence, not response or final-state evidence. Each value has an
+exact numerator, denominator, and source paths and carries
 `synthetic-metrics-not-observed-outcomes`; it is deterministic and uncalibrated, not an
 observed outcome. The matched comparison layer requires identical city, assignment, trace,
 seed, duration, and population provenance. It guarantees exact-zero A/A deltas and labels

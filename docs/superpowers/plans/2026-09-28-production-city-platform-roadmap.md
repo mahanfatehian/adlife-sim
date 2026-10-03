@@ -212,10 +212,11 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   the full causal bridge. Schema-v4 city runs freeze the validated scenario, canonical
   `synthetic-opportunity-not-impression` JSONL stream and independent funnel summary;
   manifest hashes/byte/count bounds, final-manifest publication, corruption tests,
-  deterministic replay and installed-wheel smoke cover the artifact. C3 remains open:
-  these opportunities do not yet drive cognition, agent state, purchases, metrics,
-  or reports. A subsequent bounded UI slice exposes validated current-minute opportunity
-  evidence in the read-only saved-run viewer without adding any causal transition.
+  deterministic replay and installed-wheel smoke cover the artifact. At that slice,
+  opportunities did not drive cognition, agent state, purchases, metrics, or reports. A
+  subsequent bounded UI slice exposed validated current-minute opportunity evidence in the
+  read-only saved-run viewer without adding a causal transition; C3b/C3c and C4a below record
+  the later bounded additions.
 
   **C3b evidence (2026-10-02):** schema-v5 adds a second immutable, replay-verified
   evidence layer: one synthetic impression per opportunity and a deterministic noticed
@@ -223,7 +224,18 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   `attention-summary.json` are manifest-bound and exposed through bounded read-only API/UI
   views. Every record says `synthetic-attention-not-observed-behavior`; the model is
   uncalibrated and cannot affect cognition, state, budget, movement or purchase logic.
-  C3 remains open for that response/state bridge.
+
+  **C3c evidence (2026-10-03):** schema-v6 optionally freezes a strict response input and
+  converts only persisted notices through the transparent `spatial-response-v1` rule model.
+  Canonical response/state-update JSONL, complete final campaign state and an independent
+  summary are manifest-bound, replayed, and exposed read-only in the saved-run viewer. Every
+  record says `synthetic-response-not-observed-behavior`; same-minute planning reads one
+  immutable pre-minute state and commits one atomic campaign-scoped update. Purchase
+  intention is an uncalibrated state proxy, not a probability, sale, or transaction.
+
+  C3 remains open because C3c does not integrate bounded cognition, memory, social
+  propagation, or the separately specified rule-owned purchase path with spatial studies;
+  it also does not join the zone engine or create a complete geographic campaign model.
 - [ ] **C4 — Extend spatial metrics, comparison and reports.** Derive opportunity,
   impression, notice, recall/social and proxy metrics from persisted events with
   provenance; implement matched geographic A/A and paired A/B with common random
@@ -231,8 +243,9 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   label its confounding. Tests verify exact A/A zero, input-order invariance,
   replay equivalence, zero denominators and artifact-derived report values.
 
-  **C4a evidence (2026-10-03):** verified schema-v5 artifacts now have a pure read-only
-  spatial metrics projection with exact numerator/denominator/source receipts and literal
+  **C4a evidence (2026-10-03):** verified schema-v5 and schema-v6 artifacts now have a pure
+  read-only, attention-only spatial metrics projection with exact
+  numerator/denominator/source receipts and literal
   `synthetic-metrics-not-observed-outcomes` scope. `city-metrics`, a bounded viewer API/UI
   ledger, and installed-wheel smoke expose the same deterministic model without adding a
   cache or artifact schema. Matched `city-compare` requires city/assignment/trace/seed/
@@ -404,6 +417,13 @@ the focused plan or milestone evidence document.
    the next dependency-unblocked package and whether the branch is pushed. No plan
    itself authorizes a push, remote change, deployment or publication.
 
-Current ledger (2026-09-28, before this roadmap's implementation): **A1–G5 are
-unchecked.** The original zone engine and city pilot are a functioning baseline,
-not evidence that any production-track gate above has passed.
+Current ledger (2026-10-03, after the bounded C3c slice): **A1–A4, B6, C1, and C2 are
+checked.** Technical foundations also include city-pack v2/import/catalog work, C3a
+opportunity storage, C3b attention evidence, C3c response/state evidence, C4a read-only
+metrics/comparison, and bounded local viewer slices. Those foundations do not close the
+unchecked parent gates: B1–B5 still require the relevant data-product, rights, qualification,
+scale, and basemap decisions; C3 still requires the broader cognition/memory/social/purchase
+integration described above; C4 remains open for C4b repeated-seed uncertainty and spatial
+reports; D–G retain their unchecked production, identity, calibration, operational, and
+enterprise gates. No rights-reviewed real city, authentication boundary, or external-validity
+evidence is claimed by this ledger.

@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic source hashing and quality counts, stable segment identities, and
   refusal of access/turn semantics the model cannot represent. Import and catalog
   workflows stay offline and do not contact public tiles or geocoders.
+- **C3c spatial response evidence** — `city-run --spatial-response` now requires a
+  validated `--spatial-campaign` and creates a replay-verified schema-v6 artifact. The
+  transparent `spatial-response-v1` evaluator converts only persisted noticed records into
+  bounded campaign-scoped state under `synthetic-response-not-observed-behavior`; it adds
+  no provider call, purchase event, budget mutation, or movement change. The saved-run
+  viewer exposes verified response evidence and explicitly scoped final end-of-run state.
 - **Announcement-readiness hardening** — regression coverage for hybrid provider
   identity, non-destructive replay, the cognition fallback across ticks, the CLI
   error boundary, and documentation consistency (tick scale pinned by a doc test).

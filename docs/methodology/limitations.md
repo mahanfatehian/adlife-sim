@@ -58,38 +58,42 @@ What this model cannot support. Read alongside the
 ## Engineering caveats
 
 - **Geographic mobility is a separate pilot.** `adlife city` can show up to 250
-  fictional agents for up to 31 days on a local directed road graph. It is not joined
-  to impressions, purchases, or social influence. The bounded `city-run` path
-  can persist a city artifact for up to 30 agents and seven days;
-  `city-replay` verifies every normalized minute-frame digest, and `city-view` observes
-  the validated saved state. These are not campaign-engine run artifacts. The packaged,
+  fictional agents for up to 31 days on a local directed road graph; that ephemeral viewer
+  does not create an advertising artifact. The bounded `city-run` path can persist a city
+  artifact for up to 30 agents and seven days, optionally with spatial campaign evidence;
+  `city-replay` verifies every normalized minute-frame/evidence digest, and `city-view`
+  observes the validated saved state. These are not zone campaign-engine run artifacts. The packaged,
   offline, content-addressed catalog contains only the `fictional-grid-v2` fixture; no
   real city is catalog-qualified. A local real street extract supplies geography, not
   real residents, measured traffic, legal navigation routes, or validated effects.
   Optional place sets constrain synthetic home, workplace and leisure nodes with stated
   provenance and deterministic assignment. They do not model land-use capacity, household
   composition, job matching, venue preference or observed origin-destination demand.
-- **Spatial opportunity and attention are bounded model evidence.** `city-campaign validate` checks
-  hashes, references, windows, caps, direction and road-coordinate consistency. C2 can
-  derive typed opportunities and explicit funnel denominators. C3a schema-v4 city runs
-  persist and replay that canonical stream and its summary. Every record retains the
-  literal claim `synthetic-opportunity-not-impression`. C3b schema-v5 runs add one synthetic
-  impression per opportunity and a keyed noticed/ignored label using a fixed 0.5 probability;
-  each carries `synthetic-attention-not-observed-behavior`. This threshold is uncalibrated
-  and is not observed attention. The read-only saved-run viewer can display persisted
-  current-minute opportunity and attention evidence, but this presentation adds no response
-  or outcome semantics. Neither evidence layer affects cognition, agent state, budget,
-  movement, or purchase probability. The C4a read-only metrics projection summarizes those
-  verified files with exact numerator, denominator, and source paths under
-  `synthetic-metrics-not-observed-outcomes`; it remains uncalibrated and is not an observed
-  outcome.
-  Road proximity and the half-plane orientation heuristic omit occlusion, lanes,
-  buildings, traffic, speed variation and measured viewability. Phone probability is an
-  analyst assumption, not an observed usage rate. Matched comparisons carry
-  `synthetic-comparison-not-causal-or-observed-effect`; if the normalized placement/channel
-  structure differs they are labeled `opportunity-confounded`, not interpreted as a channel
-  effect. The remaining C3 response/state bridge and C4b repeated-seed uncertainty and
-  spatial reporting work are intentionally unresolved.
+- **Spatial opportunity and attention are bounded model evidence.** `city-campaign validate`
+  checks hashes, references, windows, caps, direction and road-coordinate consistency. C2
+  derives typed opportunities and explicit funnel denominators. C3a schema-v4 city runs
+  persist and replay that canonical stream under `synthetic-opportunity-not-impression`.
+  C3b schema-v5 runs add one synthetic impression per opportunity and a keyed
+  noticed/ignored label using a fixed 0.5 probability under
+  `synthetic-attention-not-observed-behavior`. The threshold is uncalibrated and is not
+  observed attention. For schema-v5 and schema-v6, the C4a spatial metrics remain
+  attention-only: they summarize verified opportunity/attention files, not response state,
+  with exact numerator, denominator, and source paths under
+  `synthetic-metrics-not-observed-outcomes`.
+- **Schema-v6 response state is an illustrative rules model, not observed behavior.** Only
+  a validated noticed record can produce a bounded response and campaign-scoped state
+  update under `synthetic-response-not-observed-behavior`. Purchase intention is an
+  uncalibrated internal proxy, not purchase probability, sales, or a transaction. Schema-v6
+  adds no cognition, memory, social propagation, budget mutation, purchase event, or
+  movement change. It does not join the zone simulator or make the city population
+  calibrated. C3 therefore remains open for those broader causal mechanisms.
+- **Geographic evidence omits important mechanisms.** Road proximity and the half-plane
+  orientation heuristic omit occlusion, lanes, buildings, traffic, speed variation and
+  measured viewability. Phone probability is an analyst assumption, not an observed usage
+  rate. Matched comparisons carry `synthetic-comparison-not-causal-or-observed-effect`; if
+  the normalized placement/channel structure differs they are labeled
+  `opportunity-confounded`, not interpreted as a channel effect. C4b repeated-seed
+  uncertainty and self-contained spatial HTML report integration remain unresolved.
 - **Time-zone metadata is not a civil-time model.** City-pack v2 records an IANA time
   zone, but the fixed schedule treats day 1 as Monday, has no start date, holidays or
   daylight-saving transition policy, and uses fixed light/dark hours rather than local

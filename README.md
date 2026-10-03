@@ -86,9 +86,10 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Complete command-line interface | Complete |
 | Live terminal user interface | Complete |
 | Self-contained HTML reports | Complete |
-| Opt-in deterministic street-mobility pilot, city-pack v2, saved/replayable traces, local web timeline, and offline OSM extract importer | Initial pilot; separate from campaign engine |
+| Opt-in deterministic street-mobility pilot, city-pack v2, saved/replayable spatial evidence, local web timeline, and offline OSM extract importer | Initial product-track pilot; separate from the zone campaign engine |
+| Schema-v6 spatial rule responses and campaign-scoped state over persisted notices | C3c evidence complete; uncalibrated and not a purchase or sales model |
 | Verified offline, content-addressed city catalog with one `fictional-fixture` entry | Foundation complete; no real city is qualified |
-| Rights-reviewed real-city entries, geographic campaign effects, authenticated provider settings | Not implemented |
+| Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
 | Package-index publication (PyPI) and public tagged releases | Not performed by this audit |
@@ -197,7 +198,11 @@ uv run adlife city-campaign validate spatial-campaign.json --city-id fictional-g
 uv run adlife city-run --city-id fictional-grid-v2 --places places.json \
   --spatial-campaign spatial-campaign.json --output-root ./city-output \
   --run-id spatial-42 --agents 20 --days 3 --seed 42
+uv run adlife city-run --city-id fictional-grid-v2 --places places.json \
+  --spatial-campaign spatial-campaign.json --spatial-response spatial-response.json \
+  --output-root ./city-output --run-id response-42 --agents 20 --days 3 --seed 42
 uv run adlife city-replay ./city-output spatial-42
+uv run adlife city-replay ./city-output response-42
 uv run adlife city-metrics ./city-output spatial-42
 uv run adlife city-compare ./city-output spatial-42 spatial-42
 ```
@@ -221,41 +226,61 @@ order-independent keyed draw records noticed when it is below the fixed neutral 
 0.5. That value is an uncalibrated research assumption, not observed attention, and every
 attention record says `synthetic-attention-not-observed-behavior`.
 
-`city-replay` recomputes and verifies both evidence layers without changing the source. For
-a verified schema-v5 run, `city-view` shows read-only current-minute opportunity and
-current-minute attention evidence on the map and in bounded evidence rails. The viewer also
-shows a read-only metrics ledger derived from those verified artifacts. Every metric carries
-its exact numerator, denominator, and source paths under the literal claim
-`synthetic-metrics-not-observed-outcomes`; no metric is calibrated to observed behavior.
-Neither evidence layer is sent to cognition or applied to agent state, memory, social
-propagation, budget, movement, or purchase probability. Campaign copy, identity, creative
-content and provider configuration are not inputs to the attention draw.
+`--spatial-response` requires `--spatial-campaign`. A spatial campaign without a response
+input remains schema-v5 opportunity/attention evidence. Supplying both produces a schema-v6
+run under `illustrative-road-spatial-response-study-v1`: only persisted noticed records enter
+the deterministic `spatial-response-v1` evaluator. The input, canonical response/state
+stream, complete final campaign-scoped state, and summary are manifest-bound as
+`inputs/spatial-response.json`, `outputs/spatial-responses.jsonl`,
+`outputs/response-state.json`, and `outputs/response-summary.json`. Every `spatial.response`
+and `spatial.state-updated` stream record carries the claim scope
+`synthetic-response-not-observed-behavior`; the final-state document carries that claim once
+at top level instead of repeating it on each state entry. Purchase intention is a bounded,
+uncalibrated state proxy, not purchase probability, a sale, or a transaction; this slice
+adds no cognition, memory, social propagation, budget mutation, purchase event, or movement
+change.
 
-`city-metrics` prints the same deterministic receipt-bearing projection without writing a
-cache or changing the run. `city-compare` accepts only matched city, assignment, trace,
+`city-replay` recomputes and verifies every layer without changing the source. For verified
+schema-v5 and schema-v6 runs, `city-view` shows read-only current-minute opportunity and
+current-minute attention evidence on the map and in bounded evidence rails; schema-v6 also
+shows response records and complete end-of-run campaign state. The viewer's spatial metrics
+ledger remains attention-only for both schema versions: every metric is derived solely from
+opportunity and attention evidence and carries its exact numerator, denominator, and source
+paths under `synthetic-metrics-not-observed-outcomes`. No metric is calibrated to observed
+behavior. Campaign copy, identity, creative content and provider configuration are not inputs
+to the attention draw. In the response model, campaign ID routes each notice to its campaign
+assumptions and campaign-scoped state. Campaign name, copy, creative hash and provider
+configuration do not change numeric response values when the frozen response assumptions
+remain fixed.
+
+`city-metrics` prints that same deterministic attention-only, receipt-bearing projection
+without writing a cache or changing the schema-v5 or schema-v6 run. `city-compare` accepts
+only matched city, assignment, trace,
 seed, duration, and population provenance. A same-run A/A comparison is exactly zero. When
 the normalized placement/channel opportunity structure differs, the result is explicitly
 `opportunity-confounded`, not a channel effect. Every comparison carries
 `synthetic-comparison-not-causal-or-observed-effect`. Older schema-v4 artifacts remain
-readable as opportunity-only evidence and do not fabricate attention. The C3 response/state
-bridge and C4b repeated-seed uncertainty and spatial reporting work remain open. Nothing
-here claims observed device use, viewability, attention, traffic, people, purchases, sales,
-or causal effects.
+readable as opportunity-only evidence and do not fabricate attention or response state. C3
+remains open for bounded cognition, memory, social propagation, and separately specified
+rule-owned purchase semantics; C4b repeated-seed uncertainty and self-contained spatial
+reporting also remain open. Nothing here claims observed device use, viewability, attention,
+traffic, people, purchases, sales, or causal effects.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
 terminal window for you.
 
 `city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
-schema-v5 spatial runs additionally persist opportunity and attention evidence. `city-replay`
-verifies the selected contract without changing source artifacts, and `city-view` opens its
-verified mobility projection plus persisted current-minute opportunity and current-minute
-attention evidence in the same read-only local timeline.
+schema-v5 spatial runs additionally persist opportunity and attention evidence, and
+schema-v6 runs add the bounded response/state layer above. `city-replay` verifies the
+selected contract without changing source artifacts, and `city-view` opens its verified
+mobility projection plus persisted evidence in the same read-only local timeline.
 
 This remains an early geographic research slice, not a calibrated advertising outcome
-model: its synthetic impression and fixed-0.5 notice labels are model evidence, not measured
-behavior. It does not simulate calibrated residents or traffic or predict purchases or
-sales. A real street network improves spatial fidelity but does not validate agent behavior.
+model: its synthetic impression, fixed-0.5 notice label, response score, and purchase
+intention proxy are model evidence, not measured behavior. It does not simulate calibrated
+residents or traffic or predict purchases or sales. A real street network improves spatial
+fidelity but does not validate agent behavior.
 City-pack format and scientific boundaries are in [docs/city-pilot.md](docs/city-pilot.md).
 
 ---

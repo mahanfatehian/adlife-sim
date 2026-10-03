@@ -281,26 +281,80 @@ FastAPI, vanilla HTML/CSS/JavaScript, pytest/Hypothesis/Playwright, Ruff, mypy a
 - Produces truthful v5/v6 documentation, a clean-wheel rules-only response run/replay/
   metrics/viewer smoke, and current roadmap/status text. C3 remains open.
 
-- [ ] **Step 1: Write failing executable documentation/smoke assertions.** Pin the option,
+- [x] **Step 1: Write failing executable documentation/smoke assertions.** Pin the option,
   filenames, schema/model/claim IDs, response receipts, v5/v6 distinction, source hash
   immutability, packaged UI resources and explicit exclusion of cognition, memory, social,
   budgets, purchases, calibration and spatial HTML reports.
-- [ ] **Step 2: Reconcile public docs and stale status.** Explain formulas, atomic minute
+- [x] **Step 2: Reconcile public docs and stale status.** Explain formulas, atomic minute
   semantics, campaign-scoped state, limitations and replay receipts; update the production
   design's obsolete starting-state wording, roadmap ledger and changelog without claiming
   C3, C4b, real-city qualification or external validity complete.
-- [ ] **Step 3: Extend exact-wheel smoke with a generated fictional response input.** Create
+- [x] **Step 3: Extend exact-wheel smoke with a generated fictional response input.** Create
   schema v6, replay it, derive attention-only metrics/A/A, prove all source hashes unchanged
   and verify the packaged response API/UI resources without network access.
-- [ ] **Step 4: Run focused packaging/documentation tests.**
+- [x] **Step 4: Run focused packaging/documentation tests.**
   Run: `uv run pytest -q tests/packaging tests/security tests/architecture`
   Expected: all pass.
-- [ ] **Step 5: Run the full release-quality matrix.** Run locked sync, Ruff format/lint,
+- [x] **Step 5: Run the full release-quality matrix.** Run locked sync, Ruff format/lint,
   strict mypy, full pytest, `PYTHONHASHSEED=0`, `PYTHONHASHSEED=12345`, branch coverage,
   build, exact-wheel smoke, offline doctor/demo, response/spatial performance gates and
   `git diff --check`. Run a local frozen build only when supported and available; make no
   claim about unexecuted OS builds.
-- [ ] **Step 6: Request a fresh whole-branch review and make one TDD fix pass for every
+- [x] **Step 6: Request a fresh whole-branch review and make one TDD fix pass for every
   critical/important finding.** Record rulings and deferred minors in the execution ledger.
-- [ ] **Step 7: Record exact evidence, commit and push.**
+- [x] **Step 7: Record exact evidence, commit and push.**
   Commit: `docs(city): document spatial response studies`
+
+**Execution evidence (2026-10-03):**
+
+- Documentation and smoke work started RED. Four executable documentation-contract cases
+  failed before public prose was reconciled; a subsequent focused README case also failed
+  before campaign routing and claim placement were corrected. Six smoke assertions failed
+  before schema-v6 response generation, replay, viewer and isolation support existed. The
+  first real installed-wheel run then exposed an invalid `response_count` probe lookup.
+- The public contract now defines the schema-v1 response input shape, exact formulas and
+  bounds, advertised/reference `relative_price`, channel-specific recall encoding,
+  campaign/agent-ID binding, atomic same-minute semantics, canonical-versus-persisted hash
+  boundaries and the v5/v6 distinction. It explicitly keeps C3, C4b, real-city
+  qualification, calibration, authentication and external validity open. Documentation
+  contract suite: `32 passed in 0.72s`.
+- The exact-wheel smoke creates a two-agent fictional schema-v6 run, verifies every response
+  receipt and all four response files, derives attention-only metrics, proves exact-zero A/A,
+  replays every response receipt, hashes source files after each read-only boundary, and
+  probes the installed ASGI response/metrics API and packaged HTML/CSS/JavaScript without
+  binding a socket. The final standalone smoke reported a `4,862,319`-byte self-contained
+  report and `schema-v6 response API/UI verified without network`.
+- The smoke executes from a fresh child environment, verifies imported module origins under
+  child `purelib`, refuses a pre-existing guard, decodes UTF-8 strictly, requires exactly one
+  JSON document on stdout, and installs an audited network deny hook before application
+  imports. It permits numeric loopback needed by the runtime but denies external connect,
+  bind, send, `sendmsg` and DNS audit paths. Runtime children remove Python/venv/loader,
+  credential-like, package-index/proxy and auth-agent/config injection; install children
+  retain only narrow registry/proxy/index settings. The final review reproduced a real host
+  `API_KEY_21ST` leak, added two RED regressions, fixed it, and finished with `24 passed in
+  38.41s`; no critical, important or blocking review finding remains.
+- Focused final boundary gate:
+  `uv run pytest -q tests/packaging tests/security tests/architecture` ->
+  `1005 passed, 4 skipped in 102.53s`. Ruff format reported `295 files already formatted`,
+  Ruff lint passed, strict mypy reported `Success: no issues found in 120 source files`, and
+  `git diff --check` passed.
+- Full final suite: `3797 passed, 22 skipped in 713.04s`. Independent full hash-seed runs
+  produced the same counts: `PYTHONHASHSEED=0` in `485.60s` and
+  `PYTHONHASHSEED=12345` in `660.37s`. Branch coverage ran all tests in `1330.25s` and reached
+  `90.84%`, above the configured `85%` floor.
+- `uv build --no-sources` built both `dist/adlife_sim-0.1.0.tar.gz` and the exact
+  `dist/adlife_sim-0.1.0-py3-none-any.whl`. The local Windows PyInstaller build also
+  completed and its exact executable passed version, offline doctor, catalog, city run/
+  replay, project init, rules run and self-contained report smoke; no claim is made for
+  unexecuted local macOS/Linux frozen builds.
+- Offline CLI verification passed for version, headless demo and JSON headless demo. Both
+  demos completed at minute `4320` with `2042` events and no credentials. Captured JSON mode
+  produced exactly one JSON stdout line and one human note on stderr. Doctor reported the
+  host's documented `cp1252` warning (`7/8`, exit zero); with `PYTHONUTF8=1` the source-tree
+  command reported `8/8`. The frozen console retained the same environmental `cp1252`
+  warning while all functional checks passed.
+- Uninstrumented performance evidence: the 30-agent/seven-day rules run completed in
+  `19.58s` under the machine-specific `40.0s` ceiling with `5685` events, `2 MiB` traced
+  peak memory, a `3,629,056`-byte database and `4,862,947`-byte report. The maximum spatial
+  phone evaluator processed `6,048,000` eligible agent-minutes and retained `4200`
+  opportunities in `12.24s` under its `30.0s` ceiling.

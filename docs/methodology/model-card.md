@@ -5,20 +5,25 @@ trusted. Read this before quoting any number the simulator produces.
 
 ## Intended use
 
-The opt-in city mobility viewer is a separate prototype, not a spatial extension of
-the advertising results. Its packaged, content-addressed catalog currently contains
-only the `fictional-grid-v2` fixture; a rights-reviewed real city has not shipped. A
-street pack acquired under appropriate rights can provide real geography, but the
-agents, schedules and speeds remain synthetic and uncalibrated. Spatial campaign documents
-can be validated against roads, and the pure core can derive bounded synthetic opportunity
-records. A schema-v5 `city-run` freezes those records plus a separate attention evidence
-stream: one synthetic impression per opportunity and noticed when an independent keyed draw
-is below the fixed 0.5 probability. The records say
+The opt-in city path is a separate product-track prototype alongside the zone campaign
+engine. Its packaged, content-addressed catalog currently contains only the
+`fictional-grid-v2` fixture; a rights-reviewed real city has not shipped. A street pack
+acquired under appropriate rights can provide real geography, but the agents, schedules and
+speeds remain synthetic and uncalibrated. Spatial campaign documents can be validated
+against roads, and the pure core can derive bounded synthetic opportunity records. A
+schema-v5 `city-run` freezes those records plus a separate attention evidence stream: one
+synthetic impression per opportunity and noticed when an independent keyed draw is below
+the fixed 0.5 probability. The records say
 `synthetic-attention-not-observed-behavior`; the probability is not calibrated or observed.
-The read-only map can display current-minute opportunity and current-minute attention
-evidence, but neither reaches cognition, state, budget or purchase logic and neither is a
-response or outcome. Both evidence layers are persisted and replayed from frozen inputs;
-older schema-v4 runs remain opportunity-only.
+The read-only map displays current-minute opportunity and current-minute attention evidence.
+
+An opt-in schema-v6 run adds deterministic campaign-scoped response state for persisted
+notices under `synthetic-response-not-observed-behavior`. Its purchase intention is an
+uncalibrated bounded proxy, not a purchase probability, sales estimate, or transaction.
+Schema-v6 adds no cognition, memory, social propagation, budget mutation, purchase event, or
+movement change. All spatial evidence is persisted and replayed from frozen inputs; older
+schema-v4 runs remain opportunity-only and ordinary schema-v5 runs remain
+opportunity/attention-only.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -88,7 +93,7 @@ source provenance, but it contains no real-person trajectories. Its IANA time zo
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
 pilot can optionally assign synthetic home, workplace and leisure points supplied in a
 pack-hash-bound place set. Those points must be routable road nodes, carry explicit
-authored/source-derived/inferred provenance, and are frozen for v3/v4/v5 replay; they are
+  authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6 replay; they are
 scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
 sunrise/sunset calculation, measured demand or calibrated traffic. Import validation
@@ -113,9 +118,23 @@ Schema-v4 city artifacts persist and replay that stream and its independent summ
 Schema-v5 additionally persists deterministic attention model v1 at the fixed 0.5 notice
 probability. Every opportunity creates one model impression; a threshold success creates a
 noticed label carrying `synthetic-attention-not-observed-behavior`. This uncalibrated layer
-excludes campaign/provider inputs from its draw and cannot reach cognition, agent state,
-or purchase logic. The read-only city viewer presents persisted current-minute opportunity
-and current-minute attention evidence alongside mobility.
+excludes campaign/provider inputs from its draw. The attention evaluator itself does not
+mutate cognition, agent state, or purchase logic, and schema-v5 stops at this evidence. The
+read-only city viewer presents persisted current-minute opportunity and current-minute
+attention evidence alongside mobility.
+
+Schema-v6 retains that evidence and sends persisted noticed records across a separate
+response boundary into the transparent rules-only response model. Strict response inputs
+bind fictional interests and bounded traits, campaign target interests/relative price, and
+complete initial state to the exact agent-ID set generated for the run and to the exact
+scenario, not to one mobility assignment. Same-minute responses read a shared immutable
+pre-minute state and commit one atomic campaign-scoped state update. Every
+response/state-update stream record carries
+`synthetic-response-not-observed-behavior`; the final-state document carries the claim at its
+top level rather than on every state entry. The resulting sentiment, recall, and purchase
+intention values are synthetic internal state: purchase intention is not purchase
+probability, sales, or evidence of effect, and the formulas are not calibrated to any real
+person, city, brand, or population.
 
 ## Metrics
 
@@ -125,9 +144,10 @@ intention delta, high-intention count, purchases, and cognition counters — eac
 numerator, denominator, and event/state sources recorded, so provenance is re-derivable
 from the artifact.
 
-For schema-v5 city runs, the separate spatial-metrics fold derives exact opportunity,
-impression, and noticed receipts from verified persisted evidence. Each value exposes its
-numerator, denominator, and source paths and carries
+For schema-v5 and schema-v6 city runs, the separate spatial-metrics fold remains
+attention-only: it derives exact opportunity, impression, and noticed receipts from verified
+persisted evidence but does not consume v6 response or final-state evidence. Each value
+exposes its numerator, denominator, and source paths and carries
 `synthetic-metrics-not-observed-outcomes`. These uncalibrated values are model summaries,
 not observed outcomes. Matched city comparisons require identical city, assignments,
 mobility trace, seed, duration, and population provenance; a changed normalized opportunity

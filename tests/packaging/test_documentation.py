@@ -9,6 +9,7 @@ unsupported accuracy or adoption claim has crept in.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -31,6 +32,21 @@ def _all_docs() -> dict[Path, str]:
         for path in sorted(ROOT.joinpath(directory).glob("*.md")):
             docs[path] = path.read_text(encoding="utf-8")
     return docs
+
+
+def _squash(text: str) -> str:
+    """Normalize prose wrapping while preserving meaningful contract punctuation."""
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _assert_terms_share_paragraph(text: str, *terms: str) -> None:
+    paragraphs = tuple(
+        _squash(paragraph) for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()
+    )
+    expected = tuple(term.lower() for term in terms)
+    assert any(all(term in paragraph for term in expected) for paragraph in paragraphs), (
+        f"no paragraph associates the required contract terms: {expected}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +329,390 @@ def test_spatial_metrics_docs_describe_c4a_receipts_and_confounding_honestly() -
         "c4 are responsible for causal downstream outcomes and metrics",
     ):
         assert stale_claim not in combined
+
+
+def test_spatial_response_docs_describe_exact_schema_v6_artifacts_and_interfaces() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+
+    public = (readme, architecture, cli, city_pilot, reproducibility, model_card, limitations)
+    for text in public:
+        lowered = text.lower()
+        assert "schema-v6" in lowered
+        assert "synthetic-response-not-observed-behavior" in lowered
+
+    for text in (readme, cli, city_pilot, reproducibility):
+        assert "--spatial-response" in text
+
+    for text in (cli, city_pilot):
+        _assert_terms_share_paragraph(
+            text,
+            "--spatial-response",
+            "requires",
+            "--spatial-campaign",
+        )
+        _assert_terms_share_paragraph(text, "--spatial-campaign", "schema-v5")
+        _assert_terms_share_paragraph(text, "--spatial-response", "schema-v6")
+
+    artifact_docs = (architecture, cli, city_pilot, reproducibility)
+    for text in artifact_docs:
+        for artifact in (
+            "inputs/spatial-response.json",
+            "outputs/spatial-responses.jsonl",
+            "outputs/response-state.json",
+            "outputs/response-summary.json",
+        ):
+            assert artifact in text, artifact
+
+    identity_docs = (architecture, city_pilot, reproducibility)
+    for text in identity_docs:
+        for model_id in (
+            "illustrative-road-spatial-response-study-v1",
+            "spatial-response-v1",
+            "spatial-response-artifact-v1",
+            "spatial-response-state-v1",
+        ):
+            assert model_id in text, model_id
+
+    for receipt in (
+        "response_input_sha256",
+        "response_stream_sha256",
+        "response_state_sha256",
+        "response_summary_sha256",
+        "response_stream_bytes",
+        "response_count",
+        "state_update_count",
+        "response_campaign_count",
+        "final_state_count",
+    ):
+        assert receipt in cli, receipt
+
+    for route in (
+        "/api/response-summary",
+        "/api/response-events",
+        "/api/response-state",
+    ):
+        assert route in cli, route
+    _assert_terms_share_paragraph(cli, "/api/response-state", "final", "scrub")
+
+
+def test_spatial_response_docs_pin_rule_semantics_and_remaining_limitations() -> None:
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+
+    formula_contract = _squash(city_pilot)
+    for formula in (
+        "interest_match = jaccard(profile interests, campaign target interests)",
+        "affordability = clamp(1.25 - relative_price * price_sensitivity, 0, 1)",
+        "value_match = 0.55 * interest_match + 0.25 * novelty_seeking + 0.20 * affordability",
+        "frequency_fatigue = min(1, prior_notices_today / frequency_cap_per_agent_per_day)",
+        "0.18 * value_match - 0.12 * advertising_skepticism - 0.06 * frequency_fatigue",
+        "0.22 * channel_recall_encoding + 0.12 * novelty_seeking - 0.08 * frequency_fatigue",
+        "sentiment_after = clamp(sentiment_before + sum(sentiment_delta), -1, 1)",
+        "recall_after = 1 - (1 - recall_before) * product(1 - recall_delta)",
+        "0.40 * ((sentiment_after + 1) / 2) + 0.25 * value_match + "
+        "0.20 * recall_after + 0.15 * impulsivity",
+    ):
+        assert formula in formula_contract, formula
+
+    for text in (architecture, city_pilot, reproducibility):
+        lowered = _squash(text)
+        assert "campaign-scoped" in lowered
+        assert "immutable pre-minute state" in lowered
+        _assert_terms_share_paragraph(
+            text,
+            "same",
+            "minute",
+            "immutable pre-minute state",
+            "atomic",
+            "state update",
+        )
+
+    for text in (cli, reproducibility, model_card, limitations):
+        _assert_terms_share_paragraph(text, "schema-v5", "schema-v6", "attention-only")
+
+    _assert_terms_share_paragraph(
+        limitations,
+        "schema-v6",
+        "cognition",
+        "memory",
+        "social",
+        "budget",
+        "purchase event",
+    )
+    _assert_terms_share_paragraph(limitations, "spatial", "html", "report", "remain")
+    for text in (model_card, limitations):
+        lowered = _squash(text)
+        assert "purchase intention" in lowered
+        _assert_terms_share_paragraph(text, "purchase intention", "purchase probability", "sales")
+        assert "not purchase probability" in lowered or "not a purchase probability" in lowered
+        assert "not calibrated" in lowered or "uncalibrated" in lowered
+
+
+def test_spatial_response_public_input_contract_is_complete_and_unambiguous() -> None:
+    city_pilot = _read("docs", "city-pilot.md")
+    cli = _read("docs", "cli-reference.md")
+
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "relative_price",
+        "advertised price",
+        "category reference price",
+        "(0, 100]",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "channel_recall_encoding",
+        "mobile-feed",
+        "mobile_recall_encoding",
+        "roadside-billboard",
+        "roadside_recall_encoding",
+    )
+
+    match = re.search(
+        r"<!-- spatial-response-input:start -->\s*```json\s*(.*?)\s*```\s*"
+        r"<!-- spatial-response-input:end -->",
+        city_pilot,
+        flags=re.DOTALL,
+    )
+    assert match is not None, "public city guide must contain the exact response-input example"
+    assert json.loads(match.group(1)) == {
+        "schema_version": 1,
+        "city_sha256": "0" * 64,
+        "scenario_sha256": "1" * 64,
+        "profiles": [
+            {
+                "agent_id": "person-001",
+                "fictional": True,
+                "interests": ["coffee"],
+                "traits": {
+                    "price_sensitivity": 0.5,
+                    "novelty_seeking": 0.5,
+                    "advertising_skepticism": 0.5,
+                    "mobile_recall_encoding": 0.5,
+                    "roadside_recall_encoding": 0.5,
+                    "impulsivity": 0.5,
+                },
+            }
+        ],
+        "campaigns": [
+            {
+                "campaign_id": "demo-campaign",
+                "creative_sha256": "2" * 64,
+                "target_interests": ["coffee"],
+                "relative_price": 1.0,
+            }
+        ],
+        "initial_states": [
+            {
+                "agent_id": "person-001",
+                "campaign_id": "demo-campaign",
+                "brand_sentiment": 0.0,
+                "recall_strength": 0.0,
+                "purchase_intention": 0.0,
+            }
+        ],
+    }
+    _assert_terms_share_paragraph(cli, "schema-v1", "exact json shape", "city-pilot.md")
+
+
+def test_spatial_response_docs_distinguish_v5_attention_from_v6_state_causality() -> None:
+    model_card = _read("docs", "methodology", "model-card.md")
+    lowered = _squash(model_card)
+
+    assert "cannot reach cognition, agent state, or purchase logic" not in lowered
+    _assert_terms_share_paragraph(
+        model_card,
+        "attention evaluator itself",
+        "does not mutate",
+        "schema-v5",
+        "stops",
+    )
+    _assert_terms_share_paragraph(
+        model_card,
+        "schema-v6",
+        "persisted noticed",
+        "separate response boundary",
+        "campaign-scoped state",
+    )
+
+
+def test_spatial_response_reproducibility_docs_distinguish_permutations_from_corruption() -> None:
+    reproducibility = _read("docs", "reproducibility.md")
+    lowered = _squash(reproducibility)
+
+    assert "source notice ordering cannot change the result" not in lowered
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "response-input collection permutations",
+        "canonicalized",
+    )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "noncanonical persisted notice order",
+        "corruption",
+        "refused",
+    )
+
+
+def test_spatial_response_docs_state_exact_agent_binding_and_hash_boundaries() -> None:
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+
+    for text in (architecture, cli, model_card):
+        assert "exact agent-id set" in _squash(text)
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "response input",
+        "not bound",
+        "mobility assignment",
+        "separately freezes",
+    )
+    for text in (cli, city_pilot, reproducibility):
+        _assert_terms_share_paragraph(
+            text,
+            "response_input_sha256",
+            "excluding",
+            "trailing newline",
+            "response_stream_sha256",
+            "response_state_sha256",
+            "response_summary_sha256",
+            "persisted bytes",
+            "including",
+            "trailing newline",
+        )
+
+
+def test_readme_describes_response_routing_and_claim_scope_precisely() -> None:
+    readme = _read("README.md")
+    lowered = _squash(readme)
+
+    assert (
+        "campaign copy, identity, creative content and provider configuration are not inputs "
+        "to the attention draw or the response formulas"
+    ) not in lowered
+    _assert_terms_share_paragraph(
+        readme,
+        "campaign id",
+        "routes",
+        "campaign assumptions",
+        "campaign-scoped state",
+    )
+    _assert_terms_share_paragraph(
+        readme,
+        "campaign name",
+        "copy",
+        "creative hash",
+        "response assumptions remain fixed",
+        "numeric response values",
+    )
+    _assert_terms_share_paragraph(
+        readme,
+        "spatial.response",
+        "spatial.state-updated",
+        "stream record",
+        "claim scope",
+        "final-state document",
+        "top level",
+        "state entry",
+    )
+
+
+def test_spatial_response_roadmap_design_and_changelog_record_partial_c3c_status() -> None:
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    )
+    design = _read("docs", "superpowers", "specs", "2026-09-28-production-city-platform-design.md")
+    changelog = _read("CHANGELOG.md")
+    unreleased = changelog.split("## [0.1.0]", maxsplit=1)[0]
+
+    roadmap_lower = roadmap.lower()
+    assert "c3c evidence" in roadmap_lower
+    assert "schema-v6" in roadmap_lower
+    assert "synthetic-response-not-observed-behavior" in roadmap_lower
+    assert "[ ] **c3" in roadmap_lower
+    assert "[ ] **c4" in roadmap_lower
+    assert "c4b" in roadmap_lower
+    assert "current ledger (2026-10-03" in roadmap_lower
+    _assert_terms_share_paragraph(
+        roadmap,
+        "C3 remains open",
+        "cognition",
+        "memory",
+        "social",
+        "purchase",
+    )
+
+    design_lower = design.lower()
+    assert "partially implemented" in design_lower
+    assert "schema-v6" in design_lower
+    assert "synthetic-response-not-observed-behavior" in design_lower
+    for still_open in (
+        "rights-reviewed real",
+        "authentication",
+        "external validity",
+    ):
+        assert still_open in design_lower
+
+    unreleased_lower = unreleased.lower()
+    for term in (
+        "schema-v6",
+        "--spatial-response",
+        "spatial-response-v1",
+        "synthetic-response-not-observed-behavior",
+    ):
+        assert term in unreleased_lower
+
+
+def test_spatial_response_docs_remove_obsolete_pre_c3c_claims() -> None:
+    public = _squash(
+        "\n".join(
+            _read(path)
+            for path in (
+                "README.md",
+                "docs/architecture.md",
+                "docs/city-pilot.md",
+                "docs/cli-reference.md",
+                "docs/reproducibility.md",
+                "docs/methodology/model-card.md",
+                "docs/methodology/limitations.md",
+            )
+        )
+    )
+    roadmap = _squash(
+        _read("docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md")
+    )
+    design = _squash(
+        _read("docs", "superpowers", "specs", "2026-09-28-production-city-platform-design.md")
+    )
+
+    for stale_claim in (
+        "the remaining c3 response/state bridge",
+        "the c3 response/state bridge",
+        "remaining c3 response/state work",
+        "validate a schema-v5 saved run and derive",
+        "compare two fully verified schema-v5 runs",
+        "v1/v2/v3/v4/v5 `cityrunmanifest`",
+        "it is not joined to impressions",
+        "not a spatial extension of the advertising results",
+    ):
+        assert stale_claim not in public, stale_claim
+
+    assert "c3 remains open for that response/state bridge" not in roadmap
+    assert "a1\u2013g5 are unchecked" not in roadmap
+    assert "status: proposed target, **not implemented**" not in design
 
 
 # ---------------------------------------------------------------------------

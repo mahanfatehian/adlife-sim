@@ -62,6 +62,7 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     with zipfile.ZipFile(built_wheel) as wheel:
         names = set(wheel.namelist())
         html = wheel.read("adlife/city/static/index.html").decode("utf-8")
+        style = wheel.read("adlife/city/static/app.css").decode("utf-8")
         script = wheel.read("adlife/city/static/app.js").decode("utf-8")
     for resource in (
         "adlife/city/demo_city.json",
@@ -73,8 +74,20 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     assert 'id="saved-run-label" hidden' in html
     assert 'id="metrics-panel"' in html
     assert 'id="metrics-overall-notice-rate-receipt"' in html
+    assert 'id="response-panel"' in html
+    assert 'id="response-state-panel"' in html
+    assert "NOT STATE AT THE SCRUBBED MINUTE" in html
+    assert "PURCHASE INTENTION IS NOT PURCHASE PROBABILITY OR SALES" in html
+    assert ".response-panel" in style
+    assert ".response-state-panel" in style
     assert 'byId("saved-run-label").textContent =' in script
     assert 'fetchJson("/api/spatial-metrics")' in script
+    assert 'fetchJson("/api/response-summary")' in script
+    assert "fetchJson(`/api/response-events?minute=${next}`)" in script
+    assert (
+        "fetchJson(`/api/response-state?agent_id=${encodeURIComponent(state.selected)}`)" in script
+    )
+    assert 'page.state_scope !== "final-end-of-run-not-scrubbed-minute"' in script
     assert "innerHTML" not in script
     assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
 
@@ -98,6 +111,12 @@ def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> Non
 
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:
     report = tmp_path / "smoke-result.txt"
+    shadow = tmp_path / "shadow-checkout"
+    (shadow / "adlife").mkdir(parents=True)
+    (shadow / "adlife" / "__init__.py").write_text(
+        'raise RuntimeError("shadow checkout package was imported")\n',
+        encoding="utf-8",
+    )
     completed = subprocess.run(
         [
             sys.executable,
@@ -109,8 +128,15 @@ def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path
         text=True,
         timeout=600,
         cwd=tmp_path,
-        env={**os.environ, "UV_OFFLINE": "1"},
+        env={
+            **os.environ,
+            "UV_OFFLINE": "1",
+            # A clean-wheel smoke must not silently import the checkout even when
+            # the caller supplies the most adversarial plausible Python path.
+            "PYTHONPATH": str(shadow),
+        },
     )
     report.write_text(completed.stdout + completed.stderr, encoding="utf-8")
     assert completed.returncode == 0, report.read_text(encoding="utf-8")
     assert "smoke ok" in completed.stdout
+    assert "schema-v6 response API/UI verified without network" in completed.stdout

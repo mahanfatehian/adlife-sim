@@ -102,7 +102,7 @@ This command does not run or persist the advertising engine. Its minute-addressa
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
-## `adlife city-run [PACK | --city-id ID] [--places FILE] [--spatial-campaign FILE] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
+## `adlife city-run [PACK | --city-id ID] [--places FILE] [--spatial-campaign FILE] [--spatial-response FILE] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
 
 Save a deterministic city run under `ROOT/city-runs/ID`. Supply
 exactly one local `PACK` or verified catalog `--city-id`; neither and both exit 2. The
@@ -123,9 +123,37 @@ records retain `synthetic-opportunity-not-impression`; attention records say
 `synthetic-attention-not-observed-behavior`. Every opportunity becomes one synthetic
 impression and an order-independent draw below the fixed 0.5 probability becomes noticed.
 This is an uncalibrated assumption. It does not affect cognition, state, budget, movement,
-or purchase probability. A separate read-only command may summarize the persisted evidence;
-it does not turn it into an observed outcome. Older schema-v4 artifacts remain readable as
-opportunity-only evidence.
+or purchase probability. Older schema-v4 artifacts remain readable as opportunity-only
+evidence.
+
+`--spatial-response` requires `--spatial-campaign`. Supplying `--spatial-campaign` alone
+continues to create schema-v5; supplying both flags creates schema-v6 under run model
+`illustrative-road-spatial-response-study-v1`. Before reserving the run ID, the command
+loads strict local JSON, binds every fictional profile to the exact agent-ID set generated
+for the run, binds every campaign to the exact scenario, and validates complete
+campaign-scoped initial state. The response
+input is not bound to one mobility assignment; the saved run separately freezes and hashes
+its generated assignments. The schema-v1 field contract and exact JSON shape are in
+[city-pilot.md](city-pilot.md). V6 additionally freezes
+`inputs/spatial-response.json`, `outputs/spatial-responses.jsonl`,
+`outputs/response-state.json`, and `outputs/response-summary.json`. Only persisted notices
+create `spatial-response-v1` rule responses and atomic state updates, each carrying
+`synthetic-response-not-observed-behavior`. The bounded purchase-intention value is an
+uncalibrated proxy, not purchase probability, sales, or a transaction; the path adds no
+provider call, memory, social propagation, budget mutation, purchase event, or movement.
+
+JSON success output includes response model/claim identity plus the exact v6 receipt keys
+`response_input_sha256`, `response_stream_sha256`, `response_state_sha256`,
+`response_summary_sha256`, `response_stream_bytes`, `response_count`,
+`state_update_count`, `response_campaign_count`, and `final_state_count`.
+`response_input_sha256` is the canonical input fingerprint excluding the saved file's
+trailing newline; `response_stream_sha256`, `response_state_sha256`, and
+`response_summary_sha256` cover exact persisted bytes, including JSONL line endings and the
+trailing newline in each single-document state/summary file. Human output prints the same
+values with readable labels. A malformed,
+mismatched, non-finite, oversized, or sensitive response document exits 2 without reserving
+the run ID. A separate read-only command may summarize persisted evidence; it does not turn
+it into an observed outcome.
 Interrupted or failed publication may leave an incomplete, reserved directory; use a
 new run ID after examining it. JSON mode emits one result document on stdout.
 
@@ -134,18 +162,24 @@ new run ID after examining it. JSON mode emits one result document on stdout.
 Load the frozen inputs, regenerate every minute frame, and compare the full trace hash and
 counts. For schema-v4, also re-evaluate and compare the canonical opportunity stream and
 independent summary. For schema-v5, additionally recompute and compare the canonical
-attention stream and summary, including the fixed 0.5 model contract. Success emits
+attention stream and summary, including the fixed 0.5 model contract. Schema-v6 repeats all
+of those checks, then re-evaluates the frozen response input and verifies the canonical
+response stream, complete final-state document, summary, hashes, bytes, and counts. Success
+emits
 `"identical": true`; missing, damaged,
 partial, or incompatible artifacts exit 4 without modifying the source files. This
 proves replay against the saved artifact on a compatible implementation/runtime; it
 is not cryptographic authentication against an owner rewriting all artifact files.
 Saved city runs are not zone advertising runs and do not claim measured traffic,
-real-person behavior, or geographic campaign effects.
+real-person behavior, or externally valid geographic campaign effects.
 
 ## `adlife city-metrics ROOT ID`
 
-Validate a schema-v5 saved run and derive its deterministic spatial metrics without
-changing or caching anything in the artifact. JSON and human output both carry
+Validate a schema-v5 or schema-v6 saved run and derive its deterministic spatial metrics
+without changing or caching anything in the artifact. The metrics contract is attention-only
+for both schemas: it uses persisted opportunity and attention evidence and preserves the
+exact source schema provenance, but does not fold response records or final campaign state.
+JSON and human output both carry
 `synthetic-metrics-not-observed-outcomes`. Every metric includes its exact numerator,
 denominator, and source paths, including explicit zero-denominator behavior. The values
 summarize an uncalibrated synthetic evidence model; they are not observed outcomes.
@@ -153,8 +187,11 @@ Corrupt, partial, older, or incompatible artifacts exit 4.
 
 ## `adlife city-compare ROOT CONTROL_ID TREATMENT_ID`
 
-Compare two fully verified schema-v5 runs only when city, place assignments, trace model,
-seed, duration, and population match. The command never modifies either run. Same-run A/A
+Compare two fully verified schema-v5 and/or schema-v6 runs only when city, place assignments,
+trace model, seed, duration, and population match. Each metric snapshot retains its source
+schema provenance; cross-version comparison is permitted because comparison remains
+attention-only and never treats schema-v6 response state as a metric. The command never
+modifies either run. Same-run A/A
 comparison produces exact-zero deltas. If normalized placement/channel opportunity
 structure differs, classification is `opportunity-confounded`; callers must not describe
 that result as a channel effect. Every response carries
@@ -167,21 +204,28 @@ Open a **validated saved** city mobility run in the same read-only browser timel
 at `http://127.0.0.1:8765` (loopback only). The run is fully verified before the
 server binds; a corrupt or partial run exits 4. The HTTP API cannot select another
 run or open a filesystem path. The header displays the saved run ID and artifact
-schema version. For schema-v4 and schema-v5 runs, the viewer adds a read-only current-minute opportunity
+schema version. For schema-v4, schema-v5, and schema-v6 runs, the viewer adds a read-only
+current-minute opportunity
 panel with persisted totals, channel counts and canonical records for the timeline
 scrubber. Its bounded `/api/opportunities` endpoint accepts a required minute, optional
 saved agent ID, offset and a maximum page size of 100; `/api/opportunity-summary` exposes
 only validated scenario metadata and aggregate counts. Neither endpoint accepts a path or
 changes the run. Every record remains `synthetic-opportunity-not-impression`; the viewer
-does not invent a response or outcome. Schema-v5 also adds bounded
+does not invent a response or outcome. Schema-v5 and schema-v6 also add bounded
 `/api/attention-events` and `/api/attention-summary` endpoints and displays persisted
 current-minute attention evidence. Those records remain
 `synthetic-attention-not-observed-behavior`; noticed means only that the deterministic draw
-was below the uncalibrated 0.5 threshold. `--port` accepts 1–65535. Like
+was below the uncalibrated 0.5 threshold. Schema-v6 additionally exposes the exact persisted
+response artifact through `/api/response-summary`, bounded and filterable
+`/api/response-events`, and bounded `/api/response-state`. The state endpoint returns
+complete final end-of-run campaign state, not state at the scrubbed minute, and labels that
+scope `final-end-of-run-not-scrubbed-minute`. All three routes retain
+`synthetic-response-not-observed-behavior`, accept no path/run selector, and never mutate
+the source artifact. `--port` accepts 1–65535. Like
 `adlife city`, this interactive command accepts human output mode only and does not launch
-a browser automatically. Schema-v5 runs also expose a read-only `/api/spatial-metrics`
-receipt ledger. It uses the same exact numerator, denominator, and source paths as
-`city-metrics` and does not write to the artifact.
+a browser automatically. Schema-v5 and schema-v6 runs also expose a read-only
+`/api/spatial-metrics` receipt ledger. It uses the same exact numerator, denominator, and
+source paths as `city-metrics`, remains attention-only, and does not write to the artifact.
 
 ## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--schema-version 1|2] [--largest-component]`
 

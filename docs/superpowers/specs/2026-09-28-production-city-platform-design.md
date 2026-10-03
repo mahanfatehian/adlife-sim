@@ -1,7 +1,9 @@
 # Production-track city platform: target design
 
-> Status: proposed target, **not implemented**. This document extends the local
-> research instrument on `main`; it does not rewrite the `defense-ready` branch or
+> Status: **partially implemented** target. The local deterministic city foundation and
+> bounded C1–C3c/C4a evidence slices described below exist on `main`; rights-reviewed real
+> city qualification, remote authentication/authorization, calibrated outcomes, and
+> external validity do not. This document does not rewrite the `defense-ready` branch or
 > retroactively change the original CLI specification. Read the
 > [execution roadmap](../plans/2026-09-28-production-city-platform-roadmap.md)
 > for work packages and gates.
@@ -22,25 +24,35 @@ or spend recommendations. Do not substitute invented traffic, demographic, or
 conversion rates for licensed measurements. No personal trajectories, real-person
 profiles, ad-network integrations, or live consumer targeting belong in this scope.
 
-## Starting point, verified in code on 2026-09-28
+## Implemented baseline, updated from code on 2026-10-03
 
 - `src/adlife/core/simulation/runner.py` and `src/adlife/adapters/storage/sqlite_store.py`
   implement the zone-based advertising run/replay path with SQLite authority,
   canonical JSONL export, frozen inputs, and deterministic rules/mock execution.
-- `src/adlife/core/domain/city.py` validates a bounded version-1 directed road graph
-  (10,000 nodes, 20,000 roads, 4 MiB). `src/adlife/core/simulation/city_mobility.py`
-  computes road-constrained, minute-addressable synthetic positions for 1–250 agents
-  over 1–31 days. It assumes fixed free-flow speeds and routines.
+- `src/adlife/core/domain/city.py` validates bounded version-1 and version-2 directed road
+  graphs (10,000 nodes, 20,000 roads, 4 MiB). Version 2 preserves geometry, direction,
+  bounds, time zone, source provenance and omissions. `city-run` freezes bounded 1–30-agent,
+  1–7-day traces; `city-replay` verifies them from their saved inputs. The wider ephemeral
+  viewer remains limited to 250 agents and 31 days. All schedules and speeds are synthetic.
 - `src/adlife/city/osm.py` and `adlife city-import` convert a **local** bounded
   Overpass JSON extract into an attributed ODbL pack without network access. They do
   not download or catalog worldwide cities; unsupported turn/access rules are refused.
+- The packaged, content-addressed catalog contains only the explicit
+  `fictional-grid-v2` fixture. No rights-reviewed real-city entry has shipped.
 - `src/adlife/city/web.py` serves a read-only, loopback FastAPI viewer, and
-  `src/adlife/city/static/` is vanilla browser code. It paints an illustrative
-  road canvas and fixed 06:00/19:00 light/dark styling, **not** local sunrise.
-- The city viewer does not create a run artifact, simulate geographic advertising,
-  provide authentication/provider settings, or join the existing campaign engine.
-  The existing `docs/methodology/model-card.md` and `limitations.md` govern claims
-  until new models are independently reviewed and documented.
+  `src/adlife/city/static/` is vanilla browser code. It paints an illustrative road canvas
+  and fixed 06:00/19:00 light/dark styling, **not** local sunrise. It can validate and view a
+  saved run but exposes no path/run selector or write endpoint.
+- C1/C2 define and evaluate the spatial scenario/opportunity contracts; C3a/C3b persist and
+  replay opportunity and fixed-0.5 synthetic attention evidence. C3c schema-v6 adds bounded
+  deterministic response/state evidence
+  from noticed records under `synthetic-response-not-observed-behavior`. Its purchase
+  intention is an uncalibrated proxy, not a sale or transaction. C4a metrics remain a
+  read-only opportunity/attention projection; repeated-seed uncertainty and spatial HTML
+  reports remain open.
+- The city path does not join the existing zone campaign engine, provide authentication or
+  protected provider settings, use calibrated traffic/population data, or establish
+  external validity. The current model card and limitations govern every claim.
 
 ## Architecture and non-negotiable seams
 
