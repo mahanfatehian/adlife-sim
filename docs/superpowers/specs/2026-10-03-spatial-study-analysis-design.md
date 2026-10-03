@@ -266,6 +266,14 @@ Rules are fixed:
   `max(positive_count, negative_count) / n`, with zeros in `n`;
 - no p-value is produced.
 
+An exactly constant binary64 vector is normalized as an algebraic identity before those
+floating reductions: mean and median equal the positive-zero-normalized constant,
+sample deviation is exactly `0.0`, the standardized difference is `null`, and both
+bootstrap endpoints equal that constant. This prevents `fsum(values) / n` rounding (for
+example, three copies of `0.1`) from manufacturing seed variation where none exists. The
+constant interval is the exact closed-form result of all 10,000 resamples and does not
+advance a generator.
+
 Each interval uses 10,000 paired bootstrap resamples. It resamples seed pairs with
 replacement, computes each bootstrap mean as `fsum(selected_values) / n`, sorts the 10,000
 means, and selects zero-based elements 249 and 9749. The generator is versioned SplitMix64.

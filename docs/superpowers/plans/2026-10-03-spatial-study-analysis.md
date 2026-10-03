@@ -219,7 +219,7 @@ def analyze_stored_spatial_study(
 ) -> SpatialStudyResult: ...
 ```
 
-- [ ] **Step 1: Write RED statistic goldens.** Pin exact two-, twenty- and fifty-seed
+- [x] **Step 1: Write RED statistic goldens.** Pin exact two-, twenty- and fifty-seed
   documents; bootstrap seed derivation, rejection sampling and indices; all-zero and
   constant vectors; positive/negative/zero-heavy/exact-0.8 directions; nullable effect;
   even-sample median, all-zero versus directional agreement, metric insertion/order/hash-
