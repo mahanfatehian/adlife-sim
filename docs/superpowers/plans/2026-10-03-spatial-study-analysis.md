@@ -245,10 +245,10 @@ def analyze_stored_spatial_study(
 - [x] **Step 5: Write RED CLI contracts and implement `city-study`.** Pin exact JSON/human
   output, empty JSON stderr, generic safe failures and exit classes 1/2/4/130. Command is
   read-only and accepts no discovery/output option.
-- [x] **Step 6: Run focused/related/performance suites, Ruff/mypy, inspect diff and commit
-  locally.** The current Task 3 continuation explicitly defers pushing. Include
-  load/project/release sequencing, constant-factor peak memory, and a
-  maximum 100-pair/20-campaign serialized-result bound. Commit:
+- [ ] **Step 6: Run focused/related/performance suites, Ruff/mypy, inspect diff, commit and
+  push.** Commit and push remain owner-authorized; the controller performs the push after
+  independent review. Include load/project/release sequencing, constant-factor peak memory,
+  and a maximum 100-pair/20-campaign serialized-result bound. Commit:
   `feat(city): analyze repeated-seed studies`.
 
 Task 3 continuation evidence (2026-10-05): focused tests passed 235 cases, related
@@ -261,8 +261,9 @@ format checking, strict mypy (131 source files), and diff checks passed. The str
 instrumented loaded-run peak memory was 8,772,706 bytes for 2 pairs and 9,076,729 for 8.
 The maximum-shape probe uses real scalar evidence with synthetic compact per-seed
 projections, and the memory probe is instrumented, not maximum-production RSS evidence.
-Author self-review found no unrelated changes or golden edits. The continuation's
-explicit local-only authority leaves pushing deferred.
+Author self-review found no unrelated changes or golden edits. The local continuation
+commit is `805e333`; controller review and push remain pending. The owner's commit-and-push
+authorization remains active, with the controller performing the push after independent review.
 
 ### Task 4: Render and publish a zero-JavaScript spatial study report
 
