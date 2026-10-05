@@ -14,6 +14,17 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
+from adlife.core.domain.spatial_study import SpatialStudyDefinition
+from adlife.core.experiments._spatial_study_receipts import (
+    OpportunityClassification,
+    ResponseClassification,
+    SpatialStudyArmReceipt,
+    SpatialStudyCityProvenance,
+    SpatialStudyPairReceipt,
+    SpatialStudyResponseReceipt,
+    SpatialStudyScalarPair,
+    StudyHash,
+)
 from adlife.core.experiments.spatial_observations import (
     SpatialStudyMetricArtifact,
     _source_artifacts_for_key,
@@ -399,8 +410,111 @@ def spatial_paired_statistics(
     return tuple(results)
 
 
+MAX_SPATIAL_STUDY_RESULT_BYTES = 33_554_432
+
+
+class SpatialStudyCompatibilityError(ValueError):
+    """Verified runs cannot satisfy the declared scientific study protocol."""
+
+
+class SpatialStudyAAInvariantError(ValueError):
+    """Verified A/A evidence is not exactly equal; no failed A/A result is valid."""
+
+
+class SpatialStudyResult(DomainModel):
+    """Bounded evidence ledger whose receipt graph and statistics are recomputed."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    schema_version: Literal[1] = 1
+    model_id: Literal["spatial-paired-study-v1"] = "spatial-paired-study-v1"
+    claim_scope: Literal["synthetic-study-not-observed-or-causal-effect"] = (
+        "synthetic-study-not-observed-or-causal-effect"
+    )
+    definition: SpatialStudyDefinition
+    study_definition_sha256: StudyHash
+    seeds: tuple[int, ...] = Field(min_length=2, max_length=100)
+    seed_protocol: Literal["contiguous-zero-based-seeds-v1"] = "contiguous-zero-based-seeds-v1"
+    evidence_tier: Literal["exploratory-under-50-seeds", "full-protocol-50-or-more-seeds"]
+    bootstrap_model_id: Literal["spatial-paired-bootstrap-v1"] = "spatial-paired-bootstrap-v1"
+    bootstrap_resamples: Literal[10_000] = 10_000
+    bootstrap_confidence: float = Field(default=0.95, ge=0.95, le=0.95)
+    direction_threshold: float = Field(default=0.8, ge=0.8, le=0.8)
+    source_run_schema_version: Literal[5, 6]
+    source_run_model_id: Literal[
+        "illustrative-road-spatial-attention-study-v1",
+        "illustrative-road-spatial-response-study-v1",
+    ]
+    opportunity_model_id: Literal["spatial-opportunity-v1"] = "spatial-opportunity-v1"
+    attention_model_id: Literal["spatial-attention-v1"] = "spatial-attention-v1"
+    response_model_id: Literal["spatial-response-v1"] | None = None
+    package_version: str = Field(min_length=1, max_length=40)
+    python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
+    city: SpatialStudyCityProvenance
+    city_provenance_sha256: StudyHash
+    days: int = Field(ge=1, le=7)
+    population_size: int = Field(ge=1, le=30)
+    place_schema_version: Literal[1] | None = None
+    place_set_sha256: StudyHash | None = None
+    control_scenario_sha256: StudyHash
+    treatment_scenario_sha256: StudyHash
+    control_response_input_sha256: StudyHash | None = None
+    treatment_response_input_sha256: StudyHash | None = None
+    control_response_assumption_structure_sha256: StudyHash | None = None
+    treatment_response_assumption_structure_sha256: StudyHash | None = None
+    campaign_ids: tuple[str, ...] = Field(default=(), max_length=20)
+    opportunity_classification: OpportunityClassification
+    opportunity_matched_pair_count: int = Field(ge=0, le=100)
+    opportunity_confounded_pair_count: int = Field(ge=0, le=100)
+    response_assumption_classification: ResponseClassification
+    response_assumption_matched_pair_count: int = Field(ge=0, le=100)
+    response_assumption_confounded_pair_count: int = Field(ge=0, le=100)
+    a_a_status: Literal["exact-zero-verified", "not-applicable"]
+    pairs: tuple[SpatialStudyPairReceipt, ...] = Field(min_length=2, max_length=100)
+    statistics: tuple[SpatialPairedStatistic, ...] = Field(min_length=24, max_length=328)
+
+    @field_validator("source_run_schema_version", "bootstrap_resamples", mode="before")
+    @classmethod
+    def integer_protocol_fields(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("study protocol integers must be exact integers")
+        return value
+
+    @field_validator("place_schema_version", mode="before")
+    @classmethod
+    def optional_integer_protocol_field(cls, value: object) -> object:
+        if value is not None and type(value) is not int:
+            raise ValueError("study place version must be an exact integer")
+        return value
+
+    @field_validator("bootstrap_confidence", "direction_threshold", mode="before")
+    @classmethod
+    def float_protocol_fields(cls, value: object) -> object:
+        if type(value) is not float:
+            raise ValueError("study protocol fractions must be exact floats")
+        return value
+
+    @model_validator(mode="after")
+    def complete_receipt_graph(self) -> Self:
+        from adlife.core.experiments._spatial_study_validation import validate_study_result
+
+        validate_study_result(self)
+        if len(canonical_json(self).encode("utf-8")) > MAX_SPATIAL_STUDY_RESULT_BYTES:
+            raise ValueError("spatial study result exceeds the canonical JSON size limit")
+        return self
+
+
 __all__ = [
+    "MAX_SPATIAL_STUDY_RESULT_BYTES",
     "SpatialPairedStatistic",
+    "SpatialStudyAAInvariantError",
+    "SpatialStudyArmReceipt",
+    "SpatialStudyCityProvenance",
+    "SpatialStudyCompatibilityError",
     "SpatialStudyDirection",
+    "SpatialStudyPairReceipt",
+    "SpatialStudyResponseReceipt",
+    "SpatialStudyResult",
+    "SpatialStudyScalarPair",
     "spatial_paired_statistics",
 ]

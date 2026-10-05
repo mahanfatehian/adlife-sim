@@ -227,28 +227,42 @@ def analyze_stored_spatial_study(
   outside 2..100, mixed lengths, bool/non-finite members, more than 328/invalid/duplicate
   keys, mismatched source keys, wrong-but-allowed source tuples and unknown artifact
   literals before resampling.
-- [ ] **Step 2: Implement pure result/statistics models.** Use versioned SplitMix64 and one
+- [x] **Step 2: Implement pure result/statistics models.** Use versioned SplitMix64 and one
   discarded 10,000-mean vector per metric; no p-values or stateful global generator.
-- [ ] **Step 3: Write RED artifact-analysis cases.** Independently vary every within-pair
+- [x] **Step 3: Write RED artifact-analysis cases.** Independently vary every within-pair
   and cross-study provenance field, schemas, models, keys, campaign sets, arm identities,
   classifications and A/A invariants. Cover v5 attention, v6 attention, v6 response,
   mixed-schema refusal, maximum pairs and source tree hashes.
-- [ ] **Step 3a: Write bypass/tamper result tests.** Construct results with changed scalar
+- [x] **Step 3a: Write bypass/tamper result tests.** Construct results with changed scalar
   values/numerators/denominators/sources/deltas, definition/manifest hashes,
   classifications/counts, statistic means/intervals/directions, order and duplicate keys;
   require full coherence recomputation before CLI/report use.
-- [ ] **Step 4: Implement streaming application projection.** Hold at most one full loaded
+- [x] **Step 4: Implement streaming application projection.** Hold at most one full loaded
   run projection at a time with only a bounded constant number of revalidation copies;
   retain `O(largest run + bounded result)`, not `O(run count)`; reuse same-run A/A; copy
   only bounded public city provenance; hash canonical manifests; never copy paths/raw
   records/response inputs into the result. Enforce a 32 MiB canonical result ceiling.
-- [ ] **Step 5: Write RED CLI contracts and implement `city-study`.** Pin exact JSON/human
+- [x] **Step 5: Write RED CLI contracts and implement `city-study`.** Pin exact JSON/human
   output, empty JSON stderr, generic safe failures and exit classes 1/2/4/130. Command is
   read-only and accepts no discovery/output option.
-- [ ] **Step 6: Run focused/related/performance suites, Ruff/mypy, inspect diff, commit and
-  push.** Include load/project/release sequencing, constant-factor peak memory, and a
+- [x] **Step 6: Run focused/related/performance suites, Ruff/mypy, inspect diff and commit
+  locally.** The current Task 3 continuation explicitly defers pushing. Include
+  load/project/release sequencing, constant-factor peak memory, and a
   maximum 100-pair/20-campaign serialized-result bound. Commit:
   `feat(city): analyze repeated-seed studies`.
+
+Task 3 continuation evidence (2026-10-05): focused tests passed 235 cases, related
+domain/security/architecture tests passed 609 with 1 skip, and the final-tree full
+`uv run pytest -q` passed 4,298 with 23 skips in 630.34 seconds. The full branch-coverage
+run reached 90.73% against the unchanged 85% gate; its sole missing CLI-reference entry
+was fixed and all 32 documentation tests passed before the fresh full run. Ruff lint,
+format checking, strict mypy (131 source files), and diff checks passed. The structural
+100-pair/20-campaign result was 18,838,356 canonical UTF-8 bytes and took 8.77 seconds;
+instrumented loaded-run peak memory was 8,772,706 bytes for 2 pairs and 9,076,729 for 8.
+The maximum-shape probe uses real scalar evidence with synthetic compact per-seed
+projections, and the memory probe is instrumented, not maximum-production RSS evidence.
+Author self-review found no unrelated changes or golden edits. The continuation's
+explicit local-only authority leaves pushing deferred.
 
 ### Task 4: Render and publish a zero-JavaScript spatial study report
 

@@ -198,6 +198,20 @@ that result as a channel effect. Every response carries
 `synthetic-comparison-not-causal-or-observed-effect`. Provenance mismatch is invalid input
 and corrupt or incompatible artifacts exit 4.
 
+## `adlife city-study ROOT STUDY.json`
+
+Analyze the explicit study definition's 2–100 saved, seed-matched run pairs using the
+contiguous seeds `0..N-1`. Attention-only studies use homogeneous schema-v5 or schema-v6
+runs; attention-and-response studies require schema-v6. Every source is verified, and
+the command does not rerun, discover, modify, cache, or publish artifacts. There is no
+output or discovery option. JSON emits the fully revalidated compact result; human
+output labels synthetic evidence, opportunity/response-assumption confounding, and
+A/A status. The fixed paired bootstrap describes simulator seed variation, not
+population confidence, sales, observed outcomes, or causal effects. Fewer than 50 seeds
+are exploratory; 50 or more follow the full protocol, not a registered study. Invalid
+definitions or scientific incompatibility exit 2; missing, corrupt, unsupported, or
+failed verified A/A artifacts exit 4.
+
 ## `adlife city-view ROOT ID [--port N]`
 
 Open a **validated saved** city mobility run in the same read-only browser timeline
