@@ -50,3 +50,23 @@ def test_wheel_contains_report_resources() -> None:
     assert any("reporting/templates/report.html.j2" in name for name in names)
     assert any("reporting/static/report.css" in name for name in names)
     assert any("resources/demo/adlife.yaml" in name for name in names)
+
+
+def test_spatial_resources_are_lf_pinned_for_identical_cross_platform_csp():
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "git",
+            "check-attr",
+            "eol",
+            "--",
+            "src/adlife/reporting/templates/spatial-report.html.j2",
+            "src/adlife/reporting/static/spatial-report.css",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert all(line.endswith(": eol: lf") for line in result.stdout.splitlines())
+    assert len(result.stdout.splitlines()) == 2

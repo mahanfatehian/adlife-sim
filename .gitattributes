@@ -9,3 +9,6 @@ tests/golden/scenarios/**/record.json text eol=lf
 *.tar.gz binary
 *.png binary
 *.ico binary
+# The normalized inline stylesheet is authorized by its exact SHA-256 CSP hash.
+src/adlife/reporting/templates/spatial-report.html.j2 text eol=lf
+src/adlife/reporting/static/spatial-report.css text eol=lf

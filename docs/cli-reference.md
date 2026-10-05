@@ -212,6 +212,17 @@ are exploratory; 50 or more follow the full protocol, not a registered study. In
 definitions or scientific incompatibility exit 2; missing, corrupt, unsupported, or
 failed verified A/A artifacts exit 4.
 
+## `adlife city-report ROOT STUDY.json`
+
+Analyze the same explicit verified study as `city-study`, then publish a self-contained
+zero-JavaScript evidence ledger at `ROOT/city-reports/<study_id>.html`. There is no output,
+force or browser-opening option. Any existing destination exits 3 unchanged; report-directory
+symlinks and junctions are refused. JSON emits the nine-field receipt with a relative POSIX
+report path, exact byte count and SHA-256 hashes. Scientific/input and source-artifact errors
+retain `city-study` exit codes; filesystem and unexpected failures exit 1, interruption 130.
+Publication uses an atomic no-clobber hard link after fsyncing the complete file; parent
+directory fsync is best effort after commit. Source city-run artifacts remain unchanged.
+
 ## `adlife city-view ROOT ID [--port N]`
 
 Open a **validated saved** city mobility run in the same read-only browser timeline

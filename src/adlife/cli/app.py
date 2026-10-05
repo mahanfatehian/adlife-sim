@@ -27,6 +27,7 @@ from adlife.cli.commands.city_import import command as city_import_command
 from adlife.cli.commands.city_metrics import command as city_metrics_command
 from adlife.cli.commands.city_places import app as city_places_app
 from adlife.cli.commands.city_replay import command as city_replay_command
+from adlife.cli.commands.city_report import command as city_report_command
 from adlife.cli.commands.city_run import command as city_run_command
 from adlife.cli.commands.city_study import command as city_study_command
 from adlife.cli.commands.city_view import command as city_view_command
@@ -108,6 +109,7 @@ app.command("city-import")(city_import_command)
 app.command("city-metrics")(city_metrics_command)
 app.command("city-compare")(city_compare_command)
 app.command("city-study")(city_study_command)
+app.command("city-report")(city_report_command)
 app.command("city-run")(city_run_command)
 app.command("city-replay")(city_replay_command)
 app.command("city-view")(city_view_command)

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{ csp }}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spatial study evidence — {{ study.definition.study_id }}</title>
+<style>{{ css }}</style>
+</head>
+<body>
+{% macro value(item) -%}
+{% if item is mapping %}{{ ledger(item) }}{% elif item is sequence and item is not string %}<ul class="values">{% for entry in item %}<li>{{ value(entry) }}</li>{% endfor %}</ul>{% elif item is none %}<span class="null">null</span>{% elif item is string %}<bdi dir="auto">{{ item }}</bdi>{% else %}{{ item }}{% endif %}
+{%- endmacro %}
+{% macro ledger(fields) -%}
+<dl class="ledger">{% for key, item in fields.items() %}<dt>{{ key }}</dt><dd>{{ value(item) }}</dd>{% endfor %}</dl>
+{%- endmacro %}
+<a class="skip-link" href="#main">Skip to evidence</a>
+<header class="study-header">
+<p class="scope">Synthetic / exploratory / unobserved / non-causal / not sales</p>
+<p class="eyebrow">Spatial repeated-seed study · evidence ledger</p>
+<h1>Study verdict</h1>
+<p class="study-name"><bdi dir="auto">{{ study.definition.study_id }}</bdi> · <bdi dir="auto">{{ study.city.name }}</bdi></p>
+<dl class="verdicts">
+<dt>Protocol size</dt><dd>{{ study.seeds|length }} seeds · {{ study.evidence_tier }}</dd>
+<dt>Opportunity structure</dt><dd>{{ study.opportunity_classification }} · matched {{ study.opportunity_matched_pair_count }} / confounded {{ study.opportunity_confounded_pair_count }}</dd>
+<dt>Response assumptions</dt><dd>{{ study.response_assumption_classification }} · matched {{ study.response_assumption_matched_pair_count }} / confounded {{ study.response_assumption_confounded_pair_count }}</dd>
+<dt>A/A invariant</dt><dd>{{ study.a_a_status }}</dd>
+</dl>
+<p class="warning">Intervals describe deterministic simulator seed variation, not population confidence intervals. Directional stability does not establish observed behavior, causality, or sales.</p>
+</header>
+<main id="main" tabindex="-1">
+<section aria-labelledby="evidence-route-heading">
+<h2 id="evidence-route-heading">Evidence route</h2>
+<ol class="evidence-route">
+<li><strong>Opportunity</strong><span>Analyzed · synthetic eligibility, not an impression</span></li>
+<li><strong>Impression</strong><span>Analyzed · one model impression per retained opportunity</span></li>
+<li><strong>Notice</strong><span>Analyzed · keyed neutral draw below 0.5, not observed attention</span></li>
+<li class="proxy"><strong>Rule response</strong><span>{% if response_analyzed %}Analyzed · planned rule deltas, not engagement{% else %}Not analyzed · attention-only study{% endif %}</span></li>
+<li class="proxy"><strong>Campaign state proxy</strong><span>{% if response_analyzed %}Analyzed · committed bounded state changes, not outcomes{% else %}Not analyzed · attention-only study{% endif %}</span></li>
+</ol>
+{% if response_analyzed %}
+<p class="warning">Every notice mechanically produces one rule response. Response count, reach and frequency are notice-derived processing counts, not engagement, acceptance or persuasion. A nonzero v1 contrast changes opportunity structure or numeric response assumptions; directional stability is not a clean creative effect.</p>
+<p class="proxy-note">Purchase intention is an uncalibrated internal proxy, never a probability, conversion, transaction or sale. Planned recall encoding and committed nonlinear recall change are distinct. Campaign state is not attributed to channels: simultaneous notices can share one bounded state update.</p>
+{% endif %}
+</section>
+<section aria-labelledby="protocol-heading">
+<h2 id="protocol-heading">Study and protocol receipts</h2>
+{{ ledger(protocol) }}
+<dl class="ledger"><dt>study_result_sha256</dt><dd><bdi dir="auto">{{ result_sha256 }}</bdi></dd></dl>
+</section>
+<section aria-labelledby="city-heading">
+<h2 id="city-heading">City provenance</h2>
+<p>Public pack metadata only. Source URLs are plain text. A hash binds an artifact; a detached result does not independently authenticate its source.</p>
+{{ ledger(study.city) }}
+{% if not study.city.known_omissions %}<p>Legacy v1 metadata does not enumerate known omissions. This is not evidence that no omissions exist.</p>{% endif %}
+</section>
+<section aria-labelledby="statistics-heading">
+<h2 id="statistics-heading">Aggregate statistics</h2>
+<p>Experimental unit: one simulator seed. Every difference is treatment minus control. Statistics schema version 1; scalar source receipts identify canonical artifacts. No agents, notices or states are pooled across seeds as independent observations.</p>
+<p>Bootstrap: {{ study.bootstrap_resamples }} resamples, confidence {{ study.bootstrap_confidence }}, model {{ study.bootstrap_model_id }}. Each metric uses an independently keyed SplitMix64 stream; ordered endpoints 249 and 9749. Positive or negative agreement ≥ {{ study.direction_threshold }} sets the corresponding stable direction; all-zero vectors are stable-null. A zero sample deviation has a null standardized difference.</p>
+<div class="table-region" tabindex="0" role="region" aria-labelledby="statistics-caption">
+<table class="statistics"><caption id="statistics-caption">All seed-paired aggregate statistics ({{ study.statistics|length }} metrics)</caption>
+<thead><tr><th scope="col">Metric and sources</th><th scope="col">Seeds</th><th scope="col">Location</th><th scope="col">Variation</th><th scope="col">Bootstrap 95% interval</th><th scope="col">Signs</th><th scope="col">Direction</th></tr></thead>
+<tbody>{% for statistic in study.statistics %}<tr>
+<th scope="row"><bdi dir="auto">{{ statistic.metric_key }}</bdi><ul class="sources">{% for artifact in statistic.source_artifacts %}<li><bdi dir="auto">{{ artifact }}</bdi></li>{% endfor %}</ul></th>
+<td>{{ statistic.n_seeds }}</td>
+<td>Mean: {{ statistic.mean_paired_difference }}<br>Median: {{ statistic.median_paired_difference }}</td>
+<td>Sample SD: {{ statistic.sample_standard_deviation }}<br>Standardized difference: {{ value(statistic.paired_standardized_difference) }}</td>
+<td>Low: {{ statistic.bootstrap_ci_low }}<br>High: {{ statistic.bootstrap_ci_high }}</td>
+<td>Positive: {{ statistic.positive_count }}<br>Negative: {{ statistic.negative_count }}<br>Zero: {{ statistic.zero_count }}</td>
+<td><bdi dir="auto">{{ statistic.direction }}</bdi><br>Agreement: {{ statistic.agreement_fraction }}</td>
+</tr>{% endfor %}</tbody></table>
+</div>
+</section>
+<section aria-labelledby="pairs-heading">
+<h2 id="pairs-heading">Pair provenance ledger</h2>
+<p>Complete compact pair provenance follows. Per-seed scalar triples are omitted from this report and retained in the canonical study result. Manifest hashes cover exact canonical run.json bytes including their trailing LF; definition and result hashes cover canonical JSON without a trailing LF.</p>
+{% for pair in study.pairs %}<article class="pair" aria-labelledby="pair-{{ pair.seed }}">
+<h3 id="pair-{{ pair.seed }}">Seed {{ pair.seed }} · control / treatment receipts</h3>
+{{ ledger(pair) }}
+</article>{% endfor %}
+</section>
+<section aria-labelledby="assumptions-heading">
+<h2 id="assumptions-heading">Assumptions</h2>
+<p>Mobility is deterministic fictional movement on the supplied city graph, not calibrated traffic. Opportunity eligibility uses placement geometry or mobile windows, probability and daily caps from the bound scenario. The scenario hashes above bind these assumptions; this ledger does not embed placement inputs.</p>
+<p>{{ study.opportunity_model_id }} retains eligible opportunities. {{ study.attention_model_id }} makes one impression per opportunity and one notice when the deterministic keyed draw is less than the uncalibrated fixed probability 0.5. Creative text and fictional traits do not change the v1 attention rule.</p>
+{% if response_analyzed %}
+<h3>Transparent response and campaign state rules</h3>
+<p>{{ study.response_model_id }} uses fictional, operator-authored numeric assumptions. Their exact input and normalized structure hashes are recorded above; profiles, traits, interests and campaign copy are not embedded here.</p>
+<dl class="formulas">
+<dt>Interest match</dt><dd>Jaccard intersection / union; empty union gives 0.</dd>
+<dt>Affordability</dt><dd>clamp(1.25 − relative_price × price_sensitivity, 0, 1)</dd>
+<dt>Frequency fatigue</dt><dd>min(1, prior_notices_today / placement_daily_cap)</dd>
+<dt>Value match</dt><dd>0.55 × interest_match + 0.25 × novelty_seeking + 0.20 × affordability</dd>
+<dt>Planned sentiment delta</dt><dd>clamp(0.18 × value_match − 0.12 × advertising_skepticism − 0.06 × frequency_fatigue, −0.20, 0.20)</dd>
+<dt>Planned recall delta</dt><dd>clamp(0.22 × channel_recall_encoding + 0.12 × novelty_seeking − 0.08 × frequency_fatigue, 0, 0.30)</dd>
+<dt>Committed sentiment</dt><dd>Notices are grouped by minute, agent and campaign. clamp(math.fsum(previous_sentiment, planned_sentiment_deltas), −1, 1).</dd>
+<dt>Committed recall</dt><dd>clamp(1 − (1 − previous_recall) × math.prod(sorted(1 − planned_recall_delta)), 0, 1). Encoding has diminishing returns; spatial-response-v1 has no daily decay. State is campaign-scoped, never split by channel.</dd>
+<dt>Purchase intention proxy</dt><dd>clamp(0.40 × normalized_sentiment + 0.25 × value_match + 0.20 × recall_strength + 0.15 × impulsivity, 0, 1). It is an uncalibrated internal proxy.</dd>
+</dl>
+<p>Response event means use canonical math.fsum / response count. Zero-event frequency and direct means are 0.0 with 0 / 0 receipts. State means weight every matched agent/campaign state equally; unchanged campaigns remain present. No spatial social metric exists in schema v6.</p>
+{% else %}<p>Rule response and campaign state proxy: Not analyzed. No response or sales claim is made.</p>{% endif %}
+</section>
+<section aria-labelledby="reproduction-heading">
+<h2 id="reproduction-heading">Reproduction</h2>
+<p>Use the package/Python/model versions and already committed run IDs recorded in this ledger. Verify the source artifacts before analysis; save the following canonical study definition as STUDY.json. ROOT means the local directory containing city-runs; local absolute paths are intentionally absent.</p>
+<pre><code>adlife --format json city-study ROOT STUDY.json
+adlife --format json city-report ROOT STUDY.json</code></pre>
+<pre class="definition"><code><bdi dir="auto">{{ definition_json }}</bdi></code></pre>
+<p>Publication is fixed at city-reports/<bdi dir="auto">{{ study.definition.study_id }}</bdi>.html and refuses any existing destination. Analysis is read-only. The HTML omits scalar triples, so preserve the canonical JSON result alongside source artifacts to audit every observation numerator and denominator.</p>
+</section>
+<section aria-labelledby="limitations-heading">
+<h2 id="limitations-heading">Limitations</h2>
+<p>These are synthetic, exploratory model comparisons: unobserved, non-causal and not sales. Full-protocol-50-or-more-seeds describes protocol size only, not registration, representativeness, calibration or statistical power. Seed intervals characterize deterministic model variation only.</p>
+<p>A/A equality is an internal invariant, not external validation. Matched opportunity structure and response assumptions do not establish a clean creative effect: creative-only changes are numerically inert in v1. A nonzero v1 contrast changes opportunity structure or numeric assumptions. Opaque hashes and internally coherent detached results require their verified source artifacts for authenticity.</p>
+<p>No observed residents, personal data, sales, provider output, trajectories or campaign copy are included. The report is a static audit artifact, with no executable content or network resources. It does not claim calibrated population outcomes or external validity.</p>
+</section>
+</main>
+<footer>Spatial study HTML v1 · synthetic-study-not-observed-or-causal-effect</footer>
+</body>
+</html>

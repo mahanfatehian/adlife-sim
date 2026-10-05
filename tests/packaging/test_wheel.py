@@ -56,6 +56,8 @@ def test_wheel_carries_report_template_and_stylesheets(built_wheel: Path) -> Non
     assert "adlife/reporting/templates/report.html.j2" in names
     assert "adlife/reporting/static/report.css" in names
     assert "adlife/tui/styles.tcss" in names
+    assert "adlife/reporting/templates/spatial-report.html.j2" in names
+    assert "adlife/reporting/static/spatial-report.css" in names
 
 
 def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> None:
@@ -140,3 +142,60 @@ def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path
     assert completed.returncode == 0, report.read_text(encoding="utf-8")
     assert "smoke ok" in completed.stdout
     assert "schema-v6 response API/UI verified without network" in completed.stdout
+
+
+def test_exact_installed_wheel_spatial_report_is_offline_and_no_clobber(built_wheel, tmp_path):
+    import json
+
+    from scripts import smoke_release
+    from tests.integration.test_city_spatial_study import definition, make_runs
+    from tests.unit.city.test_city_analysis import _artifact_bytes
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    python, uv = smoke_release._create_interpreter(tmp_path)
+    smoke_release._expose_locked_dependencies(python)
+    smoke_release._install_wheel(python, uv, built_wheel, no_deps=True)
+    guard = smoke_release._install_network_guard(python, cwd=scratch)
+    probe = smoke_release._run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import pathlib, sysconfig, adlife; "
+            "assert pathlib.Path(adlife.__file__).resolve().is_relative_to("
+            "pathlib.Path(sysconfig.get_path('purelib')).resolve()); print('exact wheel')",
+        ],
+        cwd=scratch,
+    )
+    assert probe.stdout.strip() == "exact wheel"
+    make_runs(scratch, response=True)
+    from adlife.core.domain.serialization import canonical_json
+
+    study = scratch / "study.json"
+    study.write_text(canonical_json(definition(response=True)), encoding="utf-8")
+    before = _artifact_bytes(scratch / "city-runs")
+    adlife = python.parent / ("adlife.exe" if sys.platform == "win32" else "adlife")
+    command = [str(adlife), "--format", "json", "city-report", ".", "study.json"]
+    completed = smoke_release._run(command, cwd=scratch)
+    receipt = json.loads(completed.stdout)
+    assert receipt["report_path"] == "city-reports/repeated-study.html"
+    assert len(receipt) == 9 and completed.stderr == ""
+    report = scratch / receipt["report_path"]
+    original = report.read_bytes()
+    assert b"<style>" in original and b"<script" not in original
+    assert b"Content-Security-Policy" in original
+    conflict = subprocess.run(
+        command,
+        cwd=scratch,
+        capture_output=True,
+        text=True,
+        env=smoke_release._subprocess_environment(),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        timeout=60,
+    )
+    assert conflict.returncode == 3
+    assert json.loads(conflict.stdout)["error"]["message"] == "report destination already exists"
+    assert report.read_bytes() == original
+    assert _artifact_bytes(scratch / "city-runs") == before
+    assert guard.with_name(smoke_release._NETWORK_GUARD_LOG).is_file()
