@@ -47,7 +47,10 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check src tests
       - name: Mypy strict
-        run: uv run mypy src
+        run: |
+          uv run mypy src
+          uv run mypy --platform linux src
+          uv run mypy --platform win32 src
       - name: Test suite with branch coverage (85% floor)
         env:
           # Run the timing-sensitive benchmark separately from coverage instrumentation.

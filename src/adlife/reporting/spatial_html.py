@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import os
 import stat
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from hashlib import sha256
@@ -153,7 +154,7 @@ def _publication_directory(root: Path, *, create: bool = True) -> Iterator[tuple
         with suppress(FileExistsError):
             directory.mkdir(exist_ok=True)
     before = _check_directory(directory, resolved)
-    if os.name == "nt":
+    if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
 

@@ -10,6 +10,18 @@ import yaml
 ROOT = Path(__file__).parents[2]
 
 
+def test_ci_type_checks_windows_and_posix_platform_apis() -> None:
+    """Keep platform-only stdlib attributes valid from every developer OS."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    step = next(
+        step for step in workflow["jobs"]["test"]["steps"] if step.get("name") == "Mypy strict"
+    )
+    commands = [shlex.split(line) for line in step["run"].splitlines() if line.strip()]
+
+    assert ["uv", "run", "mypy", "--platform", "linux", "src"] in commands
+    assert ["uv", "run", "mypy", "--platform", "win32", "src"] in commands
+
+
 def test_ci_runs_maximum_performance_outside_coverage() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     steps = workflow["jobs"]["test"]["steps"]
