@@ -140,17 +140,38 @@ state, explicitly not state at the scrubbed minute. It does not create or mutate
 V4 remains opportunity-only evidence, V5 adds bounded synthetic attention evidence, and V6
 adds bounded rules-only response evidence; none is an observed advertising-outcome run.
 
-The adapter-free core also exposes a read-only spatial-metrics projection over verified V5
-and V6 artifacts. The projection is deliberately attention-only in both schemas: it folds
-opportunity and attention evidence, not response or final-state evidence. Each value has an
-exact numerator, denominator, and source paths and carries
-`synthetic-metrics-not-observed-outcomes`; it is deterministic and uncalibrated, not an
-observed outcome. The matched comparison layer requires identical city, assignment, trace,
-seed, duration, and population provenance. It guarantees exact-zero A/A deltas and labels
-different normalized placement/channel structures `opportunity-confounded`. Comparisons
-carry `synthetic-comparison-not-causal-or-observed-effect`. These projections do not mutate
-or cache data, do not drive cognition or agent state, and do not turn evidence into a
-causal effect. C4b repeated-seed uncertainty and spatial report integration remain open.
+The adapter-free core exposes the original read-only spatial-metrics projection over
+verified V5 and V6 artifacts. That C4a projection remains attention-only in both schemas:
+it folds opportunity and attention evidence, not response or final-state evidence. Each
+value has an exact numerator, denominator, and source paths and carries
+`synthetic-metrics-not-observed-outcomes`. The matched comparison requires identical city,
+assignment, trace, seed, duration, and population provenance, guarantees exact-zero A/A
+deltas, and labels changed normalized placement/channel structure
+`opportunity-confounded`. It carries
+`synthetic-comparison-not-causal-or-observed-effect`.
+
+Schema V6 has a separate additive `spatial-response-metrics-v1` projection under
+`synthetic-response-metrics-not-observed-outcomes`. Its event receipts summarize response
+count, reach, frequency, and mean planned rule deltas overall, by channel, and by campaign.
+Its complete-grid state receipts summarize initial, final, and changed brand sentiment,
+recall strength, and purchase-intention proxy overall and by campaign. Channel state is
+intentionally absent: notices from different channels can share one nonlinear committed
+state update, so allocating that state to a channel would invent evidence. The response
+comparison requires V6 and reports opportunity and response-assumption classifications
+independently. `/api/spatial-metrics` remains the attention-only endpoint;
+`/api/spatial-response-metrics` is a separate GET-only, path-free V6 endpoint.
+
+Bounded C4b evidence is complete without closing the parent C4 gate. The immutable,
+path-free study definition names 2–100 committed seed pairs. `city-study` verifies and
+projects one run at a time, treats each seed pair as the experimental unit, and produces
+`spatial-paired-study-v1` under `synthetic-study-not-observed-or-causal-effect` without
+pooling agent or event rows. Independent keyed SplitMix64 streams create deterministic
+paired intervals per metric. After `city-report` performs the same source verification and
+analysis, its renderer consumes only that revalidated result and publishes a fixed-path,
+zero-JavaScript, no-network evidence ledger; the renderer never receives raw events,
+response inputs, provider bodies, or source paths. Both analysis and report are read-only.
+Broader spatial social/purchase mechanisms, automatic jobs, the workbench, authentication,
+calibration, and external validity remain open.
 
 ## The cognition seam
 

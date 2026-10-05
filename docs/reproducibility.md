@@ -161,19 +161,79 @@ summary is `spatial-response-artifact-v1`, and the final-state document is
 `synthetic-response-not-observed-behavior`; purchase intention is an uncalibrated proxy, not
 purchase probability, sales, or a transaction.
 
-`adlife city-metrics ROOT ID` derives a canonical read-only projection only after complete
-schema-v5 or schema-v6 artifact verification. It remains attention-only for both schemas:
-the fold reads opportunity and attention evidence, records the exact source schema version,
-and does not consume response records or final campaign state. Every value carries its exact
-numerator, denominator, and source paths plus `synthetic-metrics-not-observed-outcomes`. The
-projection is deterministic and uncalibrated; it is neither stored in the artifact nor
-presented as an observed outcome.
-`adlife city-compare ROOT CONTROL_ID TREATMENT_ID` requires identical city, assignment,
-trace model, seed, duration, and population provenance. Same-run A/A deltas are exactly zero.
-Different normalized placement/channel opportunity structure is classified
-`opportunity-confounded`, and every comparison carries
-`synthetic-comparison-not-causal-or-observed-effect`. Thus a differing structure cannot be
-silently interpreted as a channel effect.
+`adlife city-metrics ROOT ID` derives canonical read-only projections only after complete
+artifact verification. The default attention layer remains the exact C4a contract for
+schema-v5 and schema-v6: it reads opportunity and attention evidence, records the source
+schema version, and does not consume response records or final campaign state. Every value
+carries its exact numerator, denominator, and source paths plus
+`synthetic-metrics-not-observed-outcomes`.
+
+For schema-v6 only, `city-metrics --layer response` derives the separate
+`spatial-response-metrics-v1` projection under
+`synthetic-response-metrics-not-observed-outcomes`. It re-evaluates response evidence from
+the frozen response input and notice stream before folding it. Direct rule responses have
+overall/channel/campaign event receipts; complete initial/final state has overall/campaign
+receipts only. Channel state is deliberately absent because a shared nonlinear commit
+cannot be decomposed after the fact. Both projections are deterministic, uncalibrated,
+derived in memory, and never stored back into the source run.
+
+`adlife city-compare ROOT CONTROL_ID TREATMENT_ID` preserves the attention layer by default
+and requires identical city, assignment, trace model, seed, duration, and population
+provenance. Same-run A/A deltas are exactly zero. Its additive schema-v6 response layer
+separately classifies opportunity structure and numeric response assumptions; a different
+normalized placement/channel structure is `opportunity-confounded`, and changed assumptions
+are `response-assumption-confounded`. Attention comparisons carry
+`synthetic-comparison-not-causal-or-observed-effect`; response comparisons carry their
+separate response claim scope. Both explicitly refuse causal or observed-effect
+interpretation.
+
+### Repeated-seed study reproducibility
+
+`adlife city-study ROOT STUDY.json` analyzes explicit contiguous `0..N-1` run pairs as
+`spatial-paired-study-v1` under `synthetic-study-not-observed-or-causal-effect`. One seed
+pair is the experimental unit; the analyzer never pools agents, events, opportunities,
+notices, or campaign-state rows as independent samples. Matching assignment, mobility trace,
+and optional place-assignment hashes provide the within-pair common-random-number evidence.
+Attention studies are homogeneous all-v5 or all-v6; attention-and-response requires v6.
+
+Each metric's treatment-minus-control vector yields its mean, sample standard deviation,
+median, nullable paired standardized difference, exact sign counts, agreement, direction,
+and a deterministic 95% interval. Positive/negative direction requires at least `0.8` of
+all pairs; zeros remain in the denominator, all-zero is `stable-null`, and no p-value is
+produced. These are summaries of simulator seed variation, not population confidence.
+
+Intervals use 10,000 resamples of whole seed pairs with replacement. Each metric receives
+an independently keyed SplitMix64 stream derived from its canonical metric key and sample
+size, so adding or reordering another metric cannot change it. Resampled means use
+`math.fsum`; after sorting, zero-based elements 249 and 9749 are the interval endpoints.
+Modulo bias is avoided with rejection sampling. The algorithm does not use Python's global
+random generator.
+
+An exactly constant vector is treated algebraically: mean and median equal the constant,
+sample deviation is exactly `0.0`, the nullable paired standardized difference is `null`,
+and both bootstrap endpoints equal the same constant. This avoids manufacturing variation
+through floating-point regrouping.
+
+Two to 49 pairs are `exploratory-under-50-seeds`; 50–100 are
+`full-protocol-50-or-more-seeds`. That label is not registered, not representative, not
+validated, and not statistically powered. It records a protocol-size tier only.
+
+`study_definition_sha256` and `study_result_sha256` hash canonical JSON UTF-8 without a
+trailing LF. Each pair's `manifest_sha256` hashes exact persisted canonical `run.json`
+bytes, including its trailing LF. Existing stream/state hashes retain their manifest
+meanings.
+
+`report_sha256` and `report_bytes` cover the exact emitted UTF-8/LF HTML bytes. The static
+report contains no JavaScript or network resource and is published only to the fixed
+`city-reports/<study_id>.html` path without replacing an existing entry.
+
+Canonical study results are capped at 32 MiB and projected with
+`O(largest source run + bounded result)` memory; static reports omit per-seed scalar triples
+and are capped at 8 MiB. Analysis and reporting leave every source run byte-identical.
+
+Current city manifests record package version, Python version, run model, and evidence
+identities. City manifests do not prove Git revision or lockfile identity; preserve the
+source revision and dependency lock separately when reporting a study.
 
 `adlife city-run PACK --output-root ROOT --run-id ID` or the catalog form
 `adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at
@@ -224,7 +284,9 @@ persisted current-minute attention evidence with the synthetic claim and 0.5 ass
 Schema-v6 also presents persisted current-minute response/state-update records and complete
 final end-of-run state explicitly labeled as not state at the scrubbed minute. Schema-v5 and
 schema-v6 viewers derive the same attention-only, receipt-bearing spatial metrics ledger in
-memory; viewing, scrubbing, metrics, and comparison never modify the saved artifact. A
+memory; a fully prevalidated schema-v6 viewer also re-derives the separate response metrics
+document. Viewing, scrubbing, metrics, comparison, study analysis, and reporting never
+modify the saved artifact. A
 digest proves equality against that artifact, not authenticity against an owner rewriting
 all files. Identical frames are expected on a compatible implementation/runtime;
 cross-platform bitwise identity of floating-point interpolation is not claimed.

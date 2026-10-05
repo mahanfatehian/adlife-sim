@@ -449,7 +449,13 @@ def test_spatial_response_docs_pin_rule_semantics_and_remaining_limitations() ->
         "budget",
         "purchase event",
     )
-    _assert_terms_share_paragraph(limitations, "spatial", "html", "report", "remain")
+    _assert_terms_share_paragraph(
+        limitations,
+        "spatial",
+        "report",
+        "zero-javascript",
+        "8 mib",
+    )
     for text in (model_card, limitations):
         lowered = _squash(text)
         assert "purchase intention" in lowered
@@ -644,8 +650,19 @@ def test_spatial_response_roadmap_design_and_changelog_record_partial_c3c_status
     assert "synthetic-response-not-observed-behavior" in roadmap_lower
     assert "[ ] **c3" in roadmap_lower
     assert "[ ] **c4" in roadmap_lower
-    assert "c4b" in roadmap_lower
-    assert "current ledger (2026-10-03" in roadmap_lower
+    _assert_terms_share_paragraph(
+        roadmap,
+        "C4b evidence",
+        "spatial-paired-study-v1",
+        "city-report",
+        "source artifacts unchanged",
+    )
+    _assert_terms_share_paragraph(
+        roadmap,
+        "Current ledger",
+        "C4b repeated-seed analysis/static reporting",
+        "unchecked parent gates",
+    )
     _assert_terms_share_paragraph(
         roadmap,
         "C3 remains open",
@@ -672,8 +689,358 @@ def test_spatial_response_roadmap_design_and_changelog_record_partial_c3c_status
         "--spatial-response",
         "spatial-response-v1",
         "synthetic-response-not-observed-behavior",
+        "city-study",
+        "city-report",
+        "spatial-paired-study-v1",
     ):
         assert term in unreleased_lower
+
+
+def test_spatial_response_metrics_are_an_additive_schema_v6_public_contract() -> None:
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+
+    for text in (architecture, cli, city_pilot, reproducibility, model_card):
+        assert "spatial-response-metrics-v1" in text
+        assert "synthetic-response-metrics-not-observed-outcomes" in text
+
+    _assert_terms_share_paragraph(cli, "city-metrics", "--layer", "attention", "default")
+    _assert_terms_share_paragraph(cli, "city-metrics", "--layer response", "schema-v6")
+    _assert_terms_share_paragraph(cli, "city-compare", "--layer response", "schema-v6")
+    _assert_terms_share_paragraph(
+        cli,
+        "/api/spatial-metrics",
+        "attention-only",
+        "/api/spatial-response-metrics",
+        "schema-v6",
+        "get-only",
+    )
+
+    formulas = _squash(city_pilot)
+    for formula in (
+        "response_count = len(r)",
+        "response_reach = unique responding agents / population_size",
+        "response_frequency = len(r) / unique responding agents",
+        "mean_rule_sentiment_delta = fsum(response.sentiment_delta) / len(r)",
+        "mean_rule_recall_delta = fsum(response.recall_delta) / len(r)",
+        "change_total = final_total - initial_total",
+        "mean_change = change_total / len(s)",
+    ):
+        assert formula in formulas, formula
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "mean_rule_recall_delta",
+        "planned",
+        "recall_strength.mean_change",
+        "committed nonlinear",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "one",
+        "notice",
+        "one",
+        "response",
+        "not engagement",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "event-only",
+        "channel",
+        "state",
+        "not",
+        "attributed",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "direct-response receipts",
+        "outputs/spatial-responses.jsonl",
+        "spatial.response",
+        "state receipts",
+        "inputs/spatial-response.json",
+        "outputs/response-state.json",
+    )
+
+
+def test_spatial_study_docs_pin_seed_statistics_and_provenance_contract() -> None:
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+
+    for text in (architecture, cli, city_pilot, reproducibility, model_card, limitations):
+        assert "city-study" in text
+        assert "synthetic-study-not-observed-or-causal-effect" in text
+    for text in (architecture, city_pilot, reproducibility, model_card):
+        assert "spatial-paired-study-v1" in text
+
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "seed pair",
+        "experimental unit",
+        "never pools",
+        "agents",
+        "events",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "assignment",
+        "trace",
+        "place",
+        "common random numbers",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "attention",
+        "all-v5",
+        "all-v6",
+        "attention-and-response",
+        "schema-v6",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "opportunity",
+        "matched-opportunity-structure",
+        "opportunity-confounded",
+        "response assumptions",
+        "matched-response-assumptions",
+        "response-assumption-confounded",
+    )
+
+    statistics = _squash(reproducibility)
+    for required in (
+        "sample standard deviation",
+        "median",
+        "nullable paired standardized difference",
+        "0.8",
+        "no p-value",
+        "10,000",
+        "splitmix64",
+        "249",
+        "9749",
+        "simulator seed variation",
+    ):
+        assert required in statistics, required
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "each metric",
+        "independently keyed SplitMix64 stream",
+        "10,000 resamples",
+    )
+    assert "10,000 independently keyed SplitMix64 resamples" not in city_pilot
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "constant",
+        "sample deviation",
+        "0.0",
+        "standardized difference",
+        "null",
+        "bootstrap endpoints",
+    )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "50",
+        "full-protocol-50-or-more-seeds",
+        "not registered",
+        "not representative",
+        "not validated",
+        "not statistically powered",
+    )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "city manifests",
+        "package",
+        "python",
+        "model",
+        "do not prove",
+        "git",
+        "lockfile",
+    )
+
+
+def test_spatial_study_hash_size_and_report_publication_boundaries_are_explicit() -> None:
+    cli = _read("docs", "cli-reference.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "study_definition_sha256",
+        "study_result_sha256",
+        "without a trailing lf",
+        "manifest_sha256",
+        "including",
+        "trailing lf",
+    )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "report_sha256",
+        "report_bytes",
+        "exact",
+        "utf-8/lf",
+    )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "32 mib",
+        "o(largest source run + bounded result)",
+        "8 mib",
+    )
+    _assert_terms_share_paragraph(
+        cli,
+        "city-reports/<study_id>.html",
+        "zero-javascript",
+        "no network",
+        "csp",
+    )
+    _assert_terms_share_paragraph(
+        cli,
+        "atomic no-clobber",
+        "hard link",
+        "best effort",
+        "directory fsync",
+        "power loss",
+    )
+    for receipt_field in (
+        "schema_version",
+        "format_id",
+        "claim_scope",
+        "study_id",
+        "study_definition_sha256",
+        "study_result_sha256",
+        "report_path",
+        "report_sha256",
+        "report_bytes",
+    ):
+        assert receipt_field in cli, receipt_field
+    assert "city-study" in limitations
+    assert "city-report" in limitations
+
+
+def test_city_pilot_repeated_seed_example_uses_campaign_backed_schema_v6_runs() -> None:
+    city_pilot = _read("docs", "city-pilot.md")
+
+    for required in (
+        "--run-id response-0",
+        "--seed 0",
+        "--run-id response-1",
+        "--seed 1",
+        "--spatial-campaign spatial-campaign.json",
+        "--spatial-response spatial-response.json",
+        "city-metrics ./city-output response-0 --layer response",
+        "city-compare ./city-output response-0 response-0 --layer response",
+        "city-study ./city-output spatial-study.json",
+        "city-report ./city-output spatial-study.json",
+    ):
+        assert required in city_pilot, required
+
+    match = re.search(
+        r"<!-- spatial-study-definition:start -->\s*```json\s*(.*?)\s*```\s*"
+        r"<!-- spatial-study-definition:end -->",
+        city_pilot,
+        flags=re.DOTALL,
+    )
+    assert match is not None, "city guide must include the exact two-seed A/A definition"
+    assert json.loads(match.group(1)) == {
+        "schema_version": 1,
+        "study_id": "response-aa",
+        "design": "a-a",
+        "analysis_scope": "attention-and-response",
+        "pairs": [
+            {
+                "seed": 0,
+                "control_run_id": "response-0",
+                "treatment_run_id": "response-0",
+            },
+            {
+                "seed": 1,
+                "control_run_id": "response-1",
+                "treatment_run_id": "response-1",
+            },
+        ],
+    }
+
+
+def test_spatial_public_status_is_complete_only_for_bounded_c4b() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    )
+    design = _read("docs", "superpowers", "specs", "2026-09-28-production-city-platform-design.md")
+
+    for text in (readme, architecture, roadmap, design):
+        assert "C4b evidence" in text
+        assert "city-study" in text
+        assert "city-report" in text
+    _assert_terms_share_paragraph(
+        roadmap,
+        "C4 remains open",
+        "social",
+        "job orchestration",
+        "workbench",
+        "authentication",
+        "calibration",
+        "external validity",
+    )
+    _assert_terms_share_paragraph(
+        design,
+        "bounded C4b",
+        "complete",
+        "broader C3",
+        "C4",
+        "open",
+    )
+
+    assert "attribute the difference in outcome to that change alone" not in readme.lower()
+    spatial_evidence_section = roadmap.split("**C3c evidence", maxsplit=1)[1].split(
+        "## D. Analyst web workbench", maxsplit=1
+    )[0]
+    assert "inspect the causal event on that road/time" not in spatial_evidence_section.lower()
+    assert "inspect persisted evidence on that road/time" in spatial_evidence_section.lower()
+    _assert_terms_share_paragraph(
+        readme,
+        "zone campaign engine",
+        "shared per-person",
+        "spatial",
+        "campaign-scoped",
+    )
+
+
+def test_spatial_study_plan_records_completed_tasks_and_exact_evidence() -> None:
+    plan = _read("docs", "superpowers", "plans", "2026-10-03-spatial-study-analysis.md")
+    task_3 = plan.split("### Task 3:", maxsplit=1)[1].split("### Task 4:", maxsplit=1)[0]
+    task_4 = plan.split("### Task 4:", maxsplit=1)[1].split("### Task 5:", maxsplit=1)[0]
+    task_5 = plan.split("### Task 5:", maxsplit=1)[1]
+
+    assert "- [ ]" not in task_3
+    assert "controller review and push remain pending" not in task_3.lower()
+    assert "805e333" in task_3
+    assert "eb1d0cd" in task_3
+    assert "origin/main" in task_3
+
+    assert "- [ ]" not in task_4
+    assert "1cab490" in task_4
+    assert "bb3fb58" in task_4
+    assert "independent scoped re-review" in task_4.lower()
+    assert "origin/main" in task_4
+
+    assert "- [ ]" not in task_5
+    for evidence in (
+        "4,592 tests",
+        "90.69%",
+        "60,061-byte static spatial report",
+        "14.02 seconds",
+        "windows x86-64 pyinstaller build",
+        "108 tests",
+        "4,597 tests",
+        "exact `city-run` json receipt",
+        "recorded jsonl/state evidence",
+    ):
+        assert evidence in task_5.lower()
 
 
 def test_spatial_response_docs_remove_obsolete_pre_c3c_claims() -> None:

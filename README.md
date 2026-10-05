@@ -14,9 +14,10 @@ what it saw with people it knows, and updates its recall, brand sentiment, and p
 accordingly. The engine advances in fixed 15-simulated-minute ticks — 96 ticks per simulated day; a
 timestamp is an absolute simulated minute, so day 1 ends at minute 1,440.
 
-It is a research and teaching instrument: a controlled environment where you can change one variable in a
-campaign, re-run an identical population under an identical seed, and attribute the difference in outcome
-to that change alone.
+It is a research and teaching instrument: a controlled environment where you can change a declared
+campaign input and compare seed-matched synthetic runs under common random numbers. The resulting
+difference is a contrast inside this model, not automatically a causal effect; changed opportunity
+structure and changed numeric response assumptions are classified explicitly.
 
 ---
 
@@ -88,6 +89,8 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Self-contained HTML reports | Complete |
 | Opt-in deterministic street-mobility pilot, city-pack v2, saved/replayable spatial evidence, local web timeline, and offline OSM extract importer | Initial product-track pilot; separate from the zone campaign engine |
 | Schema-v6 spatial rule responses and campaign-scoped state over persisted notices | C3c evidence complete; uncalibrated and not a purchase or sales model |
+| Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
+| Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
 | Verified offline, content-addressed city catalog with one `fictional-fixture` entry | Foundation complete; no real city is qualified |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
@@ -243,28 +246,40 @@ change.
 `city-replay` recomputes and verifies every layer without changing the source. For verified
 schema-v5 and schema-v6 runs, `city-view` shows read-only current-minute opportunity and
 current-minute attention evidence on the map and in bounded evidence rails; schema-v6 also
-shows response records and complete end-of-run campaign state. The viewer's spatial metrics
-ledger remains attention-only for both schema versions: every metric is derived solely from
-opportunity and attention evidence and carries its exact numerator, denominator, and source
-paths under `synthetic-metrics-not-observed-outcomes`. No metric is calibrated to observed
-behavior. Campaign copy, identity, creative content and provider configuration are not inputs
-to the attention draw. In the response model, campaign ID routes each notice to its campaign
+shows response records and complete end-of-run campaign state. The existing
+`/api/spatial-metrics` ledger and default `city-metrics` output remain attention-only for both
+schema versions under `synthetic-metrics-not-observed-outcomes`. Schema-v6 adds the separate
+`spatial-response-metrics-v1` projection under
+`synthetic-response-metrics-not-observed-outcomes`, selected with `--layer response` or read
+from `/api/spatial-response-metrics`. It reports direct rule-response receipts and
+overall/campaign committed state with exact numerator and denominator evidence; channel
+series are event-only because nonlinear state cannot be allocated honestly between
+channels. No metric is calibrated to observed behavior.
+Campaign copy, identity, creative content and provider configuration are not inputs to the
+attention draw. In the response model, campaign ID routes each notice to its campaign
 assumptions and campaign-scoped state. Campaign name, copy, creative hash and provider
 configuration do not change numeric response values when the frozen response assumptions
 remain fixed.
 
-`city-metrics` prints that same deterministic attention-only, receipt-bearing projection
-without writing a cache or changing the schema-v5 or schema-v6 run. `city-compare` accepts
-only matched city, assignment, trace,
-seed, duration, and population provenance. A same-run A/A comparison is exactly zero. When
+`city-metrics` and `city-compare` preserve the exact attention output by default. Their
+additive `--layer response` mode requires schema-v6 and independently classifies opportunity
+structure and numeric response assumptions. A same-run A/A comparison is exactly zero. When
 the normalized placement/channel opportunity structure differs, the result is explicitly
-`opportunity-confounded`, not a channel effect. Every comparison carries
-`synthetic-comparison-not-causal-or-observed-effect`. Older schema-v4 artifacts remain
-readable as opportunity-only evidence and do not fabricate attention or response state. C3
-remains open for bounded cognition, memory, social propagation, and separately specified
-rule-owned purchase semantics; C4b repeated-seed uncertainty and self-contained spatial
-reporting also remain open. Nothing here claims observed device use, viewability, attention,
-traffic, people, purchases, sales, or causal effects.
+`opportunity-confounded`, not a channel effect. Every comparison carries a non-causal,
+unobserved claim scope: attention comparisons use
+`synthetic-comparison-not-causal-or-observed-effect`, while response comparisons use
+`synthetic-response-comparison-not-causal-or-observed-effect`.
+
+Bounded C4b evidence is also complete: `city-study` analyzes an explicit definition of
+2–100 already committed, seed-matched run pairs as `spatial-paired-study-v1`, and
+`city-report` publishes its fixed-path, zero-JavaScript evidence ledger. One seed pair is
+the experimental unit; the analysis never pools agents or events across seeds. Its
+`synthetic-study-not-observed-or-causal-effect` results describe deterministic simulator-seed
+variation, not population confidence. Older schema-v4 artifacts remain opportunity-only.
+Broader C3/C4 social and purchase integration, the analyst workbench, authentication,
+automatic job orchestration, calibration and external validity remain open. Nothing here
+claims observed device use, viewability, attention, traffic, people, purchases, sales, or
+causal effects.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
 Use `--agents`, `--days`, `--seed`, and `--port` to change the preview. No map tile server,
 provider key, or network connection is needed. The server does not open a browser or
@@ -391,7 +406,9 @@ simulated days) with two advertising channels; purchase is a rule-derived proxy,
 model; nothing is calibrated against real-world data.
 Standard CLI/demo initial states have no active purchase need and zero disposable budget,
 so their purchase count is structurally zero. Purchase-enabled core studies require explicit
-initial states. Sentiment, recall and intention are shared per-person state, not campaign-specific.
+initial states. In the zone campaign engine, sentiment, recall and intention are shared
+per-person state, not campaign-specific; the separate spatial schema-v6 response model uses
+campaign-scoped state.
 Read
 [docs/methodology/limitations.md](docs/methodology/limitations.md) before citing any number this
 software produces.

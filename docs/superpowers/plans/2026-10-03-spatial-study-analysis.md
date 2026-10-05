@@ -245,10 +245,10 @@ def analyze_stored_spatial_study(
 - [x] **Step 5: Write RED CLI contracts and implement `city-study`.** Pin exact JSON/human
   output, empty JSON stderr, generic safe failures and exit classes 1/2/4/130. Command is
   read-only and accepts no discovery/output option.
-- [ ] **Step 6: Run focused/related/performance suites, Ruff/mypy, inspect diff, commit and
-  push.** Commit and push remain owner-authorized; the controller performs the push after
-  independent review. Include load/project/release sequencing, constant-factor peak memory,
-  and a maximum 100-pair/20-campaign serialized-result bound. Commit:
+- [x] **Step 6: Run focused/related/performance suites, Ruff/mypy, inspect diff, commit and
+  push.** Commit and push were owner-authorized and completed after controller review.
+  Evidence includes load/project/release sequencing, constant-factor peak memory, and a
+  maximum 100-pair/20-campaign serialized-result bound. Commit:
   `feat(city): analyze repeated-seed studies`.
 
 Task 3 continuation evidence (2026-10-05): focused tests passed 235 cases, related
@@ -262,8 +262,9 @@ instrumented loaded-run peak memory was 8,772,706 bytes for 2 pairs and 9,076,72
 The maximum-shape probe uses real scalar evidence with synthetic compact per-seed
 projections, and the memory probe is instrumented, not maximum-production RSS evidence.
 Author self-review found no unrelated changes or golden edits. The local continuation
-commit is `805e333`; controller review and push remain pending. The owner's commit-and-push
-authorization remains active, with the controller performing the push after independent review.
+commit is `805e333`; the authority-correction commit is `eb1d0cd`. Controller review
+completed cleanly, and both commits are ancestors of the synchronized `origin/main` branch.
+No Task 3 review or push remains pending.
 
 ### Task 4: Render and publish a zero-JavaScript spatial study report
 
@@ -292,27 +293,35 @@ def publish_spatial_study_report(
 ) -> SpatialReportReceipt: ...
 ```
 
-- [ ] **Step 1: Apply `frontend-design` and write RED document tests.** Pin deterministic
+- [x] **Step 1: Apply `frontend-design` and write RED document tests.** Pin deterministic
   LF/UTF-8 bytes, exact result values, attention/response sections, disclosures,
   assumptions, limitations, Persian `<bdi>`, autoescaping, no scripts/external resources,
   CSS CSP hash, 8 MiB ceiling and no NaN/Infinity.
-- [ ] **Step 2: Implement the strict static renderer.** Use `StrictUndefined`, autoescape,
+- [x] **Step 2: Implement the strict static renderer.** Use `StrictUndefined`, autoescape,
   trusted packaged CSS only, system fonts and semantic field-ledger structure.
-- [ ] **Step 3: Write RED no-clobber/fault CLI tests.** Cover fixed contained destination,
+- [x] **Step 3: Write RED no-clobber/fault CLI tests.** Cover fixed contained destination,
   file/directory/symlink/dangling conflicts, report-directory junction/symlink, injected
   open/write/file-fsync/link/directory-fsync failures, Python-3.11 Windows reparse-point
   detection, temporary cleanup, safe JSON receipt, exit codes and source immutability.
   File-fsync/link failures are pre-commit and leave no destination; a post-link directory-
   fsync failure is non-fatal and leaves the complete published destination.
-- [ ] **Step 4: Implement atomic link publication and `city-report`.** Never fall back to
+- [x] **Step 4: Implement atomic link publication and `city-report`.** Never fall back to
   replace. Return relative POSIX path/hash/bytes only.
-- [ ] **Step 5: Write/run browser and security tests.** Disable JavaScript; assert semantic
+- [x] **Step 5: Write/run browser and security tests.** Disable JavaScript; assert semantic
   headings/tables, keyboard focus, visible focus, 390 px containment, print/forced-colors,
   contrast, Persian directionality, hostile markup safety and zero network requests. Render
   the maximum statistic/pair-provenance shape and prove it remains deterministic and below
   the 8 MiB report ceiling.
-- [ ] **Step 6: Run resource/wheel/CLI/report/security suites, Ruff/mypy, inspect diff,
+- [x] **Step 6: Run resource/wheel/CLI/report/security suites, Ruff/mypy, inspect diff,
   commit and push.** Commit: `feat(report): add spatial study evidence report`.
+
+Task 4 completion evidence (2026-10-05): implementation commit `1cab490` and independent-
+review repair commit `bb3fb58` are ancestors of the synchronized `origin/main` branch. The
+independent scoped re-review found no new Critical or Important issue. Related report/CLI/
+security suites passed 469 cases with 5 skips; Python 3.11 focused coverage passed 286 with
+4 privilege-dependent skips. Full deterministic suites under `PYTHONHASHSEED=0` and
+`PYTHONHASHSEED=12345` each passed 4,506 tests with 27 skips. Ruff lint, format checking,
+and strict mypy passed. These are Task 4 completion receipts, not Task 5 release evidence.
 
 ### Task 5: Reconcile public contracts and certify installed C4b behavior
 
@@ -330,21 +339,56 @@ def publish_spatial_study_report(
 - Modify: packaging documentation/smoke tests.
 - Modify: this plan with exact execution evidence.
 
-- [ ] **Step 1: Write RED executable documentation/smoke assertions.** Pin commands,
+- [x] **Step 1: Write RED executable documentation/smoke assertions.** Pin commands,
   schemas/models/scopes, formulas, seed unit, bootstrap, classifications, report security,
   v5/v6 behavior and explicit limitations.
-- [ ] **Step 2: Reconcile public documentation.** Mark bounded C4b evidence complete but
+- [x] **Step 2: Reconcile public documentation.** Mark bounded C4b evidence complete but
   keep broader C4/social, job/workbench, calibration, authentication and external validity
   open. Never call 50 seeds registered or claim city Git/lock provenance.
-- [ ] **Step 3: Extend exact-wheel smoke.** Create schema-v6 pairs for seeds 0 and 1, run
+- [x] **Step 3: Extend exact-wheel smoke.** Create schema-v6 pairs for seeds 0 and 1, run
   response metrics, A/A `city-study`, and `city-report`; verify exact receipts/CSP/no script,
   second-write conflict, source tree hashes and network guard.
-- [ ] **Step 4: Run focused packaging/documentation/security/architecture suites.**
-- [ ] **Step 5: Run the full release-quality matrix.** Locked sync, Ruff format/lint,
+- [x] **Step 4: Run focused packaging/documentation/security/architecture suites.**
+- [x] **Step 5: Run the full release-quality matrix.** Locked sync, Ruff format/lint,
   strict mypy, full pytest, hash seeds 0/12345, branch coverage, build, exact-wheel smoke,
   doctor/demo, spatial study/report performance, `git diff --check`, and supported frozen
   smoke. Make no claim for unexecuted OS-specific builds.
-- [ ] **Step 6: Request independent whole-diff review and fix every critical/important
+- [x] **Step 6: Request independent whole-diff review and fix every critical/important
   finding test-first.**
-- [ ] **Step 7: Record exact evidence, inspect status, commit and push.**
+- [x] **Step 7: Record exact evidence, inspect status, commit and push.**
   Commit: `docs(city): document repeated-seed studies`.
+
+Task 5 verification evidence (2026-10-05): locked synchronization, Ruff formatting and
+lint, strict mypy over 133 source files, and standalone smoke-script mypy passed. The
+unseeded suite and the `PYTHONHASHSEED=0` and `PYTHONHASHSEED=12345` suites each passed
+4,592 tests with 29 platform-dependent skips. Full branch coverage passed 4,592 tests
+with 29 skips at 90.69%, above the unchanged 85% floor. `uv build --no-sources` and the
+exact `adlife_sim-0.1.0-py3-none-any.whl` clean-room smoke passed under its network guard;
+the installed wheel certified the retained schema-v6 flow, two-seed response A/A study,
+60,061-byte static spatial report, and immutable second-publication conflict.
+
+Offline version, human/JSON doctor, and human/JSON headless demo checks passed. The host's
+default `cp1252` console produced the documented UTF-8 environmental warning (7/8 checks,
+exit 0); with `PYTHONUTF8=1`, both doctor formats reported 8/8 and `all_ok: true`. The fresh
+presentation flow passed init, validation, a three-day/20-agent phone run, identical replay,
+self-contained report, billboard JSON run, and exact-zero two-seed A/A study-directory
+comparison. Pilot-driven TUI tests passed in the full suites; an interactive live terminal
+was intentionally not opened from this noninteractive/background verification session.
+
+The 30-agent/seven-day rules run completed in 14.02 seconds against its 40-second local
+ceiling, with 5,685 events, 2 MiB traced peak memory, a 3,629,056-byte database, and a
+4,862,947-byte report. The maximum 100-pair spatial result was 18,838,356 bytes and took
+8.56 seconds against its 60-second ceiling; maximum spatial HTML was 1,173,631 bytes. The
+locally supported Windows x86-64 PyInstaller build succeeded, and its exact executable
+passed version, offline doctor, packaged catalog, city run/replay, project run, and
+4,863,257-byte report smoke. No Linux or macOS frozen build is claimed. `git diff --check`
+passed; informational AutoCRLF notices were the only output.
+
+The independent whole-diff review found two installed-wheel receipt-binding gaps. RED-first
+repairs now bind the exact `city-run` JSON receipt to its canonical persisted manifest and
+independently project response/state metric receipts from the recorded JSONL/state evidence
+without reimplementing simulation decisions. The post-repair smoke suite passed 108 tests
+with 2 platform-dependent skips; Ruff, formatting, smoke-script mypy, diff checking, rebuild,
+and exact-wheel smoke passed again. These focused post-review results supplement the broad
+matrix above. The final repaired-tree full suite then passed 4,597 tests with 29 skips in
+704.75 seconds.

@@ -251,11 +251,24 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   cache or artifact schema. Matched `city-compare` requires city/assignment/trace/seed/
   duration/population parity, guarantees exact-zero same-run A/A deltas, labels changed
   normalized opportunity structure `opportunity-confounded`, and carries
-  `synthetic-comparison-not-causal-or-observed-effect`. C4 remains open for C4b repeated-seed
-  uncertainty, recall/social proxy integration, and self-contained spatial reports.
+  `synthetic-comparison-not-causal-or-observed-effect`.
+
+  **C4b evidence (2026-10-05):** schema-v6 now has a separate receipt-backed response
+  projection and independently classified response comparison while the existing attention
+  output remains the default. `city-study` analyzes an explicit bounded definition of
+  2–100 verified seed pairs as `spatial-paired-study-v1`, with one seed pair as the
+  experimental unit and independently keyed deterministic bootstrap streams. `city-report`
+  publishes the revalidated result to a fixed contained path as a zero-JavaScript,
+  no-network, atomic no-clobber evidence ledger. Both carry synthetic/non-causal claim
+  scopes and leave source artifacts unchanged.
+
+  C4 remains open for spatial social and rule-owned purchase integration and other declared
+  outcome metrics; job orchestration, the workbench, authentication, calibration, and
+  external validity also remain separate open gates. Bounded C4b completion does not close
+  C3, C4, D, E, F, or G.
 
 **Exit gate:** An operator can place a fictional billboard on a qualified road,
-run a spatial study offline, inspect the causal event on that road/time, replay it,
+run a spatial study offline, inspect persisted evidence on that road/time, replay it,
 and compare a declared treatment without claiming actual sales.
 
 ## D. Analyst web workbench: FastAPI + vanilla browser
@@ -417,13 +430,15 @@ the focused plan or milestone evidence document.
    the next dependency-unblocked package and whether the branch is pushed. No plan
    itself authorizes a push, remote change, deployment or publication.
 
-Current ledger (2026-10-03, after the bounded C3c slice): **A1–A4, B6, C1, and C2 are
+Current ledger (2026-10-05, after the bounded C4b slice): **A1–A4, B6, C1, and C2 are
 checked.** Technical foundations also include city-pack v2/import/catalog work, C3a
 opportunity storage, C3b attention evidence, C3c response/state evidence, C4a read-only
-metrics/comparison, and bounded local viewer slices. Those foundations do not close the
+metrics/comparison, C4b repeated-seed analysis/static reporting, and bounded local viewer
+slices. Those foundations do not close the
 unchecked parent gates: B1–B5 still require the relevant data-product, rights, qualification,
 scale, and basemap decisions; C3 still requires the broader cognition/memory/social/purchase
-integration described above; C4 remains open for C4b repeated-seed uncertainty and spatial
-reports; D–G retain their unchecked production, identity, calibration, operational, and
+integration described above; C4 remains open for spatial social/purchase integration and
+the other declared geographic outcome metrics; D–G retain their unchecked production,
+identity, calibration, operational, and
 enterprise gates. No rights-reviewed real city, authentication boundary, or external-validity
 evidence is claimed by this ledger.

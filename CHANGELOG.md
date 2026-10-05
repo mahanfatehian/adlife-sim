@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bounded campaign-scoped state under `synthetic-response-not-observed-behavior`; it adds
   no provider call, purchase event, budget mutation, or movement change. The saved-run
   viewer exposes verified response evidence and explicitly scoped final end-of-run state.
+- **Spatial response metrics and C4b study evidence** — schema-v6 runs now expose the
+  additive `spatial-response-metrics-v1` receipt projection through
+  `city-metrics --layer response`, `city-compare --layer response`, and the read-only
+  `/api/spatial-response-metrics` endpoint while preserving the original attention
+  defaults. `city-study` analyzes an explicit two-to-100-pair definition with one seed
+  pair as the experimental unit under `spatial-paired-study-v1`; `city-report` publishes
+  the same verified result as a fixed-path, zero-JavaScript, no-clobber evidence ledger.
+  These bounded C4b outputs describe simulator-seed variation only and retain the
+  `synthetic-study-not-observed-or-causal-effect` scope.
 - **Announcement-readiness hardening** — regression coverage for hybrid provider
   identity, non-destructive replay, the cognition fallback across ticks, the CLI
   error boundary, and documentation consistency (tick scale pinned by a doc test).

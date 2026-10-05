@@ -1,7 +1,7 @@
 # Production-track city platform: target design
 
 > Status: **partially implemented** target. The local deterministic city foundation and
-> bounded C1–C3c/C4a evidence slices described below exist on `main`; rights-reviewed real
+> bounded C1–C3c/C4a/C4b evidence slices described below exist on `main`; rights-reviewed real
 > city qualification, remote authentication/authorization, calibrated outcomes, and
 > external validity do not. This document does not rewrite the `defense-ready` branch or
 > retroactively change the original CLI specification. Read the
@@ -24,7 +24,7 @@ or spend recommendations. Do not substitute invented traffic, demographic, or
 conversion rates for licensed measurements. No personal trajectories, real-person
 profiles, ad-network integrations, or live consumer targeting belong in this scope.
 
-## Implemented baseline, updated from code on 2026-10-03
+## Implemented baseline, updated from code on 2026-10-05
 
 - `src/adlife/core/simulation/runner.py` and `src/adlife/adapters/storage/sqlite_store.py`
   implement the zone-based advertising run/replay path with SQLite authority,
@@ -47,9 +47,12 @@ profiles, ad-network integrations, or live consumer targeting belong in this sco
   replay opportunity and fixed-0.5 synthetic attention evidence. C3c schema-v6 adds bounded
   deterministic response/state evidence
   from noticed records under `synthetic-response-not-observed-behavior`. Its purchase
-  intention is an uncalibrated proxy, not a sale or transaction. C4a metrics remain a
-  read-only opportunity/attention projection; repeated-seed uncertainty and spatial HTML
-  reports remain open.
+  intention is an uncalibrated proxy, not a sale or transaction. C4a metrics retain their
+  read-only opportunity/attention default; schema-v6 adds a separate response projection.
+  Bounded C4b evidence is complete: `city-study` analyzes explicit verified seed pairs and
+  `city-report` publishes a fixed-path zero-JavaScript evidence ledger. The broader C3 and
+  C4 gates remain open for spatial social/purchase mechanisms and other declared metrics;
+  job orchestration and the analyst workbench also remain open.
 - The city path does not join the existing zone campaign engine, provide authentication or
   protected provider settings, use calibrated traffic/population data, or establish
   external validity. The current model card and limitations govern every claim.
@@ -127,8 +130,8 @@ events. A billboard is associated with a permitted road segment and side/positio
 its opportunity is evaluated against the directed traversed segment, time window,
 frequency cap and an explicit visibility approximation. A phone placement requires
 a modeled phone-use opportunity, not merely proximity to a road. Attribution must
-follow causal events. Do not claim viewability, attention or sales measurements from
-these synthetic events. An experiment changing phone to billboard also changes
+follow persisted event lineage. Do not claim viewability, attention or sales measurements
+from these synthetic events. An experiment changing phone to billboard also changes
 opportunity structure unless held equal by design; report this confound.
 
 ## Web application and identity contract

@@ -173,30 +173,40 @@ is not cryptographic authentication against an owner rewriting all artifact file
 Saved city runs are not zone advertising runs and do not claim measured traffic,
 real-person behavior, or externally valid geographic campaign effects.
 
-## `adlife city-metrics ROOT ID`
+## `adlife city-metrics ROOT ID [--layer attention|response]`
 
-Validate a schema-v5 or schema-v6 saved run and derive its deterministic spatial metrics
-without changing or caching anything in the artifact. The metrics contract is attention-only
-for both schemas: it uses persisted opportunity and attention evidence and preserves the
-exact source schema provenance, but does not fold response records or final campaign state.
-JSON and human output both carry
-`synthetic-metrics-not-observed-outcomes`. Every metric includes its exact numerator,
-denominator, and source paths, including explicit zero-denominator behavior. The values
-summarize an uncalibrated synthetic evidence model; they are not observed outcomes.
-Corrupt, partial, older, or incompatible artifacts exit 4.
+Validate a saved run and derive deterministic spatial metrics without changing or caching
+anything in the artifact. `city-metrics --layer attention` is the default and preserves
+the exact prior schema-v5/schema-v6 JSON shape: persisted opportunity and attention evidence only, under
+`synthetic-metrics-not-observed-outcomes`, with exact numerator, denominator, and source
+paths. It does not fold response records or final campaign state.
 
-## `adlife city-compare ROOT CONTROL_ID TREATMENT_ID`
+`city-metrics --layer response` requires schema-v6 and emits the separate
+`spatial-response-metrics-v1` document under
+`synthetic-response-metrics-not-observed-outcomes`. It reports response count, reach,
+frequency, planned mean rule sentiment/recall deltas, and complete-grid initial/final/change
+state receipts overall and by campaign. Channel response series are event-only; committed
+nonlinear state is not allocated to a channel. Purchase intention is an uncalibrated proxy,
+not purchase probability or sales. Corrupt, partial, older, or incompatible artifacts exit
+4.
 
-Compare two fully verified schema-v5 and/or schema-v6 runs only when city, place assignments,
-trace model, seed, duration, and population match. Each metric snapshot retains its source
-schema provenance; cross-version comparison is permitted because comparison remains
-attention-only and never treats schema-v6 response state as a metric. The command never
-modifies either run. Same-run A/A
-comparison produces exact-zero deltas. If normalized placement/channel opportunity
-structure differs, classification is `opportunity-confounded`; callers must not describe
-that result as a channel effect. Every response carries
-`synthetic-comparison-not-causal-or-observed-effect`. Provenance mismatch is invalid input
-and corrupt or incompatible artifacts exit 4.
+## `adlife city-compare ROOT CONTROL_ID TREATMENT_ID [--layer attention|response]`
+
+Compare two fully verified runs only when city, place assignments, trace model, seed,
+duration, and population match. `--layer attention` is the default, retains the exact prior
+output, accepts schema-v5, schema-v6, or cross-version v5/v6 evidence, and never treats
+response state as an attention metric. Same-run A/A produces exact-zero deltas. A changed
+normalized placement/channel structure is `opportunity-confounded`, never a channel effect,
+and the result carries `synthetic-comparison-not-causal-or-observed-effect`.
+
+`city-compare --layer response` requires schema-v6 and emits
+`spatial-response-metrics-comparison-v1` under
+`synthetic-response-comparison-not-causal-or-observed-effect`. It independently classifies
+opportunity structure as `matched-opportunity-structure` or `opportunity-confounded` and
+numeric response assumptions as `matched-response-assumptions` or
+`response-assumption-confounded`. All deltas are treatment minus control. The command never
+modifies either run; provenance mismatch is invalid input and corrupt/incompatible artifacts
+exit 4.
 
 ## `adlife city-study ROOT STUDY.json`
 
@@ -204,7 +214,8 @@ Analyze the explicit study definition's 2–100 saved, seed-matched run pairs us
 contiguous seeds `0..N-1`. Attention-only studies use homogeneous schema-v5 or schema-v6
 runs; attention-and-response studies require schema-v6. Every source is verified, and
 the command does not rerun, discover, modify, cache, or publish artifacts. There is no
-output or discovery option. JSON emits the fully revalidated compact result; human
+output or discovery option. The strict path-free JSON definition is capped at 64 KiB.
+JSON emits the fully revalidated compact result; human
 output labels synthetic evidence, opportunity/response-assumption confounding, and
 A/A status. The fixed paired bootstrap describes simulator seed variation, not
 population confidence, sales, observed outcomes, or causal effects. Fewer than 50 seeds
@@ -212,16 +223,31 @@ are exploratory; 50 or more follow the full protocol, not a registered study. In
 definitions or scientific incompatibility exit 2; missing, corrupt, unsupported, or
 failed verified A/A artifacts exit 4.
 
+The result model is `spatial-paired-study-v1` with claim scope
+`synthetic-study-not-observed-or-causal-effect`. One seed pair is the experimental unit;
+agent, notice, event, opportunity, and state rows are never pooled across seeds. Exact
+assignment, trace, and optional place-assignment hashes—not the seed number alone—establish
+common-random-number evidence within a pair. Each statistic includes mean, sample standard
+deviation, median, a deterministic 10,000-resample paired interval, nullable standardized
+difference, sign counts, agreement, and the 0.8 direction rule; it emits no p-value.
+
 ## `adlife city-report ROOT STUDY.json`
 
 Analyze the same explicit verified study as `city-study`, then publish a self-contained
 zero-JavaScript evidence ledger at `ROOT/city-reports/<study_id>.html`. There is no output,
 force or browser-opening option. Any existing destination exits 3 unchanged; report-directory
 symlinks and junctions are refused. JSON emits the nine-field receipt with a relative POSIX
-report path, exact byte count and SHA-256 hashes. Scientific/input and source-artifact errors
-retain `city-study` exit codes; filesystem and unexpected failures exit 1, interruption 130.
-Publication uses an atomic no-clobber hard link after fsyncing the complete file; parent
-directory fsync is best effort after commit. Source city-run artifacts remain unchanged.
+report path. Its exact fields are `schema_version`, `format_id`, `claim_scope`, `study_id`,
+`study_definition_sha256`, `study_result_sha256`, `report_path`, `report_sha256`, and
+`report_bytes`; hash and size cover the exact emitted UTF-8/LF bytes. The report is capped at
+8 MiB, contains no JavaScript or network-capable resource, makes no network request, and
+uses a CSP that permits only the exact hashed inline stylesheet. Scientific/input and
+source-artifact errors retain `city-study` exit codes; filesystem and unexpected failures
+exit 1, interruption 130.
+Publication uses an atomic no-clobber hard link after fsyncing the complete file. Directory
+fsync after the link is best effort: an unsupported or failed post-commit directory fsync is
+non-fatal, so the contract does not promise the new directory entry survives sudden power
+loss on every filesystem. Source city-run artifacts remain unchanged.
 
 ## `adlife city-view ROOT ID [--port N]`
 
@@ -251,6 +277,9 @@ the source artifact. `--port` accepts 1–65535. Like
 a browser automatically. Schema-v5 and schema-v6 runs also expose a read-only
 `/api/spatial-metrics` receipt ledger. It uses the same exact numerator, denominator, and
 source paths as `city-metrics`, remains attention-only, and does not write to the artifact.
+A fully prevalidated schema-v6 viewer additionally exposes the separate GET-only,
+path-free `/api/spatial-response-metrics` document; mutation methods return 405 and older
+or unconfigured runs return 404.
 
 ## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--schema-version 1|2] [--largest-component]`
 

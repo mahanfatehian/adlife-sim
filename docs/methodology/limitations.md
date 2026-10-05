@@ -23,10 +23,11 @@ What this model cannot support. Read alongside the
   and `disposable_budget=0`; there is no generated need/budget sampling. Zero committed
   purchases in these runs are structural, not evidence of ineffective advertising.
   The core proxy supports explicit purchase-enabled `Scenario` initial states.
-- **Principal state is shared across campaigns.** Sentiment, recall, intention,
-  social proof and ad fatigue are per-person scalars. Multi-campaign final-state changes
-  are not campaign-attributable, even though exposure counts, awareness and event links
-  identify campaigns.
+- **Zone-engine principal state is shared across campaigns.** In the zone campaign
+  engine, sentiment, recall, intention, social proof and ad fatigue are per-person scalars.
+  Multi-campaign final-state changes are not campaign-attributable, even though exposure
+  counts, awareness and event links identify campaigns. This does not describe the separate
+  spatial schema-v6 response model, whose bounded state is campaign-scoped.
 - **Routines are templates.** Agents follow generated daily routines; they do not plan,
   adapt their schedules, or respond to congestion.
   Generated unemployed profiles retain the historical office-worker schedule proxy;
@@ -79,7 +80,10 @@ What this model cannot support. Read alongside the
   observed attention. For schema-v5 and schema-v6, the C4a spatial metrics remain
   attention-only: they summarize verified opportunity/attention files, not response state,
   with exact numerator, denominator, and source paths under
-  `synthetic-metrics-not-observed-outcomes`.
+  `synthetic-metrics-not-observed-outcomes`. Schema-v6's separate response layer derives
+  `spatial-response-metrics-v1` under
+  `synthetic-response-metrics-not-observed-outcomes`; its state receipts are overall and
+  campaign scoped, never allocated to a channel.
 - **Schema-v6 response state is an illustrative rules model, not observed behavior.** Only
   a validated noticed record can produce a bounded response and campaign-scoped state
   update under `synthetic-response-not-observed-behavior`. Purchase intention is an
@@ -92,8 +96,15 @@ What this model cannot support. Read alongside the
   measured viewability. Phone probability is an analyst assumption, not an observed usage
   rate. Matched comparisons carry `synthetic-comparison-not-causal-or-observed-effect`; if
   the normalized placement/channel structure differs they are labeled
-  `opportunity-confounded`, not interpreted as a channel effect. C4b repeated-seed
-  uncertainty and self-contained spatial HTML report integration remain unresolved.
+  `opportunity-confounded`, not interpreted as a channel effect.
+- **C4b quantifies model-seed variation, not real uncertainty.** `city-study` treats each
+  seed pair as one experimental unit and emits
+  `synthetic-study-not-observed-or-causal-effect`; it provides no population confidence,
+  p-value, representative sample, calibration, validation, or causal identification.
+  `city-report` publishes that bounded spatial evidence as a zero-JavaScript report capped
+  at 8 MiB, not as a sales forecast. A fixed report does not add missing spatial social,
+  memory, cognition, rule-owned purchase, traffic, population, or external-validity
+  mechanisms. Those broader C3/C4 and research gates remain open.
 - **Time-zone metadata is not a civil-time model.** City-pack v2 records an IANA time
   zone, but the fixed schedule treats day 1 as Monday, has no start date, holidays or
   daylight-saving transition policy, and uses fixed light/dark hours rather than local

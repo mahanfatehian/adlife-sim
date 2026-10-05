@@ -54,8 +54,10 @@ The standard CLI/demo initializes `active_need=False` and `disposable_budget=0`;
 not generate purchase needs or budgets. Its committed-purchase count is therefore zero
 by construction, not a finding about campaign effectiveness. Purchase-enabled core
 experiments must explicitly supply need and budget in the `Scenario` initial states.
-Sentiment, recall, intention, fatigue and social proof are shared per-person scalars,
-not per-campaign state; multi-campaign final-state changes cannot be assigned to one ad.
+In the zone campaign engine, sentiment, recall, intention, fatigue and social proof are
+shared per-person scalars, not per-campaign state; multi-campaign final-state changes cannot
+be assigned to one ad. The separate spatial schema-v6 response model instead maintains
+explicit campaign-scoped sentiment, recall, and purchase-intention proxy state.
 
 ## The LLM's role (and its limits)
 
@@ -144,15 +146,25 @@ intention delta, high-intention count, purchases, and cognition counters — eac
 numerator, denominator, and event/state sources recorded, so provenance is re-derivable
 from the artifact.
 
-For schema-v5 and schema-v6 city runs, the separate spatial-metrics fold remains
-attention-only: it derives exact opportunity, impression, and noticed receipts from verified
-persisted evidence but does not consume v6 response or final-state evidence. Each value
-exposes its numerator, denominator, and source paths and carries
-`synthetic-metrics-not-observed-outcomes`. These uncalibrated values are model summaries,
-not observed outcomes. Matched city comparisons require identical city, assignments,
-mobility trace, seed, duration, and population provenance; a changed normalized opportunity
-structure is labeled `opportunity-confounded`. Every comparison carries
-`synthetic-comparison-not-causal-or-observed-effect`, so it is not a causal effect estimate.
+For schema-v5 and schema-v6 city runs, the original spatial-metrics fold remains the
+attention default: it derives exact opportunity, impression, and noticed receipts from
+verified persisted evidence and carries `synthetic-metrics-not-observed-outcomes`. It does
+not consume v6 response or final-state evidence.
+
+Schema-v6 adds a separate `spatial-response-metrics-v1` fold under
+`synthetic-response-metrics-not-observed-outcomes`. It derives direct rule-response receipts
+plus complete initial/final campaign-state receipts. Event evidence may be grouped by
+channel, but nonlinear committed state is only overall/campaign scoped. The response
+comparison classifies opportunity structure and numeric response assumptions independently.
+All of these uncalibrated values are model summaries, not observed outcomes, sales, or
+causal effects.
+
+`city-study` treats one verified seed pair as the experimental unit and produces
+`spatial-paired-study-v1` under `synthetic-study-not-observed-or-causal-effect`; it never
+pools agents or events across seeds. Its deterministic bootstrap describes simulator-seed
+variation only. `city-report` renders the same revalidated aggregate evidence and pair
+provenance as a zero-JavaScript static ledger. Neither command calibrates the model or
+upgrades its external-validity status.
 
 ## Ethical risks and mitigations
 

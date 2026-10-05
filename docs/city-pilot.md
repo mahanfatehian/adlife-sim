@@ -201,10 +201,10 @@ city before any advertising model exists:
 uv run adlife city-campaign validate spatial-campaign.json --city-id fictional-grid-v2
 ```
 
-The document is capped at 2 MiB and binds `city_id` plus `city_sha256`, 1â€“20 fictional
-campaigns and 1â€“500 placements. Each campaign carries the SHA-256 of its creative bytes.
+The document is capped at 2 MiB and binds `city_id` plus `city_sha256`, 1–20 fictional
+campaigns and 1–500 placements. Each campaign carries the SHA-256 of its creative bytes.
 Every placement references a campaign, uses non-overlapping absolute model-minute windows
-within 1â€“7 days, and declares a per-agent/per-day cap.
+within 1–7 days, and declares a per-agent/per-day cap.
 
 A `roadside-billboard` supplies a stable road ID, supported travel direction, physical
 source-to-target road fraction, explicit WGS84 coordinate, left/right side, orientation
@@ -352,16 +352,87 @@ purchase probability, sales, or a transaction. The slice adds no cognition, pros
 output, memory, social propagation, budget mutation, purchase event, or movement change.
 
 The saved-run viewer can inspect persisted current-minute opportunity and
-current-minute attention evidence without changing it. Schema-v6 additionally exposes current-minute
-response/state-update records and complete final end-of-run campaign state. A separate
-read-only projection summarizes opportunity and attention as receipt-bearing spatial
-metrics. For schema-v5 and schema-v6 this projection remains attention-only: it never folds
-response scores or final state into metrics. Every value records its exact numerator,
-denominator, and source paths under `synthetic-metrics-not-observed-outcomes`; the fixed
-assumptions remain uncalibrated and the metrics are not observed outcomes. C3 remains open
-for bounded cognition, memory, social propagation, and separately specified rule-owned
-purchase semantics. C4b repeated-seed uncertainty and self-contained spatial reporting
-also remain open.
+current-minute attention evidence without changing it. Schema-v6 additionally exposes
+current-minute response/state-update records and complete final end-of-run campaign state.
+The original read-only `spatial-metrics-v1` projection remains attention-only for both
+schema-v5 and schema-v6. It never folds response scores or final state into metrics; every
+value records its exact numerator, denominator, and source paths under
+`synthetic-metrics-not-observed-outcomes`.
+
+Schema-v6 also has a separate additive `spatial-response-metrics-v1` projection under
+`synthetic-response-metrics-not-observed-outcomes`. For a filtered canonical set of direct
+rule-response records `R`, its event receipts are:
+
+```text
+response_count = len(R)
+response_reach = unique responding agents / population_size
+response_frequency = len(R) / unique responding agents
+mean_rule_sentiment_delta = fsum(response.sentiment_delta) / len(R)
+mean_rule_recall_delta = fsum(response.recall_delta) / len(R)
+```
+
+Zero-event frequency and means use numerator 0, denominator 0, and value `0.0`. For a
+state field over the complete matched initial/final agent-campaign set `S`, the receipt is:
+
+```text
+initial_total = fsum(initial.x)
+final_total = fsum(final.x)
+change_total = final_total - initial_total
+initial_mean = initial_total / len(S)
+final_mean = final_total / len(S)
+mean_change = change_total / len(S)
+```
+
+Direct-response receipts name `outputs/spatial-responses.jsonl` and event type
+`spatial.response`; state receipts name `inputs/spatial-response.json` and
+`outputs/response-state.json`. Overall state weights every complete agent/campaign pair
+equally, each campaign contains exactly one state per fictional agent, and a campaign with
+no response remains visible with zero event values and unchanged state.
+
+State fields are brand sentiment, recall strength, and purchase-intention proxy. Response
+events can be grouped by channel, but those channel series are event-only: committed state
+is not attributed to a channel because same-minute notices may share one nonlinear update.
+`mean_rule_recall_delta` is the planned encoding term, whereas
+`recall_strength.mean_change` is the committed nonlinear state change after saturation.
+In this model one persisted notice mechanically creates one response; response counts are
+rule-processing counts, not engagement, persuasion, or observed acceptance. Purchase
+intention remains an uncalibrated internal proxy, never purchase probability or sales.
+
+Use `city-metrics --layer response` and `city-compare --layer response` for this V6-only
+layer. The default `--layer attention` preserves the exact prior output. Response
+comparison reports `matched-opportunity-structure` or `opportunity-confounded` separately
+from `matched-response-assumptions` or `response-assumption-confounded`. The viewer exposes
+the same verified response projection through GET-only `/api/spatial-response-metrics`;
+`/api/spatial-metrics` remains attention-only. Response comparisons carry
+`synthetic-response-comparison-not-causal-or-observed-effect`.
+
+## Repeated-seed spatial studies
+
+`city-study` analyzes an explicit 2–100-pair definition over already committed runs. One
+seed pair is the experimental unit; it never pools agents, notices, events, opportunities,
+or state rows across seeds. Exact assignment, trace, and optional place-assignment evidence
+must match within a pair—the declared seed alone does not prove common random numbers.
+Attention scope accepts homogeneous all-v5 or all-v6 inputs; attention-and-response scope
+requires schema-v6 throughout. Opportunity classification is independently
+`matched-opportunity-structure` or `opportunity-confounded`; response assumptions are
+independently `matched-response-assumptions` or `response-assumption-confounded`.
+
+The `spatial-paired-study-v1` result carries
+`synthetic-study-not-observed-or-causal-effect`. Each treatment-minus-control statistic
+contains a mean, sample standard deviation, median, deterministic 95% bootstrap interval,
+nullable paired standardized difference, sign counts, agreement, and a direction label.
+Each metric uses an independently keyed SplitMix64 stream to generate 10,000 resamples.
+The resampled means are sorted, and zero-based elements 249 and 9749 form the interval.
+Positive or negative direction requires at least 0.8 of
+all seed pairs; zeros stay in that denominator, all-zero is `stable-null`, and no p-value
+is produced. The result describes simulator seed variation only. Two to 49 pairs are
+exploratory; 50–100 are `full-protocol-50-or-more-seeds`, not a registered,
+representative, validated, or statistically powered study.
+
+Bounded C4b evidence is complete: `city-report` turns the verified result into a fixed-path
+zero-JavaScript evidence ledger. Broader C3/C4 cognition, memory, social propagation and
+rule-owned purchase integration remain open, as do automatic jobs, a write-capable
+workbench, authentication, calibration, and external validity.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
@@ -394,10 +465,59 @@ uv run adlife city-run city.json --output-root ./city-output --run-id study-42 -
 # spatial opportunity + attention evidence: add --spatial-campaign spatial-campaign.json (uses schema-v5)
 # bounded response/state evidence: also add --spatial-response spatial-response.json (uses schema-v6)
 uv run adlife city-replay ./city-output study-42
-uv run adlife city-metrics ./city-output study-42
-uv run adlife city-compare ./city-output study-42 study-42
 uv run adlife city-view ./city-output study-42
 ```
+
+Metrics and studies require campaign-backed artifacts; a mobility-only `study-42` is not
+a valid input. After authoring and validating the campaign and response files described
+above, this seed-0/seed-1 schema-v6 A/A flow is executable without network access:
+
+```bash
+uv run adlife city-run --city-id fictional-grid-v2 \
+  --spatial-campaign spatial-campaign.json --spatial-response spatial-response.json \
+  --output-root ./city-output --run-id response-0 --agents 1 --days 1 --seed 0
+uv run adlife city-run --city-id fictional-grid-v2 \
+  --spatial-campaign spatial-campaign.json --spatial-response spatial-response.json \
+  --output-root ./city-output --run-id response-1 --agents 1 --days 1 --seed 1
+uv run adlife city-replay ./city-output response-0
+uv run adlife city-replay ./city-output response-1
+uv run adlife city-metrics ./city-output response-0 --layer response
+uv run adlife city-compare ./city-output response-0 response-0 --layer response
+```
+
+Save this exact definition as `spatial-study.json`; an A/A definition may reuse one
+verified run for both arms of each seed pair:
+
+<!-- spatial-study-definition:start -->
+```json
+{
+  "schema_version": 1,
+  "study_id": "response-aa",
+  "design": "a-a",
+  "analysis_scope": "attention-and-response",
+  "pairs": [
+    {
+      "seed": 0,
+      "control_run_id": "response-0",
+      "treatment_run_id": "response-0"
+    },
+    {
+      "seed": 1,
+      "control_run_id": "response-1",
+      "treatment_run_id": "response-1"
+    }
+  ]
+}
+```
+<!-- spatial-study-definition:end -->
+
+```bash
+uv run adlife city-study ./city-output spatial-study.json
+uv run adlife city-report ./city-output spatial-study.json
+```
+
+The report is published once at
+`./city-output/city-reports/response-aa.html`; a second publication refuses to clobber it.
 
 `city-run` reserves a new ID and freezes the validated pack, generated fictional
 home/work/leisure assignments, seed, model/runtime identity, and hashes of every
@@ -433,7 +553,9 @@ state belongs to the scrubbed minute. Schema-v5 and schema-v6 runs also expose
 `/api/spatial-metrics` and a metrics evidence ledger. The projection is derived only after
 full artifact validation and has exact
 numerator/denominator/source receipts; it remains attention-only and is not written back to
-the run.
+the run. A fully prevalidated schema-v6 viewer additionally exposes the separate GET-only
+`/api/spatial-response-metrics` projection; it is likewise derived in memory and never
+written back.
 `city-compare` requires matched city, assignment, trace, seed, duration, and population
 provenance. Identical A/A inputs produce exact-zero deltas. A different normalized
 placement/channel structure is labeled `opportunity-confounded`, and every result carries
