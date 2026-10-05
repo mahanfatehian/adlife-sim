@@ -47,6 +47,18 @@ def test_publisher_emits_fixed_relative_nine_field_receipt_and_exact_bytes(resul
     ]
 
 
+def test_report_receipt_rejects_a_different_study_destination():
+    with pytest.raises(ValueError):
+        report_module().SpatialReportReceipt(
+            study_id="study-a",
+            study_definition_sha256="0" * 64,
+            study_result_sha256="1" * 64,
+            report_path="city-reports/study-b.html",
+            report_sha256="2" * 64,
+            report_bytes=1,
+        )
+
+
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling"])
 def test_every_existing_destination_is_unchanged_conflict(result, tmp_path, kind, monkeypatch):
     module = report_module()
@@ -233,6 +245,120 @@ def test_city_report_json_success_then_conflict_preserves_sources(tmp_path, resp
     assert json.loads(conflict.stdout)["error"]["message"] == "report destination already exists"
     assert (tmp_path / receipt["report_path"]).read_bytes() == content
     assert _artifact_bytes(tmp_path / "city-runs") == before
+
+
+def test_city_report_existing_report_wins_over_corrupt_source_artifact(tmp_path, monkeypatch):
+    from adlife.cli.commands import city_report
+
+    make_runs(tmp_path, response=True)
+    study = tmp_path / "study.json"
+    study.write_text(canonical_json(definition(response=True)), encoding="utf-8")
+    arguments = ["--format", "json", "city-report", str(tmp_path), str(study)]
+    published = CliRunner().invoke(app, arguments)
+    assert published.exit_code == 0, published.output
+    destination = tmp_path / "city-reports" / "repeated-study.html"
+    original = destination.read_bytes()
+    (tmp_path / "city-runs" / "control-0" / "run.json").write_bytes(b"{corrupt-manifest")
+    corrupted_sources = _artifact_bytes(tmp_path / "city-runs")
+
+    conflict = CliRunner().invoke(app, arguments)
+    assert conflict.exit_code == 3, conflict.output
+    assert json.loads(conflict.stdout)["error"]["message"] == "report destination already exists"
+    assert conflict.stderr == "error: report destination already exists\n"
+    assert str(tmp_path) not in conflict.output and "corrupt-manifest" not in conflict.output
+    assert destination.read_bytes() == original
+    assert _artifact_bytes(tmp_path / "city-runs") == corrupted_sources
+
+    def forbid_analysis(*args):
+        raise AssertionError("an existing report must bypass source analysis")
+
+    monkeypatch.setattr(city_report, "analyze_stored_spatial_study", forbid_analysis)
+    assert CliRunner().invoke(app, arguments).exit_code == 3
+
+
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_city_report_existing_destination_precedes_missing_source_error(tmp_path, kind):
+    study = tmp_path / "study.json"
+    study.write_text(canonical_json(definition(response=True)), encoding="utf-8")
+    destination = tmp_path / "city-reports" / "repeated-study.html"
+    destination.parent.mkdir()
+    if kind == "file":
+        destination.write_bytes(b"original-report")
+    else:
+        destination.mkdir()
+    original = destination.lstat()
+    conflict = CliRunner().invoke(
+        app, ["--format", "json", "city-report", str(tmp_path), str(study)]
+    )
+    assert conflict.exit_code == 3, conflict.output
+    assert json.loads(conflict.stdout)["error"]["message"] == "report destination already exists"
+    assert destination.lstat() == original
+    if kind == "file":
+        assert destination.read_bytes() == b"original-report"
+    assert not (tmp_path / "city-runs").exists()
+
+
+@pytest.mark.parametrize("kind", ["file", "reparse-attributes", "junction"])
+def test_city_report_containment_preflight_precedes_missing_source_error(
+    tmp_path, monkeypatch, kind
+):
+    study = tmp_path / "study.json"
+    study.write_text(canonical_json(definition(response=True)), encoding="utf-8")
+    directory = tmp_path / "city-reports"
+    if kind == "file":
+        directory.write_bytes(b"original-parent-file")
+    elif kind == "reparse-attributes":
+        directory.mkdir()
+        real_lstat = Path.lstat
+
+        def lstat(path, *args, **kwargs):
+            if path == directory:
+                return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+            return real_lstat(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "lstat", lstat)
+    else:
+        if os.name != "nt":
+            pytest.skip("Windows junction boundary")
+        import subprocess
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "repeated-study.html").write_bytes(b"outside-original-report")
+        completed = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(directory), str(outside)],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+    refusal = CliRunner().invoke(
+        app, ["--format", "json", "city-report", str(tmp_path), str(study)]
+    )
+    assert refusal.exit_code == 1, refusal.output
+    assert json.loads(refusal.stdout)["error"]["message"] == (
+        "spatial study report could not be published"
+    )
+    assert str(tmp_path) not in refusal.output
+    assert not (tmp_path / "city-runs").exists()
+    if kind == "file":
+        assert directory.read_bytes() == b"original-parent-file"
+    elif kind == "junction":
+        assert (outside / "repeated-study.html").read_bytes() == b"outside-original-report"
+        assert list(outside.iterdir()) == [outside / "repeated-study.html"]
+    else:
+        assert list(directory.iterdir()) == []
+
+
+def test_city_report_missing_sources_do_not_create_report_directory(tmp_path):
+    study = tmp_path / "study.json"
+    study.write_text(canonical_json(definition(response=True)), encoding="utf-8")
+    failure = CliRunner().invoke(
+        app, ["--format", "json", "city-report", str(tmp_path), str(study)]
+    )
+    assert failure.exit_code == 4, failure.output
+    assert not (tmp_path / "city-reports").exists()
 
 
 @pytest.mark.parametrize("kind", ["file", "dangling-directory"])

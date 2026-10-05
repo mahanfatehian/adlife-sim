@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import pytest
+from hashlib import sha256
 
-from adlife.core.experiments._spatial_study_validation import document_sha256
-from adlife.core.experiments.spatial_study import SpatialStudyResult
+import pytest
+from pydantic import BaseModel
+
+from adlife.core.domain.serialization import canonical_json
+from adlife.core.experiments._spatial_study_validation import document_sha256, reconstruct_manifest
+from adlife.core.experiments.spatial_study import SpatialStudyPairReceipt, SpatialStudyResult
 from tests.integration.test_city_spatial_study import analyze, definition, make_runs
 from tests.unit.reporting.test_spatial_html import Document, report_module
 
@@ -17,11 +21,63 @@ def public_city_result(result, text):
     return SpatialStudyResult.model_validate(document)
 
 
+def package_version_document(result, version):
+    # Regenerate every manifest digest so rejection cannot be mistaken for a
+    # stale opaque receipt. Source scalar evidence remains unchanged.
+    document = result.model_dump(mode="python")
+    document["package_version"] = version
+    for pair, fields in zip(result.pairs, document["pairs"], strict=True):
+        for name in ("control", "treatment"):
+            manifest = reconstruct_manifest(result, pair, getattr(pair, name)).model_dump()
+            manifest["package_version"] = version
+            fields[name]["manifest_sha256"] = sha256(
+                (canonical_json(manifest) + "\n").encode("utf-8")
+            ).hexdigest()
+    return document
+
+
 @pytest.fixture(scope="module")
 def result(tmp_path_factory):
     root = tmp_path_factory.mktemp("hostile-report")
     make_runs(root, response=True)
     return analyze(root, definition(response=True))
+
+
+@pytest.mark.parametrize("bypass", [False, True])
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.1.0\rX",
+        "0.1.0\nX",
+        r"C:\Users\Example\private",
+        "ADLIFE_API_KEY=fixture-secret",
+        "0.1.0+sk-ant-" + "a" * 20,
+    ],
+)
+def test_report_refuses_unsafe_coherent_package_versions(result, version, bypass):
+    document = package_version_document(result, version)
+    with pytest.raises(ValueError):
+        if bypass:
+            copied = BaseModel.model_copy(
+                result,
+                update={
+                    "package_version": version,
+                    "pairs": tuple(
+                        SpatialStudyPairReceipt.model_validate(pair) for pair in document["pairs"]
+                    ),
+                },
+            )
+            report_module().render_spatial_study_html(copied)
+        else:
+            report_module().render_spatial_study_html(SpatialStudyResult.model_validate(document))
+
+
+@pytest.mark.parametrize("version", ["0.1.0rc1", "2!1.0.dev2+local.3", "v1.2.post3"])
+def test_report_preserves_normal_coherent_pep440_package_versions(result, version):
+    checked = SpatialStudyResult.model_validate(package_version_document(result, version))
+    content = report_module().render_spatial_study_html(checked)
+    assert version in " ".join(Document(content).text)
+    assert b"\r" not in content
 
 
 @pytest.mark.parametrize(

@@ -3,16 +3,41 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal, Self, TypeAlias
+import re
+from typing import Annotated, Any, Literal, Self, TypeAlias
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AfterValidator, Field, field_validator, model_validator
 
-from adlife.core.domain.person import DomainModel
+from adlife.core.domain.person import DomainModel, contains_secret_or_email_text
 
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _RESERVED_RUN_IDS = {"con", "prn", "aux", "nul"} | {
     f"{prefix}{number}" for prefix in ("com", "lpt") for number in range(1, 10)
 }
+
+# PEP 440's version grammar, without surrounding whitespace or normalization:
+# https://packaging.python.org/en/latest/specifications/version-specifiers/
+_PACKAGE_VERSION_PATTERN = re.compile(
+    r"v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*"
+    r"(?:[-_.]?(?:a|b|c|rc|alpha|beta|pre|preview)[-_.]?[0-9]*)?"
+    r"(?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?"
+    r"(?:[-_.]?dev[-_.]?[0-9]*)?"
+    r"(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?",
+    re.IGNORECASE | re.ASCII,
+)
+
+
+def _validate_package_version(value: str) -> str:
+    if contains_secret_or_email_text(value):
+        raise ValueError("package version carries credential-shaped text")
+    if _PACKAGE_VERSION_PATTERN.fullmatch(value) is None:
+        raise ValueError("package version must use safe PEP 440 text")
+    return value
+
+
+PackageVersion: TypeAlias = Annotated[
+    str, Field(min_length=1, max_length=40), AfterValidator(_validate_package_version)
+]
 
 
 class CityTraceSummary(DomainModel):
@@ -37,7 +62,7 @@ class CityRunManifest(DomainModel):
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
     status: Literal["completed"] = "completed"
     model_id: Literal["illustrative-road-mobility-v1"] = "illustrative-road-mobility-v1"
-    package_version: str = Field(min_length=1, max_length=40)
+    package_version: PackageVersion
     python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     agents_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -71,7 +96,7 @@ class CityRunManifestV2(DomainModel):
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
     status: Literal["completed"] = "completed"
     model_id: Literal["illustrative-road-mobility-v2"] = "illustrative-road-mobility-v2"
-    package_version: str = Field(min_length=1, max_length=40)
+    package_version: PackageVersion
     python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     agents_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -113,7 +138,7 @@ class CityRunManifestV3(DomainModel):
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
     status: Literal["completed"] = "completed"
     model_id: Literal["illustrative-road-mobility-v3"] = "illustrative-road-mobility-v3"
-    package_version: str = Field(min_length=1, max_length=40)
+    package_version: PackageVersion
     python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     place_set_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -165,7 +190,7 @@ class CityRunManifestV4(DomainModel):
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
     status: Literal["completed"] = "completed"
     model_id: Literal["illustrative-road-spatial-study-v1"] = "illustrative-road-spatial-study-v1"
-    package_version: str = Field(min_length=1, max_length=40)
+    package_version: PackageVersion
     python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     agents_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -246,7 +271,7 @@ class CityRunManifestV5(DomainModel):
     model_id: Literal["illustrative-road-spatial-attention-study-v1"] = (
         "illustrative-road-spatial-attention-study-v1"
     )
-    package_version: str = Field(min_length=1, max_length=40)
+    package_version: PackageVersion
     python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     agents_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -339,7 +364,7 @@ class CityRunManifestV6(DomainModel):
     model_id: Literal["illustrative-road-spatial-response-study-v1"] = (
         "illustrative-road-spatial-response-study-v1"
     )
-    package_version: str = Field(min_length=1, max_length=40)
+    package_version: PackageVersion
     python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     agents_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -506,5 +531,6 @@ __all__ = [
     "CityRunManifestV5",
     "CityRunManifestV6",
     "CityTraceSummary",
+    "PackageVersion",
     "parse_city_run_manifest_json",
 ]

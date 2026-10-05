@@ -14,12 +14,12 @@ from contextlib import contextmanager, suppress
 from hashlib import sha256
 from importlib import resources
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import uuid4
 
 from jinja2 import Environment, StrictUndefined
 from markupsafe import Markup
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from adlife.core.domain.identifiers import validate_portable_run_identifier
 from adlife.core.domain.person import DomainModel
@@ -67,6 +67,12 @@ class SpatialReportReceipt(DomainModel):
         identifier = value[len(prefix) : -len(".html")]
         validate_portable_run_identifier(identifier)
         return value
+
+    @model_validator(mode="after")
+    def matching_study_path(self) -> Self:
+        if self.report_path != f"city-reports/{self.study_id}.html":
+            raise ValueError("spatial report path does not match study identifier")
+        return self
 
 
 def _lf(text: str) -> str:
@@ -131,7 +137,7 @@ def _check_directory(directory: Path, root: Path) -> os.stat_result:
 
 
 @contextmanager
-def _publication_directory(root: Path) -> Iterator[tuple[Path, int | None]]:
+def _publication_directory(root: Path, *, create: bool = True) -> Iterator[tuple[Path, int | None]]:
     """Bind publication to one real directory, with no link/junction traversal.
 
     POSIX operations use its open descriptor. Windows holds a directory handle
@@ -142,9 +148,10 @@ def _publication_directory(root: Path) -> Iterator[tuple[Path, int | None]]:
     if not resolved.is_dir():
         raise SpatialReportPublicationError("report directory is invalid")
     directory = resolved / "city-reports"
-    # lstat below classifies files and dangling links as an invalid parent.
-    with suppress(FileExistsError):
-        directory.mkdir(exist_ok=True)
+    if create:
+        # lstat below classifies files and dangling links as an invalid parent.
+        with suppress(FileExistsError):
+            directory.mkdir(exist_ok=True)
     before = _check_directory(directory, resolved)
     if os.name == "nt":
         import ctypes
@@ -191,6 +198,27 @@ def _publication_directory(root: Path) -> Iterator[tuple[Path, int | None]]:
             yield directory, descriptor
         finally:
             os.close(descriptor)
+
+
+def preflight_spatial_study_report(root: Path, study_id: str) -> None:
+    """Refuse an existing contained destination before analysis, without writing.
+
+    This is only an early refusal; the publisher retains its atomic final check.
+    Missing roots or report directories are left for source verification/publication.
+    """
+    filename = f"{validate_portable_run_identifier(study_id)}.html"
+    try:
+        with _publication_directory(root, create=False) as (directory, directory_fd):
+            kwargs = {} if directory_fd is None else {"dir_fd": directory_fd}
+            destination: str | Path = directory / filename if directory_fd is None else filename
+            os.stat(destination, follow_symlinks=False, **kwargs)
+            raise SpatialReportConflict("report destination already exists")
+    except FileNotFoundError:
+        return
+    except SpatialReportPublicationError:
+        raise
+    except OSError:
+        raise SpatialReportPublicationError("spatial study report could not be published") from None
 
 
 def _fsync_directory(directory: Path, descriptor: int | None) -> None:
@@ -291,6 +319,7 @@ __all__ = [
     "SpatialReportConflict",
     "SpatialReportPublicationError",
     "SpatialReportReceipt",
+    "preflight_spatial_study_report",
     "publish_spatial_study_report",
     "render_spatial_study_html",
 ]

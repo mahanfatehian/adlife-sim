@@ -16,6 +16,7 @@ from adlife.core.ports.run_store import StorageError
 from adlife.reporting.spatial_html import (
     SpatialReportConflict,
     SpatialReportPublicationError,
+    preflight_spatial_study_report,
     publish_spatial_study_report,
 )
 
@@ -28,6 +29,7 @@ def command(
     """Publish a zero-JavaScript spatial study ledger at its fixed no-clobber path."""
     try:
         definition = load_spatial_study_definition(study)
+        preflight_spatial_study_report(root, definition.study_id)
         result = analyze_stored_spatial_study(CityRunStore(root), definition)
         receipt = publish_spatial_study_report(result, root)
         document = receipt.model_dump(mode="json")

@@ -103,6 +103,72 @@ def valid_manifest_v6() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize(
+    "factory",
+    [
+        valid_manifest,
+        valid_manifest_v2,
+        valid_manifest_v3,
+        valid_manifest_v4,
+        valid_manifest_v5,
+        valid_manifest_v6,
+    ],
+)
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.1.0\rX",
+        "0.1.0\nX",
+        r"C:\Users\Example\private",
+        "/private/local/version",
+        "ADLIFE_API_KEY=fixture-secret",
+        "0.1.0+sk-ant-" + "a" * 20,
+        "not-a-version",
+    ],
+)
+def test_all_manifest_versions_refuse_unsafe_package_version_text(factory, version):
+    document = {**factory(), "package_version": version}
+    with pytest.raises(ValueError):
+        city_run.parse_city_run_manifest_json(canonical_json(document))
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        valid_manifest,
+        valid_manifest_v2,
+        valid_manifest_v3,
+        valid_manifest_v4,
+        valid_manifest_v5,
+        valid_manifest_v6,
+    ],
+)
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.1.0",
+        "1",
+        "01.002.0",
+        "v1.0.0",
+        "2!1.4.0rc2",
+        "1.2.3a1",
+        "1.2.3b2",
+        "1.2.3.post1",
+        "1.2.3.dev2",
+        "1.2.3rc1.post2.dev3+local.4",
+        "1.0-1",
+        "1.0rev2",
+        "1.0-preview3",
+        "1.0+linux_amd64.2",
+    ],
+)
+def test_all_manifest_versions_preserve_supported_pep440_package_versions(factory, version):
+    document = {**factory(), "package_version": version}
+    manifest = city_run.parse_city_run_manifest_json(canonical_json(document))
+    assert manifest.package_version == version
+    assert manifest.schema_version == document["schema_version"]
+
+
 def test_valid_manifest_round_trips_and_is_immutable() -> None:
     manifest = CityRunManifest.model_validate(valid_manifest())
     assert CityRunManifest.model_validate_json(manifest.model_dump_json()) == manifest

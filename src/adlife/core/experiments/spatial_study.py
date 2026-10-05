@@ -12,6 +12,7 @@ from typing import Literal, Self, TypeVar, cast
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from adlife.core.domain.city_run import PackageVersion
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition
@@ -448,7 +449,7 @@ class SpatialStudyResult(DomainModel):
     opportunity_model_id: Literal["spatial-opportunity-v1"] = "spatial-opportunity-v1"
     attention_model_id: Literal["spatial-attention-v1"] = "spatial-attention-v1"
     response_model_id: Literal["spatial-response-v1"] | None = None
-    package_version: str = Field(min_length=1, max_length=40)
+    package_version: PackageVersion
     python_version: str = Field(pattern=r"^3\.(?:11|12|13)\.[0-9]+$")
     city: SpatialStudyCityProvenance
     city_provenance_sha256: StudyHash
