@@ -1,11 +1,71 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
+const portableRunIdPattern = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const reservedRunIds = new Set([
+  "con", "prn", "aux", "nul",
+  ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+  ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`),
+]);
+const credentialShapedRunIdPatterns = [
+  /^(?:sk|pk|rk)-(?:live|test|proj)-?[a-z0-9][a-z0-9-]{7,}$/,
+  /^(?:sk|pk|rk)-[a-z0-9][a-z0-9-]{19,}$/,
+  /^xox[abeprs]-[a-z0-9-]{10,}$/,
+  /^xapp-[a-z0-9-]{10,}$/,
+];
+const viewerApiEndpoints = new Set([
+  "/meta",
+  "/city",
+  "/agents",
+  "/places",
+  "/place-assignments",
+  "/opportunity-summary",
+  "/opportunities",
+  "/attention-summary",
+  "/spatial-metrics",
+  "/spatial-response-metrics",
+  "/attention-events",
+  "/response-summary",
+  "/response-events",
+  "/response-state",
+  "/frame",
+]);
+
+function invalidApiBase() {
+  throw new Error("Viewer API base is invalid");
+}
+
+function validatedApiBase() {
+  const declarations = document.querySelectorAll('meta[name="adlife-api-base"]');
+  if (declarations.length !== 1) invalidApiBase();
+  const value = declarations[0].getAttribute("content");
+  if (value === "/api") return value;
+  if (typeof value !== "string") invalidApiBase();
+  const match = /^\/api\/runs\/([a-z0-9][a-z0-9-]{0,39})$/.exec(value);
+  if (!match) invalidApiBase();
+  const runId = match[1];
+  if (
+    !portableRunIdPattern.test(runId)
+    || reservedRunIds.has(runId)
+    || credentialShapedRunIdPatterns.some((pattern) => pattern.test(runId))
+  ) invalidApiBase();
+  return value;
+}
+
+function apiPath(relative) {
+  if (typeof relative !== "string" || relative.includes("#") || relative.includes("\\")) {
+    invalidApiBase();
+  }
+  const path = relative.split("?", 1)[0];
+  if (!viewerApiEndpoints.has(path)) invalidApiBase();
+  return `${validatedApiBase()}${relative}`;
+}
+
 const EVIDENCE_PAGE_SIZE = 100;
 const evidencePageKinds = ["opportunity", "attention", "response"];
 const evidencePageContracts = {
   opportunity: {
-    endpoint: "/api/opportunities",
+    endpoint: "/opportunities",
     pageKey: "opportunityPage",
     claimScope: "synthetic-opportunity-not-impression",
     modelKey: null,
@@ -16,7 +76,7 @@ const evidencePageContracts = {
     keys: ["schema_version", "claim_scope", "minute", "agent_id", "offset", "limit", "total", "channel_counts", "agent_counts", "next_offset", "items"],
   },
   attention: {
-    endpoint: "/api/attention-events",
+    endpoint: "/attention-events",
     pageKey: "attentionPage",
     claimScope: "synthetic-attention-not-observed-behavior",
     modelKey: "attention_model_id",
@@ -27,7 +87,7 @@ const evidencePageContracts = {
     keys: ["schema_version", "attention_model_id", "claim_scope", "minute", "agent_id", "offset", "limit", "total", "event_type_counts", "channel_counts", "agent_counts", "next_offset", "items"],
   },
   response: {
-    endpoint: "/api/response-events",
+    endpoint: "/response-events",
     pageKey: "responsePage",
     claimScope: "synthetic-response-not-observed-behavior",
     modelKey: "response_model_id",
@@ -87,7 +147,8 @@ const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
 const activities = { home: "At home", commute: "Travelling on streets", work: "At work", leisure: "Leisure visit" };
 
-async function fetchJson(url) {
+async function fetchJson(relative) {
+  const url = apiPath(relative);
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`Could not load ${url} (${response.status})`);
   return response.json();
@@ -137,7 +198,8 @@ function topLevelIntegerToken(source, wantedKey) {
   return found;
 }
 
-async function fetchJsonWithIntegerToken(url, key) {
+async function fetchJsonWithIntegerToken(relative, key) {
+  const url = apiPath(relative);
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`Could not load ${url} (${response.status})`);
   const source = await response.text();
@@ -1745,7 +1807,7 @@ async function setMinute(minute, selectedAgent = state.selected) {
     setEvidencePaginationBusy(kind, true);
   }
   try {
-    const requests = [fetchJson(`/api/frame?minute=${next}&agent_id=${encodeURIComponent(selectedAgent)}`)];
+    const requests = [fetchJson(`/frame?minute=${next}&agent_id=${encodeURIComponent(selectedAgent)}`)];
     const opportunityIndex = state.opportunitySummary ? requests.length : null;
     if (opportunityIndex !== null) requests.push(fetchJson(evidencePageUrl("opportunity", next, offsets.opportunity)));
     const attentionIndex = state.attentionSummary ? requests.length : null;
@@ -1753,7 +1815,7 @@ async function setMinute(minute, selectedAgent = state.selected) {
     const responseIndex = state.responseSummary ? requests.length : null;
     if (responseIndex !== null) requests.push(fetchJson(evidencePageUrl("response", next, offsets.response)));
     const responseStateIndex = state.responseSummary ? requests.length : null;
-    if (responseStateIndex !== null) requests.push(fetchJson(`/api/response-state?agent_id=${encodeURIComponent(selectedAgent)}`));
+    if (responseStateIndex !== null) requests.push(fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`));
     const responses = await Promise.all(requests);
     const frame = responses[0];
     const opportunityPage = opportunityIndex === null
@@ -1841,22 +1903,22 @@ function attachMapControls() {
 async function boot() {
   try {
     const [metaResponse, city, agents] = await Promise.all([
-      fetchJsonWithIntegerToken("/api/meta", "seed"),
-      fetchJson("/api/city"),
-      fetchJson("/api/agents"),
+      fetchJsonWithIntegerToken("/meta", "seed"),
+      fetchJson("/city"),
+      fetchJson("/agents"),
     ]);
     const meta = metaResponse.document;
     validateSpatialResponseSeed(meta.seed, metaResponse.integerToken);
     state.meta = meta; state.metaSeedToken = metaResponse.integerToken;
     state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
     if (meta.place_set_sha256) {
-      const [places, assignmentDocument] = await Promise.all([fetchJson("/api/places"), fetchJson("/api/place-assignments")]);
+      const [places, assignmentDocument] = await Promise.all([fetchJson("/places"), fetchJson("/place-assignments")]);
       state.places = places;
       state.placeAssignments = assignmentDocument.assignments;
       for (const key of document.querySelectorAll(".place-key")) key.hidden = false;
     }
     if (meta.spatial_opportunities === true) {
-      state.opportunitySummary = await fetchJson("/api/opportunity-summary");
+      state.opportunitySummary = await fetchJson("/opportunity-summary");
       byId("opportunity-scenario").textContent = state.opportunitySummary.scenario_name;
       byId("opportunity-total").textContent = String(state.opportunitySummary.counts.opportunity_count);
       byId("opportunity-roadside").textContent = String(state.opportunitySummary.counts.roadside_opportunity_count);
@@ -1865,7 +1927,7 @@ async function boot() {
       for (const key of document.querySelectorAll(".opportunity-key")) key.hidden = false;
     }
     if (meta.spatial_attention === true) {
-      state.attentionSummary = await fetchJson("/api/attention-summary");
+      state.attentionSummary = await fetchJson("/attention-summary");
       byId("attention-impressions").textContent = String(state.attentionSummary.counts.impression_count);
       byId("attention-notices").textContent = String(state.attentionSummary.counts.noticed_count);
       byId("attention-probability").textContent = `${Math.round(state.attentionSummary.notice_probability * 100)}%`;
@@ -1873,7 +1935,7 @@ async function boot() {
       for (const key of document.querySelectorAll(".attention-key")) key.hidden = false;
     }
     if (meta.spatial_response === true) {
-      state.responseSummary = await fetchJson("/api/response-summary");
+      state.responseSummary = await fetchJson("/response-summary");
       if (state.responseSummary.claim_scope !== "synthetic-response-not-observed-behavior") {
         throw new Error("Spatial response claim scope is invalid");
       }
@@ -1887,12 +1949,12 @@ async function boot() {
       byId("response-state-panel").hidden = false;
     }
     if (meta.spatial_metrics === true) {
-      state.spatialMetrics = await fetchJson("/api/spatial-metrics");
+      state.spatialMetrics = await fetchJson("/spatial-metrics");
       renderSpatialMetrics();
     }
     if (meta.spatial_response_metrics === true) {
       const responseMetrics = await fetchJsonWithIntegerToken(
-        "/api/spatial-response-metrics",
+        "/spatial-response-metrics",
         "seed",
       );
       state.spatialResponseMetrics = responseMetrics.document;

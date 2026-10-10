@@ -308,11 +308,15 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'id="metrics-panel"' in html.text
     assert 'id="metrics-claim"' in html.text
     assert 'id="metrics-overall-notice-rate-receipt"' in html.text
-    assert 'fetchJson("/api/places")' in js.text
-    assert 'fetchJson("/api/place-assignments")' in js.text
-    assert 'fetchJson("/api/attention-summary")' in js.text
-    assert 'fetchJson("/api/spatial-metrics")' in js.text
-    assert 'endpoint: "/api/attention-events"' in js.text
+    assert 'fetchJson("/places")' in js.text
+    assert 'fetchJson("/place-assignments")' in js.text
+    assert 'fetchJson("/attention-summary")' in js.text
+    assert 'fetchJson("/spatial-metrics")' in js.text
+    assert 'endpoint: "/attention-events"' in js.text
+    assert "function validatedApiBase()" in js.text
+    assert "function apiPath(relative)" in js.text
+    assert "const url = apiPath(relative);" in js.text
+    assert 'fetch(url, { cache: "no-store" })' in js.text
     assert 'fetchJson(evidencePageUrl("attention", next, offsets.attention))' in js.text
     assert "limit=${EVIDENCE_PAGE_SIZE}" in js.text
     assert "drawAttentionMarker" in js.text

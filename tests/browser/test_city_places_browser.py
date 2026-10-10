@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import socket
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -74,6 +76,20 @@ def test_required_browser_gate_never_silently_skips(
         assert isinstance(error, pytest.fail.Exception)
     else:
         pytest.fail("required browser gate accepted a missing browser")
+
+
+_API_BASE_META = re.compile(
+    r'\s*<meta\s+name="adlife-api-base"\s+content="[^"]*"\s*/?>',
+)
+
+
+def _viewer_html_with_api_bases(*values: str) -> str:
+    source = (
+        resources.files("adlife.city").joinpath("static", "index.html").read_text(encoding="utf-8")
+    )
+    source = _API_BASE_META.sub("", source)
+    tags = "".join(f'\n  <meta name="adlife-api-base" content="{value}">' for value in values)
+    return source.replace('<meta charset="utf-8">', f'<meta charset="utf-8">{tags}', 1)
 
 
 @contextmanager
@@ -295,6 +311,178 @@ def _response_viewer(
             response_evaluation,
             response_metrics,
         )
+
+
+def test_viewer_default_document_uses_one_legacy_same_origin_api_base() -> None:
+    browser_path = _installed_browser()
+    api_requests: list[str] = []
+    external_requests: list[str] = []
+    with _place_viewer() as base_url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def route_request(route: Route) -> None:
+            url = route.request.url
+            if url.startswith(f"{base_url}/api/"):
+                api_requests.append(url)
+                route.continue_()
+            elif url.startswith(base_url):
+                route.continue_()
+            else:
+                external_requests.append(url)
+                route.abort()
+
+        page.route("**/*", route_request)
+        page.goto(base_url, wait_until="networkidle")
+
+        api_base = page.locator('meta[name="adlife-api-base"]')
+        assert api_base.count() == 1
+        assert api_base.get_attribute("content") == "/api"
+        assert api_requests
+        assert not external_requests
+        browser.close()
+
+
+def test_viewer_routes_every_scientific_request_through_the_run_api_base() -> None:
+    browser_path = _installed_browser()
+    nested_requests: list[str] = []
+    legacy_requests: list[str] = []
+    external_requests: list[str] = []
+    page_errors: list[str] = []
+    with _response_viewer() as viewer, sync_playwright() as playwright:
+        base_url = viewer[0]
+        html = _viewer_html_with_api_bases("/api/runs/nested-run")
+        run_prefix = f"{base_url}/api/runs/nested-run"
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def route_request(route: Route) -> None:
+            url = route.request.url
+            if url in {base_url, f"{base_url}/"}:
+                route.fulfill(status=200, content_type="text/html", body=html)
+                return
+            if url.startswith(f"{run_prefix}/"):
+                suffix = url[len(run_prefix) :]
+                nested_requests.append(suffix)
+                upstream = route.fetch(url=f"{base_url}/api{suffix}")
+                route.fulfill(response=upstream)
+                return
+            if url.startswith(f"{base_url}/api/"):
+                legacy_requests.append(url)
+                route.abort()
+                return
+            if url.startswith(base_url):
+                route.continue_()
+                return
+            external_requests.append(url)
+            route.abort()
+
+        page.route("**/*", route_request)
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.goto(base_url, wait_until="networkidle")
+
+        expect(page.locator("#response-panel")).to_be_visible()
+        requested_paths = {item.partition("?")[0] for item in nested_requests}
+        assert {
+            "/meta",
+            "/city",
+            "/agents",
+            "/opportunity-summary",
+            "/opportunities",
+            "/attention-summary",
+            "/attention-events",
+            "/response-summary",
+            "/response-events",
+            "/response-state",
+            "/spatial-metrics",
+            "/spatial-response-metrics",
+            "/frame",
+        } <= requested_paths
+        assert not legacy_requests
+        assert not external_requests
+        assert not page_errors
+        browser.close()
+
+
+def test_viewer_refuses_hostile_api_base_metadata_before_any_api_request() -> None:
+    browser_path = _installed_browser()
+    cases: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("missing", ()),
+        ("duplicate", ("/api", "/api")),
+        ("absolute", ("https://attacker.invalid/api",)),
+        ("protocol-relative", ("//attacker.invalid/api",)),
+        ("query", ("/api/runs/safe-run?redirect=https://attacker.invalid",)),
+        ("fragment", ("/api/runs/safe-run#attacker",)),
+        ("encoded", ("/api/runs/%73afe-run",)),
+        ("traversal", ("/api/runs/../safe-run",)),
+        ("backslash", (r"\api\runs\safe-run",)),
+        ("uppercase", ("/api/runs/Safe-run",)),
+        ("reserved", ("/api/runs/con",)),
+        ("credential-shaped", (f"/api/runs/sk-{'a' * 24}",)),
+    )
+    with _place_viewer() as base_url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+
+        def route_handler(
+            html_document: str,
+            observed_api_requests: list[str],
+            observed_external_requests: list[str],
+        ):
+            def handle(route: Route) -> None:
+                url = route.request.url
+                if url in {base_url, f"{base_url}/"}:
+                    route.fulfill(
+                        status=200,
+                        content_type="text/html",
+                        body=html_document,
+                    )
+                elif url.startswith(f"{base_url}/api"):
+                    observed_api_requests.append(url)
+                    route.abort()
+                elif url.startswith(base_url):
+                    route.continue_()
+                else:
+                    observed_external_requests.append(url)
+                    route.abort()
+
+            return handle
+
+        def page_error_handler(observed_errors: list[str]):
+            def handle(error: object) -> None:
+                observed_errors.append(str(error))
+
+            return handle
+
+        for label, values in cases:
+            api_requests: list[str] = []
+            external_requests: list[str] = []
+            page_errors: list[str] = []
+            html = _viewer_html_with_api_bases(*values)
+            page = browser.new_page()
+            page.route("**/*", route_handler(html, api_requests, external_requests))
+            page.on("pageerror", page_error_handler(page_errors))
+            page.goto(base_url, wait_until="networkidle")
+
+            expect(page.locator("#error-banner"), message=label).to_contain_text(
+                "Viewer API base is invalid"
+            )
+            assert not api_requests, label
+            assert not external_requests, label
+            assert not page_errors, label
+            page.close()
+        browser.close()
 
 
 def test_place_viewer_renders_provenance_and_scrubs_without_external_requests(

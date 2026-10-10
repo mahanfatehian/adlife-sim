@@ -11,13 +11,25 @@ from importlib.resources import files
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from adlife.city.analysis import (
+    metrics_for_stored_city_run,
+    response_metrics_for_stored_city_run,
+)
 from adlife.city.catalog import load_city_catalog
+from adlife.city.web import (
+    CityViewContext,
+    city_dashboard_response,
+    city_static_asset_response,
+    create_city_view_context,
+    install_city_view_routes,
+)
 from adlife.city.workbench_creatives import load_creative_template_catalog
 from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_jobs import (
@@ -52,7 +64,13 @@ from adlife.city.workbench_workspace import (
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
-from adlife.core.ports.run_store import DuplicateRun, StorageError
+from adlife.core.ports.run_store import (
+    DuplicateRun,
+    RunNotFound,
+    StorageError,
+    UnsafeRunLocation,
+    validate_run_id,
+)
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _ASSET_LIMIT_BYTES = 262_144
@@ -121,6 +139,14 @@ _SHELL_HEADERS = {
 
 class WorkbenchQueryError(ValueError):
     """A value-free refusal for a noncanonical or unbounded run-list query."""
+
+
+class WorkbenchRunNotFound(ValueError):
+    """A value-free refusal for an invalid or unknown completed run."""
+
+
+class WorkbenchRunUnavailable(RuntimeError):
+    """A value-free refusal for an artifact that cannot be freshly verified."""
 
 
 def _read_packaged_text(relative: str) -> str:
@@ -290,6 +316,44 @@ def create_city_workbench_app(
     repository = WorkbenchRunRepository(workspace)
     jobs = CityJobManager(repository)
 
+    def verified_city_view(run_id: object) -> CityViewContext:
+        try:
+            portable_run_id = validate_run_id(run_id)
+        except UnsafeRunLocation:
+            raise WorkbenchRunNotFound from None
+        try:
+            stored = repository.load(portable_run_id)
+        except RunNotFound:
+            raise WorkbenchRunNotFound from None
+        except UnsafeRunLocation:
+            raise WorkbenchRunUnavailable from None
+        except StorageError:
+            raise WorkbenchRunUnavailable from None
+
+        schema_version = stored.manifest.schema_version
+        try:
+            spatial_metrics = metrics_for_stored_city_run(stored) if schema_version >= 5 else None
+            response_metrics = (
+                response_metrics_for_stored_city_run(stored) if schema_version >= 6 else None
+            )
+            return create_city_view_context(
+                stored.mobility,
+                run_id=stored.manifest.run_id,
+                run_schema_version=schema_version,
+                spatial_scenario=stored.spatial_scenario,
+                opportunity_evaluation=stored.opportunity_evaluation,
+                attention_evaluation=stored.attention_evaluation,
+                spatial_metrics=spatial_metrics,
+                response_input=stored.response_input,
+                response_evaluation=stored.response_evaluation,
+                spatial_response_metrics=response_metrics,
+            )
+        except (StorageError, ValueError):
+            raise WorkbenchRunUnavailable from None
+
+    def resolve_city_view(request: Request) -> CityViewContext:
+        return verified_city_view(request.path_params.get("run_id"))
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
@@ -332,9 +396,14 @@ def create_city_workbench_app(
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
-        _request: Request,
+        request: Request,
         error: RequestValidationError,
     ) -> JSONResponse:
+        if request.url.path.startswith("/api/runs/"):
+            return JSONResponse(
+                status_code=422,
+                content=jsonable_encoder({"detail": error.errors()}),
+            )
         return workbench_error(
             422,
             "invalid-fields",
@@ -442,6 +511,24 @@ def create_city_workbench_app(
             "The workbench workspace is unavailable.",
         )
 
+    @app.exception_handler(WorkbenchRunNotFound)
+    async def run_not_found_handler(
+        _request: Request,
+        _error: WorkbenchRunNotFound,
+    ) -> JSONResponse:
+        return workbench_error(404, "not-found", "The requested resource was not found.")
+
+    @app.exception_handler(WorkbenchRunUnavailable)
+    async def run_unavailable_handler(
+        _request: Request,
+        _error: WorkbenchRunUnavailable,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "run-unavailable",
+            "The saved run could not be verified.",
+        )
+
     @app.exception_handler(StorageError)
     async def storage_conflict_handler(
         _request: Request,
@@ -455,10 +542,15 @@ def create_city_workbench_app(
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error_handler(
-        _request: Request,
+        request: Request,
         error: StarletteHTTPException,
     ) -> JSONResponse:
         status_code = error.status_code if 400 <= error.status_code <= 599 else 500
+        if request.url.path.startswith("/api/runs/"):
+            return JSONResponse(
+                status_code=status_code,
+                content={"detail": error.detail},
+            )
         if status_code == 404:
             return workbench_error(404, "not-found", "The requested resource was not found.")
         return workbench_error(
@@ -492,6 +584,17 @@ def create_city_workbench_app(
             headers={"X-Content-Type-Options": "nosniff"},
         )
 
+    @app.get("/static/{asset_name}", include_in_schema=False)
+    def city_static_asset(asset_name: str) -> Response:
+        return city_static_asset_response(asset_name)
+
+    @app.get("/runs/{run_id}", include_in_schema=False)
+    def inspect_run(run_id: str, request: Request) -> HTMLResponse:
+        _require_empty_query(request)
+        context = verified_city_view(run_id)
+        assert context.run_id is not None
+        return city_dashboard_response(api_base=f"/api/runs/{context.run_id}")
+
     @app.get("/api/workbench")
     def capabilities(request: Request) -> dict[str, object]:
         _require_empty_query(request)
@@ -503,7 +606,7 @@ def create_city_workbench_app(
                 "scenario_validation": True,
                 "jobs": True,
                 "run_execution": True,
-                "run_inspection": False,
+                "run_inspection": True,
                 "provider_configuration": False,
                 "oauth": False,
                 "response_modes": ["deterministic-rules"],
@@ -591,6 +694,11 @@ def create_city_workbench_app(
             )
         return JSONResponse(content=jobs.cancel(_require_job_id(job_id)).model_dump(mode="json"))
 
+    install_city_view_routes(
+        app,
+        prefix="/api/runs/{run_id}",
+        resolver=resolve_city_view,
+    )
     return app
 
 

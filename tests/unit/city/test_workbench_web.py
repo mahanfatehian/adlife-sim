@@ -15,8 +15,17 @@ import pytest
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
+from adlife.city.analysis import (
+    metrics_for_stored_city_run,
+    response_metrics_for_stored_city_run,
+)
 from adlife.city.run_store import CityRunStore
+from adlife.city.runs import create_city_run
+from adlife.city.web import create_city_app
+from adlife.city.workbench_input import WorkbenchRunDraft
+from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.ports.run_store import UnsafeRunLocation
 from tests.unit.city.test_workbench_input import draft_data
 
 TOKEN = "fixed-workbench-web-token"
@@ -113,6 +122,40 @@ def _snapshot(root: Path) -> tuple[tuple[str, str, str], ...]:
     return tuple(entries)
 
 
+def _saved_workbench_run(root: Path, *, run_id: str, schema_version: int):
+    draft = WorkbenchRunDraft.model_validate_json(
+        json.dumps(_tiny_draft(run_id=run_id), separators=(",", ":"))
+    )
+    validated = construct_workbench_run(draft)
+    settings = validated.workbench_input.draft.settings
+    return create_city_run(
+        validated.pack,
+        root=root,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input if schema_version == 7 else None,
+    )
+
+
+def _legacy_saved_run_app(stored):
+    return create_city_app(
+        stored.mobility,
+        run_id=stored.manifest.run_id,
+        run_schema_version=stored.manifest.schema_version,
+        spatial_scenario=stored.spatial_scenario,
+        opportunity_evaluation=stored.opportunity_evaluation,
+        attention_evaluation=stored.attention_evaluation,
+        spatial_metrics=metrics_for_stored_city_run(stored),
+        response_input=stored.response_input,
+        response_evaluation=stored.response_evaluation,
+        spatial_response_metrics=response_metrics_for_stored_city_run(stored),
+    )
+
+
 def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path) -> None:
     client, _ = _client(tmp_path)
     with client:
@@ -126,7 +169,7 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
             "scenario_validation": True,
             "jobs": True,
             "run_execution": True,
-            "run_inspection": False,
+            "run_inspection": True,
             "provider_configuration": False,
             "oauth": False,
             "response_modes": ["deterministic-rules"],
@@ -146,6 +189,227 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
     }
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("schema_version", [6, 7])
+def test_run_scoped_reads_match_the_legacy_verified_view_contract(
+    tmp_path: Path,
+    schema_version: int,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    run_id = f"parity-v{schema_version}"
+    stored = _saved_workbench_run(root, run_id=run_id, schema_version=schema_version)
+    before = _snapshot(root)
+    workbench = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+    legacy = _legacy_saved_run_app(stored)
+    suffixes = (
+        "meta",
+        "city",
+        "agents",
+        "places",
+        "place-assignments",
+        "opportunity-summary",
+        "opportunities?minute=480&limit=1",
+        "attention-summary",
+        "spatial-metrics",
+        "spatial-response-metrics",
+        "attention-events?minute=480&limit=1",
+        "response-summary",
+        "response-events?minute=480&limit=1",
+        "response-state?agent_id=person-001",
+        "frame?minute=480&agent_id=person-001",
+    )
+    refusal_suffixes = (
+        "opportunities?minute=1440",
+        "attention-events?minute=480&agent_id=person-999",
+        "response-events?minute=-1",
+        "response-state?limit=101",
+        "frame?minute=1440&agent_id=person-001",
+    )
+
+    with (
+        TestClient(workbench, base_url=ORIGIN) as scoped_client,
+        TestClient(legacy, base_url=ORIGIN) as legacy_client,
+    ):
+        for suffix in (*suffixes, *refusal_suffixes):
+            legacy_response = legacy_client.get(f"/api/{suffix}")
+            scoped_response = scoped_client.get(f"/api/runs/{run_id}/{suffix}")
+            assert scoped_response.status_code == legacy_response.status_code, suffix
+            assert scoped_response.json() == legacy_response.json(), suffix
+            assert (
+                scoped_response.headers["content-type"] == legacy_response.headers["content-type"]
+            )
+            assert (
+                scoped_response.headers["cache-control"]
+                == legacy_response.headers["cache-control"]
+                == "no-store"
+            )
+            assert (
+                scoped_response.headers["x-content-type-options"]
+                == legacy_response.headers["x-content-type-options"]
+                == "nosniff"
+            )
+
+    assert _snapshot(root) == before
+
+
+def test_completed_inspector_url_serves_the_existing_dashboard_with_a_scoped_api_base(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    stored = _saved_workbench_run(root, run_id="inspectable-run", schema_version=7)
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        page = client.get("/runs/inspectable-run")
+        script = client.get("/static/app.js")
+        style = client.get("/static/app.css")
+        listing = client.get("/api/runs")
+
+    assert page.status_code == script.status_code == style.status_code == 200
+    assert page.text.count('name="adlife-api-base"') == 1
+    assert 'name="adlife-api-base" content="/api/runs/inspectable-run"' in page.text
+    assert 'src="/static/app.js"' in page.text
+    assert page.headers["content-security-policy"].startswith("default-src 'none'")
+    assert page.headers["cache-control"] == "no-store"
+    assert script.headers["content-type"].startswith("text/javascript")
+    assert style.headers["content-type"].startswith("text/css")
+    assert listing.json()["runs"][0]["inspector_url"] == "/runs/inspectable-run"
+    assert stored.manifest.run_id in page.text or "saved-run-label" in page.text
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ["missing-run", "CON", "sk-live-abcdefghij", "x" * 41],
+)
+def test_direct_inspection_screens_invalid_or_unknown_run_identifiers(
+    tmp_path: Path,
+    run_id: str,
+) -> None:
+    client, _ = _client(tmp_path)
+    with client:
+        api = client.get(f"/api/runs/{run_id}/meta")
+        page = client.get(f"/runs/{run_id}")
+
+    assert api.status_code == page.status_code == 404
+    assert api.json()["error"]["code"] == page.json()["error"]["code"] == "not-found"
+    assert run_id not in api.text
+    assert run_id not in page.text
+
+
+def test_run_scoped_reads_reverify_after_a_prior_success_and_refuse_tampering(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    _saved_workbench_run(root, run_id="tamper-run", schema_version=7)
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        first = client.get("/api/runs/tamper-run/meta")
+        manifest = root / "city-runs" / "tamper-run" / "run.json"
+        manifest.write_bytes(manifest.read_bytes() + b"\n")
+        second = client.get("/api/runs/tamper-run/meta")
+        page = client.get("/runs/tamper-run")
+
+    assert first.status_code == 200
+    assert second.status_code == page.status_code == 409
+    assert (
+        second.json()["error"]
+        == page.json()["error"]
+        == {
+            "code": "run-unavailable",
+            "message": "The saved run could not be verified.",
+            "fields": {},
+        }
+    )
+    assert str(manifest) not in second.text + page.text
+
+
+def test_run_scoped_reads_refuse_a_workspace_replaced_between_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    _saved_workbench_run(root, run_id="workspace-swap", schema_version=7)
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        first = client.get("/api/runs/workspace-swap/meta")
+
+        runs_module = importlib.import_module("adlife.city.workbench_runs")
+
+        def replaced(_workspace):
+            raise runs_module.UnsafeWorkbenchWorkspace("replaced")
+
+        monkeypatch.setattr(runs_module, "verify_workbench_workspace", replaced)
+        second = client.get("/api/runs/workspace-swap/meta")
+        page = client.get("/runs/workspace-swap")
+
+    assert first.status_code == 200
+    assert second.status_code == page.status_code == 409
+    assert (
+        second.json()["error"]
+        == page.json()["error"]
+        == {
+            "code": "workspace-unavailable",
+            "message": "The workbench workspace is unavailable.",
+            "fields": {},
+        }
+    )
+
+
+def test_run_scoped_reads_report_a_valid_run_with_an_unsafe_location_as_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    _saved_workbench_run(root, run_id="unsafe-location", schema_version=7)
+    module = _module()
+    app = module.create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+    unsafe_detail = "unsafe run location must never be returned"
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        first = client.get("/api/runs/unsafe-location/meta")
+
+        def unsafe_load(_repository: object, _run_id: str) -> None:
+            raise UnsafeRunLocation(unsafe_detail)
+
+        monkeypatch.setattr(module.WorkbenchRunRepository, "load", unsafe_load)
+        second = client.get("/api/runs/unsafe-location/meta")
+        page = client.get("/runs/unsafe-location")
+
+    assert first.status_code == 200
+    assert second.status_code == page.status_code == 409
+    assert (
+        second.json()["error"]
+        == page.json()["error"]
+        == {
+            "code": "run-unavailable",
+            "message": "The saved run could not be verified.",
+            "fields": {},
+        }
+    )
+    assert unsafe_detail not in second.text + page.text
 
 
 def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery(
