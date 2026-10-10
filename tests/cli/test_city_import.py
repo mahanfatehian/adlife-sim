@@ -1,6 +1,9 @@
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 from typer.testing import CliRunner
@@ -121,6 +124,81 @@ def test_city_import_publication_failure_leaves_no_partial_pack(
     assert not output.exists()
     assert list(tmp_path.glob(".city.json.*.tmp")) == []
     assert "disk refused" not in result.output
+
+
+@pytest.mark.parametrize("schema_version", [1, 2])
+@pytest.mark.parametrize("failure", ["partial", "zero", "write", "flush", "fsync"])
+def test_city_import_incomplete_write_or_sync_failure_never_publishes_a_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_version: int, failure: str
+) -> None:
+    source = tmp_path / "overpass.json"
+    output = tmp_path / "city.json"
+    source_bytes = json.dumps(extract()).encode("utf-8")
+    source.write_bytes(source_bytes)
+    original_fdopen = os.fdopen
+
+    def denied(*args: object) -> None:
+        raise OSError("private-publication-diagnostic")
+
+    @contextmanager
+    def faulty_destination(descriptor: int, mode: str) -> Iterator[BinaryIO]:
+        with original_fdopen(descriptor, mode) as destination:
+            original_write = destination.write
+
+            def write(contents: bytes) -> int:
+                if failure == "partial":
+                    return original_write(contents[: len(contents) // 2])
+                if failure == "zero":
+                    return 0
+                raise OSError("private-publication-diagnostic")
+
+            if failure in {"partial", "zero", "write"}:
+                monkeypatch.setattr(destination, "write", write)
+            elif failure == "flush":
+                monkeypatch.setattr(destination, "flush", denied)
+            yield destination
+
+    monkeypatch.setattr(os, "fdopen", faulty_destination)
+    if failure == "fsync":
+        monkeypatch.setattr(os, "fsync", denied)
+    args = _args(source, output) if schema_version == 1 else _v2_args(source, output)
+
+    result = CliRunner().invoke(app, ["--format", "json", *args])
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout)["error"]["exit_code"] == 2
+    assert "private-publication-diagnostic" not in result.output
+    assert "Traceback" not in result.output
+    assert not output.exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["overpass.json"]
+    assert source.read_bytes() == source_bytes
+
+
+def test_city_import_publication_conflict_preserves_the_winning_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "overpass.json"
+    output = tmp_path / "city.json"
+    source_bytes = json.dumps(extract()).encode("utf-8")
+    source.write_bytes(source_bytes)
+    original_link = os.link
+
+    def competing_publication(
+        source_path: str | os.PathLike[str], dest_path: str | os.PathLike[str]
+    ) -> None:
+        Path(dest_path).write_bytes(b"winning pack")
+        original_link(source_path, dest_path)
+
+    monkeypatch.setattr(os, "link", competing_publication)
+
+    result = CliRunner().invoke(app, ["--format", "json", *_args(source, output)])
+
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.stdout)["error"]["exit_code"] == 3
+    assert output.read_bytes() == b"winning pack"
+    assert source.read_bytes() == source_bytes
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["city.json", "overpass.json"]
+    assert "Traceback" not in result.output
 
 
 def test_city_import_v2_writes_geometry_pack_and_clean_quality_json(tmp_path: Path) -> None:

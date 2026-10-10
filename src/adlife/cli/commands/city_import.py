@@ -29,7 +29,8 @@ def _publish_new_file(path: Path, contents: bytes) -> None:
         descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
         temporary = Path(name)
         with os.fdopen(descriptor, "wb") as destination:
-            destination.write(contents)
+            if destination.write(contents) != len(contents):
+                raise OSError("city pack write was incomplete")
             destination.flush()
             os.fsync(destination.fileno())
         os.link(temporary, path)
