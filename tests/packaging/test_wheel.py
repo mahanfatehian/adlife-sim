@@ -85,9 +85,11 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     assert 'byId("saved-run-label").textContent =' in script
     assert 'fetchJson("/api/spatial-metrics")' in script
     assert 'fetchJson("/api/response-summary")' in script
-    assert "fetchJson(`/api/response-events?minute=${next}`)" in script
+    assert 'endpoint: "/api/response-events"' in script
+    assert 'fetchJson(evidencePageUrl("response", next, offsets.response))' in script
+    assert "`${endpoint}?minute=${minute}&offset=${offset}&limit=${EVIDENCE_PAGE_SIZE}`" in script
     assert (
-        "fetchJson(`/api/response-state?agent_id=${encodeURIComponent(state.selected)}`)" in script
+        "fetchJson(`/api/response-state?agent_id=${encodeURIComponent(selectedAgent)}`)" in script
     )
     assert 'page.state_scope !== "final-end-of-run-not-scrubbed-minute"' in script
     assert "innerHTML" not in script

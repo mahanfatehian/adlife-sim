@@ -343,7 +343,7 @@ async def _main() -> None:
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as client:
         metadata = await _json(client, "/api/meta")
         metrics_payload = await _json(client, "/api/spatial-metrics")
