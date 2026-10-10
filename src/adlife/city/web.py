@@ -10,7 +10,8 @@ from importlib.resources import files
 from typing import Literal, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from adlife.core.domain.spatial_campaign import (
@@ -708,6 +709,15 @@ def city_static_asset_response(asset_name: str) -> Response:
     )
 
 
+def city_validation_error_response() -> JSONResponse:
+    """Return a value-free validation refusal shared by every city-view wrapper."""
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "request validation failed"},
+    )
+
+
 def install_city_view_routes(
     app: FastAPI,
     *,
@@ -759,6 +769,13 @@ def create_city_app(
         www_redirect=False,
     )
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error(
+        _request: Request,
+        _error: RequestValidationError,
+    ) -> JSONResponse:
+        return city_validation_error_response()
+
     @app.middleware("http")
     async def city_response_headers(
         request: Request,
@@ -788,6 +805,7 @@ __all__ = [
     "CityViewContext",
     "city_dashboard_response",
     "city_static_asset_response",
+    "city_validation_error_response",
     "create_city_app",
     "create_city_view_context",
     "install_city_view_routes",

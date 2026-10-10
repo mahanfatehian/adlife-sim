@@ -122,6 +122,17 @@ def client() -> httpx.AsyncClient:
 
 
 @pytest.mark.asyncio
+async def test_viewer_validation_errors_never_echo_query_values() -> None:
+    secret = "Authorization: Bearer sk-never-echo-viewer-query-1234567890"
+    async with client() as web:
+        response = await web.get("/api/frame", params={"minute": secret})
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "request validation failed"}
+    assert secret not in response.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("host", "forwarded_host"),
     [
