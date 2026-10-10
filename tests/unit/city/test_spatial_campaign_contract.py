@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from adlife.core.domain.serialization import canonical_json
+from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 
 
 def spatial_scenario_data() -> dict[str, Any]:
@@ -234,3 +235,64 @@ def test_spatial_scenario_forbids_unknown_fields() -> None:
     data["provider_api_key"] = "never accepted"
     with pytest.raises(ValidationError, match="extra"):
         _parse(data)
+
+
+def test_road_coordinate_uses_verified_v1_and_curved_v2_geometry() -> None:
+    coordinate = getattr(_module(), "road_coordinate", None)
+    assert coordinate is not None, "road_coordinate is not implemented"
+
+    v1 = load_pack(pack_data())
+    assert coordinate(
+        v1,
+        road_id="ab",
+        travel_direction="forward",
+        road_fraction=0.5,
+    ) == pytest.approx((0.005, 0.0))
+
+    v2 = load_pack_v2(pack_v2_data())
+    expected = (0.005, 0.004)
+    assert coordinate(
+        v2,
+        road_id="ab",
+        travel_direction="forward",
+        road_fraction=0.5,
+    ) == pytest.approx(expected)
+    assert coordinate(
+        v2,
+        road_id="ab",
+        travel_direction="backward",
+        road_fraction=0.5,
+    ) == pytest.approx(expected)
+
+
+def test_road_coordinate_refuses_unknown_direction_and_invalid_fraction() -> None:
+    coordinate = getattr(_module(), "road_coordinate", None)
+    assert coordinate is not None, "road_coordinate is not implemented"
+    one_way_data = pack_data()
+    roads = one_way_data["roads"]
+    assert isinstance(roads, list) and isinstance(roads[0], dict)
+    roads[0]["one_way"] = True
+    pack = load_pack(one_way_data)
+
+    with pytest.raises(ValueError, match="unknown"):
+        coordinate(
+            pack,
+            road_id="missing",
+            travel_direction="forward",
+            road_fraction=0.5,
+        )
+    with pytest.raises(ValueError, match="direction"):
+        coordinate(
+            pack,
+            road_id="ab",
+            travel_direction="backward",
+            road_fraction=0.5,
+        )
+    for fraction in (True, 0.0, 1.0, float("nan"), float("inf")):
+        with pytest.raises((TypeError, ValueError), match="fraction"):
+            coordinate(
+                pack,
+                road_id="ab",
+                travel_direction="forward",
+                road_fraction=fraction,
+            )

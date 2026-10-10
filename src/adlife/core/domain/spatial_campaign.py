@@ -13,6 +13,7 @@ from pydantic import Field, field_validator, model_validator
 from adlife.core.domain.city import (
     CityPack,
     CityPackDocument,
+    CityPackV2,
     TravelDirection,
     _validate_public_metadata,
 )
@@ -235,6 +236,61 @@ def _interpolate_geometry(
     raise AssertionError("validated road geometry must contain a segment")
 
 
+def _road_geometry(
+    pack: CityPackDocument,
+    road_id: str,
+) -> tuple[tuple[tuple[float, float], ...], tuple[TravelDirection, ...]]:
+    nodes = {node.node_id: node for node in pack.nodes}
+    points: tuple[tuple[float, float], ...]
+    if isinstance(pack, CityPack):
+        road = next((item for item in pack.roads if item.road_id == road_id), None)
+        if road is None:
+            raise ValueError("billboard references an unknown city road")
+        directions: tuple[TravelDirection, ...] = (
+            ("forward",) if road.one_way else ("forward", "backward")
+        )
+        points = (
+            (nodes[road.source_node].longitude, nodes[road.source_node].latitude),
+            (nodes[road.target_node].longitude, nodes[road.target_node].latitude),
+        )
+        return points, directions
+
+    road_v2 = next((item for item in pack.roads if item.road_id == road_id), None)
+    if road_v2 is None:
+        raise ValueError("billboard references an unknown city road")
+    points = (
+        (nodes[road_v2.source_node].longitude, nodes[road_v2.source_node].latitude),
+        *((point.longitude, point.latitude) for point in road_v2.shape),
+        (nodes[road_v2.target_node].longitude, nodes[road_v2.target_node].latitude),
+    )
+    return points, road_v2.directions
+
+
+def road_coordinate(
+    pack: CityPackDocument,
+    *,
+    road_id: str,
+    travel_direction: TravelDirection,
+    road_fraction: float,
+) -> tuple[float, float]:
+    """Return the point at a canonical source-to-target road fraction."""
+    if not isinstance(pack, (CityPack, CityPackV2)):
+        raise TypeError("pack must be a supported city pack")
+    if not isinstance(road_id, str):
+        raise TypeError("road identifier must be a string")
+    if travel_direction not in ("forward", "backward"):
+        raise ValueError("travel direction is unsupported")
+    if type(road_fraction) is not float:
+        raise TypeError("road fraction must be a float")
+    if not math.isfinite(road_fraction) or not 0 < road_fraction < 1:
+        raise ValueError("road fraction must be finite and between zero and one")
+
+    points, directions = _road_geometry(pack, road_id)
+    if travel_direction not in directions:
+        raise ValueError(f"city road direction does not support {travel_direction} travel")
+    return _interpolate_geometry(points, road_fraction)
+
+
 def validate_spatial_scenario_against_city(
     scenario: SpatialCampaignScenario,
     pack: CityPackDocument,
@@ -245,58 +301,32 @@ def validate_spatial_scenario_against_city(
     if scenario.city_sha256 != pack.fingerprint:
         raise ValueError("spatial scenario city fingerprint does not match city pack")
 
-    nodes = {node.node_id: node for node in pack.nodes}
+    if isinstance(pack, CityPack):
+        west = min(node.longitude for node in pack.nodes)
+        east = max(node.longitude for node in pack.nodes)
+        south = min(node.latitude for node in pack.nodes)
+        north = max(node.latitude for node in pack.nodes)
+    else:
+        west = pack.bounds.west
+        east = pack.bounds.east
+        south = pack.bounds.south
+        north = pack.bounds.north
+
     errors: list[float] = []
     billboard_count = 0
     for placement in scenario.placements:
         if not isinstance(placement, RoadsideBillboardPlacement):
             continue
         billboard_count += 1
-        points: tuple[tuple[float, float], ...]
-        directions: tuple[TravelDirection, ...]
-        if isinstance(pack, CityPack):
-            road = next(
-                (item for item in pack.roads if item.road_id == placement.road_id),
-                None,
-            )
-            if road is None:
-                raise ValueError("billboard references an unknown city road")
-            directions = ("forward",) if road.one_way else ("forward", "backward")
-            points = (
-                (nodes[road.source_node].longitude, nodes[road.source_node].latitude),
-                (nodes[road.target_node].longitude, nodes[road.target_node].latitude),
-            )
-            west = min(node.longitude for node in pack.nodes)
-            east = max(node.longitude for node in pack.nodes)
-            south = min(node.latitude for node in pack.nodes)
-            north = max(node.latitude for node in pack.nodes)
-        else:
-            road_v2 = next(
-                (item for item in pack.roads if item.road_id == placement.road_id),
-                None,
-            )
-            if road_v2 is None:
-                raise ValueError("billboard references an unknown city road")
-            directions = road_v2.directions
-            points = (
-                (nodes[road_v2.source_node].longitude, nodes[road_v2.source_node].latitude),
-                *((point.longitude, point.latitude) for point in road_v2.shape),
-                (nodes[road_v2.target_node].longitude, nodes[road_v2.target_node].latitude),
-            )
-            west = pack.bounds.west
-            east = pack.bounds.east
-            south = pack.bounds.south
-            north = pack.bounds.north
-
-        if placement.travel_direction not in directions:
-            raise ValueError(
-                f"city road {placement.road_id} does not support "
-                f"{placement.travel_direction} travel"
-            )
         if not (west <= placement.longitude <= east and south <= placement.latitude <= north):
             raise ValueError("billboard coordinate is outside city bounds")
 
-        expected = _interpolate_geometry(points, placement.road_fraction)
+        expected = road_coordinate(
+            pack,
+            road_id=placement.road_id,
+            travel_direction=placement.travel_direction,
+            road_fraction=placement.road_fraction,
+        )
         error = _distance_meters(expected, (placement.longitude, placement.latitude))
         if error > MAX_BILLBOARD_BINDING_ERROR_METERS:
             raise ValueError("billboard coordinate is more than 1 meter from its road fraction")
@@ -359,5 +389,6 @@ __all__ = [
     "SpatialPlacement",
     "SpatialScenarioEvidence",
     "parse_spatial_campaign_scenario_json",
+    "road_coordinate",
     "validate_spatial_scenario_against_city",
 ]
