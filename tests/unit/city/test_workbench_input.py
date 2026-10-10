@@ -365,6 +365,70 @@ def test_normalized_input_is_frozen_canonical_and_hashes_complete_template() -> 
         )
 
 
+def test_persisted_workbench_input_parser_round_trips_strict_canonical_model() -> None:
+    models = _models()
+    template = models.CreativeTemplate(
+        template_id="fictional-device-launch-v1",
+        template_version=1,
+        product_name="Lumen Pocket",
+        product_category="fictional consumer device",
+        message="A fictional compact device for a synthetic commute.",
+        call_to_action="Explore the fictional concept",
+        disclosure="Fictional creative for synthetic simulation only.",
+    )
+    value = models.WorkbenchRunInput(
+        schema_version=1,
+        draft=_normalized_draft(),
+        creative_template=template,
+    )
+
+    assert models.parse_workbench_run_input_json(canonical_json(value)) == value
+    assert models.parse_workbench_run_input_json(canonical_json(value).encode("utf-8")) == value
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        b"\xff",
+        b"{",
+        b"[]",
+        b'{"schema_version":1,"schema_version":1}',
+        b'{"schema_version":1,"draft":NaN}',
+    ],
+)
+def test_persisted_workbench_input_parser_refuses_invalid_json(document: bytes) -> None:
+    models = _models()
+    with pytest.raises((ValidationError, ValueError)):
+        models.parse_workbench_run_input_json(document)
+
+
+def test_persisted_workbench_input_parser_refuses_unknown_fields_and_creative_drift() -> None:
+    models = _models()
+    template = models.CreativeTemplate(
+        template_id="fictional-device-launch-v1",
+        template_version=1,
+        product_name="Lumen Pocket",
+        product_category="fictional consumer device",
+        message="A fictional compact device for a synthetic commute.",
+        call_to_action="Explore the fictional concept",
+        disclosure="Fictional creative for synthetic simulation only.",
+    )
+    value = models.WorkbenchRunInput(
+        draft=_normalized_draft(),
+        creative_template=template,
+    ).model_dump(mode="json")
+
+    with_extra = deepcopy(value)
+    with_extra["request_headers"] = {"authorization": "redacted"}
+    with pytest.raises(ValidationError):
+        models.parse_workbench_run_input_json(json.dumps(with_extra))
+
+    mismatch = deepcopy(value)
+    mismatch["creative_template"]["template_id"] = "fictional-cafe-launch-v1"
+    with pytest.raises(ValidationError, match="does not match"):
+        models.parse_workbench_run_input_json(json.dumps(mismatch))
+
+
 def test_packaged_creative_catalog_is_bounded_safe_sorted_and_selectable() -> None:
     creatives = _creatives()
     catalog = creatives.load_creative_template_catalog()

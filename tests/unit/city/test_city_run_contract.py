@@ -103,6 +103,15 @@ def valid_manifest_v6() -> dict[str, object]:
     }
 
 
+def valid_manifest_v7() -> dict[str, object]:
+    return {
+        **valid_manifest_v6(),
+        "schema_version": 7,
+        "workbench_input_schema_version": 1,
+        "workbench_input_sha256": "7" * 64,
+    }
+
+
 @pytest.mark.parametrize(
     "factory",
     [
@@ -112,6 +121,7 @@ def valid_manifest_v6() -> dict[str, object]:
         valid_manifest_v4,
         valid_manifest_v5,
         valid_manifest_v6,
+        valid_manifest_v7,
     ],
 )
 @pytest.mark.parametrize(
@@ -141,6 +151,7 @@ def test_all_manifest_versions_refuse_unsafe_package_version_text(factory, versi
         valid_manifest_v4,
         valid_manifest_v5,
         valid_manifest_v6,
+        valid_manifest_v7,
     ],
 )
 @pytest.mark.parametrize(
@@ -440,6 +451,43 @@ def test_v6_manifest_allows_zero_notices_only_with_zero_state_updates() -> None:
 
     with pytest.raises(ValidationError, match="updates"):
         city_run.CityRunManifestV6.model_validate({**document, "state_update_count": 1})
+
+
+def test_v7_manifest_binds_canonical_workbench_input_and_parser_dispatch() -> None:
+    model = getattr(city_run, "CityRunManifestV7", None)
+    assert model is not None, "CityRunManifestV7 is not implemented"
+
+    manifest = city_run.parse_city_run_manifest_json(json.dumps(valid_manifest_v7()))
+
+    assert isinstance(manifest, model)
+    assert manifest.schema_version == 7
+    assert manifest.workbench_input_schema_version == 1
+    assert manifest.workbench_input_sha256 == "7" * 64
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", 6),
+        ("schema_version", True),
+        ("workbench_input_schema_version", True),
+        ("workbench_input_schema_version", 2),
+        ("workbench_input_sha256", "short"),
+        ("workbench_input_sha256", "A" * 64),
+    ],
+)
+def test_v7_manifest_refuses_invalid_workbench_bindings(field: str, value: object) -> None:
+    model = getattr(city_run, "CityRunManifestV7", None)
+    assert model is not None, "CityRunManifestV7 is not implemented"
+    with pytest.raises(ValidationError):
+        model.model_validate({**valid_manifest_v7(), field: value})
+
+
+def test_manifest_parser_refuses_unknown_version_after_v7() -> None:
+    with pytest.raises(ValueError, match="unsupported"):
+        city_run.parse_city_run_manifest_json(
+            json.dumps({**valid_manifest_v7(), "schema_version": 8})
+        )
 
 
 @pytest.mark.parametrize(

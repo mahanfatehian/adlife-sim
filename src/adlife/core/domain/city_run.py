@@ -355,10 +355,9 @@ class CityRunManifestV5(DomainModel):
         return self
 
 
-class CityRunManifestV6(DomainModel):
-    """A spatial city trace with frozen bounded response-state evidence."""
+class _CityRunResponseManifestBase(DomainModel):
+    """Fields shared by response runs with and without workbench provenance."""
 
-    schema_version: Literal[6] = 6
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
     status: Literal["completed"] = "completed"
     model_id: Literal["illustrative-road-spatial-response-study-v1"] = (
@@ -468,6 +467,27 @@ class CityRunManifestV6(DomainModel):
         return self
 
 
+class CityRunManifestV6(_CityRunResponseManifestBase):
+    """A spatial city trace with frozen bounded response-state evidence."""
+
+    schema_version: Literal[6] = 6
+
+
+class CityRunManifestV7(_CityRunResponseManifestBase):
+    """A response run bound to its complete normalized workbench input."""
+
+    schema_version: Literal[7] = 7
+    workbench_input_schema_version: Literal[1]
+    workbench_input_sha256: str = Field(pattern=_HASH_PATTERN)
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_workbench_input_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("workbench_input_schema_version must be integer 1")
+        return value
+
+
 CityRunManifestDocument: TypeAlias = (
     CityRunManifest
     | CityRunManifestV2
@@ -475,6 +495,7 @@ CityRunManifestDocument: TypeAlias = (
     | CityRunManifestV4
     | CityRunManifestV5
     | CityRunManifestV6
+    | CityRunManifestV7
 )
 
 
@@ -519,6 +540,8 @@ def parse_city_run_manifest_json(document: str | bytes) -> CityRunManifestDocume
         return CityRunManifestV5.model_validate_json(normalized)
     if version == 6:
         return CityRunManifestV6.model_validate_json(normalized)
+    if version == 7:
+        return CityRunManifestV7.model_validate_json(normalized)
     raise ValueError("unsupported city run manifest schema_version")
 
 
@@ -530,6 +553,7 @@ __all__ = [
     "CityRunManifestV4",
     "CityRunManifestV5",
     "CityRunManifestV6",
+    "CityRunManifestV7",
     "CityTraceSummary",
     "PackageVersion",
     "parse_city_run_manifest_json",

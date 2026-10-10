@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from hashlib import sha256
 from itertools import pairwise
 from typing import Annotated, Final, Literal, Self
@@ -393,6 +394,40 @@ class WorkbenchRunInput(DomainModel):
         return sha256(canonical_json(self).encode("utf-8")).hexdigest()
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("workbench input JSON contains a duplicate object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"workbench input JSON contains non-finite constant {value}")
+
+
+def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInput:
+    """Parse one strict persisted input without accepting ambiguous JSON."""
+    try:
+        payload = json.loads(
+            document,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        raise ValueError("workbench input is not valid UTF-8 JSON") from None
+    if not isinstance(payload, dict):
+        raise ValueError("workbench input must be a JSON object")
+    normalized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    return WorkbenchRunInput.model_validate_json(normalized)
+
+
 __all__ = [
     "CREATIVE_DISCLOSURE",
     "CreativeTemplate",
@@ -411,4 +446,5 @@ __all__ = [
     "WorkbenchRunInput",
     "WorkbenchRunSettings",
     "WorkbenchScenarioDraft",
+    "parse_workbench_run_input_json",
 ]
