@@ -1,7 +1,7 @@
 # Local City Workbench Design
 
 **Date:** 2026-10-10  
-**Status:** Proposed for implementation  
+**Status:** Approved for staged implementation<br>
 **Roadmap scope:** D1-D4, first shell-free loopback slice  
 **Parent design:** `2026-09-28-production-city-platform-design.md`
 
