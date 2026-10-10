@@ -38,10 +38,10 @@
 - Consumes: `derive_spatial_response_metrics(...) -> SpatialResponseMetrics` and `create_city_app(..., spatial_response_metrics=...)`.
 - Produces: browser assertions for visibility, exact receipts, provenance, immutable scrubbing, safe labels, accessibility, and narrow containment.
 
-- [ ] **Step 1: Extend the schema-v6 response viewer fixture.** Derive the real response metrics from the same verified scenario, opportunity, attention, response input, and response evaluation, then pass them to `create_city_app`.
-- [ ] **Step 2: Write failing full-run ledger assertions.** Assert exact overall/channel values and receipt labels, a zero-response campaign, selected campaign state, honest claim copy, and no channel state table.
-- [ ] **Step 3: Write failing interaction/security assertions.** Scrub the timeline and select another agent without changing ledger values; exercise keyboard focus and campaign selection; assert hostile labels remain text, 390-pixel containment, no console/page errors, and no external requests.
-- [ ] **Step 4: Run the focused browser test and confirm RED.** Run `uv run --offline pytest tests/browser/test_city_places_browser.py -q -k response_viewer`; expected failure is missing response-ledger DOM/behavior, not fixture construction.
+- [x] **Step 1: Extend the schema-v6 response viewer fixture.** Derive the real response metrics from the same verified scenario, opportunity, attention, response input, and response evaluation, then pass them to `create_city_app`.
+- [x] **Step 2: Write failing full-run ledger assertions.** Assert exact overall/channel values and receipt labels, a zero-response campaign, selected campaign state, honest claim copy, and no channel state table.
+- [x] **Step 3: Write failing interaction/security assertions.** Scrub the timeline and select another agent without changing ledger values; exercise keyboard focus and campaign selection; assert hostile labels remain text, 390-pixel containment, no console/page errors, and no external requests.
+- [x] **Step 4: Run the focused browser test and confirm RED.** Run `uv run --offline pytest tests/browser/test_city_places_browser.py -q -k response_viewer`; expected failure is missing response-ledger DOM/behavior, not fixture construction.
 
 ### Task 2: Render the immutable response ledger
 
@@ -55,11 +55,11 @@
 - Consumes: `GET /api/meta` flag `spatial_response_metrics` and `GET /api/spatial-response-metrics`.
 - Produces: `renderSpatialResponseMetrics()` and a campaign-selection render path over one immutable in-memory projection.
 
-- [ ] **Step 1: Add semantic hidden-by-default markup.** Add a keyboard-focusable full-run panel, direct-rule receipt table, bounded native campaign selector, committed-state receipt table, and explicit limitations/disclosures.
-- [ ] **Step 2: Add strict response-metric parsing and safe rendering.** Fetch once only when advertised; require exact model/scope and bounded canonical series; reject malformed/non-finite receipts; set text and accessibility attributes without HTML insertion.
-- [ ] **Step 3: Preserve presentation-only controls.** Re-render only the chosen campaign state series; do not connect the ledger to minute/agent state or mutate fetched data.
-- [ ] **Step 4: Add focused styling.** Extend the existing forensic-console visual language with coral direct-response and blue committed-state accents, visible focus, readable data type, contained table scrolling, reduced-motion compatibility, and 390-pixel layout rules.
-- [ ] **Step 5: Run the focused browser tests and confirm GREEN.** Run `uv run --offline pytest tests/browser/test_city_places_browser.py -q -k response_viewer`.
+- [x] **Step 1: Add semantic hidden-by-default markup.** Add a keyboard-focusable full-run panel, direct-rule receipt table, bounded native campaign selector, committed-state receipt table, and explicit limitations/disclosures.
+- [x] **Step 2: Add strict response-metric parsing and safe rendering.** Fetch once only when advertised; require exact model/scope and bounded canonical series; reject malformed/non-finite receipts; set text and accessibility attributes without HTML insertion.
+- [x] **Step 3: Preserve presentation-only controls.** Re-render only the chosen campaign state series; do not connect the ledger to minute/agent state or mutate fetched data.
+- [x] **Step 4: Add focused styling.** Extend the existing forensic-console visual language with coral direct-response and blue committed-state accents, visible focus, readable data type, contained table scrolling, reduced-motion compatibility, and 390-pixel layout rules.
+- [x] **Step 5: Run the focused browser tests and confirm GREEN.** Run `uv run --offline pytest tests/browser/test_city_places_browser.py -q -k response_viewer`.
 
 ### Task 3: Reconcile and verify the public contract
 
@@ -75,9 +75,27 @@
 - Consumes: the completed browser behavior from Task 2.
 - Produces: truthful documentation that records incremental D3/D4 progress while keeping the phase-D exit gate open.
 
-- [ ] **Step 1: Add executable documentation assertions if current contract tests do not cover the new public wording.** Pin the endpoint/panel scope and the uncalibrated-proxy/channel-attribution limitations.
-- [ ] **Step 2: Reconcile public documentation.** Document the saved-run ledger and keep workbench jobs, writes, authentication/provider settings, purchase/social behavior, calibration, and external validity explicitly open.
-- [ ] **Step 3: Run related verification.** Run browser, city-web, documentation, security, architecture, Ruff format/lint, and strict mypy checks.
-- [ ] **Step 4: Request independent review.** Fix every Critical or Important finding test-first and rerun affected checks.
-- [ ] **Step 5: Run the final repository gates appropriate to the accumulated changes.** Record exact outputs; do not claim unexecuted platform-specific evidence.
+- [x] **Step 1: Add executable documentation assertions if current contract tests do not cover the new public wording.** Pin the endpoint/panel scope and the uncalibrated-proxy/channel-attribution limitations.
+- [x] **Step 2: Reconcile public documentation.** Document the saved-run ledger and keep workbench jobs, writes, authentication/provider settings, purchase/social behavior, calibration, and external validity explicitly open.
+- [x] **Step 3: Run related verification.** Run browser, city-web, documentation, security, architecture, Ruff format/lint, and strict mypy checks.
+- [x] **Step 4: Request independent review.** Fix every Critical or Important finding test-first and rerun affected checks.
+- [x] **Step 5: Run the final repository gates appropriate to the accumulated changes.** Record exact outputs; do not claim unexecuted platform-specific evidence.
 - [ ] **Step 6: Commit and push the logical slice.** Use the configured repository identity and existing remote only; do not publish or create a release.
+
+## Completion Evidence (2026-10-10)
+
+- RED was confirmed before implementation for the missing browser ledger and again for each
+  independently discovered validation edge: unsafe binary64 partition tolerance, lossy maximum
+  seed handling, subnormal partitions, power-of-two ULP boundaries, and half-even summation.
+- Focused browser matrix: `28 passed in 108.84s`.
+- Related city web, documentation, and security suites: `885 passed, 1 skipped in 32.04s`.
+- Full final-tree suite: `4629 passed, 29 skipped in 1325.56s (0:22:05)`.
+- Ruff format: `333 files already formatted`; Ruff lint: `All checks passed!`.
+- Strict mypy: `Success: no issues found in 133 source files`.
+- JavaScript syntax (`node --check`) and `git diff --check` passed.
+- Independent review approved the final implementation with no remaining Critical or Important
+  findings.
+- Local implementation commits are `bf42df0` and `ee90c60`. Push remains incomplete because the
+  existing HTTPS remote has no usable non-interactive owner credential in this environment:
+  `fatal: could not read Password ... terminal prompts disabled`. Interactive authentication was
+  intentionally not opened because repository work is required to remain background-only.
