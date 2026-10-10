@@ -1649,6 +1649,39 @@ def test_smoke_viewer_probe_checks_guard_before_installed_imports_and_metrics() 
     )
     assert 'metrics_payload = await _json(client, "/api/spatial-metrics")' in source
     assert 'assert metrics_payload == metrics.model_dump(mode="json")' in source
+    assert 'assert \'<meta name="adlife-api-base" content="/api">\' in index.text' in source
+    assert 'assert "function validatedApiBase()" in javascript.text' in source
+    assert 'assert "function apiPath(relative)" in javascript.text' in source
+    assert "assert 'endpoint: \"/response-events\"' in javascript.text" in source
+
+
+def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> None:
+    source = smoke_release._VIEWER_PROBE_SOURCE
+
+    for required in (
+        "from adlife.city.workbench_web import create_city_workbench_app",
+        "accepted = await workbench_client.post(",
+        '"/api/jobs",',
+        "await workbench_client.get(status_url)",
+        'await workbench_client.get("/api/runs?offset=0&limit=100")',
+        'await workbench_client.get("/assets/workbench.js")',
+        'await workbench_client.get("/api/catalog/cities/fictional-grid-v2")',
+        'await workbench_client.get("/runs/wheel-workbench")',
+        'await workbench_client.get("/api/runs/wheel-workbench/meta")',
+        '"/api/runs/wheel-workbench/workbench-input"',
+        '"/api/runs/wheel-workbench/frame?minute=0"',
+        'await workbench_client.get("/static/app.js")',
+        'assert workbench_input.json()["settings"]["seed"] == "17"',
+        'root / "city-runs" / "wheel-workbench" / "inputs" / "workbench.json"',
+        '"seed": "17",',
+        'accepted_settings = accepted_document["job"]["accepted_settings"]',
+        'assert completed_job["accepted_settings"] == accepted_settings',
+        '"workbench_run_schema_version": 7',
+        '"workbench_input_view_verified": True',
+        '"workbench_scoped_frame_verified": True',
+        '"workbench_browser_asset_verified": True',
+    ):
+        assert required in source
 
 
 def test_smoke_network_guard_refuses_to_replace_sitecustomize(
@@ -2067,6 +2100,13 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "module_origin_verified": True,
                 "network_guard_verified": True,
                 "ui_verified": True,
+                "workbench_run_schema_version": 7,
+                "workbench_sidecar_verified": True,
+                "workbench_discovery_verified": True,
+                "workbench_inspector_verified": True,
+                "workbench_input_view_verified": True,
+                "workbench_scoped_frame_verified": True,
+                "workbench_browser_asset_verified": True,
             }
         elif arguments == ["--format", "json", "doctor", "--offline"]:
             document = {

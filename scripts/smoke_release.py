@@ -5,9 +5,9 @@ the development checkout. This script creates a temporary virtual environment, i
 exactly the wheel it was handed, changes to a scratch directory outside the checkout,
 and runs the documented workflow — including the verified packaged city catalog,
 validated fictional place, campaign, and response inputs, a schema-v6 spatial opportunity,
-attention, and rules-only response run, its replay, and its read-only ASGI viewer — validating
-the JSON output contract along the way. Every temporary artifact is cleaned up on success and on
-failure.
+attention, and rules-only response run, its replay, its read-only ASGI viewer, and a complete
+schema-v7 workbench submit/poll/discover/inspect lifecycle — validating the JSON output contract
+along the way. Every temporary artifact is cleaned up on success and on failure.
 """
 
 from __future__ import annotations
@@ -184,7 +184,7 @@ with Path(__file__).with_name("adlife-smoke-network-guard.log").open(
 ) as _guard_log:
     _guard_log.write(f"{_guard_token}\\t{sys.argv[0]}\\n")
 '''
-_VIEWER_PROBE_SOURCE = '''"""Verify the installed schema-v6 viewer without binding a socket."""
+_VIEWER_PROBE_SOURCE = '''"""Verify installed v6 viewing and the v7 workbench without a socket."""
 from __future__ import annotations
 
 import asyncio
@@ -230,6 +230,9 @@ import httpx
 from adlife.city.analysis import metrics_for_stored_city_run
 from adlife.city.run_store import CityRunStore
 from adlife.city.web import create_city_app
+from adlife.city.workbench_web import create_city_workbench_app
+from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.domain.serialization import canonical_json
 from adlife.core.simulation.spatial_response import (
     SpatialRuleResponse,
     spatial_response_state_document,
@@ -256,6 +259,8 @@ async def _main() -> None:
         Path(adlife.__file__).resolve(),
         Path(inspect.getfile(CityRunStore)).resolve(),
         Path(inspect.getfile(create_city_app)).resolve(),
+        Path(inspect.getfile(create_city_workbench_app)).resolve(),
+        Path(inspect.getfile(prepare_workbench_workspace)).resolve(),
         Path(inspect.getfile(metrics_for_stored_city_run)).resolve(),
     )
     assert all(_inside(origin, child_site) for origin in origins), origins
@@ -372,16 +377,183 @@ async def _main() -> None:
     assert first_states == expected_states(0, 1)
     assert later_states == expected_states(1, 100)
     assert index.status_code == javascript.status_code == stylesheet.status_code == 200
+    assert '<meta name="adlife-api-base" content="/api">' in index.text
     assert 'id="response-panel"' in index.text
     assert 'id="response-state-panel"' in index.text
     assert "PURCHASE INTENTION IS NOT PURCHASE PROBABILITY OR SALES" in index.text
-    assert "/api/response-summary" in javascript.text
-    assert "/api/response-events" in javascript.text
-    assert "/api/response-state" in javascript.text
+    assert "function validatedApiBase()" in javascript.text
+    assert "function apiPath(relative)" in javascript.text
+    assert 'fetchJson("/response-summary")' in javascript.text
+    assert 'endpoint: "/response-events"' in javascript.text
+    assert (
+        'fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`)'
+        in javascript.text
+    )
+    assert "/api/response-summary" not in javascript.text
+    assert "/api/response-events" not in javascript.text
+    assert "/api/response-state" not in javascript.text
     assert "final-end-of-run-not-scrubbed-minute" in javascript.text
     assert "innerHTML" not in javascript.text
     assert ".response-panel" in stylesheet.text
     assert ".response-state-panel" in stylesheet.text
+
+    workbench_draft = {
+        "schema_version": 1,
+        "city_id": "fictional-grid-v2",
+        "scenario": {
+            "scenario_id": "wheel-workbench-study",
+            "name": "Installed wheel workbench study",
+            "campaign": {
+                "campaign_id": "wheel-workbench-campaign",
+                "name": "Installed wheel fictional campaign",
+                "creative_template_id": "fictional-device-launch-v1",
+                "target_interests": ["commuting", "technology"],
+                "relative_price": 1.25,
+            },
+            "phone": {
+                "active_windows": [
+                    {"day": 1, "start_minute": 480, "end_minute": 540}
+                ],
+                "frequency_cap_per_agent_per_day": 3,
+                "eligible_activities": ["commute", "leisure"],
+                "opportunity_probability_per_minute": 0.05,
+            },
+            "roadside": None,
+        },
+        "cohort": {
+            "interests": ["commuting", "technology"],
+            "traits": {
+                "price_sensitivity": 0.5,
+                "novelty_seeking": 0.6,
+                "advertising_skepticism": 0.4,
+                "mobile_recall_encoding": 0.7,
+                "roadside_recall_encoding": 0.6,
+                "impulsivity": 0.3,
+            },
+            "initial_state": {
+                "brand_sentiment": 0.0,
+                "recall_strength": 0.1,
+                "purchase_intention": 0.2,
+            },
+        },
+        "settings": {
+            "run_id": "wheel-workbench",
+            "agent_count": 1,
+            "days": 1,
+            "seed": "17",
+            "response_mode": "deterministic-rules",
+        },
+    }
+    workbench = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="installed-wheel-workbench-token",
+    )
+    secure_headers = {
+        "Content-Type": "application/json",
+        "Origin": "http://127.0.0.1",
+        "X-AdLife-CSRF": "installed-wheel-workbench-token",
+    }
+    encoded_draft = json.dumps(
+        workbench_draft,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    async with workbench.router.lifespan_context(workbench):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=workbench),
+            base_url="http://127.0.0.1",
+        ) as workbench_client:
+            workbench_shell = await workbench_client.get("/")
+            workbench_script = await workbench_client.get("/assets/workbench.js")
+            city_detail = await workbench_client.get("/api/catalog/cities/fictional-grid-v2")
+            assert (
+                workbench_shell.status_code
+                == workbench_script.status_code
+                == city_detail.status_code
+                == 200
+            )
+            assert '<script defer src="/assets/workbench.js"></script>' in workbench_shell.text
+            assert "CITY" in workbench_shell.text
+            assert "CAMPAIGN" in workbench_shell.text
+            assert "RUN" in workbench_shell.text
+            assert "INSPECT" in workbench_shell.text
+            assert "localStorage" not in workbench_script.text
+            assert city_detail.json()["city_id"] == "fictional-grid-v2"
+
+            accepted = await workbench_client.post(
+                "/api/jobs",
+                headers=secure_headers,
+                content=encoded_draft,
+            )
+            assert accepted.status_code == 202, accepted.text
+            accepted_document = accepted.json()
+            accepted_settings = accepted_document["job"]["accepted_settings"]
+            assert accepted_settings == {
+                "schema_version": 1,
+                "city_id": "fictional-grid-v2",
+                "scenario_id": "wheel-workbench-study",
+                "campaign_id": "wheel-workbench-campaign",
+                "seed": "17",
+                "agent_count": 1,
+                "days": 1,
+                "response_mode": "deterministic-rules",
+            }
+            status_url = accepted_document["status_url"]
+            deadline = asyncio.get_running_loop().time() + 30.0
+            while True:
+                status_response = await workbench_client.get(status_url)
+                assert status_response.status_code == 200, status_response.text
+                completed_job = status_response.json()
+                if completed_job["phase"] in {"completed", "failed", "cancelled"}:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("installed workbench job did not terminate")
+                await asyncio.sleep(0.01)
+            assert completed_job["phase"] == "completed", completed_job
+            assert completed_job["accepted_settings"] == accepted_settings
+            assert completed_job["result"]["run_schema_version"] == 7
+            assert completed_job["result"]["inspector_url"] == "/runs/wheel-workbench"
+
+            run_page = await workbench_client.get("/api/runs?offset=0&limit=100")
+            assert run_page.status_code == 200, run_page.text
+            summaries = run_page.json()["runs"]
+            assert any(item == completed_job["result"] for item in summaries)
+            inspector = await workbench_client.get("/runs/wheel-workbench")
+            scoped_meta = await workbench_client.get("/api/runs/wheel-workbench/meta")
+            workbench_input = await workbench_client.get(
+                "/api/runs/wheel-workbench/workbench-input"
+            )
+            scoped_frame = await workbench_client.get(
+                "/api/runs/wheel-workbench/frame?minute=0"
+            )
+            inspector_script = await workbench_client.get("/static/app.js")
+            assert (
+                inspector.status_code
+                == scoped_meta.status_code
+                == workbench_input.status_code
+                == scoped_frame.status_code
+                == inspector_script.status_code
+                == 200
+            )
+            assert 'name="adlife-api-base" content="/api/runs/wheel-workbench"' in inspector.text
+            assert scoped_meta.json()["run_schema_version"] == 7
+            assert workbench_input.json()["settings"]["seed"] == "17"
+            assert workbench_input.json()["run_id"] == "wheel-workbench"
+            assert scoped_frame.json()["minute"] == 0
+            assert "function validatedApiBase()" in inspector_script.text
+
+    workbench_stored = CityRunStore(root).load("wheel-workbench")
+    assert workbench_stored.manifest.schema_version == 7
+    assert workbench_stored.workbench_input is not None
+    sidecar = root / "city-runs" / "wheel-workbench" / "inputs" / "workbench.json"
+    assert sidecar.read_bytes() == (
+        canonical_json(workbench_stored.workbench_input) + "\\n"
+    ).encode("utf-8")
+    assert (
+        workbench_stored.manifest.workbench_input_sha256
+        == workbench_stored.workbench_input.fingerprint
+    )
 
     print(
         json.dumps(
@@ -399,6 +571,13 @@ async def _main() -> None:
                 "module_origin_verified": True,
                 "network_guard_verified": True,
                 "ui_verified": True,
+                "workbench_run_schema_version": 7,
+                "workbench_sidecar_verified": True,
+                "workbench_discovery_verified": True,
+                "workbench_inspector_verified": True,
+                "workbench_input_view_verified": True,
+                "workbench_scoped_frame_verified": True,
+                "workbench_browser_asset_verified": True,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -3844,6 +4023,13 @@ def _verify_installed_viewer(
         ("module_origin_verified", True),
         ("network_guard_verified", True),
         ("ui_verified", True),
+        ("workbench_run_schema_version", 7),
+        ("workbench_sidecar_verified", True),
+        ("workbench_discovery_verified", True),
+        ("workbench_inspector_verified", True),
+        ("workbench_input_view_verified", True),
+        ("workbench_scoped_frame_verified", True),
+        ("workbench_browser_asset_verified", True),
     ):
         _expect_value(receipt, key, expected, "installed city viewer")
     module_path = receipt.get("adlife_module_path")
@@ -4665,7 +4851,7 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
         print(
             "smoke ok: "
             f"report at {html.stat().st_size} bytes; "
-            "schema-v6 response API/UI verified without network; "
+            "schema-v6 response API/UI and schema-v7 workbench lifecycle verified without network; "
             "catalog fictional-grid-v2 metrics, A/A comparison, and replay verified; "
             f"two-seed response study and {spatial_report_bytes}-byte static report verified"
         )

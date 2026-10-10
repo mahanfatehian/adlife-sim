@@ -9,6 +9,7 @@ virtual environment outside the checkout and drives the whole workflow offline.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -75,6 +76,7 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     ):
         assert resource in names, resource
     assert 'id="saved-run-label" hidden' in html
+    assert '<meta name="adlife-api-base" content="/api">' in html
     assert 'id="metrics-panel"' in html
     assert 'id="metrics-overall-notice-rate-receipt"' in html
     assert 'id="response-panel"' in html
@@ -84,14 +86,18 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     assert ".response-panel" in style
     assert ".response-state-panel" in style
     assert 'byId("saved-run-label").textContent =' in script
-    assert 'fetchJson("/api/spatial-metrics")' in script
-    assert 'fetchJson("/api/response-summary")' in script
-    assert 'endpoint: "/api/response-events"' in script
+    assert "function validatedApiBase()" in script
+    assert "function apiPath(relative)" in script
+    assert 'fetchJson("/spatial-metrics")' in script
+    assert 'fetchJson("/response-summary")' in script
+    assert 'endpoint: "/response-events"' in script
     assert 'fetchJson(evidencePageUrl("response", next, offsets.response))' in script
     assert "`${endpoint}?minute=${minute}&offset=${offset}&limit=${EVIDENCE_PAGE_SIZE}`" in script
-    assert (
-        "fetchJson(`/api/response-state?agent_id=${encodeURIComponent(selectedAgent)}`)" in script
-    )
+    assert "fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`)" in script
+    assert "/api/spatial-metrics" not in script
+    assert "/api/response-summary" not in script
+    assert "/api/response-events" not in script
+    assert "/api/response-state" not in script
     assert 'page.state_scope !== "final-end-of-run-not-scrubbed-minute"' in script
     assert "innerHTML" not in script
     assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
@@ -127,11 +133,13 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         shell = wheel.read("adlife/city/static/workbench.html").decode("utf-8")
         style = wheel.read("adlife/city/static/workbench.css").decode("utf-8")
         icon = wheel.read("adlife/city/static/workbench-icon.svg").decode("utf-8")
+        javascript = wheel.read("adlife/city/static/workbench.js").decode("utf-8")
     for resource in (
         "adlife/city/creative_templates.json",
         "adlife/city/static/workbench.html",
         "adlife/city/static/workbench.css",
         "adlife/city/static/workbench-icon.svg",
+        "adlife/city/static/workbench.js",
     ):
         assert resource in names
     catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
@@ -142,10 +150,25 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     assert "__ADLIFE_CSRF_TOKEN__" in shell
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell
     assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell
-    assert "<script" not in shell.lower()
+    assert '<script defer src="/assets/workbench.js"></script>' in shell
+    assert shell.lower().count("<script") == 1
+    assert re.search(r"\son[a-z]+\s*=", shell, flags=re.IGNORECASE) is None
     assert "http://" not in shell and "https://" not in shell
     assert "@import" not in style.lower() and "url(" not in style.lower()
     assert icon.startswith("<svg") and "<script" not in icon.lower()
+    assert "http://" not in javascript and "https://" not in javascript
+    for forbidden in (
+        "innerHTML",
+        "outerHTML",
+        "insertAdjacentHTML",
+        "localStorage",
+        "sessionStorage",
+        "indexedDB",
+        "serviceWorker",
+        "eval(",
+        "new Function",
+    ):
+        assert forbidden not in javascript
 
     scratch = tmp_path / "workbench-clean-room"
     scratch.mkdir()
@@ -165,21 +188,30 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
             "assert package.is_relative_to(pathlib.Path(sysconfig.get_path('purelib')).resolve()); "
             "workspace=prepare_workbench_workspace(pathlib.Path(sys.argv[1])); "
             "app=create_city_workbench_app(workspace, csrf_token='installed-wheel-token'); "
-            "paths=sorted({route.path for route in app.routes}); "
+            "paths=sorted({route.path for route in app.routes if hasattr(route, 'path')}); "
             "print(json.dumps(paths))",
             str(scratch / "workspace"),
         ],
         cwd=scratch,
     )
-    assert json.loads(probe.stdout) == [
+    assert set(json.loads(probe.stdout)) == {
         "/",
         "/api/catalog/cities",
+        "/api/catalog/cities/{city_id}",
         "/api/creative-templates",
+        "/api/jobs",
+        "/api/jobs/{job_id}",
+        "/api/jobs/{job_id}/cancel",
+        "/api/runs",
+        "/api/runs/{run_id}/workbench-input",
         "/api/scenarios/validate",
         "/api/workbench",
         "/assets/workbench-icon.svg",
         "/assets/workbench.css",
-    ]
+        "/assets/workbench.js",
+        "/runs/{run_id}",
+        "/static/{asset_name}",
+    }
 
 
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:
@@ -212,7 +244,10 @@ def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path
     report.write_text(completed.stdout + completed.stderr, encoding="utf-8")
     assert completed.returncode == 0, report.read_text(encoding="utf-8")
     assert "smoke ok" in completed.stdout
-    assert "schema-v6 response API/UI verified without network" in completed.stdout
+    assert (
+        "schema-v6 response API/UI and schema-v7 workbench lifecycle verified without network"
+        in completed.stdout
+    )
 
 
 def test_exact_installed_wheel_spatial_report_is_offline_and_no_clobber(built_wheel, tmp_path):
