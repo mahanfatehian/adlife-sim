@@ -34,11 +34,11 @@ def command(
         raise CommandError("invalid city run identifier") from None
     stored = CityRunStore(root).load(run_id)
     spatial_metrics = (
-        metrics_for_stored_city_run(stored) if stored.manifest.schema_version in {5, 6} else None
+        metrics_for_stored_city_run(stored) if stored.manifest.schema_version in {5, 6, 7} else None
     )
     spatial_response_metrics = (
         response_metrics_for_stored_city_run(stored)
-        if stored.manifest.schema_version == 6
+        if stored.manifest.schema_version in {6, 7}
         else None
     )
     application = create_city_app(

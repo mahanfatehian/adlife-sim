@@ -11,7 +11,7 @@ from importlib import resources
 import pytest
 from pydantic import BaseModel
 
-from tests.integration.test_city_spatial_study import analyze, definition, make_runs
+from tests.integration.test_city_spatial_study import _analyze_v7, analyze, definition, make_runs
 
 
 def report_module():
@@ -151,6 +151,16 @@ def test_report_claims_and_attention_response_stages_are_explicit(study_result):
             "no daily decay",
         ):
             assert disclosure in text
+
+
+def test_schema_v7_report_discloses_response_enabled_schema_scope(tmp_path) -> None:
+    result, _ = _analyze_v7(tmp_path)
+
+    text = " ".join(Document(report_module().render_spatial_study_html(result)).text)
+
+    assert "schema v6 or v7" in text
+    assert "workbench_input_sha256" in text
+    assert result.pairs[0].control.workbench_input_sha256 in text
 
 
 def test_csp_authorizes_only_exact_packaged_lf_css_before_style(study_result):

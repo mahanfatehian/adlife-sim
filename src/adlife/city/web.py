@@ -77,7 +77,7 @@ def create_city_app(
     if run_id is None and run_schema_version is not None:
         raise ValueError("run schema version requires a saved run identifier")
     if run_schema_version is not None and (
-        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4, 5, 6}
+        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4, 5, 6, 7}
     ):
         raise ValueError("unsupported city run schema version")
     if (spatial_scenario is None) != (opportunity_evaluation is None):
@@ -85,27 +85,35 @@ def create_city_app(
     has_spatial_evidence = spatial_scenario is not None
     if run_schema_version == 4 and not has_spatial_evidence:
         raise ValueError("schema version 4 requires spatial opportunity evidence")
-    if run_schema_version in {5, 6} and (not has_spatial_evidence or attention_evaluation is None):
+    if run_schema_version in {5, 6, 7} and (
+        not has_spatial_evidence or attention_evaluation is None
+    ):
         raise ValueError(f"schema version {run_schema_version} requires spatial attention evidence")
-    if has_spatial_evidence and (run_id is None or run_schema_version not in {4, 5, 6}):
+    if has_spatial_evidence and (run_id is None or run_schema_version not in {4, 5, 6, 7}):
         raise ValueError(
-            "spatial opportunity evidence is only valid for a saved schema version 4, 5 or 6 run"
+            "spatial opportunity evidence is only valid for a saved schema version 4, 5, 6 or 7 run"
         )
-    if attention_evaluation is not None and (run_id is None or run_schema_version not in {5, 6}):
+    if attention_evaluation is not None and (run_id is None or run_schema_version not in {5, 6, 7}):
         raise ValueError(
-            "spatial attention evidence is only valid for a saved schema version 5 or 6 run"
+            "spatial attention evidence is only valid for a saved schema version 5, 6 or 7 run"
         )
-    if spatial_metrics is not None and (run_id is None or run_schema_version not in {5, 6}):
-        raise ValueError("spatial metrics are only valid for a saved schema version 5 or 6 run")
+    if spatial_metrics is not None and (run_id is None or run_schema_version not in {5, 6, 7}):
+        raise ValueError("spatial metrics are only valid for a saved schema version 5, 6 or 7 run")
     if (response_input is None) != (response_evaluation is None):
         raise ValueError("spatial response input and evaluation must be supplied together")
     has_response_evidence = response_input is not None
-    if run_schema_version == 6 and not has_response_evidence:
-        raise ValueError("schema version 6 requires spatial response evidence")
-    if has_response_evidence and (run_id is None or run_schema_version != 6):
-        raise ValueError("spatial response evidence is only valid for a saved schema version 6 run")
-    if spatial_response_metrics is not None and (run_id is None or run_schema_version != 6):
-        raise ValueError("spatial response metrics are only valid for a saved schema version 6 run")
+    if run_schema_version in {6, 7} and not has_response_evidence:
+        raise ValueError(f"schema version {run_schema_version} requires spatial response evidence")
+    if has_response_evidence and (run_id is None or run_schema_version not in {6, 7}):
+        raise ValueError(
+            "spatial response evidence is only valid for a saved schema version 6 or 7 run"
+        )
+    if spatial_response_metrics is not None and (
+        run_id is None or run_schema_version not in {6, 7}
+    ):
+        raise ValueError(
+            "spatial response metrics are only valid for a saved schema version 6 or 7 run"
+        )
     if spatial_scenario is not None and opportunity_evaluation is not None:
         spatial_scenario = SpatialCampaignScenario.model_validate(
             spatial_scenario.model_dump(mode="python")
@@ -134,7 +142,13 @@ def create_city_app(
         if opportunity_evaluation is None or attention_evaluation is None:
             raise ValueError("spatial metrics require opportunity and attention evidence")
         spatial_metrics = SpatialMetrics.model_validate(spatial_metrics.model_dump(mode="python"))
-        metrics_source_version: Literal[5, 6] = 6 if run_schema_version == 6 else 5
+        metrics_source_version: Literal[5, 6, 7]
+        if run_schema_version == 7:
+            metrics_source_version = 7
+        elif run_schema_version == 6:
+            metrics_source_version = 6
+        else:
+            metrics_source_version = 5
         expected_metrics = derive_spatial_metrics(
             opportunity_evaluation,
             attention_evaluation,
@@ -180,6 +194,7 @@ def create_city_app(
         spatial_response_metrics = SpatialResponseMetrics.model_validate(
             spatial_response_metrics.model_dump(mode="python")
         )
+        response_source_version: Literal[6, 7] = 7 if run_schema_version == 7 else 6
         response_attention_metrics = spatial_metrics or derive_spatial_metrics(
             opportunity_evaluation,
             attention_evaluation,
@@ -187,7 +202,7 @@ def create_city_app(
             agents_sha256=spatial_response_metrics.agents_sha256,
             trace_sha256=spatial_response_metrics.trace_sha256,
             days=simulation.days,
-            source_run_schema_version=6,
+            source_run_schema_version=response_source_version,
         )
         expected_response_metrics = derive_spatial_response_metrics(
             response_input,

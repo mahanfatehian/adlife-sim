@@ -53,6 +53,7 @@ def _attention_metrics(
     attention: SpatialAttentionEvaluation,
     *,
     agent_ids: tuple[str, ...],
+    source_run_schema_version: int = 6,
 ) -> SpatialMetrics:
     return derive_spatial_metrics(
         opportunities,
@@ -61,7 +62,7 @@ def _attention_metrics(
         agents_sha256=AGENTS_SHA256,
         trace_sha256=TRACE_SHA256,
         days=1,
-        source_run_schema_version=6,
+        source_run_schema_version=source_run_schema_version,
     )
 
 
@@ -661,10 +662,35 @@ def test_metrics_refuse_public_identity_tampering(field: str) -> None:
         attention_metrics=attention_metrics,
     )
     document = result.model_dump(mode="python")
-    document[field] = 7 if field in {"schema_version", "source_run_schema_version"} else "other"
+    document[field] = (
+        2 if field == "schema_version" else 5 if field == "source_run_schema_version" else "other"
+    )
 
     with pytest.raises(ValidationError):
         SpatialResponseMetrics.model_validate(document)
+
+
+def test_response_metrics_preserve_schema_v7_source_provenance() -> None:
+    scenario, opportunities, attention, response_input, response, _ = _billboard_bundle(
+        attention_seed=0
+    )
+    attention_metrics = _attention_metrics(
+        opportunities,
+        attention,
+        agent_ids=("person-001",),
+        source_run_schema_version=7,
+    )
+
+    result = _derive(
+        response_input,
+        response,
+        scenario=scenario,
+        opportunities=opportunities,
+        attention=attention,
+        attention_metrics=attention_metrics,
+    )
+
+    assert result.source_run_schema_version == 7
 
 
 def test_derivation_revalidates_attention_metric_and_response_artifact_anchors() -> None:

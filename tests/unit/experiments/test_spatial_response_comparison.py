@@ -34,6 +34,7 @@ def _response_metric_pair(
     phone_end_minute: int = 2,
     phone_cap: int = 2,
     initial_sentiment: float = 0.1,
+    source_run_schema_version: int = 6,
 ) -> tuple[Any, Any]:
     pack = load_pack(pack_data())
     scenario = _scenario(
@@ -69,7 +70,7 @@ def _response_metric_pair(
         agents_sha256=AGENTS_SHA256,
         trace_sha256=TRACE_SHA256,
         days=1,
-        source_run_schema_version=6,
+        source_run_schema_version=source_run_schema_version,
     )
     response_metrics = derive_spatial_response_metrics(
         response_input,
@@ -89,12 +90,14 @@ def _response_metrics(
     phone_end_minute: int = 2,
     phone_cap: int = 2,
     initial_sentiment: float = 0.1,
+    source_run_schema_version: int = 6,
 ) -> Any:
     return _response_metric_pair(
         phone_campaign_id=phone_campaign_id,
         phone_end_minute=phone_end_minute,
         phone_cap=phone_cap,
         initial_sentiment=initial_sentiment,
+        source_run_schema_version=source_run_schema_version,
     )[1]
 
 
@@ -191,6 +194,32 @@ def test_same_response_metrics_are_an_exact_aa_zero() -> None:
     deltas = _delta_values(result)
     assert deltas
     assert set(deltas.values()) == {0.0}
+
+
+def test_schema_v7_response_comparison_preserves_source_and_refuses_cross_version() -> None:
+    from adlife.core.experiments.spatial_response_comparison import (
+        SpatialResponseComparisonError,
+        compare_spatial_response_metrics,
+    )
+
+    v6 = _response_metrics()
+    v7 = _response_metrics(source_run_schema_version=7)
+
+    result = compare_spatial_response_metrics(
+        v7,
+        v7,
+        control_run_id="same-v7",
+        treatment_run_id="same-v7",
+    )
+    assert result.control.source_run_schema_version == 7
+    assert result.treatment.source_run_schema_version == 7
+    with pytest.raises(SpatialResponseComparisonError, match="source run schema"):
+        compare_spatial_response_metrics(
+            v6,
+            v7,
+            control_run_id="v6",
+            treatment_run_id="v7",
+        )
 
 
 def test_swapping_response_metric_arms_exactly_negates_every_scalar_delta() -> None:

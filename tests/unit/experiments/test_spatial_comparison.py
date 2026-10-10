@@ -9,7 +9,7 @@ from adlife.core.experiments.spatial_comparison import (
     SpatialMetricsComparison,
     compare_spatial_metrics,
 )
-from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
+from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
 from adlife.core.simulation.spatial_attention import evaluate_spatial_attention
 from tests.unit.city.test_city_pack import load_pack, pack_data
 from tests.unit.city.test_spatial_opportunity import (
@@ -91,6 +91,26 @@ def test_same_run_comparison_is_an_exact_aa_zero() -> None:
     )
     for series in (result.overall, *result.channels):
         assert set(_values(series).values()) == {0.0}
+
+
+def test_attention_comparison_retains_truthful_cross_version_snapshots() -> None:
+    v6 = SpatialMetrics.model_validate(
+        _derive().model_dump(mode="python") | {"source_run_schema_version": 6}
+    )
+    v7 = SpatialMetrics.model_validate(
+        v6.model_dump(mode="python") | {"source_run_schema_version": 7}
+    )
+
+    result = compare_spatial_metrics(
+        v6,
+        v7,
+        control_run_id="v6",
+        treatment_run_id="v7",
+    )
+
+    assert result.control.source_run_schema_version == 6
+    assert result.treatment.source_run_schema_version == 7
+    assert result.classification == "matched-opportunity-structure"
 
 
 def test_treatment_minus_control_deltas_are_exact_and_confounded() -> None:

@@ -1,5 +1,7 @@
 """The saved-city viewer opens only a validated artifact on loopback."""
 
+from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
 import httpx
@@ -10,7 +12,7 @@ from typer.testing import CliRunner
 from adlife.city import analysis as city_analysis
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
-from adlife.core.domain.city_run import CityRunManifestV6
+from adlife.core.domain.city_run import CityRunManifestV6, CityRunManifestV7
 from adlife.core.simulation.spatial_response import summarize_spatial_response_artifact
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
@@ -340,6 +342,66 @@ async def test_city_view_passes_verified_v6_response_evidence_and_metrics_read_o
         for path in stored.directory.rglob("*")
         if path.is_file()
     }
+
+
+@pytest.mark.asyncio
+async def test_city_view_preserves_v7_metric_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pack = load_pack(pack_data())
+    scenario = _scenario(
+        pack,
+        [_phone(windows=[{"start_minute": 0, "end_minute": 2}], cap=2)],
+    )
+    response_input = _response_input(
+        scenario,
+        agent_ids=("person-001", "person-002"),
+    )
+    stored = create_city_run(
+        pack,
+        root=tmp_path,
+        run_id="v7-response-study",
+        seed=42,
+        agent_count=2,
+        days=1,
+        spatial_scenario=scenario,
+        spatial_response=response_input,
+    )
+    v7 = replace(
+        stored,
+        manifest=CityRunManifestV7.model_validate(
+            stored.manifest.model_dump(mode="python")
+            | {
+                "schema_version": 7,
+                "workbench_input_schema_version": 1,
+                "workbench_input_sha256": sha256(b"v7-response-study").hexdigest(),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "adlife.cli.commands.city_view.CityRunStore.load",
+        lambda _store, _run_id: v7,
+    )
+    calls: list[FastAPI] = []
+    monkeypatch.setattr("uvicorn.run", lambda application, **_kwargs: calls.append(application))
+
+    result = CliRunner().invoke(
+        app,
+        ["city-view", str(tmp_path), "v7-response-study", "--port", "8768"],
+    )
+
+    assert result.exit_code == 0, result.output
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=calls[0]),
+        base_url="http://127.0.0.1",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        attention_metrics = (await web.get("/api/spatial-metrics")).json()
+        response_metrics = (await web.get("/api/spatial-response-metrics")).json()
+    assert metadata["run_schema_version"] == 7
+    assert attention_metrics["source_run_schema_version"] == 7
+    assert response_metrics["source_run_schema_version"] == 7
 
 
 def test_city_view_refuses_corrupt_v6_response_before_server_bind(

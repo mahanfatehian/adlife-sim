@@ -441,7 +441,7 @@ class SpatialStudyResult(DomainModel):
     bootstrap_resamples: Literal[10_000] = 10_000
     bootstrap_confidence: float = Field(default=0.95, ge=0.95, le=0.95)
     direction_threshold: float = Field(default=0.8, ge=0.8, le=0.8)
-    source_run_schema_version: Literal[5, 6]
+    source_run_schema_version: Literal[5, 6, 7]
     source_run_model_id: Literal[
         "illustrative-road-spatial-attention-study-v1",
         "illustrative-road-spatial-response-study-v1",

@@ -11,7 +11,7 @@ from adlife.city.analysis import (
 )
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.core.domain.city import CityPackV2
-from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6
+from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6, CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition
 from adlife.core.experiments._spatial_study_validation import document_sha256, pair_classifications
@@ -50,10 +50,10 @@ class _RunProjection:
 
 def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
     manifest = stored.manifest
-    if not isinstance(manifest, (CityRunManifestV5, CityRunManifestV6)):
-        raise SchemaVersionMismatch("spatial study requires schema-v5 or schema-v6 city runs")
-    if response_scope and not isinstance(manifest, CityRunManifestV6):
-        raise SchemaVersionMismatch("spatial response study requires schema-v6 city runs")
+    if not isinstance(manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7)):
+        raise SchemaVersionMismatch("spatial study requires a schema-v5, v6 or v7 city run")
+    if response_scope and not isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
+        raise SchemaVersionMismatch("spatial response study requires a schema-v6 or v7 city run")
     pack = stored.pack
     if isinstance(pack, CityPackV2):
         city = SpatialStudyCityProvenance(
@@ -87,15 +87,15 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
         "place_schema_version": manifest.place_schema_version,
         "place_set_sha256": manifest.place_set_sha256,
         "response_model_id": "spatial-response-v1"
-        if isinstance(manifest, CityRunManifestV6)
+        if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7))
         else None,
     }
     attention = metrics_for_stored_city_run(stored)
     response_metrics = response_metrics_for_stored_city_run(stored) if response_scope else None
     response_receipt = None
-    if isinstance(manifest, CityRunManifestV6):
+    if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
         if stored.response_input is None or stored.spatial_scenario is None:
-            raise CorruptRunArtifact("schema-v6 city run has incomplete response inputs")
+            raise CorruptRunArtifact("response city run has incomplete response inputs")
         response_fields: dict[str, object] = {
             name: getattr(manifest, name)
             for name in (
@@ -152,6 +152,14 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
             "opportunity_structure_sha256": attention.opportunity_structure_sha256,
             "attention_metrics_sha256": document_sha256(attention),
             "response": response_receipt,
+            "workbench_input_schema_version": (
+                manifest.workbench_input_schema_version
+                if isinstance(manifest, CityRunManifestV7)
+                else None
+            ),
+            "workbench_input_sha256": (
+                manifest.workbench_input_sha256 if isinstance(manifest, CityRunManifestV7) else None
+            ),
         }
     )
     return _RunProjection(
@@ -253,10 +261,20 @@ def analyze_stored_spatial_study(
         )
         if checked.design == "a-a":
             if control.arm.model_dump(
-                exclude={"run_id", "manifest_sha256"}
-            ) != treatment.arm.model_dump(exclude={"run_id", "manifest_sha256"}) or any(
-                row.control != row.treatment or row.delta != 0.0 for row in scalars
-            ):
+                exclude={
+                    "run_id",
+                    "manifest_sha256",
+                    "workbench_input_schema_version",
+                    "workbench_input_sha256",
+                }
+            ) != treatment.arm.model_dump(
+                exclude={
+                    "run_id",
+                    "manifest_sha256",
+                    "workbench_input_schema_version",
+                    "workbench_input_sha256",
+                }
+            ) or any(row.control != row.treatment or row.delta != 0.0 for row in scalars):
                 raise CorruptRunArtifact("verified spatial study A/A invariant failed")
         elif control.arm.scenario_sha256 == treatment.arm.scenario_sha256 and (
             not response_scope

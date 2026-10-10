@@ -98,7 +98,7 @@
 <dt>Committed recall</dt><dd>clamp(1 − (1 − previous_recall) × math.prod(sorted(1 − planned_recall_delta)), 0, 1). Encoding has diminishing returns; spatial-response-v1 has no daily decay. State is campaign-scoped, never split by channel.</dd>
 <dt>Purchase intention proxy</dt><dd>clamp(0.40 × normalized_sentiment + 0.25 × value_match + 0.20 × recall_strength + 0.15 × impulsivity, 0, 1). It is an uncalibrated internal proxy.</dd>
 </dl>
-<p>Response event means use canonical math.fsum / response count. Zero-event frequency and direct means are 0.0 with 0 / 0 receipts. State means weight every matched agent/campaign state equally; unchanged campaigns remain present. No spatial social metric exists in schema v6.</p>
+<p>Response event means use canonical math.fsum / response count. Zero-event frequency and direct means are 0.0 with 0 / 0 receipts. State means weight every matched agent/campaign state equally; unchanged campaigns remain present. No spatial social metric exists in response-enabled schema v6 or v7.</p>
 {% else %}<p>Rule response and campaign state proxy: Not analyzed. No response or sales claim is made.</p>{% endif %}
 </section>
 <section aria-labelledby="reproduction-heading">

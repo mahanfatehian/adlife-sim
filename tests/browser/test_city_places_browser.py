@@ -200,7 +200,9 @@ def _attention_viewer() -> Iterator[
 
 
 @contextmanager
-def _response_viewer() -> Iterator[
+def _response_viewer(
+    *, run_schema_version: int = 6
+) -> Iterator[
     tuple[
         str,
         SpatialCampaignScenario,
@@ -261,7 +263,7 @@ def _response_viewer() -> Iterator[
         agents_sha256="e" * 64,
         trace_sha256="f" * 64,
         days=simulation.days,
-        source_run_schema_version=6,
+        source_run_schema_version=run_schema_version,
     )
     response_metrics = derive_spatial_response_metrics(
         response_input,
@@ -275,7 +277,7 @@ def _response_viewer() -> Iterator[
     application = create_city_app(
         simulation,
         run_id="browser-response-study",
-        run_schema_version=6,
+        run_schema_version=run_schema_version,
         spatial_scenario=scenario,
         opportunity_evaluation=opportunities,
         attention_evaluation=attention,
@@ -923,6 +925,33 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert not external_requests
         assert not console_errors
         assert not page_errors
+        browser.close()
+
+
+def test_schema_v7_response_viewer_accepts_truthful_metric_provenance() -> None:
+    browser_path = _installed_browser()
+    with (
+        _response_viewer(run_schema_version=7) as (
+            base_url,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+
+        expect(page.locator("#saved-run-label")).to_contain_text("V7")
+        expect(page.locator("#response-metrics-panel")).to_be_visible()
+        expect(page.locator("#error-banner")).to_be_hidden()
         browser.close()
 
 
@@ -1632,6 +1661,7 @@ def test_response_viewer_ignores_a_superseded_request_failure_during_playback() 
         ("claim", "Spatial response metrics contract is invalid"),
         ("projection-model", "Spatial response metrics contract is invalid"),
         ("response-model", "Spatial response metrics contract is invalid"),
+        ("source-schema", "Spatial response metrics contract is invalid"),
         ("missing-series", "Response metric series is invalid"),
         ("extra-field", "Spatial response metrics contract is invalid"),
         ("series", "Response metric series is inconsistent"),
@@ -1693,6 +1723,8 @@ def test_response_viewer_refuses_malformed_full_run_metrics_without_fabricating_
                 document["model_id"] = "unknown-projection-model"
             elif corruption == "response-model":
                 document["response_model_id"] = "unknown-response-model"
+            elif corruption == "source-schema":
+                document["source_run_schema_version"] = 7
             elif corruption == "missing-series":
                 overall = document["overall"]
                 assert isinstance(overall, dict)

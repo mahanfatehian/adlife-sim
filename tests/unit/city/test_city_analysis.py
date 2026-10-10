@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -7,7 +9,7 @@ import pytest
 from adlife.city import analysis as city_analysis
 from adlife.city.analysis import compare_stored_city_runs, metrics_for_stored_city_run
 from adlife.city.runs import create_city_run
-from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6
+from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6, CityRunManifestV7
 from adlife.core.experiments.spatial_comparison import SpatialComparisonError
 from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatch
 from tests.unit.city.test_city_pack import load_pack, pack_data
@@ -176,6 +178,31 @@ def test_response_metrics_project_verified_v6_run_without_mutating_artifacts(
     assert metrics.overall.response_count.numerator == stored.manifest.response_count == 1
     assert metrics.overall.purchase_intention_proxy.denominator == stored.manifest.final_state_count
     assert _artifact_bytes(stored.directory) == before
+
+
+def test_v7_projections_and_comparisons_preserve_exact_source_schema(tmp_path: Path) -> None:
+    stored = _spatial_run(tmp_path, "v7-response-study", response=True)
+    manifest = CityRunManifestV7.model_validate(
+        stored.manifest.model_dump(mode="python")
+        | {
+            "schema_version": 7,
+            "workbench_input_schema_version": 1,
+            "workbench_input_sha256": sha256(b"v7-response-study").hexdigest(),
+        }
+    )
+    v7 = replace(stored, manifest=manifest)
+
+    attention = metrics_for_stored_city_run(v7)
+    response = _response_metrics_for_stored_city_run(v7)
+    attention_comparison = compare_stored_city_runs(v7, v7)
+    response_comparison = _compare_stored_city_response_runs(v7, v7)
+
+    assert attention.source_run_schema_version == 7
+    assert response.source_run_schema_version == 7
+    assert attention_comparison.control.source_run_schema_version == 7
+    assert attention_comparison.treatment.source_run_schema_version == 7
+    assert response_comparison.control.source_run_schema_version == 7
+    assert response_comparison.treatment.source_run_schema_version == 7
 
 
 def test_response_metrics_refuse_legacy_and_incomplete_v6_evidence(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from adlife.city.run_store import CityRunStore
+from adlife.core.domain.city_run import CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition, SpatialStudyPair
 from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatch
@@ -48,6 +49,38 @@ def make_runs(root: Path, *, response: bool = False, contrast: bool = False, sam
             )
 
 
+def _as_v7(stored):
+    document = stored.manifest.model_dump(mode="python")
+    document.update(
+        schema_version=7,
+        workbench_input_schema_version=1,
+        workbench_input_sha256=sha256(stored.manifest.run_id.encode("utf-8")).hexdigest(),
+    )
+    return replace(stored, manifest=CityRunManifestV7.model_validate(document))
+
+
+def _analyze_v7(root: Path):
+    stored = {}
+    for seed in range(2):
+        for arm in ("control", "treatment"):
+            run_id = f"{arm}-{seed}"
+            stored[run_id] = _as_v7(_spatial_run(root, run_id, seed=seed, response=True))
+
+    class InMemoryStore:
+        def load(self, run_id):
+            return stored[run_id]
+
+    from adlife.city.studies import analyze_stored_spatial_study
+
+    return (
+        analyze_stored_spatial_study(
+            InMemoryStore(),
+            definition(response=True, same=False),
+        ),
+        stored,
+    )
+
+
 @pytest.mark.parametrize(
     "schema,scope", [(5, "attention"), (6, "attention"), (6, "attention-and-response")]
 )
@@ -70,6 +103,8 @@ def test_verified_aa_study_has_exact_receipts_and_preserves_sources(tmp_path, sc
             raw = (tmp_path / "city-runs" / arm.run_id / "run.json").read_bytes()
             assert arm.manifest_sha256 == sha256(raw).hexdigest()
             assert (arm.response is not None) == (schema == 6)
+            assert "workbench_input_schema_version" not in arm.model_dump(mode="python")
+            assert "workbench_input_sha256" not in arm.model_dump(mode="python")
         assert all(row.delta == 0.0 and row.control == row.treatment for row in pair.scalars)
     assert all(stat.direction == "stable-null" for stat in result.statistics)
     assert _artifact_bytes(tmp_path) == before
@@ -83,6 +118,37 @@ def test_verified_aa_study_has_exact_receipts_and_preserves_sources(tmp_path, sc
         'frames":',
     ):
         assert forbidden not in public
+
+
+def test_v7_study_preserves_exact_schema_and_workbench_manifest_receipts(tmp_path) -> None:
+    result, stored = _analyze_v7(tmp_path)
+
+    assert result.source_run_schema_version == 7
+    assert result.a_a_status == "exact-zero-verified"
+    for pair in result.pairs:
+        assert pair.control.workbench_input_schema_version == 1
+        assert pair.treatment.workbench_input_schema_version == 1
+        assert pair.control.workbench_input_sha256 != pair.treatment.workbench_input_sha256
+        for arm in (pair.control, pair.treatment):
+            expected = (canonical_json(stored[arm.run_id].manifest) + "\n").encode("utf-8")
+            assert arm.manifest_sha256 == sha256(expected).hexdigest()
+
+
+@pytest.mark.parametrize("mutation", ["missing", "hash", "legacy-extra"])
+def test_study_result_revalidates_v7_workbench_manifest_receipts(tmp_path, mutation) -> None:
+    from adlife.core.experiments.spatial_study import SpatialStudyResult
+
+    result, _ = _analyze_v7(tmp_path)
+    document = result.model_dump(mode="python")
+    if mutation == "missing":
+        del document["pairs"][0]["control"]["workbench_input_sha256"]
+    elif mutation == "hash":
+        document["pairs"][0]["control"]["workbench_input_sha256"] = "0" * 64
+    else:
+        document["source_run_schema_version"] = 6
+
+    with pytest.raises(ValueError):
+        SpatialStudyResult.model_validate(document)
 
 
 def test_contrast_classifies_opportunity_and_response_assumptions_independently(tmp_path):

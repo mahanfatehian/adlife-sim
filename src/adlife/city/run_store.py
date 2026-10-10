@@ -16,6 +16,8 @@ from adlife.city.loader import MAX_CITY_PACK_BYTES
 from adlife.city.place_loader import MAX_CITY_PLACE_SET_BYTES
 from adlife.city.response_loader import MAX_SPATIAL_RESPONSE_INPUT_BYTES
 from adlife.city.spatial_loader import MAX_SPATIAL_CAMPAIGN_BYTES
+from adlife.city.workbench_binding import validate_workbench_execution_binding
+from adlife.city.workbench_input import WorkbenchRunInput, parse_workbench_run_input_json
 from adlife.core.domain.city import (
     CityPack,
     CityPackDocument,
@@ -31,6 +33,7 @@ from adlife.core.domain.city_run import (
     CityRunManifestV4,
     CityRunManifestV5,
     CityRunManifestV6,
+    CityRunManifestV7,
     parse_city_run_manifest_json,
 )
 from adlife.core.domain.serialization import DocumentNotSerialisable, canonical_json
@@ -90,6 +93,7 @@ MAX_CITY_AGENTS_BYTES = 65_536
 MAX_CITY_PLACE_ASSIGNMENTS_BYTES = 65_536
 MAX_CITY_OPPORTUNITY_SUMMARY_BYTES = 65_536
 MAX_CITY_ATTENTION_SUMMARY_BYTES = 65_536
+MAX_WORKBENCH_INPUT_BYTES = 131_072
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +107,7 @@ class StoredCityRun:
     attention_evaluation: SpatialAttentionEvaluation | None = None
     response_input: SpatialResponseInput | None = None
     response_evaluation: SpatialResponseEvaluation | None = None
+    workbench_input: WorkbenchRunInput | None = None
 
 
 def _runtime_version() -> str:
@@ -120,6 +125,7 @@ def _canonical_bytes(
         | SpatialResponseArtifactSummary
         | SpatialResponseInput
         | SpatialResponseStateDocument
+        | WorkbenchRunInput
         | dict[str, object]
     ),
 ) -> bytes:
@@ -135,7 +141,10 @@ def _validate_schema_pair(
     pack: CityPackDocument,
     places: CityPlaceSet | None,
 ) -> None:
-    if isinstance(manifest, (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6)):
+    if isinstance(
+        manifest,
+        (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
+    ):
         if manifest.city_schema_version != pack.schema_version:
             raise CorruptRunArtifact("city run manifest and city pack schemas do not match")
         if manifest.place_schema_version is None:
@@ -246,12 +255,18 @@ class CityRunStore:
         attention_evaluation: SpatialAttentionEvaluation | None = None,
         response_input: SpatialResponseInput | None = None,
         response_evaluation: SpatialResponseEvaluation | None = None,
+        workbench_input: WorkbenchRunInput | None = None,
     ) -> Path:
         """Reserve a fresh ID; publish the completion manifest only after frozen inputs."""
         try:
             manifest = parse_city_run_manifest_json(canonical_json(manifest))
             pack = parse_city_pack_json(canonical_json(pack))
             places = None if places is None else parse_city_place_set_json(canonical_json(places))
+            workbench_input = (
+                None
+                if workbench_input is None
+                else parse_workbench_run_input_json(canonical_json(workbench_input))
+            )
             _validate_schema_pair(manifest, pack, places)
             mobility = CityMobility(
                 pack,
@@ -268,7 +283,12 @@ class CityRunStore:
                 or (
                     isinstance(
                         manifest,
-                        (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6),
+                        (
+                            CityRunManifestV4,
+                            CityRunManifestV5,
+                            CityRunManifestV6,
+                            CityRunManifestV7,
+                        ),
                     )
                     and manifest.place_schema_version is not None
                 )
@@ -291,12 +311,13 @@ class CityRunStore:
             response_input_bytes: bytes | None = None
             response_summary_bytes: bytes | None = None
             response_state_bytes: bytes | None = None
+            workbench_input_bytes: bytes | None = None
             verified_evaluation: SpatialOpportunityEvaluation | None = None
             verified_attention: SpatialAttentionEvaluation | None = None
             verified_response: SpatialResponseEvaluation | None = None
             if isinstance(
                 manifest,
-                (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6),
+                (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
             ):
                 if spatial_scenario is None or opportunity_evaluation is None:
                     raise CorruptRunArtifact("spatial city run inputs are incomplete")
@@ -327,7 +348,10 @@ class CityRunStore:
                     raise CorruptRunArtifact(
                         "city run manifest does not match spatial opportunity inputs"
                     )
-                if isinstance(manifest, (CityRunManifestV5, CityRunManifestV6)):
+                if isinstance(
+                    manifest,
+                    (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
+                ):
                     if not isinstance(attention_evaluation, SpatialAttentionEvaluation):
                         raise CorruptRunArtifact("spatial attention evaluation is incomplete")
                     verified_attention = evaluate_spatial_attention(
@@ -354,7 +378,7 @@ class CityRunStore:
                         raise CorruptRunArtifact(
                             "city run manifest does not match spatial attention inputs"
                         )
-                    if isinstance(manifest, CityRunManifestV6):
+                    if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
                         if not isinstance(response_input, SpatialResponseInput) or not isinstance(
                             response_evaluation,
                             SpatialResponseEvaluation,
@@ -419,6 +443,28 @@ class CityRunStore:
                 or response_evaluation is not None
             ):
                 raise CorruptRunArtifact("legacy city run cannot contain spatial inputs")
+            if isinstance(manifest, CityRunManifestV7):
+                if workbench_input is None:
+                    raise CorruptRunArtifact("v7 city run requires a workbench input")
+                workbench_input = validate_workbench_execution_binding(
+                    workbench_input,
+                    pack=pack,
+                    run_id=manifest.run_id,
+                    seed=manifest.seed,
+                    agent_count=manifest.agent_count,
+                    days=manifest.days,
+                    places=places,
+                    spatial_scenario=spatial_scenario,
+                    spatial_response=response_input,
+                )
+                if (
+                    manifest.workbench_input_schema_version != workbench_input.schema_version
+                    or manifest.workbench_input_sha256 != workbench_input.fingerprint
+                ):
+                    raise CorruptRunArtifact("city run manifest does not match workbench input")
+                workbench_input_bytes = _canonical_bytes(workbench_input)
+            elif workbench_input is not None:
+                raise CorruptRunArtifact("legacy city run cannot contain a workbench input")
             if (
                 pack.fingerprint != manifest.city_sha256
                 or mobility.agents != agents
@@ -444,6 +490,10 @@ class CityRunStore:
             or len(agents_bytes) > MAX_CITY_AGENTS_BYTES
             or len(manifest_bytes) > MAX_CITY_MANIFEST_BYTES
             or (places_bytes is not None and len(places_bytes) > MAX_CITY_PLACE_SET_BYTES)
+            or (
+                workbench_input_bytes is not None
+                and len(workbench_input_bytes) > MAX_WORKBENCH_INPUT_BYTES
+            )
             or (
                 spatial_scenario_bytes is not None
                 and len(spatial_scenario_bytes) > MAX_SPATIAL_CAMPAIGN_BYTES
@@ -515,6 +565,14 @@ class CityRunStore:
                         inputs / "spatial-response.json",
                         response_input_bytes,
                         "spatial response input",
+                    )
+                )
+            if workbench_input_bytes is not None:
+                documents.append(
+                    (
+                        inputs / "workbench.json",
+                        workbench_input_bytes,
+                        "workbench input",
                     )
                 )
             for path, contents, label in documents:
@@ -751,6 +809,16 @@ class CityRunStore:
             limit=MAX_CITY_AGENTS_BYTES,
             label="agent assignments",
         )
+        workbench_input_bytes: bytes | None = None
+        workbench_input_path = directory / "inputs" / "workbench.json"
+        if isinstance(manifest, CityRunManifestV7):
+            workbench_input_bytes = self._read_document(
+                workbench_input_path,
+                limit=MAX_WORKBENCH_INPUT_BYTES,
+                label="workbench input",
+            )
+        elif workbench_input_path.is_symlink() or workbench_input_path.exists():
+            raise CorruptRunArtifact("legacy city run has an undeclared workbench input")
         places_bytes: bytes | None = None
         assignments_bytes: bytes | None = None
         place_manifest = (
@@ -759,7 +827,12 @@ class CityRunStore:
             or (
                 isinstance(
                     manifest,
-                    (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6),
+                    (
+                        CityRunManifestV4,
+                        CityRunManifestV5,
+                        CityRunManifestV6,
+                        CityRunManifestV7,
+                    ),
                 )
                 and manifest.place_schema_version is not None
             )
@@ -784,7 +857,7 @@ class CityRunStore:
         response_state_bytes: bytes | None = None
         if isinstance(
             manifest,
-            (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6),
+            (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
         ):
             outputs = directory / "outputs"
             if not outputs.is_dir():
@@ -801,13 +874,16 @@ class CityRunStore:
                 limit=MAX_CITY_OPPORTUNITY_SUMMARY_BYTES,
                 label="opportunity summary",
             )
-            if isinstance(manifest, (CityRunManifestV5, CityRunManifestV6)):
+            if isinstance(
+                manifest,
+                (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
+            ):
                 attention_summary_bytes = self._read_document(
                     outputs / "attention-summary.json",
                     limit=MAX_CITY_ATTENTION_SUMMARY_BYTES,
                     label="attention summary",
                 )
-            if isinstance(manifest, CityRunManifestV6):
+            if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
                 response_input_bytes = self._read_document(
                     directory / "inputs" / "spatial-response.json",
                     limit=MAX_SPATIAL_RESPONSE_INPUT_BYTES,
@@ -826,6 +902,11 @@ class CityRunStore:
         try:
             pack = parse_city_pack_json(city_bytes)
             places = None if places_bytes is None else parse_city_place_set_json(places_bytes)
+            workbench_input = (
+                None
+                if workbench_input_bytes is None
+                else parse_workbench_run_input_json(workbench_input_bytes)
+            )
             _validate_schema_pair(manifest, pack, places)
             if (
                 manifest.run_id != run_id
@@ -836,6 +917,13 @@ class CityRunStore:
                 or city_bytes != _canonical_bytes(pack)
             ):
                 raise CorruptRunArtifact("city run manifest or city input does not match")
+            if isinstance(manifest, CityRunManifestV7) and (
+                workbench_input is None
+                or workbench_input_bytes != _canonical_bytes(workbench_input)
+                or manifest.workbench_input_schema_version != workbench_input.schema_version
+                or manifest.workbench_input_sha256 != workbench_input.fingerprint
+            ):
+                raise CorruptRunArtifact("city run workbench input does not match")
             mobility = CityMobility(
                 pack,
                 seed=manifest.seed,
@@ -867,7 +955,7 @@ class CityRunStore:
             response_evaluation: SpatialResponseEvaluation | None = None
             if isinstance(
                 manifest,
-                (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6),
+                (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
             ):
                 if spatial_scenario_bytes is None or opportunity_summary_bytes is None:
                     raise CorruptRunArtifact("city run spatial inputs are missing")
@@ -893,7 +981,10 @@ class CityRunStore:
                     directory / "outputs" / "spatial-opportunities.jsonl",
                     opportunity_evaluation,
                 )
-                if isinstance(manifest, (CityRunManifestV5, CityRunManifestV6)):
+                if isinstance(
+                    manifest,
+                    (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
+                ):
                     if attention_summary_bytes is None:
                         raise CorruptRunArtifact("city run attention inputs are missing")
                     attention_evaluation = evaluate_spatial_attention(
@@ -921,7 +1012,7 @@ class CityRunStore:
                         directory / "outputs" / "spatial-attention.jsonl",
                         attention_evaluation,
                     )
-                    if isinstance(manifest, CityRunManifestV6):
+                    if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
                         if (
                             response_input_bytes is None
                             or response_summary_bytes is None
@@ -969,6 +1060,25 @@ class CityRunStore:
                             directory / "outputs" / "spatial-responses.jsonl",
                             response_evaluation,
                         )
+            if isinstance(manifest, CityRunManifestV7):
+                if workbench_input is None:
+                    raise CorruptRunArtifact("city run workbench input is missing")
+                try:
+                    workbench_input = validate_workbench_execution_binding(
+                        workbench_input,
+                        pack=pack,
+                        run_id=manifest.run_id,
+                        seed=manifest.seed,
+                        agent_count=manifest.agent_count,
+                        days=manifest.days,
+                        places=places,
+                        spatial_scenario=spatial_scenario,
+                        spatial_response=response_input,
+                    )
+                except (ValidationError, ValueError, TypeError):
+                    raise CorruptRunArtifact(
+                        "city run workbench input does not match frozen evidence"
+                    ) from None
             summary = summarize_city_trace(mobility)
             if (
                 summary.agents_sha256 != manifest.agents_sha256
@@ -989,7 +1099,12 @@ class CityRunStore:
             attention_evaluation=attention_evaluation,
             response_input=response_input,
             response_evaluation=response_evaluation,
+            workbench_input=workbench_input,
         )
 
 
-__all__ = ["CityRunStore", "StoredCityRun"]
+__all__ = [
+    "MAX_WORKBENCH_INPUT_BYTES",
+    "CityRunStore",
+    "StoredCityRun",
+]

@@ -1,16 +1,32 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from adlife.city import analysis as city_analysis
 from adlife.city.analysis import compare_stored_city_runs
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
+from adlife.core.domain.city_run import CityRunManifestV7
 from tests.unit.city.test_city_analysis import _artifact_bytes, _spatial_run
 from tests.unit.city.test_city_pack import load_pack, pack_data
+
+
+def _v7(stored):
+    manifest = CityRunManifestV7.model_validate(
+        stored.manifest.model_dump(mode="python")
+        | {
+            "schema_version": 7,
+            "workbench_input_schema_version": 1,
+            "workbench_input_sha256": sha256(stored.manifest.run_id.encode()).hexdigest(),
+        }
+    )
+    return replace(stored, manifest=manifest)
 
 
 def test_city_compare_json_is_exact_confounded_and_read_only(tmp_path: Path) -> None:
@@ -171,6 +187,36 @@ def test_city_compare_response_layer_emits_exact_aa_document_and_is_read_only(
     assert result.stdout.count("\n") == 1
     assert result.stderr == ""
     assert _artifact_bytes(stored.directory) == before
+
+
+def test_city_compare_layers_preserve_v7_source_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = _v7(_spatial_run(tmp_path, "v7-response", response=True))
+    monkeypatch.setattr(
+        "adlife.cli.commands.city_compare.CityRunStore.load",
+        lambda _store, _run_id: stored,
+    )
+
+    for layer in ("attention", "response"):
+        result = CliRunner().invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "city-compare",
+                str(tmp_path),
+                "v7-response",
+                "v7-response",
+                "--layer",
+                layer,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        document = json.loads(result.stdout)
+        assert document["control"]["source_run_schema_version"] == 7
+        assert document["treatment"]["source_run_schema_version"] == 7
 
 
 def test_city_compare_response_layer_human_output_discloses_both_classifications(

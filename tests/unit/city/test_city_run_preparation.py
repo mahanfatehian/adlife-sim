@@ -11,7 +11,7 @@ from adlife.city import runs
 from adlife.city.run_store import CityRunStore
 from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_validation import construct_workbench_run
-from adlife.core.domain.city_run import CityRunManifestV6
+from adlife.core.domain.city_run import CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import DuplicateRun
 from tests.unit.city.test_city_mobility import mobility_place_set
@@ -42,7 +42,7 @@ def test_prepare_city_run_evaluates_without_touching_the_filesystem(tmp_path: Pa
     )
 
     assert list(tmp_path.iterdir()) == []
-    assert isinstance(prepared.manifest, CityRunManifestV6)
+    assert isinstance(prepared.manifest, CityRunManifestV7)
     assert prepared.workbench_input == validated.workbench_input
     assert prepared.mobility.agents == validated.mobility.agents
     assert prepared.mobility.frame(1_440) == validated.mobility.frame(1_440)
@@ -283,7 +283,7 @@ def test_prepare_refuses_response_profile_and_initial_state_drift() -> None:
         )
 
 
-def test_workbench_preparation_cannot_publish_before_sidecar_support(tmp_path: Path) -> None:
+def test_workbench_preparation_publishes_only_with_v7_sidecar_support(tmp_path: Path) -> None:
     validated = _validated()
     prepared = runs.prepare_city_run(
         validated.pack,
@@ -296,10 +296,11 @@ def test_workbench_preparation_cannot_publish_before_sidecar_support(tmp_path: P
         workbench_input=validated.workbench_input,
     )
 
-    with pytest.raises(ValueError, match="schema-v7 sidecar"):
-        runs.publish_city_run(prepared, root=tmp_path)
+    stored = runs.publish_city_run(prepared, root=tmp_path)
 
-    assert list(tmp_path.iterdir()) == []
+    assert isinstance(stored.manifest, CityRunManifestV7)
+    assert stored.workbench_input == validated.workbench_input
+    assert (stored.directory / "inputs" / "workbench.json").is_file()
 
 
 def test_different_receipt_run_ids_do_not_change_normalized_scientific_evidence() -> None:
@@ -330,6 +331,9 @@ def test_different_receipt_run_ids_do_not_change_normalized_scientific_evidence(
     second_receipt = second.manifest.model_dump(mode="json")
     del first_receipt["run_id"]
     del second_receipt["run_id"]
+    first_workbench_sha256 = first_receipt.pop("workbench_input_sha256")
+    second_workbench_sha256 = second_receipt.pop("workbench_input_sha256")
+    assert first_workbench_sha256 != second_workbench_sha256
     assert canonical_json(first_receipt) == canonical_json(second_receipt)
     assert first.mobility.agents == second.mobility.agents
     assert first.opportunity_evaluation == second.opportunity_evaluation

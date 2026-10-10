@@ -146,14 +146,14 @@ class SpatialMetricSeries(DomainModel):
 
 
 class SpatialMetrics(DomainModel):
-    """Frozen schema-v5/v6 study provenance plus deterministic synthetic metrics."""
+    """Frozen schema-v5/v6/v7 provenance plus deterministic synthetic metrics."""
 
     schema_version: Literal[1] = 1
     model_id: Literal["spatial-metrics-v1"] = "spatial-metrics-v1"
     claim_scope: Literal["synthetic-metrics-not-observed-outcomes"] = (
         "synthetic-metrics-not-observed-outcomes"
     )
-    source_run_schema_version: Literal[5, 6] = 5
+    source_run_schema_version: Literal[5, 6, 7] = 5
     opportunity_model_id: Literal["spatial-opportunity-v1"] = "spatial-opportunity-v1"
     attention_model_id: Literal["spatial-attention-v1"] = "spatial-attention-v1"
     scenario_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -170,8 +170,8 @@ class SpatialMetrics(DomainModel):
     @field_validator("source_run_schema_version", mode="before")
     @classmethod
     def exact_source_run_schema_version(cls, value: object) -> object:
-        if type(value) is not int or value not in {5, 6}:
-            raise ValueError("source run schema version must be integer 5 or 6")
+        if type(value) is not int or value not in {5, 6, 7}:
+            raise ValueError("source run schema version must be integer 5, 6 or 7")
         return value
 
     @model_validator(mode="after")
@@ -360,7 +360,7 @@ def derive_spatial_metrics(
     agents_sha256: str,
     trace_sha256: str,
     days: int,
-    source_run_schema_version: Literal[5, 6] = 5,
+    source_run_schema_version: Literal[5, 6, 7] = 5,
 ) -> SpatialMetrics:
     """Derive finite synthetic metrics from a validated opportunity/attention pair."""
     validated_opportunities = revalidate_model(

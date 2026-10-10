@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
+from adlife.core.experiments.spatial_metrics import SpatialMetrics
 from adlife.core.experiments.spatial_observations import spatial_metric_observations
+from adlife.core.experiments.spatial_response_metrics import SpatialResponseMetrics
 from tests.unit.experiments.test_spatial_response_comparison import _response_metric_pair
 
 ATTENTION_METRICS = (
@@ -117,3 +120,22 @@ def test_observations_never_attribute_committed_state_to_a_channel() -> None:
         key.startswith("response.overall.state.") or key.startswith("response.campaign.")
         for key in state_keys
     )
+
+
+def test_observations_accept_matched_v7_provenance_and_refuse_mixed_versions() -> None:
+    attention, response = _response_metric_pair()
+    v7_attention = SpatialMetrics.model_validate(
+        attention.model_dump(mode="python") | {"source_run_schema_version": 7}
+    )
+    v7_response = SpatialResponseMetrics.model_validate(
+        response.model_dump(mode="python") | {"source_run_schema_version": 7}
+    )
+
+    assert spatial_metric_observations(v7_attention, v7_response)
+    with pytest.raises(ValueError, match="schema"):
+        spatial_metric_observations(attention, v7_response)
+
+    with pytest.raises(ValidationError):
+        SpatialResponseMetrics.model_validate(
+            response.model_dump(mode="python") | {"source_run_schema_version": 5}
+        )

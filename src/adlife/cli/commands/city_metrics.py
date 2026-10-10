@@ -1,4 +1,4 @@
-"""Inspect receipt-backed synthetic metrics for a verified schema-v5 or v6 city run."""
+"""Inspect receipt-backed synthetic metrics for a verified schema-v5, v6 or v7 city run."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def _response_series_line(
 @command_boundary
 def command(
     root: Annotated[Path, typer.Argument(help="Root containing city-runs/.")],
-    run_id: Annotated[str, typer.Argument(help="Saved schema-v5 or schema-v6 city run ID.")],
+    run_id: Annotated[str, typer.Argument(help="Saved schema-v5, schema-v6 or schema-v7 run ID.")],
     layer: Annotated[
         Literal["attention", "response"],
         typer.Option("--layer", help="Metric evidence layer to derive."),

@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6
+from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6, CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition
 from adlife.core.experiments._spatial_study_receipts import (
@@ -71,7 +71,7 @@ def reconstruct_manifest(
     result: SpatialStudyResult,
     pair: SpatialStudyPairReceipt,
     arm: SpatialStudyArmReceipt,
-) -> CityRunManifestV5 | CityRunManifestV6:
+) -> CityRunManifestV5 | CityRunManifestV6 | CityRunManifestV7:
     data: dict[str, object] = {
         "schema_version": result.source_run_schema_version,
         "run_id": arm.run_id,
@@ -110,11 +110,16 @@ def reconstruct_manifest(
     ):
         data[name] = getattr(arm, name)
     if result.source_run_schema_version == 5:
-        if arm.response is not None or result.response_model_id is not None:
+        if (
+            arm.response is not None
+            or result.response_model_id is not None
+            or arm.workbench_input_schema_version is not None
+            or arm.workbench_input_sha256 is not None
+        ):
             raise ValueError("v5 study cannot carry response evidence")
         return CityRunManifestV5.model_validate(data)
     if arm.response is None or result.response_model_id != "spatial-response-v1":
-        raise ValueError("v6 study requires response artifact receipts and model identity")
+        raise ValueError("response study requires response artifact receipts and model identity")
     data.update(
         {
             "spatial_response_schema_version": 1,
@@ -133,7 +138,19 @@ def reconstruct_manifest(
         "final_state_count",
     ):
         data[name] = getattr(arm.response, name)
-    return CityRunManifestV6.model_validate(data)
+    if result.source_run_schema_version == 6:
+        if arm.workbench_input_schema_version is not None or arm.workbench_input_sha256 is not None:
+            raise ValueError("v6 study cannot carry workbench input provenance")
+        return CityRunManifestV6.model_validate(data)
+    if arm.workbench_input_schema_version is None or arm.workbench_input_sha256 is None:
+        raise ValueError("v7 study requires complete workbench input provenance")
+    data.update(
+        {
+            "workbench_input_schema_version": arm.workbench_input_schema_version,
+            "workbench_input_sha256": arm.workbench_input_sha256,
+        }
+    )
+    return CityRunManifestV7.model_validate(data)
 
 
 def _event_reach_bounds(count: float, reach: float, population: int) -> None:
@@ -273,6 +290,7 @@ def _response_document(
         series.append(row)
     document = SpatialResponseMetrics.model_validate(
         {
+            "source_run_schema_version": result.source_run_schema_version,
             "scenario_sha256": arm.scenario_sha256,
             "city_sha256": result.city.city_sha256,
             "agents_sha256": pair.agents_sha256,
@@ -390,7 +408,7 @@ def validate_study_result(result: SpatialStudyResult) -> None:
     )
     if response_scope:
         if (
-            result.source_run_schema_version != 6
+            result.source_run_schema_version not in {6, 7}
             or not result.campaign_ids
             or any(value is None for value in response_identities)
         ):
@@ -467,8 +485,14 @@ def validate_study_result(result: SpatialStudyResult) -> None:
         opportunity_matched += opportunity == "matched-opportunity-structure"
         response_matched += response == "matched-response-assumptions"
         if definition.design == "a-a":
-            control = pair.control.model_dump(exclude={"run_id", "manifest_sha256"})
-            treatment = pair.treatment.model_dump(exclude={"run_id", "manifest_sha256"})
+            excluded = {
+                "run_id",
+                "manifest_sha256",
+                "workbench_input_schema_version",
+                "workbench_input_sha256",
+            }
+            control = pair.control.model_dump(exclude=excluded)
+            treatment = pair.treatment.model_dump(exclude=excluded)
             if control != treatment or any(
                 row.control != row.treatment or row.delta != 0.0 for row in pair.scalars
             ):

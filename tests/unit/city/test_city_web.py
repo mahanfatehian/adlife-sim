@@ -89,6 +89,8 @@ def _response_view_metrics(
     attention: SpatialAttentionEvaluation,
     response_input: SpatialResponseInput,
     responses: SpatialResponseEvaluation,
+    *,
+    source_run_schema_version: int = 6,
 ):
     attention_metrics = derive_spatial_metrics(
         opportunities,
@@ -97,7 +99,7 @@ def _response_view_metrics(
         agents_sha256="a" * 64,
         trace_sha256="b" * 64,
         days=simulation.days,
-        source_run_schema_version=6,
+        source_run_schema_version=source_run_schema_version,
     )
     response_metrics = derive_spatial_response_metrics(
         response_input,
@@ -555,7 +557,7 @@ def test_saved_v5_view_requires_matching_attention_evidence() -> None:
             spatial_scenario=scenario,
             opportunity_evaluation=opportunities,
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 5 or 6 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 5, 6 or 7 run"):
         create_city_app(
             simulation,
             run_id="wrong-attention-schema",
@@ -710,7 +712,7 @@ def test_spatial_view_requires_a_complete_schema_v4_saved_run() -> None:
             run_id="incomplete-spatial-study",
             run_schema_version=4,
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 4, 5 or 6 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 4, 5, 6 or 7 run"):
         create_city_app(
             simulation,
             run_id="wrong-schema-study",
@@ -984,6 +986,49 @@ async def test_saved_v6_view_exposes_exact_prevalidated_response_metrics_get_onl
 
 
 @pytest.mark.asyncio
+async def test_saved_v7_view_preserves_exact_metric_source_schema() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    attention_metrics, response_metrics = _response_view_metrics(
+        simulation,
+        scenario,
+        opportunities,
+        attention,
+        response_input,
+        responses,
+        source_run_schema_version=7,
+    )
+    application = create_city_app(
+        simulation,
+        run_id="saved-v7-response-study",
+        run_schema_version=7,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        spatial_metrics=attention_metrics,
+        response_input=response_input,
+        response_evaluation=responses,
+        spatial_response_metrics=response_metrics,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://127.0.0.1",
+    ) as web:
+        metadata = (await web.get("/api/meta")).json()
+        projected_attention = (await web.get("/api/spatial-metrics")).json()
+        projected_response = (await web.get("/api/spatial-response-metrics")).json()
+        javascript = (await web.get("/static/app.js")).text
+
+    assert metadata["run_schema_version"] == 7
+    assert projected_attention["source_run_schema_version"] == 7
+    assert projected_response["source_run_schema_version"] == 7
+    assert "![6, 7].includes(document.source_run_schema_version)" in javascript
+    assert "document.source_run_schema_version !== state.meta.run_schema_version" in javascript
+
+
+@pytest.mark.asyncio
 async def test_response_metrics_endpoint_is_absent_for_legacy_or_omitted_v6_metrics() -> None:
     async with client() as legacy:
         legacy_response = await legacy.get("/api/spatial-response-metrics")
@@ -1041,7 +1086,7 @@ def test_saved_view_rederives_response_metrics_and_rejects_wrong_schema() -> Non
                 update={"scenario_sha256": "f" * 64}
             ),
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 6 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 6 or 7 run"):
         create_city_app(
             simulation,
             run_id="wrong-response-metrics-schema",
@@ -1220,7 +1265,7 @@ def test_saved_v6_view_requires_complete_matching_revalidated_response_evidence(
     ):
         with pytest.raises(ValueError, match="must be supplied together"):
             create_city_app(simulation, **common, **partial)
-    with pytest.raises(ValueError, match="only valid for a saved schema version 6 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 6 or 7 run"):
         create_city_app(
             simulation,
             **(common | {"run_schema_version": 5}),

@@ -219,7 +219,7 @@ def test_spatial_metrics_golden_contract_has_exact_values_and_receipts() -> None
         result.__setattr__("days", 2)
 
 
-@pytest.mark.parametrize("version", [5, 6])
+@pytest.mark.parametrize("version", [5, 6, 7])
 def test_spatial_metrics_records_exact_supported_source_run_schema(version: int) -> None:
     opportunities, attention = _mixed_evidence()
 
@@ -236,7 +236,7 @@ def test_spatial_metrics_records_exact_supported_source_run_schema(version: int)
     assert result.source_run_schema_version == version
 
 
-@pytest.mark.parametrize("version", [True, 5.0, 6.0, "6", 4, 7])
+@pytest.mark.parametrize("version", [True, 5.0, 6.0, "6", 4, 8])
 def test_spatial_metrics_refuses_noninteger_or_unsupported_source_schema(
     version: object,
 ) -> None:

@@ -1416,7 +1416,8 @@ function validateSpatialResponseMetrics(documentValue, seedToken) {
     || document.schema_version !== 1
     || document.model_id !== "spatial-response-metrics-v1"
     || document.claim_scope !== "synthetic-response-metrics-not-observed-outcomes"
-    || document.source_run_schema_version !== 6
+    || ![6, 7].includes(document.source_run_schema_version)
+    || document.source_run_schema_version !== state.meta.run_schema_version
     || document.opportunity_model_id !== "spatial-opportunity-v1"
     || document.attention_model_id !== "spatial-attention-v1"
     || document.response_model_id !== "spatial-response-v1"

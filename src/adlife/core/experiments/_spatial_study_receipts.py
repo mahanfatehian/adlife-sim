@@ -81,7 +81,7 @@ class _StudyReceipt(DomainModel):
 
 
 class SpatialStudyResponseReceipt(_StudyReceipt):
-    """Schema-v6 response evidence, retained even for attention-only A/A checks."""
+    """Schema-v6/v7 response evidence, retained even for attention-only A/A checks."""
 
     response_input_sha256: StudyHash
     response_stream_sha256: StudyHash
@@ -127,11 +127,32 @@ class SpatialStudyArmReceipt(_StudyReceipt):
     opportunity_structure_sha256: StudyHash
     attention_metrics_sha256: StudyHash
     response: SpatialStudyResponseReceipt | None = None
+    workbench_input_schema_version: Literal[1] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    workbench_input_sha256: StudyHash | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("run_id")
     @classmethod
     def portable_identifier(cls, value: str) -> str:
         return validate_portable_run_identifier(value)
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_optional_workbench_version(cls, value: object) -> object:
+        if value is not None and (type(value) is not int or value != 1):
+            raise ValueError("workbench input schema version must be integer 1 when present")
+        return value
+
+    @model_validator(mode="after")
+    def complete_workbench_binding(self) -> Self:
+        if (self.workbench_input_schema_version is None) != (self.workbench_input_sha256 is None):
+            raise ValueError("study arm workbench input binding is incomplete")
+        return self
 
 
 class SpatialStudyScalarPair(_StudyReceipt):
