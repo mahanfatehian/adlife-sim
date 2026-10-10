@@ -340,7 +340,14 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'fetchJson("/workbench-input")' in js.text
     assert "const url = apiPath(relative);" in js.text
     assert 'fetch(url, { cache: "no-store" })' in js.text
-    assert 'fetchJson(evidencePageUrl("attention", next, offsets.attention))' in js.text
+    assert 'evidencePageUrl("attention", next, offsets.attention)' in js.text
+    assert "abortController.signal" in js.text
+    assert "function schedulePlaybackStep(generation)" in js.text
+    assert "setInterval(" not in js.text
+    assert 'id="previous-day-button"' in html.text
+    assert 'id="playback-speed"' in html.text
+    assert 'id="zoom-reset-button"' in html.text
+    assert 'id="map-text-summary"' in html.text
     assert "limit=${EVIDENCE_PAGE_SIZE}" in js.text
     assert "drawAttentionMarker" in js.text
     assert 'byId("model-label").textContent' in js.text
@@ -719,12 +726,14 @@ async def test_non_spatial_view_has_no_opportunity_api_or_spatial_metadata() -> 
         metadata = (await web.get("/api/meta")).json()
         summary = await web.get("/api/opportunity-summary")
         opportunities = await web.get("/api/opportunities?minute=0")
+        timeline = await web.get("/api/timeline?minute=0&agent_id=person-001")
     assert "spatial_opportunities" not in metadata
     assert "claim_scope" not in metadata
-    assert summary.status_code == opportunities.status_code == 404
+    assert summary.status_code == opportunities.status_code == timeline.status_code == 404
     assert (
         summary.json()
         == opportunities.json()
+        == timeline.json()
         == {"detail": "spatial opportunity evidence not configured"}
     )
 
@@ -1181,6 +1190,102 @@ async def test_saved_v6_response_routes_enforce_filters_bounds_and_get_only_sema
     assert empty_page.json()["next_offset"] is None
     assert empty_page.json()["items"] == []
     assert [response.status_code for response in writes] == [405, 405, 405]
+
+
+@pytest.mark.asyncio
+async def test_timeline_projection_matches_the_five_existing_read_only_resources() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    application = create_city_app(
+        simulation,
+        run_id="timeline-projection",
+        run_schema_version=6,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        response_input=response_input,
+        response_evaluation=responses,
+    )
+    params = {
+        "minute": 0,
+        "agent_id": "person-002",
+        "opportunity_offset": 0,
+        "attention_offset": 0,
+        "response_offset": 0,
+        "response_state_offset": 0,
+        "limit": 1,
+    }
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://127.0.0.1",
+    ) as web:
+        combined = await web.get("/api/timeline", params=params)
+        frame = await web.get("/api/frame?minute=0&agent_id=person-002")
+        opportunity_page = await web.get("/api/opportunities?minute=0&offset=0&limit=1")
+        attention_page = await web.get("/api/attention-events?minute=0&offset=0&limit=1")
+        response_page = await web.get("/api/response-events?minute=0&offset=0&limit=1")
+        response_state_page = await web.get(
+            "/api/response-state?agent_id=person-002&offset=0&limit=1"
+        )
+
+    assert combined.status_code == 200
+    assert combined.json() == {
+        "schema_version": 1,
+        "minute": 0,
+        "agent_id": "person-002",
+        "frame": frame.json(),
+        "opportunity_page": opportunity_page.json(),
+        "attention_page": attention_page.json(),
+        "response_page": response_page.json(),
+        "response_state_page": response_state_page.json(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_timeline_projection_enforces_every_existing_bound_and_is_get_only() -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    application = create_city_app(
+        simulation,
+        run_id="bounded-timeline-projection",
+        run_schema_version=6,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        response_input=response_input,
+        response_evaluation=responses,
+    )
+    base = "/api/timeline?minute=0&agent_id=person-001"
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://127.0.0.1",
+    ) as web:
+        missing_agent = await web.get("/api/timeline?minute=0")
+        malformed_agent = await web.get("/api/timeline?minute=0&agent_id=person-1")
+        unknown_agent = await web.get("/api/timeline?minute=0&agent_id=person-999")
+        outside_minute = await web.get("/api/timeline?minute=1440&agent_id=person-001")
+        bad_offsets = [
+            await web.get(f"{base}&opportunity_offset={MAX_SPATIAL_RESPONSE_RECORDS + 1}"),
+            await web.get(f"{base}&attention_offset={MAX_SPATIAL_RESPONSE_RECORDS + 1}"),
+            await web.get(f"{base}&response_offset={MAX_SPATIAL_RESPONSE_RECORDS + 1}"),
+            await web.get(f"{base}&response_state_offset=601"),
+        ]
+        zero_limit = await web.get(f"{base}&limit=0")
+        large_limit = await web.get(f"{base}&limit=101")
+        write = await web.post(base, json={})
+
+    assert missing_agent.status_code == malformed_agent.status_code == 422
+    assert unknown_agent.status_code == 400
+    assert unknown_agent.json() == {"detail": "unknown city agent"}
+    assert outside_minute.status_code == 422
+    assert outside_minute.json() == {"detail": "minute is outside the saved run"}
+    assert all(response.status_code == 422 for response in bad_offsets)
+    assert zero_limit.status_code == large_limit.status_code == 422
+    assert write.status_code == 405
 
 
 @pytest.mark.asyncio

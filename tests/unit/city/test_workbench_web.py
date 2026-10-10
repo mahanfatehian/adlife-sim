@@ -231,6 +231,10 @@ def test_run_scoped_reads_match_the_legacy_verified_view_contract(
         "response-events?minute=480&limit=1",
         "response-state?agent_id=person-001",
         "frame?minute=480&agent_id=person-001",
+        (
+            "timeline?minute=480&agent_id=person-001&opportunity_offset=0"
+            "&attention_offset=0&response_offset=0&response_state_offset=0&limit=1"
+        ),
     )
     refusal_suffixes = (
         "opportunities?minute=1440",
@@ -272,6 +276,47 @@ def test_run_scoped_reads_match_the_legacy_verified_view_contract(
             )
 
     assert _snapshot(root) == before
+
+
+def test_scoped_timeline_projection_verifies_the_run_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    _saved_workbench_run(root, run_id="single-load-timeline", schema_version=7)
+    module = _module()
+    original = module.WorkbenchRunRepository.load
+    loaded: list[str] = []
+
+    def counted_load(repository: object, run_id: str):
+        loaded.append(run_id)
+        return original(repository, run_id)
+
+    monkeypatch.setattr(module.WorkbenchRunRepository, "load", counted_load)
+    app = module.create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        response = client.get(
+            "/api/runs/single-load-timeline/timeline",
+            params={"minute": 480, "agent_id": "person-001", "limit": 1},
+        )
+
+    assert response.status_code == 200
+    assert loaded == ["single-load-timeline"]
+    assert set(response.json()) == {
+        "schema_version",
+        "minute",
+        "agent_id",
+        "frame",
+        "opportunity_page",
+        "attention_page",
+        "response_page",
+        "response_state_page",
+    }
 
 
 def test_completed_inspector_url_serves_the_existing_dashboard_with_a_scoped_api_base(
@@ -531,15 +576,18 @@ def test_run_scoped_reads_reverify_after_a_prior_success_and_refuse_tampering(
 
     with TestClient(app, base_url=ORIGIN) as client:
         first = client.get("/api/runs/tamper-run/meta")
+        first_timeline = client.get("/api/runs/tamper-run/timeline?minute=480&agent_id=person-001")
         manifest = root / "city-runs" / "tamper-run" / "run.json"
         manifest.write_bytes(manifest.read_bytes() + b"\n")
         second = client.get("/api/runs/tamper-run/meta")
+        second_timeline = client.get("/api/runs/tamper-run/timeline?minute=480&agent_id=person-001")
         page = client.get("/runs/tamper-run")
 
-    assert first.status_code == 200
-    assert second.status_code == page.status_code == 409
+    assert first.status_code == first_timeline.status_code == 200
+    assert second.status_code == second_timeline.status_code == page.status_code == 409
     assert (
         second.json()["error"]
+        == second_timeline.json()["error"]
         == page.json()["error"]
         == {
             "code": "run-unavailable",
@@ -647,10 +695,30 @@ def test_run_scoped_validation_errors_never_echo_query_values(tmp_path: Path) ->
             params={"minute": secret},
         )
         direct = legacy_client.get("/api/frame", params={"minute": secret})
+        scoped_timeline = scoped_client.get(
+            "/api/runs/screened-query/timeline",
+            params={"minute": secret, "agent_id": "person-001"},
+        )
+        direct_timeline = legacy_client.get(
+            "/api/timeline",
+            params={"minute": secret, "agent_id": "person-001"},
+        )
 
-    assert scoped.status_code == direct.status_code == 422
-    assert scoped.json() == direct.json() == {"detail": "request validation failed"}
-    assert secret not in scoped.text + direct.text
+    assert (
+        scoped.status_code
+        == direct.status_code
+        == scoped_timeline.status_code
+        == direct_timeline.status_code
+        == 422
+    )
+    assert (
+        scoped.json()
+        == direct.json()
+        == scoped_timeline.json()
+        == direct_timeline.json()
+        == {"detail": "request validation failed"}
+    )
+    assert secret not in scoped.text + direct.text + scoped_timeline.text + direct_timeline.text
 
 
 def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery(

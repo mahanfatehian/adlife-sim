@@ -413,15 +413,14 @@ def opportunity_summary(request: Request) -> dict[str, object]:
     }
 
 
-@CITY_VIEW_ROUTER.get("/opportunities")
-def opportunities(
-    request: Request,
-    minute: int = Query(ge=0),
-    agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
-    offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_OPPORTUNITIES),
-    limit: int = Query(default=100, ge=1, le=100),
+def _opportunity_page(
+    view: CityViewContext,
+    *,
+    minute: int,
+    agent_id: str | None,
+    offset: int,
+    limit: int,
 ) -> dict[str, object]:
-    view = _resolve_city_view(request)
     simulation = view.simulation
     opportunity_evaluation = view.opportunity_evaluation
     opportunity_minutes = view.opportunity_minutes
@@ -464,6 +463,23 @@ def opportunities(
         "next_offset": consumed if consumed < total else None,
         "items": [item.model_dump(mode="json") for item in page],
     }
+
+
+@CITY_VIEW_ROUTER.get("/opportunities")
+def opportunities(
+    request: Request,
+    minute: int = Query(ge=0),
+    agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
+    offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_OPPORTUNITIES),
+    limit: int = Query(default=100, ge=1, le=100),
+) -> dict[str, object]:
+    return _opportunity_page(
+        _resolve_city_view(request),
+        minute=minute,
+        agent_id=agent_id,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @CITY_VIEW_ROUTER.get("/attention-summary")
@@ -510,15 +526,14 @@ def response_metrics(request: Request) -> dict[str, object]:
     return spatial_response_metrics.model_dump(mode="json")
 
 
-@CITY_VIEW_ROUTER.get("/attention-events")
-def attention_events(
-    request: Request,
-    minute: int = Query(ge=0),
-    agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
-    offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_ATTENTION_EVENTS),
-    limit: int = Query(default=100, ge=1, le=100),
+def _attention_page(
+    view: CityViewContext,
+    *,
+    minute: int,
+    agent_id: str | None,
+    offset: int,
+    limit: int,
 ) -> dict[str, object]:
-    view = _resolve_city_view(request)
     simulation = view.simulation
     attention_evaluation = view.attention_evaluation
     attention_minutes = view.attention_minutes
@@ -569,6 +584,23 @@ def attention_events(
     }
 
 
+@CITY_VIEW_ROUTER.get("/attention-events")
+def attention_events(
+    request: Request,
+    minute: int = Query(ge=0),
+    agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
+    offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_ATTENTION_EVENTS),
+    limit: int = Query(default=100, ge=1, le=100),
+) -> dict[str, object]:
+    return _attention_page(
+        _resolve_city_view(request),
+        minute=minute,
+        agent_id=agent_id,
+        offset=offset,
+        limit=limit,
+    )
+
+
 @CITY_VIEW_ROUTER.get("/response-summary")
 def response_summary(request: Request) -> dict[str, object]:
     view = _resolve_city_view(request)
@@ -581,15 +613,14 @@ def response_summary(request: Request) -> dict[str, object]:
     return response_summary_document.model_dump(mode="json")
 
 
-@CITY_VIEW_ROUTER.get("/response-events")
-def response_events(
-    request: Request,
-    minute: int = Query(ge=0),
-    agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
-    offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_RESPONSE_RECORDS),
-    limit: int = Query(default=100, ge=1, le=100),
+def _response_page(
+    view: CityViewContext,
+    *,
+    minute: int,
+    agent_id: str | None,
+    offset: int,
+    limit: int,
 ) -> dict[str, object]:
-    view = _resolve_city_view(request)
     simulation = view.simulation
     response_evaluation = view.response_evaluation
     response_minutes = view.response_minutes
@@ -643,14 +674,30 @@ def response_events(
     }
 
 
-@CITY_VIEW_ROUTER.get("/response-state")
-def response_state(
+@CITY_VIEW_ROUTER.get("/response-events")
+def response_events(
     request: Request,
+    minute: int = Query(ge=0),
     agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
-    offset: int = Query(default=0, ge=0, le=_MAX_SPATIAL_RESPONSE_STATES),
+    offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_RESPONSE_RECORDS),
     limit: int = Query(default=100, ge=1, le=100),
 ) -> dict[str, object]:
-    view = _resolve_city_view(request)
+    return _response_page(
+        _resolve_city_view(request),
+        minute=minute,
+        agent_id=agent_id,
+        offset=offset,
+        limit=limit,
+    )
+
+
+def _response_state_page(
+    view: CityViewContext,
+    *,
+    agent_id: str | None,
+    offset: int,
+    limit: int,
+) -> dict[str, object]:
     simulation = view.simulation
     response_state_document = view.response_state_document
     if response_state_document is None:
@@ -683,16 +730,101 @@ def response_state(
     }
 
 
-@CITY_VIEW_ROUTER.get("/frame")
-def frame(
-    request: Request, minute: int = Query(ge=0), agent_id: str | None = Query(default=None)
+@CITY_VIEW_ROUTER.get("/response-state")
+def response_state(
+    request: Request,
+    agent_id: str | None = Query(default=None, pattern=r"^person-[0-9]{3}$"),
+    offset: int = Query(default=0, ge=0, le=_MAX_SPATIAL_RESPONSE_STATES),
+    limit: int = Query(default=100, ge=1, le=100),
 ) -> dict[str, object]:
-    view = _resolve_city_view(request)
+    return _response_state_page(
+        _resolve_city_view(request),
+        agent_id=agent_id,
+        offset=offset,
+        limit=limit,
+    )
+
+
+def _frame_document(
+    view: CityViewContext,
+    *,
+    minute: int,
+    agent_id: str | None,
+) -> dict[str, object]:
     simulation = view.simulation
     try:
         return simulation.frame_document(minute, selected_agent_id=agent_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid minute or city agent") from None
+
+
+@CITY_VIEW_ROUTER.get("/timeline")
+def timeline(
+    request: Request,
+    minute: int = Query(ge=0),
+    agent_id: str = Query(pattern=r"^person-[0-9]{3}$"),
+    opportunity_offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_OPPORTUNITIES),
+    attention_offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_ATTENTION_EVENTS),
+    response_offset: int = Query(default=0, ge=0, le=MAX_SPATIAL_RESPONSE_RECORDS),
+    response_state_offset: int = Query(
+        default=0,
+        ge=0,
+        le=_MAX_SPATIAL_RESPONSE_STATES,
+    ),
+    limit: int = Query(default=100, ge=1, le=100),
+) -> dict[str, object]:
+    """Project one model-clock interaction from one verified immutable context."""
+
+    view = _resolve_city_view(request)
+    simulation = view.simulation
+    if minute >= simulation.days * 1_440:
+        raise HTTPException(status_code=422, detail="minute is outside the saved run")
+    if all(agent.agent_id != agent_id for agent in simulation.agents):
+        raise HTTPException(status_code=400, detail="unknown city agent")
+    return {
+        "schema_version": 1,
+        "minute": minute,
+        "agent_id": agent_id,
+        "frame": _frame_document(view, minute=minute, agent_id=agent_id),
+        "opportunity_page": _opportunity_page(
+            view,
+            minute=minute,
+            agent_id=None,
+            offset=opportunity_offset,
+            limit=limit,
+        ),
+        "attention_page": _attention_page(
+            view,
+            minute=minute,
+            agent_id=None,
+            offset=attention_offset,
+            limit=limit,
+        ),
+        "response_page": _response_page(
+            view,
+            minute=minute,
+            agent_id=None,
+            offset=response_offset,
+            limit=limit,
+        ),
+        "response_state_page": _response_state_page(
+            view,
+            agent_id=agent_id,
+            offset=response_state_offset,
+            limit=limit,
+        ),
+    }
+
+
+@CITY_VIEW_ROUTER.get("/frame")
+def frame(
+    request: Request, minute: int = Query(ge=0), agent_id: str | None = Query(default=None)
+) -> dict[str, object]:
+    return _frame_document(
+        _resolve_city_view(request),
+        minute=minute,
+        agent_id=agent_id,
+    )
 
 
 def city_dashboard_response(*, api_base: str = "/api") -> HTMLResponse:
