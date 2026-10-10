@@ -272,7 +272,12 @@ response artifact through `/api/response-summary`, bounded and filterable
 complete final end-of-run campaign state, not state at the scrubbed minute, and labels that
 scope `final-end-of-run-not-scrubbed-minute`. All three routes retain
 `synthetic-response-not-observed-behavior`, accept no path/run selector, and never mutate
-the source artifact. `--port` accepts 1–65535. Like
+the source artifact. The three current-minute evidence rails use fixed 100-record Previous
+and Next pages with exact displayed ranges. They preserve canonical server order, reset to
+the first page when the minute changes, retain the current page during same-minute agent
+selection, and refuse stale or inconsistent page responses without replacing the last
+committed evidence. Opportunity and attention map markers represent only the displayed
+page; full-minute totals remain unchanged. `--port` accepts 1–65535. Like
 `adlife city`, this interactive command accepts human output mode only and does not launch
 a browser automatically. Schema-v5 and schema-v6 runs also expose a read-only
 `/api/spatial-metrics` receipt ledger. It uses the same exact numerator, denominator, and

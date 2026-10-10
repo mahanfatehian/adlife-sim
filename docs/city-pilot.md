@@ -354,6 +354,11 @@ output, memory, social propagation, budget mutation, purchase event, or movement
 The saved-run viewer can inspect persisted current-minute opportunity and
 current-minute attention evidence without changing it. Schema-v6 additionally exposes
 current-minute response/state-update records and complete final end-of-run campaign state.
+Opportunity, attention, and response rails page immutable records in canonical order with a
+fixed 100-card bound and exact ranges. Minute changes return every rail to offset zero;
+same-minute agent selection keeps the displayed pages because selection is presentation-only.
+A delayed, failed, or inconsistent page cannot replace the last committed evidence, and map
+markers are explicitly scoped to the displayed opportunity or attention page.
 The original read-only `spatial-metrics-v1` projection remains attention-only for both
 schema-v5 and schema-v6. It never folds response scores or final state into metrics; every
 value records its exact numerator, denominator, and source paths under
@@ -542,11 +547,13 @@ v1/v2/v3 runs and schema-v4 opportunity-only runs remain readable. `city-replay`
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
 API has no path or run-selection endpoint. For v4, v5, and v6, a bounded summary endpoint
-and a canonical page of current-minute opportunity records drive the read-only evidence rail
-and map markers. V5 and v6 add bounded summary and page endpoints for current-minute
-attention; noticed markers reflect only persisted model evidence. Selecting a record changes
-presentation only. The panels retain the literal synthetic claim scopes and create no
-downstream event. V6 adds `/api/response-summary`, paged `/api/response-events`, and paged
+and canonical 100-record pages of current-minute opportunity records drive the read-only
+evidence rail and page-scoped map markers. V5 and v6 add bounded summary and page endpoints
+for current-minute attention; noticed markers reflect only persisted model evidence. The
+browser can traverse every opportunity, attention, and response page with exact ranges while
+keeping only one bounded page per rail in the DOM. Selecting a record changes presentation
+only. The panels retain the literal synthetic claim scopes and create no downstream event.
+V6 adds `/api/response-summary`, paged `/api/response-events`, and paged
 `/api/response-state`. The state endpoint always labels its values
 `final-end-of-run-not-scrubbed-minute`: changing the timeline does not pretend that final
 state belongs to the scrubbed minute. Schema-v5 and schema-v6 runs also expose

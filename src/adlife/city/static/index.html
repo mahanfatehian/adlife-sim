@@ -66,7 +66,12 @@
           <div class="opportunity-now"><span>AT THE SCRUBBER</span><strong id="opportunity-current" role="status" aria-live="polite" aria-atomic="true">0 AT THIS MINUTE · 0 FOR SELECTED AGENT</strong></div>
           <div class="opportunity-list" id="opportunity-list"></div>
           <p class="opportunity-empty" id="opportunity-empty">No opportunity evidence at this minute.</p>
-          <p class="opportunity-page-note" id="opportunity-page-note" hidden></p>
+          <nav class="evidence-pagination" id="opportunity-pagination" aria-label="Opportunity evidence pages" hidden>
+            <button id="opportunity-page-previous" type="button" aria-label="Previous opportunity evidence page">PREVIOUS</button>
+            <p class="opportunity-page-note" id="opportunity-page-note" role="status" aria-live="polite" aria-atomic="true"></p>
+            <button id="opportunity-page-next" type="button" aria-label="Next opportunity evidence page">NEXT</button>
+          </nav>
+          <p class="evidence-map-scope">Map markers show the currently displayed opportunity page.</p>
         </section>
         <section class="attention-panel" id="attention-panel" aria-label="Synthetic attention evidence" hidden>
           <div class="attention-heading"><div><span class="eyebrow">CAUSAL EVIDENCE / CURRENT MINUTE</span><h2>Modeled attention</h2></div><span class="attention-seal" aria-hidden="true">A</span></div>
@@ -76,7 +81,12 @@
           <div class="attention-now"><span>AT THE SCRUBBER</span><strong id="attention-current" role="status" aria-live="polite" aria-atomic="true">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
           <div class="attention-list" id="attention-list"></div>
           <p class="attention-empty" id="attention-empty">No attention evidence at this minute.</p>
-          <p class="attention-page-note" id="attention-page-note" hidden></p>
+          <nav class="evidence-pagination" id="attention-pagination" aria-label="Attention evidence pages" hidden>
+            <button id="attention-page-previous" type="button" aria-label="Previous attention evidence page">PREVIOUS</button>
+            <p class="attention-page-note" id="attention-page-note" role="status" aria-live="polite" aria-atomic="true"></p>
+            <button id="attention-page-next" type="button" aria-label="Next attention evidence page">NEXT</button>
+          </nav>
+          <p class="evidence-map-scope">Map markers show the currently displayed attention page.</p>
         </section>
         <section class="response-panel" id="response-panel" aria-labelledby="response-title" aria-describedby="response-claim" hidden>
           <div class="response-heading"><div><span class="eyebrow">RULE EVIDENCE / CURRENT MINUTE</span><h2 id="response-title">Campaign response ledger</h2><p id="response-scenario"></p></div><span class="response-seal" aria-hidden="true">R</span></div>
@@ -86,7 +96,11 @@
           <div class="response-now"><span>AT THE SCRUBBER</span><strong id="response-current" role="status" aria-live="polite" aria-atomic="true">0 RECORDS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
           <div class="response-list" id="response-list"></div>
           <p class="response-empty" id="response-empty">No response evidence at this minute.</p>
-          <p class="response-page-note" id="response-page-note" hidden></p>
+          <nav class="evidence-pagination" id="response-pagination" aria-label="Response evidence pages" hidden>
+            <button id="response-page-previous" type="button" aria-label="Previous response evidence page">PREVIOUS</button>
+            <p class="response-page-note" id="response-page-note" role="status" aria-live="polite" aria-atomic="true"></p>
+            <button id="response-page-next" type="button" aria-label="Next response evidence page">NEXT</button>
+          </nav>
           <section class="response-state-panel" id="response-state-panel" aria-labelledby="response-state-time" aria-describedby="response-state-warning response-state-claim" tabindex="0" hidden>
             <div class="response-state-heading"><div><span class="eyebrow" id="response-state-time">FINAL STATE / END OF RUN</span><h3>Campaign state ledger</h3></div><span class="state-seal" aria-hidden="true">S</span></div>
             <p class="response-state-warning" id="response-state-warning">NOT STATE AT THE SCRUBBED MINUTE</p>

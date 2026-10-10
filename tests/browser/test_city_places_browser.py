@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import socket
 import threading
 import time
@@ -43,6 +44,8 @@ from tests.unit.city.test_spatial_response import _response_input
 _BROWSER_PATHS = (
     Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
     Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
+    Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
     Path("/usr/bin/google-chrome"),
     Path("/usr/bin/chromium"),
     Path("/usr/bin/chromium-browser"),
@@ -52,8 +55,25 @@ _BROWSER_PATHS = (
 def _installed_browser() -> Path:
     browser = next((path for path in _BROWSER_PATHS if path.is_file()), None)
     if browser is None:
-        pytest.skip("no supported local Chromium browser executable is installed")
+        message = "no supported local Chromium browser executable is installed"
+        if os.environ.get("ADLIFE_REQUIRE_BROWSER") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
     return browser
+
+
+def test_required_browser_gate_never_silently_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(_installed_browser.__globals__, "_BROWSER_PATHS", ())
+    monkeypatch.setenv("ADLIFE_REQUIRE_BROWSER", "1")
+
+    try:
+        _installed_browser()
+    except (pytest.skip.Exception, pytest.fail.Exception) as error:
+        assert isinstance(error, pytest.fail.Exception)
+    else:
+        pytest.fail("required browser gate accepted a missing browser")
 
 
 @contextmanager
@@ -184,6 +204,8 @@ def _response_viewer() -> Iterator[
     tuple[
         str,
         SpatialCampaignScenario,
+        SpatialOpportunityEvaluation,
+        SpatialAttentionEvaluation,
         SpatialResponseEvaluation,
         SpatialResponseMetrics,
     ]
@@ -263,7 +285,14 @@ def _response_viewer() -> Iterator[
         spatial_response_metrics=response_metrics,
     )
     with _serve(application) as base_url:
-        yield base_url, scenario, response_evaluation, response_metrics
+        yield (
+            base_url,
+            scenario,
+            opportunities,
+            attention,
+            response_evaluation,
+            response_metrics,
+        )
 
 
 def test_place_viewer_renders_provenance_and_scrubs_without_external_requests(
@@ -594,7 +623,14 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
     console_errors: list[str] = []
     page_errors: list[str] = []
     with (
-        _response_viewer() as (base_url, scenario, response_evaluation, response_metrics),
+        _response_viewer() as (
+            base_url,
+            scenario,
+            _,
+            _,
+            response_evaluation,
+            response_metrics,
+        ),
         sync_playwright() as playwright,
     ):
         response_before = response_evaluation.model_dump(mode="json")
@@ -676,7 +712,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert "INTENTION PROXY" in page.locator(".response-card.state-update").first.inner_text()
         assert page.locator("#response-page-note").is_visible()
         assert page.locator("#response-page-note").inner_text() == (
-            f"Showing the first 100 of {len(minute_zero)} canonical response records."
+            f"Records 1-100 of {len(minute_zero)}"
         )
 
         assert page.locator("#response-state-panel").is_visible()
@@ -890,9 +926,637 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         browser.close()
 
 
+def test_saved_run_viewer_pages_every_busy_minute_evidence_record_in_canonical_order() -> None:
+    browser_path = _installed_browser()
+    with (
+        _response_viewer() as (
+            base_url,
+            _,
+            opportunities,
+            attention,
+            responses,
+            _,
+        ),
+        sync_playwright() as playwright,
+    ):
+        expected_opportunity_ids = [
+            item.opportunity_id for item in opportunities.opportunities if item.model_minute == 0
+        ]
+        expected_attention_ids = [
+            item.event_id for item in attention.events if item.model_minute == 0
+        ]
+        expected_response_ids = [
+            item.event_id for item in responses.records if item.model_minute == 0
+        ]
+        assert [
+            len(expected_opportunity_ids),
+            len(expected_attention_ids),
+            len(expected_response_ids),
+        ] == [150, 222, 144]
+        source_before = (
+            opportunities.model_dump(mode="json"),
+            attention.model_dump(mode="json"),
+            responses.model_dump(mode="json"),
+        )
+
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        external_requests: list[str] = []
+
+        def route_request(route: Route) -> None:
+            if route.request.url.startswith(base_url):
+                route.continue_()
+            else:
+                external_requests.append(route.request.url)
+                route.abort()
+
+        page.route("**/*", route_request)
+        page.goto(base_url, wait_until="networkidle")
+
+        def rendered_ids(kind: str) -> list[str]:
+            return page.locator(f".{kind}-card").evaluate_all(
+                "cards => cards.map(card => card.dataset.evidenceId)"
+            )
+
+        assert page.locator("#opportunity-page-note").inner_text() == "Records 1-100 of 150"
+        assert page.locator("#opportunity-page-previous").is_disabled()
+        assert page.locator("#opportunity-page-next").is_enabled()
+        assert rendered_ids("opportunity") == expected_opportunity_ids[:100]
+        opportunity_ids = rendered_ids("opportunity")
+
+        page.locator("#opportunity-page-next").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#opportunity-page-note")).to_have_text("Records 101-150 of 150")
+        assert page.locator("#opportunity-page-previous").is_enabled()
+        assert page.locator("#opportunity-page-next").is_disabled()
+        opportunity_ids.extend(rendered_ids("opportunity"))
+        assert opportunity_ids == expected_opportunity_ids
+        assert len(set(opportunity_ids)) == 150
+
+        page.locator("#opportunity-page-previous").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#opportunity-page-note")).to_have_text("Records 1-100 of 150")
+        assert rendered_ids("opportunity") == expected_opportunity_ids[:100]
+
+        assert page.locator("#attention-page-note").inner_text() == "Records 1-100 of 222"
+        attention_ids = rendered_ids("attention")
+        assert attention_ids == expected_attention_ids[:100]
+        page.locator("#attention-page-next").click()
+        expect(page.locator("#attention-page-note")).to_have_text("Records 101-200 of 222")
+        attention_ids.extend(rendered_ids("attention"))
+        page.locator("#attention-page-next").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#attention-page-note")).to_have_text("Records 201-222 of 222")
+        assert page.locator("#attention-page-next").is_disabled()
+        attention_ids.extend(rendered_ids("attention"))
+        assert attention_ids == expected_attention_ids
+        assert len(set(attention_ids)) == 222
+
+        assert page.locator("#response-page-note").inner_text() == "Records 1-100 of 144"
+        response_ids = rendered_ids("response")
+        assert response_ids == expected_response_ids[:100]
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        assert page.locator("#attention-page-note").inner_text() == "Records 201-222 of 222"
+        assert page.locator("#response-page-previous").is_enabled()
+        assert page.locator("#response-page-next").is_disabled()
+        response_ids.extend(rendered_ids("response"))
+        assert response_ids == expected_response_ids
+        assert len(set(response_ids)) == 144
+
+        page.locator(".response-card").first.click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        assert rendered_ids("response") == expected_response_ids[100:]
+
+        page.locator("#opportunity-page-next").click()
+        expect(page.locator("#opportunity-page-note")).to_have_text("Records 101-150 of 150")
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = '1'; "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        expect(page.locator("#response-current")).to_have_text(
+            "0 RECORDS AT THIS MINUTE · 0 FOR SELECTED AGENT"
+        )
+        assert page.locator(".opportunity-card").count() == 0
+        assert page.locator(".attention-card").count() == 0
+        assert page.locator(".response-card").count() == 0
+        assert page.locator("#opportunity-pagination").is_hidden()
+        assert page.locator("#attention-pagination").is_hidden()
+        assert page.locator("#response-pagination").is_hidden()
+
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = '0'; "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        expect(page.locator("#opportunity-page-note")).to_have_text("Records 1-100 of 150")
+        expect(page.locator("#attention-page-note")).to_have_text("Records 1-100 of 222")
+        expect(page.locator("#response-page-note")).to_have_text("Records 1-100 of 144")
+        assert rendered_ids("opportunity") == expected_opportunity_ids[:100]
+        assert rendered_ids("attention") == expected_attention_ids[:100]
+        assert rendered_ids("response") == expected_response_ids[:100]
+        assert not external_requests
+        browser.close()
+
+    assert source_before == (
+        opportunities.model_dump(mode="json"),
+        attention.model_dump(mode="json"),
+        responses.model_dump(mode="json"),
+    )
+
+
+def test_delayed_evidence_page_cannot_overwrite_a_newer_timeline_minute() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, responses, _), sync_playwright() as playwright:
+        source_before = responses.model_dump(mode="json")
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.evaluate(
+            """() => {
+              const originalFetch = window.fetch.bind(window);
+              document.documentElement.dataset.delayedPageStarted = 'false';
+              document.documentElement.dataset.delayedPageSettled = 'false';
+              window.fetch = (...args) => {
+                const url = String(args[0]);
+                if (
+                  document.documentElement.dataset.delayedPageStarted === 'false'
+                  && url.includes('/api/response-events?minute=0&offset=100&limit=100')
+                ) {
+                  document.documentElement.dataset.delayedPageStarted = 'true';
+                  return new Promise((resolve, reject) => {
+                    window.releaseDelayedEvidencePage = () => {
+                      originalFetch(...args).then(resolve, reject).finally(() => {
+                        document.documentElement.dataset.delayedPageSettled = 'true';
+                      });
+                    };
+                  });
+                }
+                return originalFetch(...args);
+              };
+            }"""
+        )
+
+        page.locator("#response-page-next").click()
+        expect(page.locator("html")).to_have_attribute("data-delayed-page-started", "true")
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = '1'; "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        expect(page.locator("#response-current")).to_have_text(
+            "0 RECORDS AT THIS MINUTE · 0 FOR SELECTED AGENT"
+        )
+        page.evaluate("window.releaseDelayedEvidencePage()")
+        expect(page.locator("html")).to_have_attribute("data-delayed-page-settled", "true")
+        page.wait_for_timeout(100)
+
+        assert page.locator("#time-slider").input_value() == "1"
+        assert page.locator(".response-card").count() == 0
+        assert page.locator("#response-pagination").is_hidden()
+        assert page.locator("#error-banner").is_hidden()
+        assert responses.model_dump(mode="json") == source_before
+        browser.close()
+
+
+def test_delayed_evidence_page_cannot_overwrite_a_newer_same_rail_request() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, responses, _), sync_playwright() as playwright:
+        expected_ids = [
+            record.event_id for record in responses.records if record.model_minute == 0
+        ][:100]
+        source_before = responses.model_dump(mode="json")
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.evaluate(
+            """() => {
+              const originalFetch = window.fetch.bind(window);
+              document.documentElement.dataset.delayedPageStarted = 'false';
+              document.documentElement.dataset.delayedPageSettled = 'false';
+              window.fetch = (...args) => {
+                const url = String(args[0]);
+                if (
+                  document.documentElement.dataset.delayedPageStarted === 'false'
+                  && url.includes('/api/response-events?minute=0&offset=100&limit=100')
+                ) {
+                  document.documentElement.dataset.delayedPageStarted = 'true';
+                  return new Promise((resolve, reject) => {
+                    window.releaseDelayedEvidencePage = () => {
+                      originalFetch(...args).then(resolve, reject).finally(() => {
+                        document.documentElement.dataset.delayedPageSettled = 'true';
+                      });
+                    };
+                  });
+                }
+                return originalFetch(...args);
+              };
+            }"""
+        )
+
+        page.locator("#response-page-next").click()
+        expect(page.locator("html")).to_have_attribute("data-delayed-page-started", "true")
+        page.evaluate("loadEvidencePage('response', 0)")
+        expect(page.locator("#response-page-note")).to_have_text("Records 1-100 of 144")
+        page.evaluate("window.releaseDelayedEvidencePage()")
+        expect(page.locator("html")).to_have_attribute("data-delayed-page-settled", "true")
+        page.wait_for_timeout(100)
+
+        assert page.locator("#response-page-note").inner_text() == "Records 1-100 of 144"
+        assert (
+            page.locator(".response-card").evaluate_all(
+                "cards => cards.map(card => card.dataset.evidenceId)"
+            )
+            == expected_ids
+        )
+        assert page.locator("#response-page-previous").is_disabled()
+        assert page.locator("#response-page-next").is_enabled()
+        assert page.locator("#error-banner").is_hidden()
+        assert responses.model_dump(mode="json") == source_before
+        browser.close()
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_error"),
+    [
+        ("offset", "Response evidence page is invalid"),
+        ("next_offset", "Response evidence page is invalid"),
+        (
+            "http",
+            "Could not load /api/response-events?minute=0&offset=0&limit=100 (503)",
+        ),
+    ],
+)
+def test_malformed_evidence_page_is_refused_without_replacing_the_last_committed_page(
+    corruption: str,
+    expected_error: str,
+) -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, responses, _), sync_playwright() as playwright:
+        expected_ids = [
+            record.event_id for record in responses.records if record.model_minute == 0
+        ][100:]
+        source_before = responses.model_dump(mode="json")
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+
+        def corrupt_page(route: Route) -> None:
+            if corruption == "http":
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body='{"detail":"temporarily unavailable"}',
+                )
+                return
+            response = route.fetch()
+            document = response.json()
+            if corruption == "offset":
+                document["offset"] = 1
+            else:
+                document["next_offset"] = 99
+            route.fulfill(response=response, json=document)
+
+        page.route(
+            "**/api/response-events?minute=0&offset=0&limit=100",
+            corrupt_page,
+        )
+        page.locator("#response-page-previous").click()
+        expect(page.locator("#error-banner")).to_be_visible()
+        expect(page.locator("#error-banner")).to_contain_text(expected_error)
+
+        assert page.locator("#response-page-note").inner_text() == "Records 101-144 of 144"
+        assert (
+            page.locator(".response-card").evaluate_all(
+                "cards => cards.map(card => card.dataset.evidenceId)"
+            )
+            == expected_ids
+        )
+        assert page.locator("#response-page-previous").is_enabled()
+        assert page.locator("#response-page-next").is_disabled()
+        assert responses.model_dump(mode="json") == source_before
+        browser.close()
+
+
+@pytest.mark.parametrize(
+    ("kind", "corruption"),
+    [
+        ("opportunity", "null-agent"),
+        ("opportunity", "extra-record-field"),
+        ("opportunity", "unknown-campaign"),
+        ("opportunity", "invalid-hash"),
+        ("attention", "wrong-city-hash"),
+        ("opportunity", "incoherent-time"),
+        ("attention", "invalid-number"),
+        ("attention", "invalid-event-shape"),
+        ("response", "invalid-nested-state"),
+        ("opportunity", "channel-count-keys"),
+        ("attention", "event-count-sum"),
+        ("attention", "unknown-agent-count"),
+        ("response", "response-channel-sum"),
+    ],
+)
+def test_evidence_page_refuses_corrupt_records_and_aggregate_counts_transactionally(
+    kind: str,
+    corruption: str,
+) -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.locator(f"#{kind}-page-next").click()
+        expect(page.locator(f"#{kind}-page-note")).to_contain_text("Records 101-")
+        committed_note = page.locator(f"#{kind}-page-note").inner_text()
+        committed_ids = page.locator(f".{kind}-card").evaluate_all(
+            "cards => cards.map(card => card.dataset.evidenceId)"
+        )
+
+        endpoint = {
+            "opportunity": "opportunities",
+            "attention": "attention-events",
+            "response": "response-events",
+        }[kind]
+
+        def corrupt_page(route: Route) -> None:
+            response = route.fetch()
+            document = response.json()
+            item = document["items"][0]
+            if corruption == "null-agent":
+                item["agent_id"] = None
+            elif corruption == "extra-record-field":
+                item["credential"] = "sk-live-abcdef1234567890"
+            elif corruption == "unknown-campaign":
+                item["campaign_id"] = "unknown-campaign"
+            elif corruption == "invalid-hash":
+                item["scenario_sha256"] = "not-a-sha256"
+            elif corruption == "wrong-city-hash":
+                item["city_sha256"] = "0" * 64
+            elif corruption == "incoherent-time":
+                item["day_index"] = 1
+            elif corruption == "invalid-number":
+                item["notice_draw"] = None
+            elif corruption == "invalid-event-shape":
+                item["noticed"] = "yes"
+            elif corruption == "invalid-nested-state":
+                state_update = next(
+                    record
+                    for record in document["items"]
+                    if record["event_type"] == "spatial.state-updated"
+                )
+                state_update["previous_state"]["agent_id"] = None
+            elif corruption == "channel-count-keys":
+                document["channel_counts"]["telepathy"] = 0
+            elif corruption == "event-count-sum":
+                document["event_type_counts"]["spatial.impression"] += 1
+            elif corruption == "unknown-agent-count":
+                document["agent_counts"]["person-999"] = 0
+            elif corruption == "response-channel-sum":
+                document["channel_counts"]["roadside-billboard"] += 1
+            else:  # pragma: no cover - parameter table owns the cases
+                raise AssertionError(corruption)
+            route.fulfill(response=response, json=document)
+
+        page.route(
+            f"**/api/{endpoint}?minute=0&offset=0&limit=100",
+            corrupt_page,
+        )
+        page.locator(f"#{kind}-page-previous").click()
+        expect(page.locator("#error-banner")).to_be_visible()
+        expect(page.locator("#error-banner")).to_contain_text(
+            f"{kind.capitalize()} evidence page is invalid"
+        )
+        assert page.locator(f"#{kind}-page-note").inner_text() == committed_note
+        assert (
+            page.locator(f".{kind}-card").evaluate_all(
+                "cards => cards.map(card => card.dataset.evidenceId)"
+            )
+            == committed_ids
+        )
+        assert (
+            page.evaluate(
+                "kind => state[evidencePageContracts[kind].pageKey].offset",
+                kind,
+            )
+            == 100
+        )
+        browser.close()
+
+
+def test_evidence_page_accepts_the_largest_binary64_value_below_one() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+
+        def use_open_upper_bound(route: Route) -> None:
+            response = route.fetch()
+            document = response.json()
+            impression = next(
+                item for item in document["items"] if item["event_type"] == "spatial.impression"
+            )
+            impression["notice_draw"] = math.nextafter(1.0, 0.0)
+            impression["noticed"] = False
+            route.fulfill(response=response, json=document)
+
+        page.route(
+            "**/api/attention-events?minute=0&offset=100&limit=100",
+            use_open_upper_bound,
+        )
+        page.locator("#attention-page-next").click()
+        expect(page.locator("#attention-page-note")).to_have_text("Records 101-200 of 222")
+        expect(page.locator("#error-banner")).to_be_hidden()
+        browser.close()
+
+
+def test_evidence_page_render_failure_preserves_the_last_committed_page() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        committed_ids = page.locator(".response-card").evaluate_all(
+            "cards => cards.map(card => card.dataset.evidenceId)"
+        )
+        page.evaluate(
+            """() => {
+              window.savedRenderMap = renderMap;
+              renderMap = () => { throw new Error('injected render failure'); };
+            }"""
+        )
+
+        page.locator("#response-page-previous").click()
+        expect(page.locator("#error-banner")).to_contain_text("injected render failure")
+        assert page.locator("#response-page-note").inner_text() == "Records 101-144 of 144"
+        assert (
+            page.locator(".response-card").evaluate_all(
+                "cards => cards.map(card => card.dataset.evidenceId)"
+            )
+            == committed_ids
+        )
+        assert page.locator("#response-page-previous").is_enabled()
+        assert page.locator("#response-page-next").is_disabled()
+        assert page.evaluate("state.responsePage.offset") == 100
+        browser.close()
+
+
+def test_successful_evidence_retry_clears_only_its_own_current_error() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        pattern = "**/api/response-events?minute=0&offset=0&limit=100"
+
+        def fail_page(route: Route) -> None:
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"detail":"temporarily unavailable"}',
+            )
+
+        page.route(pattern, fail_page)
+        page.locator("#response-page-previous").click()
+        expect(page.locator("#error-banner")).to_contain_text("Could not load")
+        page.unroute(pattern, fail_page)
+
+        page.locator("#response-page-previous").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 1-100 of 144")
+        expect(page.locator("#error-banner")).to_be_hidden()
+
+        page.evaluate("showError('unrelated boot integrity failure')")
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        expect(page.locator("#error-banner")).to_have_text("unrelated boot integrity failure")
+        expect(page.locator("#error-banner")).to_be_visible()
+        browser.close()
+
+
+def test_failed_coordinated_refresh_keeps_the_last_committed_selection_and_minute() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, responses, _), sync_playwright() as playwright:
+        source_before = responses.model_dump(mode="json")
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def fail_candidate_frame(route: Route) -> None:
+            url = route.request.url
+            if "agent_id=person-002" in url or "minute=1" in url:
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body='{"detail":"temporarily unavailable"}',
+                )
+                return
+            route.continue_()
+
+        page.route("**/api/frame?*", fail_candidate_frame)
+        page.goto(base_url, wait_until="networkidle")
+
+        def committed_snapshot() -> dict[str, object]:
+            return page.evaluate(
+                """() => ({
+                  selected: state.selected,
+                  selectedLabel: document.getElementById('selected-id').textContent,
+                  selectedPeople: Array.from(document.querySelectorAll('.person.selected'))
+                    .map(item => item.textContent),
+                  minute: state.minute,
+                  slider: document.getElementById('time-slider').value,
+                  opportunityNote: document.getElementById('opportunity-page-note').textContent,
+                  opportunityIds: Array.from(document.querySelectorAll('.opportunity-card'))
+                    .map(item => item.dataset.evidenceId),
+                  attentionNote: document.getElementById('attention-page-note').textContent,
+                  attentionIds: Array.from(document.querySelectorAll('.attention-card'))
+                    .map(item => item.dataset.evidenceId),
+                  responseNote: document.getElementById('response-page-note').textContent,
+                  responseIds: Array.from(document.querySelectorAll('.response-card'))
+                    .map(item => item.dataset.evidenceId),
+                })"""
+            )
+
+        committed = committed_snapshot()
+        assert committed["selected"] == "person-001"
+        selection_sources = [
+            page.locator("#people-list .person").nth(1),
+            page.locator(".opportunity-card").filter(has_text="PERSON-002").first,
+            page.locator(".attention-card").filter(has_text="PERSON-002").first,
+            page.locator(".response-card").filter(has_text="PERSON-002").first,
+        ]
+
+        for source in selection_sources:
+            expect(source).to_be_visible()
+            source.click()
+            page.wait_for_function("() => state.timelineLoading === false")
+            expect(page.locator("#error-banner")).to_contain_text("Could not load /api/frame")
+            assert committed_snapshot() == committed
+
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = '1'; "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        page.wait_for_function("() => state.timelineLoading === false")
+        expect(page.locator("#error-banner")).to_contain_text("Could not load /api/frame")
+        assert committed_snapshot() == committed
+
+        page.unroute("**/api/frame?*", fail_candidate_frame)
+        page.evaluate(
+            """() => {
+              window.savedTimelineRenderMap = renderMap;
+              renderMap = () => { throw new Error('injected timeline render failure'); };
+            }"""
+        )
+        page.locator("#people-list .person").nth(1).click()
+        page.wait_for_function("() => state.timelineLoading === false")
+        expect(page.locator("#error-banner")).to_contain_text("injected timeline render failure")
+        assert committed_snapshot() == committed
+        assert responses.model_dump(mode="json") == source_before
+        browser.close()
+
+
 def test_response_viewer_ignores_a_superseded_request_failure_during_playback() -> None:
     browser_path = _installed_browser()
-    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -990,7 +1654,10 @@ def test_response_viewer_refuses_malformed_full_run_metrics_without_fabricating_
     expected_error: str,
 ) -> None:
     browser_path = _installed_browser()
-    with _response_viewer() as (base_url, _, _, response_metrics), sync_playwright() as playwright:
+    with (
+        _response_viewer() as (base_url, _, _, _, _, response_metrics),
+        sync_playwright() as playwright,
+    ):
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -1195,7 +1862,7 @@ def test_response_viewer_refuses_malformed_full_run_metrics_without_fabricating_
 def test_response_metrics_endpoint_is_not_requested_without_its_capability() -> None:
     browser_path = _installed_browser()
     metric_requests: list[str] = []
-    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -1228,7 +1895,7 @@ def test_response_metrics_endpoint_is_not_requested_without_its_capability() -> 
 def test_response_viewer_preserves_the_maximum_seed_without_javascript_rounding() -> None:
     browser_path = _installed_browser()
     maximum_seed = 2**63 - 1
-    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -1254,7 +1921,7 @@ def test_response_viewer_preserves_the_maximum_seed_without_javascript_rounding(
 
 def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenance() -> None:
     browser_path = _installed_browser()
-    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -1345,7 +2012,7 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
 
 def test_response_viewer_busy_minute_is_legible_and_contained_at_narrow_width() -> None:
     browser_path = _installed_browser()
-    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -1356,6 +2023,16 @@ def test_response_viewer_busy_minute_is_legible_and_contained_at_narrow_width() 
 
         assert page.locator(".response-card").count() == 100
         assert page.locator("#response-page-note").is_visible()
+        page.locator("#response-page-next").focus()
+        assert page.locator("#response-page-next").evaluate(
+            "element => document.activeElement === element"
+        )
+        assert (
+            page.locator("#response-page-next").evaluate(
+                "element => getComputedStyle(element).outlineStyle"
+            )
+            != "none"
+        )
         layout = page.evaluate(
             """() => {
               const fontSize = (selector) => Number.parseFloat(
@@ -1375,6 +2052,23 @@ def test_response_viewer_busy_minute_is_legible_and_contained_at_narrow_width() 
                 viewportWidth: window.innerWidth,
                 documentWidth: document.documentElement.scrollWidth,
                 panelWidth: document.getElementById('response-panel').getBoundingClientRect().width,
+                paginationContained: ['opportunity', 'attention', 'response'].every((kind) => {
+                  const panel = document.getElementById(`${kind}-panel`);
+                  const pagination = document.getElementById(`${kind}-pagination`);
+                  const paginationWidth = pagination.getBoundingClientRect().width;
+                  return paginationWidth <= panel.getBoundingClientRect().width;
+                }),
+                paginationStatuses: ['opportunity', 'attention', 'response'].map((kind) => {
+                  const status = document.getElementById(`${kind}-page-note`);
+                  return {
+                    role: status.getAttribute('role'),
+                    live: status.getAttribute('aria-live'),
+                    atomic: status.getAttribute('aria-atomic'),
+                  };
+                }),
+                listLiveRegions: ['opportunity-list', 'attention-list', 'response-list'].map(
+                  (id) => document.getElementById(id).getAttribute('aria-live')
+                ),
                 cardsContained: [...document.querySelectorAll('.response-card')].every(
                   (card) => card.scrollWidth <= card.clientWidth
                 ),
@@ -1387,4 +2081,9 @@ def test_response_viewer_busy_minute_is_legible_and_contained_at_narrow_width() 
     assert not undersized, f"response evidence below 10px: {undersized!r}"
     assert layout["documentWidth"] <= layout["viewportWidth"]
     assert layout["panelWidth"] <= layout["viewportWidth"]
+    assert layout["paginationContained"] is True
+    assert (
+        layout["paginationStatuses"] == [{"role": "status", "live": "polite", "atomic": "true"}] * 3
+    )
+    assert layout["listLiveRegions"] == [None, None, None]
     assert layout["cardsContained"] is True

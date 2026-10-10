@@ -301,7 +301,11 @@ also depend on E. Keep existing CLI/TUI/report paths working.
   **D3/D4 progress (2026-10-10):** the saved-run browser now presents the verified
   schema-v6 full-run response ledger with direct-rule and campaign-state receipts,
   keyboard provenance, safe text insertion, malformed-response refusal, narrow-screen
-  containment, and no external resources. D remains open: scenario/study operation,
+  containment, and no external resources. A subsequent bounded D1/D2/D4 slice makes every
+  persisted current-minute opportunity, attention, and response record reachable through
+  strict 100-record canonical pages. It adds exact ranges, keyboard navigation, stale-request
+  refusal, last-page retention on failure, page-scoped map disclosure, and 390-pixel QA while
+  keeping the API read-only and artifacts immutable. D remains open: scenario/study operation,
   jobs, report download, broader timeline mechanisms, authentication, provider settings,
   and the complete shell-free workflow are not implemented here.
 

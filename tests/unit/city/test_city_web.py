@@ -310,7 +310,9 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'fetchJson("/api/place-assignments")' in js.text
     assert 'fetchJson("/api/attention-summary")' in js.text
     assert 'fetchJson("/api/spatial-metrics")' in js.text
-    assert "fetchJson(`/api/attention-events?minute=${next}`)" in js.text
+    assert 'endpoint: "/api/attention-events"' in js.text
+    assert 'fetchJson(evidencePageUrl("attention", next, offsets.attention))' in js.text
+    assert "limit=${EVIDENCE_PAGE_SIZE}" in js.text
     assert "drawAttentionMarker" in js.text
     assert 'byId("model-label").textContent' in js.text
     assert "drawPlaceMarker" in js.text
