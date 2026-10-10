@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Local city workbench validation foundation (D1a)** — a human-only
+  `city-workbench --workspace PATH` command serves a polished, no-network FastAPI/vanilla
+  shell on loopback with verified fictional city and creative catalogs. Its strict
+  schema-1 validation endpoint applies exact same-origin/CSRF/content-type and 128 KiB
+  streaming limits, derives road coordinates from verified geometry, constructs complete
+  deterministic cohort inputs, and returns stable hashes without creating jobs or run
+  artifacts. Workspace components reject symlinks, Windows junctions/reparse points and
+  replacement races before startup; the exact wheel carries and instantiates all new
+  resources outside the checkout. Job execution, persistence, provider/OAuth settings,
+  real-city calibration and outcome prediction remain explicitly unavailable.
 - **City-pack v2 and offline catalog foundation** — backwards-compatible city packs
   can now preserve directed road geometry, exact bounds, IANA time-zone metadata,
   source provenance and known omissions; mobility-only v2 runs freeze those inputs and

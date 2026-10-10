@@ -102,6 +102,30 @@ This command does not run or persist the advertising engine. Its minute-addressa
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
+## `adlife city-workbench --workspace PATH [--port N]`
+
+Start the D1a local city-workbench validation foundation at
+`http://127.0.0.1:8765`. `--workspace` is required and names a dedicated local
+directory; each existing path component is checked without following symlinks or
+Windows reparse points, missing directories are created one at a time, and the resolved
+directory identity is pinned and rechecked before the server starts. `--port` accepts
+1–65535. The command is interactive, accepts human output mode only, uses one Uvicorn
+worker with reload disabled, and never opens a browser automatically.
+
+The bundled, no-network shell and schema-1 API can report honest capabilities, list the
+verified fictional city catalog, list complete packaged fictional creative snapshots,
+and validate a bounded scenario through `POST /api/scenarios/validate`. Writes require
+an exact same-origin request, exact `application/json`, a per-process CSRF header, and a
+128 KiB body limit. Validation derives roadside coordinates from verified geometry,
+constructs a complete synthetic cohort response grid, and returns only identifiers,
+counts, channels, and canonical hashes. It creates no run directory and reserves no run
+identifier.
+
+This milestone does **not** start simulation jobs, persist workbench runs, inspect new
+workbench artifacts, configure model providers or OAuth, supply a real-city digital twin,
+use calibrated population or traffic behavior, or predict sales. Those capabilities
+remain later roadmap gates; the enabled city response mode is deterministic rules.
+
 ## `adlife city-run [PACK | --city-id ID] [--places FILE] [--spatial-campaign FILE] [--spatial-response FILE] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
 
 Save a deterministic city run under `ROOT/city-runs/ID`. Supply

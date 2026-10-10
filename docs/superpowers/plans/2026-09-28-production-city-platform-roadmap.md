@@ -276,11 +276,18 @@ and compare a declared treatment without claiming actual sales.
 **Depends on:** A for saved timeline; C for advertising panels. Any remote writes
 also depend on E. Keep existing CLI/TUI/report paths working.
 
-- [ ] **D1 — Define a bounded web API.** List cities, create/validate scenarios,
-  start and inspect jobs, page immutable event/agent timelines and fetch reports.
-  Use versioned response schemas, pagination, cancellation and clear error codes;
-  no path-taking endpoints or long synchronous simulation inside a request.
-  Contract tests cover empty/corrupt runs, oversized requests and stable ordering.
+- [x] **D1a — Ship the bounded local validation foundation.** The loopback-only
+  `city-workbench` command pins a server-owned workspace, serves a packaged no-network
+  shell, exposes honest schema-1 capabilities plus verified city/creative catalogs, and
+  validates strict scenario drafts without reserving a run ID or writing an artifact.
+  Same-origin, CSRF, exact content type, fragmented-body limits, strict JSON, safe error
+  envelopes, deterministic construction hashes, wheel resources and clean-room app
+  construction are contract tested. Jobs, persistence and run discovery are explicitly
+  false capabilities.
+- [ ] **D1b — Add bounded jobs and immutable workbench artifacts.** Add schema-v7
+  workbench-input persistence, prepare/publish application seams, one process-local worker,
+  cancellation boundaries, verified completed-run discovery, and run/report read APIs.
+  No path-taking endpoint or long synchronous simulation request is permitted.
 - [ ] **D2 — Build the full timeline and map inspector.** Show time zone/model clock,
   day/night provenance, routes, activity, ad opportunity/impression/response, memory
   and social causal links. Offer a catalog-backed world-map city picker; let the

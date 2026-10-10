@@ -47,6 +47,27 @@ canonical order, validates home capacity and every directed itinerary before gen
 frames, and exposes assignments as data rather than mutable agent fields. Neither the
 web adapter nor the CLI can inject an unvalidated assignment.
 
+The separate local city workbench is an application-layer adapter under `adlife.city`,
+not a new core dependency. Its D1a path is deliberately one-way:
+
+```text
+loopback HTML / schema-1 HTTP
+        -> same-origin, CSRF, size and strict-JSON boundary
+        -> packaged city + fictional creative resolution
+        -> immutable CityMobility / SpatialCampaignScenario / SpatialResponseInput
+```
+
+`adlife city-workbench --workspace PATH` first checks every unresolved workspace path
+component for links, junctions, reparse points and non-directories, then pins the resolved
+directory identity. HTTP clients never submit filesystem paths, creative copy, derived
+coordinates/hashes, agent IDs or fictional flags. Validation constructs and independently
+checks complete domain inputs but performs no network request, starts no worker, reserves
+no run ID and writes no artifact. The static shell reports those limits rather than
+presenting job, provider or OAuth controls that do not work yet. FastAPI, workspace
+pinning, CSRF and packaged-resource loading stay outside `adlife.core`; the only core
+addition is the pure road-coordinate helper shared by construction and geographic
+validation.
+
 `core/domain/spatial_campaign.py` is another separate immutable boundary. A schema-v1
 spatial scenario is content-addressed, binds to an exact city ID/hash, references
 fictional campaigns by stable ID, and declares billboard/phone placement assumptions.
@@ -172,8 +193,10 @@ paired intervals per metric. After `city-report` performs the same source verifi
 analysis, its renderer consumes only that revalidated result and publishes a fixed-path,
 zero-JavaScript, no-network evidence ledger; the renderer never receives raw events,
 response inputs, provider bodies, or source paths. Both analysis and report are read-only.
-Broader spatial social/purchase mechanisms, automatic jobs, the workbench, authentication,
-calibration, and external validity remain open.
+Broader spatial social/purchase mechanisms, automatic workbench jobs and persistence, the
+full scenario/timeline UI, authentication, provider settings, calibration, and external
+validity remain open. The shipped D1a workbench is a side-effect-free validation
+foundation, not the complete operator workflow.
 
 ## The cognition seam
 

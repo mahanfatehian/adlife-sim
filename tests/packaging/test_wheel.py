@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from adlife.city.workbench_input import CreativeTemplateCatalog
 from adlife.core.domain.city import CityPackV2, parse_city_pack_json
 from adlife.core.domain.city_catalog import parse_city_catalog_json
 
@@ -111,6 +112,69 @@ def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> Non
     assert entry.city_id == pack.city_id == "fictional-grid-v2"
     assert entry.qualification == "fictional-fixture"
     assert entry.pack_sha256 == pack.fingerprint
+
+
+def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
+    built_wheel: Path, tmp_path: Path
+) -> None:
+    import json
+
+    from scripts import smoke_release
+
+    with zipfile.ZipFile(built_wheel) as wheel:
+        names = set(wheel.namelist())
+        creative_bytes = wheel.read("adlife/city/creative_templates.json")
+        shell = wheel.read("adlife/city/static/workbench.html").decode("utf-8")
+        style = wheel.read("adlife/city/static/workbench.css").decode("utf-8")
+    for resource in (
+        "adlife/city/creative_templates.json",
+        "adlife/city/static/workbench.html",
+        "adlife/city/static/workbench.css",
+    ):
+        assert resource in names
+    catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
+    assert [item.template_id for item in catalog.templates] == [
+        "fictional-crispy-meal-v1",
+        "fictional-device-launch-v1",
+    ]
+    assert "__ADLIFE_CSRF_TOKEN__" in shell
+    assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell
+    assert "<script" not in shell.lower()
+    assert "http://" not in shell and "https://" not in shell
+    assert "@import" not in style.lower() and "url(" not in style.lower()
+
+    scratch = tmp_path / "workbench-clean-room"
+    scratch.mkdir()
+    python, uv = smoke_release._create_interpreter(tmp_path)
+    smoke_release._expose_locked_dependencies(python)
+    smoke_release._install_wheel(python, uv, built_wheel, no_deps=True)
+    probe = smoke_release._run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import json, pathlib, sys, sysconfig; "
+            "import adlife; "
+            "from adlife.city.workbench_workspace import prepare_workbench_workspace; "
+            "from adlife.city.workbench_web import create_city_workbench_app; "
+            "package=pathlib.Path(adlife.__file__).resolve(); "
+            "assert package.is_relative_to(pathlib.Path(sysconfig.get_path('purelib')).resolve()); "
+            "workspace=prepare_workbench_workspace(pathlib.Path(sys.argv[1])); "
+            "app=create_city_workbench_app(workspace, csrf_token='installed-wheel-token'); "
+            "paths=sorted({route.path for route in app.routes}); "
+            "print(json.dumps(paths))",
+            str(scratch / "workspace"),
+        ],
+        cwd=scratch,
+    )
+    assert json.loads(probe.stdout) == [
+        "/",
+        "/api/catalog/cities",
+        "/api/creative-templates",
+        "/api/scenarios/validate",
+        "/api/workbench",
+        "/assets/workbench.css",
+    ]
 
 
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:
