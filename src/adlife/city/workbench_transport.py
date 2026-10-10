@@ -5,23 +5,34 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from hashlib import sha256
 from typing import ClassVar, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from adlife.city.catalog import (
     CityCatalogError,
     load_city_catalog,
     select_catalog_city,
 )
-from adlife.city.workbench_input import WorkbenchRunDraft
+from adlife.city.run_store import StoredCityRun
+from adlife.city.workbench_binding import validate_workbench_execution_binding
+from adlife.city.workbench_input import (
+    CreativeTemplate,
+    NormalizedWorkbenchScenarioDraft,
+    WorkbenchCohortDraft,
+    WorkbenchRunDraft,
+)
 from adlife.core.domain.city import CityBounds, CityPackV2, CitySource
 from adlife.core.domain.city_catalog import (
     CityCatalogEntry,
     DataOrigin,
     Qualification,
 )
+from adlife.core.domain.city_run import CityRunManifestV7
+from adlife.core.domain.identifiers import validate_portable_run_identifier
 from adlife.core.domain.person import DomainModel
+from adlife.core.domain.serialization import canonical_json
 
 _CANONICAL_SEED = re.compile(r"^(?:0|[1-9][0-9]{0,18})$")
 _MAX_SEED = 2**63 - 1
@@ -150,9 +161,134 @@ def build_workbench_city_detail(city_id: str) -> WorkbenchCityDetail:
     )
 
 
+class WorkbenchRunSettingsView(DomainModel):
+    """Browser projection of immutable execution settings with an exact seed token."""
+
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    agent_count: int = Field(ge=1, le=30)
+    days: int = Field(ge=1, le=7)
+    seed: str = Field(pattern=_CANONICAL_SEED.pattern, max_length=19)
+    response_mode: Literal["deterministic-rules"] = "deterministic-rules"
+
+    @field_validator("run_id")
+    @classmethod
+    def portable_run_id(cls, value: str) -> str:
+        return validate_portable_run_identifier(value)
+
+    @field_validator("seed")
+    @classmethod
+    def bounded_seed(cls, value: str) -> str:
+        if int(value) > _MAX_SEED:
+            raise ValueError("workbench input view seed exceeds its supported range")
+        return value
+
+
+class WorkbenchRunInputView(DomainModel):
+    """Path-free browser projection of one fully verified schema-v7 input."""
+
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    run_schema_version: Literal[7] = 7
+    workbench_input_schema_version: Literal[1] = 1
+    manifest_sha256: str = Field(pattern=_HASH_PATTERN)
+    workbench_input_sha256: str = Field(pattern=_HASH_PATTERN)
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario_sha256: str = Field(pattern=_HASH_PATTERN)
+    creative_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario: NormalizedWorkbenchScenarioDraft
+    cohort: WorkbenchCohortDraft
+    settings: WorkbenchRunSettingsView
+    creative_template: CreativeTemplate
+
+    @field_validator("run_schema_version", mode="before")
+    @classmethod
+    def exact_run_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 7:
+            raise ValueError("run_schema_version must be integer 7")
+        return value
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_input_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("workbench_input_schema_version must be integer 1")
+        return value
+
+    @model_validator(mode="after")
+    def internally_consistent(self) -> Self:
+        if self.run_id != self.settings.run_id:
+            raise ValueError("workbench input view run identifier is inconsistent")
+        if self.creative_sha256 != self.creative_template.fingerprint:
+            raise ValueError("workbench input view creative hash is inconsistent")
+        if self.scenario.campaign.creative_template_id != self.creative_template.template_id:
+            raise ValueError("workbench input view creative template is inconsistent")
+        return self
+
+
+def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputView:
+    """Project one already verified v7 record after rechecking every input binding."""
+    if not isinstance(stored, StoredCityRun):
+        raise TypeError("stored must be a StoredCityRun")
+    manifest = stored.manifest
+    workbench_input = stored.workbench_input
+    if not isinstance(manifest, CityRunManifestV7):
+        raise ValueError("workbench input view requires a schema-v7 run")
+    if workbench_input is None:
+        raise ValueError("workbench input view requires its frozen workbench input")
+    try:
+        workbench_input = validate_workbench_execution_binding(
+            workbench_input,
+            pack=stored.pack,
+            run_id=manifest.run_id,
+            seed=manifest.seed,
+            agent_count=manifest.agent_count,
+            days=manifest.days,
+            places=stored.mobility.places,
+            spatial_scenario=stored.spatial_scenario,
+            spatial_response=stored.response_input,
+        )
+    except ValueError:
+        raise ValueError("workbench input view binding is invalid") from None
+    scenario = stored.spatial_scenario
+    if scenario is None:
+        raise ValueError("workbench input view requires its bound scenario")
+    creative = workbench_input.creative_template
+    if (
+        manifest.workbench_input_schema_version != workbench_input.schema_version
+        or manifest.workbench_input_sha256 != workbench_input.fingerprint
+        or manifest.city_sha256 != stored.pack.fingerprint
+        or manifest.scenario_sha256 != scenario.fingerprint
+        or len(scenario.campaigns) != 1
+        or scenario.campaigns[0].creative_sha256 != creative.fingerprint
+    ):
+        raise ValueError("workbench input view hashes are inconsistent")
+    draft = workbench_input.draft
+    settings = draft.settings
+    return WorkbenchRunInputView(
+        run_id=manifest.run_id,
+        manifest_sha256=sha256((canonical_json(manifest) + "\n").encode("utf-8")).hexdigest(),
+        workbench_input_sha256=workbench_input.fingerprint,
+        city_sha256=stored.pack.fingerprint,
+        scenario_sha256=scenario.fingerprint,
+        creative_sha256=creative.fingerprint,
+        scenario=draft.scenario,
+        cohort=draft.cohort,
+        settings=WorkbenchRunSettingsView(
+            run_id=settings.run_id,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            seed=str(settings.seed),
+            response_mode=settings.response_mode,
+        ),
+        creative_template=creative,
+    )
+
+
 __all__ = [
     "WorkbenchCityDetail",
     "WorkbenchDraftTransportError",
+    "WorkbenchRunInputView",
+    "WorkbenchRunSettingsView",
     "build_workbench_city_detail",
+    "build_workbench_run_input_view",
     "parse_workbench_http_draft",
 ]

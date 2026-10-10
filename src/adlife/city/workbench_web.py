@@ -25,6 +25,7 @@ from adlife.city.catalog import (
     UnknownCatalogCity,
     load_city_catalog,
 )
+from adlife.city.run_store import StoredCityRun
 from adlife.city.web import (
     CityViewContext,
     city_dashboard_response,
@@ -59,6 +60,7 @@ from adlife.city.workbench_security import (
 from adlife.city.workbench_transport import (
     WorkbenchDraftTransportError,
     build_workbench_city_detail,
+    build_workbench_run_input_view,
     parse_workbench_http_draft,
 )
 from adlife.city.workbench_validation import (
@@ -71,6 +73,7 @@ from adlife.city.workbench_workspace import (
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
+from adlife.core.domain.city_run import CityRunManifestV7
 from adlife.core.ports.run_store import (
     DuplicateRun,
     RunNotFound,
@@ -154,6 +157,10 @@ class WorkbenchRunNotFound(ValueError):
 
 class WorkbenchRunUnavailable(RuntimeError):
     """A value-free refusal for an artifact that cannot be freshly verified."""
+
+
+class WorkbenchInputUnavailable(ValueError):
+    """A verified legacy run has no frozen browser workbench input."""
 
 
 def _read_packaged_text(relative: str) -> str:
@@ -316,7 +323,7 @@ def create_city_workbench_app(
     repository = WorkbenchRunRepository(workspace)
     jobs = CityJobManager(repository)
 
-    def verified_city_view(run_id: object) -> CityViewContext:
+    def verified_stored_run(run_id: object) -> StoredCityRun:
         try:
             portable_run_id = validate_run_id(run_id)
         except UnsafeRunLocation:
@@ -329,7 +336,10 @@ def create_city_workbench_app(
             raise WorkbenchRunUnavailable from None
         except StorageError:
             raise WorkbenchRunUnavailable from None
+        return stored
 
+    def verified_city_view(run_id: object) -> CityViewContext:
+        stored = verified_stored_run(run_id)
         schema_version = stored.manifest.schema_version
         try:
             spatial_metrics = metrics_for_stored_city_run(stored) if schema_version >= 5 else None
@@ -347,6 +357,11 @@ def create_city_workbench_app(
                 response_input=stored.response_input,
                 response_evaluation=stored.response_evaluation,
                 spatial_response_metrics=response_metrics,
+                workbench_input_sha256=(
+                    stored.manifest.workbench_input_sha256
+                    if isinstance(stored.manifest, CityRunManifestV7)
+                    else None
+                ),
             )
         except (StorageError, ValueError):
             raise WorkbenchRunUnavailable from None
@@ -556,6 +571,17 @@ def create_city_workbench_app(
             "The saved run could not be verified.",
         )
 
+    @app.exception_handler(WorkbenchInputUnavailable)
+    async def workbench_input_unavailable_handler(
+        _request: Request,
+        _error: WorkbenchInputUnavailable,
+    ) -> JSONResponse:
+        return workbench_error(
+            404,
+            "workbench-input-unavailable",
+            "This saved run has no browser workbench input.",
+        )
+
     @app.exception_handler(StorageError)
     async def storage_conflict_handler(
         _request: Request,
@@ -600,6 +626,14 @@ def create_city_workbench_app(
         return Response(
             _read_packaged_text("workbench.css"),
             media_type="text/css",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.get("/assets/workbench.js", include_in_schema=False)
+    def client_script() -> Response:
+        return Response(
+            _read_packaged_text("workbench.js"),
+            media_type="text/javascript",
             headers={"X-Content-Type-Options": "nosniff"},
         )
 
@@ -729,6 +763,21 @@ def create_city_workbench_app(
                 {"request": "Unknown field."},
             )
         return JSONResponse(content=jobs.cancel(_require_job_id(job_id)).model_dump(mode="json"))
+
+    @app.get("/api/runs/{run_id}/workbench-input")
+    def workbench_run_input(run_id: str, request: Request) -> JSONResponse:
+        _require_empty_query(request)
+        stored = verified_stored_run(run_id)
+        if not isinstance(stored.manifest, CityRunManifestV7):
+            raise WorkbenchInputUnavailable
+        try:
+            view = build_workbench_run_input_view(stored)
+        except ValueError:
+            raise WorkbenchRunUnavailable from None
+        return JSONResponse(
+            content=view.model_dump(mode="json"),
+            headers=_SHELL_HEADERS,
+        )
 
     install_city_view_routes(
         app,

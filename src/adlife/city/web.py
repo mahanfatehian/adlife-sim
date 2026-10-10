@@ -65,6 +65,7 @@ _DASHBOARD_HEADERS = {
 }
 _API_BASE_PATTERN = re.compile(r"^/api(?:/runs/[a-z0-9][a-z0-9-]{0,39})?$")
 _API_BASE_META = '<meta name="adlife-api-base" content="/api">'
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 CityRunSchemaVersion = Literal[1, 2, 3, 4, 5, 6, 7]
 
@@ -88,6 +89,7 @@ class CityViewContext:
     response_minutes: tuple[int, ...]
     response_summary_document: SpatialResponseArtifactSummary | None
     response_state_document: SpatialResponseStateDocument | None
+    workbench_input_sha256: str | None
 
 
 CityViewResolver = Callable[[Request], CityViewContext]
@@ -105,6 +107,7 @@ def create_city_view_context(
     response_input: SpatialResponseInput | None = None,
     response_evaluation: SpatialResponseEvaluation | None = None,
     spatial_response_metrics: SpatialResponseMetrics | None = None,
+    workbench_input_sha256: str | None = None,
 ) -> CityViewContext:
     """Validate and freeze one immutable city-view projection."""
     if run_id is None and run_schema_version is not None:
@@ -147,6 +150,13 @@ def create_city_view_context(
         raise ValueError(
             "spatial response metrics are only valid for a saved schema version 6 or 7 run"
         )
+    if workbench_input_sha256 is not None and (
+        run_id is None
+        or run_schema_version != 7
+        or not isinstance(workbench_input_sha256, str)
+        or _SHA256_PATTERN.fullmatch(workbench_input_sha256) is None
+    ):
+        raise ValueError("workbench input hash requires a schema version 7 saved run")
     if spatial_scenario is not None and opportunity_evaluation is not None:
         spatial_scenario = SpatialCampaignScenario.model_validate(
             spatial_scenario.model_dump(mode="python")
@@ -289,6 +299,7 @@ def create_city_view_context(
         response_minutes=response_minutes,
         response_summary_document=response_summary_document,
         response_state_document=response_state_document,
+        workbench_input_sha256=workbench_input_sha256,
     )
 
 
@@ -318,6 +329,9 @@ def metadata(request: Request) -> dict[str, object]:
         document["run_schema_version"] = (
             simulation.pack.schema_version if run_schema_version is None else run_schema_version
         )
+    if view.workbench_input_sha256 is not None:
+        document["workbench_input_available"] = True
+        document["workbench_input_sha256"] = view.workbench_input_sha256
     if opportunity_evaluation is not None:
         document["spatial_opportunities"] = True
         document["claim_scope"] = "synthetic-opportunity-not-impression"

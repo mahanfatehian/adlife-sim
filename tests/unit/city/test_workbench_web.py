@@ -124,9 +124,15 @@ def _snapshot(root: Path) -> tuple[tuple[str, str, str], ...]:
     return tuple(entries)
 
 
-def _saved_workbench_run(root: Path, *, run_id: str, schema_version: int):
+def _saved_workbench_run(
+    root: Path,
+    *,
+    run_id: str,
+    schema_version: int,
+    seed: int = 42,
+):
     payload = _tiny_draft(run_id=run_id)
-    payload["settings"]["seed"] = int(payload["settings"]["seed"])
+    payload["settings"]["seed"] = seed
     draft = WorkbenchRunDraft.model_validate_json(json.dumps(payload, separators=(",", ":")))
     validated = construct_workbench_run(draft)
     settings = validated.workbench_input.draft.settings
@@ -242,7 +248,15 @@ def test_run_scoped_reads_match_the_legacy_verified_view_contract(
             legacy_response = legacy_client.get(f"/api/{suffix}")
             scoped_response = scoped_client.get(f"/api/runs/{run_id}/{suffix}")
             assert scoped_response.status_code == legacy_response.status_code, suffix
-            assert scoped_response.json() == legacy_response.json(), suffix
+            expected = legacy_response.json()
+            if schema_version == 7 and suffix == "meta":
+                assert stored.workbench_input is not None
+                expected = {
+                    **expected,
+                    "workbench_input_available": True,
+                    "workbench_input_sha256": stored.workbench_input.fingerprint,
+                }
+            assert scoped_response.json() == expected, suffix
             assert (
                 scoped_response.headers["content-type"] == legacy_response.headers["content-type"]
             )
@@ -289,6 +303,195 @@ def test_completed_inspector_url_serves_the_existing_dashboard_with_a_scoped_api
     assert stored.manifest.run_id in page.text or "saved-run-label" in page.text
 
 
+def test_v7_workbench_input_endpoint_returns_only_the_verified_frozen_projection(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    stored = _saved_workbench_run(
+        root,
+        run_id="maximum-input-view",
+        schema_version=7,
+        seed=2**63 - 1,
+    )
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        response = client.get("/api/runs/maximum-input-view/workbench-input")
+        metadata = client.get("/api/runs/maximum-input-view/meta")
+        refused_query = client.get(
+            "/api/runs/maximum-input-view/workbench-input",
+            params={"unexpected": "sk-never-echo-this-value-1234567890"},
+        )
+        refused_path = client.get("/api/runs/maximum-input-view/workbench-input/private")
+
+    assert response.status_code == metadata.status_code == 200
+    document = response.json()
+    assert set(document) == {
+        "run_id",
+        "run_schema_version",
+        "workbench_input_schema_version",
+        "manifest_sha256",
+        "workbench_input_sha256",
+        "city_sha256",
+        "scenario_sha256",
+        "creative_sha256",
+        "scenario",
+        "cohort",
+        "settings",
+        "creative_template",
+    }
+    assert document["settings"]["seed"] == "9223372036854775807"
+    assert (
+        document["manifest_sha256"]
+        == hashlib.sha256((stored.directory / "run.json").read_bytes()).hexdigest()
+    )
+    assert stored.workbench_input is not None
+    assert document["workbench_input_sha256"] == stored.workbench_input.fingerprint
+    assert metadata.json()["workbench_input_available"] is True
+    assert metadata.json()["workbench_input_sha256"] == stored.workbench_input.fingerprint
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-security-policy"].startswith("default-src 'none'")
+    assert response.headers["permissions-policy"] == ("camera=(), microphone=(), geolocation=()")
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "directory" not in response.text
+    assert str(stored.directory) not in response.text
+    assert refused_query.status_code == 422
+    assert refused_query.json()["error"]["code"] == "invalid-query"
+    assert "sk-never" not in refused_query.text
+    assert refused_path.status_code == 404
+
+
+def _save_legacy_run(root: Path, schema_version: int) -> str:
+    from tests.integration.test_city_run_store import spatial_specimen
+    from tests.unit.city.test_city_mobility import mobility_place_set
+    from tests.unit.city.test_city_pack import (
+        load_pack,
+        load_pack_v2,
+        pack_data,
+        pack_v2_data,
+    )
+
+    run_id = f"legacy-input-v{schema_version}"
+    if schema_version == 1:
+        create_city_run(
+            load_pack(pack_data()),
+            root=root,
+            run_id=run_id,
+            seed=42,
+            agent_count=1,
+            days=1,
+        )
+    elif schema_version == 2:
+        create_city_run(
+            load_pack_v2(pack_v2_data()),
+            root=root,
+            run_id=run_id,
+            seed=42,
+            agent_count=1,
+            days=1,
+        )
+    elif schema_version == 3:
+        create_city_run(
+            load_pack_v2(pack_v2_data()),
+            root=root,
+            run_id=run_id,
+            seed=42,
+            agent_count=1,
+            days=1,
+            places=mobility_place_set(),
+        )
+    elif schema_version == 4:
+        manifest, mobility, scenario, opportunities = spatial_specimen()
+        manifest = manifest.model_copy(update={"run_id": run_id})
+        CityRunStore(root).save(
+            manifest,
+            mobility.pack,
+            mobility.agents,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+        )
+    elif schema_version == 5:
+        payload = _tiny_draft(run_id=run_id)
+        payload["settings"]["seed"] = 42
+        validated = construct_workbench_run(
+            WorkbenchRunDraft.model_validate_json(json.dumps(payload, separators=(",", ":")))
+        )
+        create_city_run(
+            validated.pack,
+            root=root,
+            run_id=run_id,
+            seed=42,
+            agent_count=1,
+            days=1,
+            spatial_scenario=validated.scenario,
+        )
+    else:
+        _saved_workbench_run(root, run_id=run_id, schema_version=6)
+    return run_id
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4, 5, 6])
+def test_verified_legacy_runs_report_workbench_input_as_unavailable_without_claiming_it(
+    tmp_path: Path,
+    schema_version: int,
+) -> None:
+    root = tmp_path / f"workspace-v{schema_version}"
+    prepare_workbench_workspace(root)
+    run_id = _save_legacy_run(root, schema_version)
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        response = client.get(f"/api/runs/{run_id}/workbench-input")
+        metadata = client.get(f"/api/runs/{run_id}/meta")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == {
+        "code": "workbench-input-unavailable",
+        "message": "This saved run has no browser workbench input.",
+        "fields": {},
+    }
+    assert metadata.status_code == 200
+    assert metadata.json()["run_schema_version"] == schema_version
+    assert "workbench_input_available" not in metadata.json()
+    assert "workbench_input_sha256" not in metadata.json()
+
+
+def test_workbench_input_endpoint_reverifies_and_refuses_sidecar_tampering(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    stored = _saved_workbench_run(root, run_id="input-tamper", schema_version=7)
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        first = client.get("/api/runs/input-tamper/workbench-input")
+        sidecar = stored.directory / "inputs" / "workbench.json"
+        sidecar.write_bytes(sidecar.read_bytes() + b"\n")
+        second = client.get("/api/runs/input-tamper/workbench-input")
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["error"] == {
+        "code": "run-unavailable",
+        "message": "The saved run could not be verified.",
+        "fields": {},
+    }
+    assert str(sidecar) not in second.text
+
+
 @pytest.mark.parametrize(
     "run_id",
     ["missing-run", "CON", "sk-live-abcdefghij", "x" * 41],
@@ -300,11 +503,18 @@ def test_direct_inspection_screens_invalid_or_unknown_run_identifiers(
     client, _ = _client(tmp_path)
     with client:
         api = client.get(f"/api/runs/{run_id}/meta")
+        workbench_input = client.get(f"/api/runs/{run_id}/workbench-input")
         page = client.get(f"/runs/{run_id}")
 
-    assert api.status_code == page.status_code == 404
-    assert api.json()["error"]["code"] == page.json()["error"]["code"] == "not-found"
+    assert api.status_code == workbench_input.status_code == page.status_code == 404
+    assert (
+        api.json()["error"]["code"]
+        == workbench_input.json()["error"]["code"]
+        == page.json()["error"]["code"]
+        == "not-found"
+    )
     assert run_id not in api.text
+    assert run_id not in workbench_input.text
     assert run_id not in page.text
 
 
@@ -362,12 +572,14 @@ def test_run_scoped_reads_refuse_a_workspace_replaced_between_requests(
 
         monkeypatch.setattr(runs_module, "verify_workbench_workspace", replaced)
         second = client.get("/api/runs/workspace-swap/meta")
+        workbench_input = client.get("/api/runs/workspace-swap/workbench-input")
         page = client.get("/runs/workspace-swap")
 
     assert first.status_code == 200
-    assert second.status_code == page.status_code == 409
+    assert second.status_code == workbench_input.status_code == page.status_code == 409
     assert (
         second.json()["error"]
+        == workbench_input.json()["error"]
         == page.json()["error"]
         == {
             "code": "workspace-unavailable",
@@ -1311,6 +1523,7 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     with client:
         shell = client.get("/")
         css = client.get("/assets/workbench.css")
+        javascript = client.get("/assets/workbench.js")
         icon = client.get("/assets/workbench-icon.svg")
         hostile_host = client.get("/", headers={"Host": "example.test"})
 
@@ -1322,18 +1535,31 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     )
     assert hostile_token not in shell.text
     assert "&quot;&gt;&lt;script&gt;" in shell.text
-    assert "<script" not in shell.text.lower()
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell.text
     assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell.text
+    assert shell.text.count('<script defer src="/assets/workbench.js"></script>') == 1
+    assert "<script>" not in shell.text.lower()
+    assert "onclick=" not in shell.text.lower()
+    assert 'class="skip-link"' in shell.text
+    assert 'id="synthetic-disclosure"' in shell.text
+    assert 'aria-label="City study stages"' in shell.text
+    assert [
+        shell.text.count(f'class="stage-name">{stage}</b>')
+        for stage in (
+            "CITY",
+            "CAMPAIGN",
+            "RUN",
+            "INSPECT",
+        )
+    ] == [1, 1, 1, 1]
+    assert 'id="city-map"' in shell.text
+    assert 'id="city-map-alternative"' in shell.text
+    assert 'id="completed-runs"' in shell.text
     assert "SYNTHETIC" in shell.text
     assert "not real residents" in shell.text
-    assert "Bounded run foundation" in shell.text
-    assert "Bounded run execution is available" in shell.text
-    assert "Run execution is not enabled" not in shell.text
-    assert "creates no job or run directory" not in shell.text
-    assert "Provider configuration is not enabled" in shell.text
-    for control in ("<form", "<input", "<select", "<button"):
-        assert control not in shell.text.lower()
+    assert "Provider and OAuth settings are not installed" in shell.text
+    for control in ("<input", "<select", "<button"):
+        assert control in shell.text.lower()
     assert "http://" not in shell.text
     assert "https://" not in shell.text
 
@@ -1345,6 +1571,15 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     assert "https://" not in css.text
     assert "url(" not in css.text.lower()
 
+    assert javascript.status_code == 200
+    assert javascript.headers["content-type"].startswith("text/javascript")
+    assert "innerHTML" not in javascript.text
+    assert "insertAdjacentHTML" not in javascript.text
+    assert "localStorage" not in javascript.text
+    assert "sessionStorage" not in javascript.text
+    assert "http://" not in javascript.text
+    assert "https://" not in javascript.text
+
     assert icon.status_code == 200
     assert icon.headers["content-type"].startswith("image/svg+xml")
     assert icon.text.startswith("<svg")
@@ -1352,7 +1587,7 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     assert "<foreignobject" not in icon.text.lower()
     assert "href=" not in icon.text.lower()
     assert hostile_host.status_code == 400
-    for response in (shell, css, icon, hostile_host):
+    for response in (shell, css, javascript, icon, hostile_host):
         assert response.headers["cache-control"] == "no-store"
         assert response.headers["x-content-type-options"] == "nosniff"
         assert "access-control-allow-origin" not in response.headers

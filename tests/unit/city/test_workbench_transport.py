@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
+from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+import adlife.city.workbench_transport as transport
 from adlife.city.catalog import CityCatalogError, load_city_catalog, select_catalog_city
+from adlife.city.runs import create_city_run
 from adlife.city.workbench_transport import (
     WorkbenchCityDetail,
     WorkbenchDraftTransportError,
     build_workbench_city_detail,
     parse_workbench_http_draft,
 )
+from adlife.core.domain.serialization import canonical_json
+from tests.unit.city.test_city_run_preparation import _validated
 from tests.unit.city.test_workbench_input import draft_data
 
 
@@ -156,3 +163,133 @@ def test_city_detail_cross_checks_catalog_hash(
 
     with pytest.raises(CityCatalogError, match="integrity"):
         build_workbench_city_detail(entry.city_id)
+
+
+def _stored_workbench_run(root: Path, *, seed: int = 42):
+    validated = _validated(
+        run_id="browser-assumptions",
+        seed=seed,
+        agents=1,
+        days=2,
+    )
+    return create_city_run(
+        validated.pack,
+        root=root,
+        run_id="browser-assumptions",
+        seed=seed,
+        agent_count=1,
+        days=2,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+
+
+def _build_run_input_view(stored: object):
+    builder = getattr(transport, "build_workbench_run_input_view", None)
+    assert builder is not None, "run input view builder is not implemented"
+    return builder(stored)
+
+
+def test_run_input_view_projects_the_complete_verified_v7_input_exactly(
+    tmp_path: Path,
+) -> None:
+    stored = _stored_workbench_run(tmp_path, seed=2**63 - 1)
+    assert stored.workbench_input is not None
+    assert stored.spatial_scenario is not None
+    source = stored.workbench_input
+
+    view = _build_run_input_view(stored)
+    document = view.model_dump(mode="json")
+
+    assert set(document) == {
+        "run_id",
+        "run_schema_version",
+        "workbench_input_schema_version",
+        "manifest_sha256",
+        "workbench_input_sha256",
+        "city_sha256",
+        "scenario_sha256",
+        "creative_sha256",
+        "scenario",
+        "cohort",
+        "settings",
+        "creative_template",
+    }
+    assert document["run_id"] == "browser-assumptions"
+    assert document["run_schema_version"] == 7
+    assert document["workbench_input_schema_version"] == 1
+    assert (
+        document["manifest_sha256"]
+        == sha256((canonical_json(stored.manifest) + "\n").encode("utf-8")).hexdigest()
+    )
+    assert (
+        document["manifest_sha256"]
+        == sha256((stored.directory / "run.json").read_bytes()).hexdigest()
+    )
+    assert document["workbench_input_sha256"] == source.fingerprint
+    assert document["city_sha256"] == stored.pack.fingerprint
+    assert document["scenario_sha256"] == stored.spatial_scenario.fingerprint
+    assert document["creative_sha256"] == source.creative_template.fingerprint
+    assert document["scenario"] == source.draft.scenario.model_dump(mode="json")
+    assert document["cohort"] == source.draft.cohort.model_dump(mode="json")
+    assert document["settings"] == {
+        "run_id": "browser-assumptions",
+        "agent_count": 1,
+        "days": 2,
+        "seed": "9223372036854775807",
+        "response_mode": "deterministic-rules",
+    }
+    assert document["creative_template"] == source.creative_template.model_dump(mode="json")
+
+
+def test_run_input_view_is_strict_frozen_and_round_trips_without_coercion(
+    tmp_path: Path,
+) -> None:
+    view = _build_run_input_view(_stored_workbench_run(tmp_path))
+    model = getattr(transport, "WorkbenchRunInputView", None)
+    assert model is not None, "run input view model is not implemented"
+    round_trip = model.model_validate_json(view.model_dump_json())
+    document: dict[str, Any] = view.model_dump(mode="python", round_trip=True)
+    document["private_path"] = r"C:\private\workbench.json"
+
+    assert round_trip == view
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        model.model_validate(document)
+    frozen_field = "run_id"
+    with pytest.raises(ValidationError, match="Instance is frozen"):
+        setattr(view, frozen_field, "changed")
+
+
+@pytest.mark.parametrize("mutation", ["legacy", "missing", "mismatched-hash", "wrong-run"])
+def test_run_input_view_refuses_incomplete_or_mismatched_bindings(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    stored = _stored_workbench_run(tmp_path / "source")
+    assert stored.workbench_input is not None
+    if mutation == "legacy":
+        validated = _validated(run_id="legacy-response", agents=1, days=2)
+        candidate = create_city_run(
+            validated.pack,
+            root=tmp_path / "legacy",
+            run_id="legacy-response",
+            seed=42,
+            agent_count=1,
+            days=2,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+        )
+    elif mutation == "missing":
+        candidate = replace(stored, workbench_input=None)
+    elif mutation == "mismatched-hash":
+        candidate = replace(
+            stored,
+            manifest=stored.manifest.model_copy(update={"workbench_input_sha256": "0" * 64}),
+        )
+    else:
+        other = _validated(run_id="other-run", agents=1, days=2).workbench_input
+        candidate = replace(stored, workbench_input=other)
+
+    with pytest.raises(ValueError, match="workbench"):
+        _build_run_input_view(candidate)
