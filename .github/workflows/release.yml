@@ -18,17 +18,30 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag_object_sha: ${{ steps.tag.outputs.tag_object_sha }}
+      tag_commit_sha: ${{ steps.tag.outputs.tag_commit_sha }}
     steps:
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
       - name: Require an annotated, signed tag
+        id: tag
         run: |
-          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
-          TYPE="$(git cat-file -t "${GITHUB_REF_NAME}")"
+          set -euo pipefail
+          TAG_REF="refs/tags/${GITHUB_REF_NAME}"
+          git fetch --force origin "${TAG_REF}:${TAG_REF}"
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          TYPE="$(git cat-file -t "${TAG_REF}")"
           [ "$TYPE" = "tag" ] || { echo "refusing: ${GITHUB_REF_NAME} is not an annotated tag ($TYPE)"; exit 1; }
-          git verify-tag "${GITHUB_REF_NAME}" || { echo "refusing: tag is not signed (configure a trusted key on GitHub or in the runner)"; exit 1; }
+          TAG_COMMIT="$(git rev-parse "${TAG_REF}^{commit}")"
+          TAG_OBJECT_SHA="$(git rev-parse "${TAG_REF}")"
+          EVENT_COMMIT="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          [ "$TAG_COMMIT" = "$EVENT_COMMIT" ] || { echo "refusing: tag no longer identifies the triggering commit"; exit 1; }
+          git merge-base --is-ancestor "$TAG_COMMIT" refs/remotes/origin/main || { echo "refusing: tagged commit is not in main"; exit 1; }
+          git verify-tag "${TAG_REF}" || { echo "refusing: tag signature is not trusted by the runner (a pinned release public key is required)"; exit 1; }
+          echo "tag_object_sha=$TAG_OBJECT_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag_commit_sha=$TAG_COMMIT" >> "$GITHUB_OUTPUT"
       - name: Compare tag with project version
         id: version
         run: |
@@ -40,9 +53,14 @@ jobs:
           fi
           echo "version=$PROJECT_VERSION" >> "$GITHUB_OUTPUT"
 
+  quality-gates:
+    name: full CI gates for tagged commit
+    needs: verify-tag
+    uses: ./.github/workflows/ci.yml
+
   build-native:
     name: frozen binary (${{ matrix.asset }})
-    needs: verify-tag
+    needs: [verify-tag, quality-gates]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -67,6 +85,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       # astral-sh/setup-uv v10.2.0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.14"
+          python-version: "3.12.11"
       - name: Install locked dependencies (packaging group included)
         run: uv sync --locked --all-groups
       - name: Build the frozen application
@@ -106,31 +127,37 @@ jobs:
           if-no-files-found: error
 
   assemble-release:
-    name: checksums, SBOM, license report, draft release
+    name: checksums, SBOM, and license report
     needs: [verify-tag, build-native]
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # draft release creation only
+      contents: read
     steps:
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       # astral-sh/setup-uv v10.2.0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.14"
+          python-version: "3.12.11"
       # actions/download-artifact v6.0.0
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
         with:
           pattern: frozen-*
           path: assets
           merge-multiple: true
+      - name: Install locked release toolchain
+        run: uv sync --locked --all-groups
       - name: Build wheel and sdist
-        run: uv build --no-sources
+        run: uv build --no-sources --no-build-isolation
       - name: Smoke-test the exact wheel
         run: uv run python scripts/smoke_release.py dist/adlife_sim-*.whl
       - name: SBOM and third-party license report
         run: |
-          uv sync --locked --all-groups
-          uv tool run --from cyclonedx-bom cyclonedx-py environment .venv/bin/python --output-file assets/sbom.cdx.json --output-format JSON
-          uv tool run pip-licenses --python .venv/bin/python --format=json --output-file=assets/third-party-licenses.json
+          uv run --locked cyclonedx-py environment .venv/bin/python --output-file assets/sbom.cdx.json --output-format JSON
+          uv run --locked pip-licenses --format=json --output-file=assets/third-party-licenses.json
       - name: Generate SHA256SUMS for every release file
         shell: bash
         run: |
@@ -144,19 +171,51 @@ jobs:
           name: verified-distributions
           path: dist/
           if-no-files-found: error
+      # actions/upload-artifact v6.0.0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: verified-release-assets
+          path: assets/
+          if-no-files-found: error
+
+  create-draft-release:
+    name: create the draft GitHub release
+    needs: [verify-tag, assemble-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # actions/download-artifact v6.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: verified-release-assets
+          path: assets/
       - name: Create the draft GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.verify-tag.outputs.version }}
+          EXPECTED_TAG_OBJECT: ${{ needs.verify-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT: ${{ needs.verify-tag.outputs.tag_commit_sha }}
         run: |
+          set -euo pipefail
+          TAG_REF="refs/tags/${GITHUB_REF_NAME}"
+          REMOTE_TAG_OBJECT="$(git ls-remote --exit-code --refs origin "$TAG_REF" | awk 'NR == 1 { print $1 }')"
+          [ "$REMOTE_TAG_OBJECT" = "$EXPECTED_TAG_OBJECT" ] || { echo "refusing: release tag changed after verification"; exit 1; }
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$EXPECTED_TAG_COMMIT" refs/remotes/origin/main || { echo "refusing: verified release commit is no longer in main"; exit 1; }
           gh release create "v${VERSION}" \
-            --draft --title "AdLife Lab v${VERSION}" \
+            --draft --verify-tag --title "AdLife Lab v${VERSION}" \
             --notes "See CHANGELOG.md for the release notes. Verify downloads against SHA256SUMS." \
             assets/*
 
   publish-pypi:
     name: PyPI (Trusted Publishing)
-    needs: [verify-tag, assemble-release]
+    needs: [verify-tag, create-draft-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -165,25 +224,53 @@ jobs:
       name: pypi
       url: https://pypi.org/p/adlife-sim
     steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       # actions/download-artifact v6.0.0
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
         with:
           name: verified-distributions
           path: dist/
+      - name: Recheck release provenance before PyPI publication
+        env:
+          EXPECTED_TAG_OBJECT: ${{ needs.verify-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT: ${{ needs.verify-tag.outputs.tag_commit_sha }}
+        run: |
+          set -euo pipefail
+          TAG_REF="refs/tags/${GITHUB_REF_NAME}"
+          REMOTE_TAG_OBJECT="$(git ls-remote --exit-code --refs origin "$TAG_REF" | awk 'NR == 1 { print $1 }')"
+          [ "$REMOTE_TAG_OBJECT" = "$EXPECTED_TAG_OBJECT" ] || { echo "refusing: release tag changed after verification"; exit 1; }
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$EXPECTED_TAG_COMMIT" refs/remotes/origin/main || { echo "refusing: verified release commit is no longer in main"; exit 1; }
       # pypa/gh-action-pypi-publish v1.13.0
       - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e
 
   publish-release:
     name: publish the GitHub release
-    needs: [verify-tag, assemble-release, publish-pypi]
+    needs: [verify-tag, create-draft-release, publish-pypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Publish the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.verify-tag.outputs.version }}
-        run: gh release edit "v${VERSION}" --draft=false
+          EXPECTED_TAG_OBJECT: ${{ needs.verify-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT: ${{ needs.verify-tag.outputs.tag_commit_sha }}
+        run: |
+          set -euo pipefail
+          TAG_REF="refs/tags/${GITHUB_REF_NAME}"
+          REMOTE_TAG_OBJECT="$(git ls-remote --exit-code --refs origin "$TAG_REF" | awk 'NR == 1 { print $1 }')"
+          [ "$REMOTE_TAG_OBJECT" = "$EXPECTED_TAG_OBJECT" ] || { echo "refusing: release tag changed after verification"; exit 1; }
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$EXPECTED_TAG_COMMIT" refs/remotes/origin/main || { echo "refusing: verified release commit is no longer in main"; exit 1; }
+          gh release edit "v${VERSION}" --verify-tag --draft=false

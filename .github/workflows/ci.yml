@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
   push:
     branches: [main]
@@ -43,9 +44,9 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --all-groups
       - name: Ruff format check
-        run: uv run ruff format --check src tests
+        run: uv run ruff format --check .
       - name: Ruff lint
-        run: uv run ruff check src tests
+        run: uv run ruff check .
       - name: Mypy strict
         run: |
           uv run mypy src
@@ -55,12 +56,19 @@ jobs:
         env:
           # Run the timing-sensitive benchmark separately from coverage instrumentation.
           ADLIFE_SKIP_LONG_TESTS: "1"
+          # Browser regressions are a required CI gate, never an environment-dependent skip.
+          ADLIFE_REQUIRE_BROWSER: "1"
         run: uv run pytest -q --cov=adlife --cov-branch
       - name: Maximum rules performance
         env:
           # GitHub's shared Windows runners are materially slower than Linux/macOS.
           ADLIFE_PERF_CEILING_SECONDS: ${{ runner.os == 'Windows' && '60' || '' }}
         run: uv run pytest -q -s tests/integration/test_maximum_run.py
+      - name: Maximum spatial opportunity performance
+        env:
+          # Keep the spatial ceiling meaningful while allowing shared Windows host noise.
+          ADLIFE_SPATIAL_PERF_CEILING_SECONDS: ${{ runner.os == 'Windows' && '60' || '' }}
+        run: uv run pytest -q -s tests/integration/test_spatial_opportunity_performance.py
       - name: Offline deterministic integration runs
         run: |
           uv run pytest -q tests/integration/test_rule_run.py tests/integration/test_demo.py

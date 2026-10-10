@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -52,7 +52,10 @@ dev = [
   "types-pyyaml>=6.0",
 ]
 packaging = [
-  "pyinstaller>=6.10",
+  "cyclonedx-bom==7.5.0",
+  "hatchling==1.27.0",
+  "pip-licenses==5.5.5",
+  "pyinstaller==6.22.3",
 ]
 
 [tool.hatch.build.targets.wheel]
