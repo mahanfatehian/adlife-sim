@@ -200,6 +200,39 @@ def test_wire_draft_rejects_private_credential_and_control_text(value: str) -> N
             _parse_draft(candidate)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("city_id",),
+        ("scenario", "scenario_id"),
+        ("scenario", "campaign", "campaign_id"),
+        ("scenario", "campaign", "creative_template_id"),
+        ("scenario", "roadside", "road_id"),
+        ("settings", "run_id"),
+    ],
+)
+def test_wire_draft_rejects_credential_shaped_identifiers(path: tuple[str, ...]) -> None:
+    candidate = draft_data(phone=True, roadside=True)
+    target: Any = candidate
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = "sk-" + "a" * 32
+
+    with pytest.raises(ValidationError, match="credential"):
+        _parse_draft(candidate)
+
+
+@pytest.mark.parametrize("value", [[{}], [[]]])
+def test_wire_draft_maps_unhashable_activity_members_to_validation_errors(
+    value: list[object],
+) -> None:
+    candidate = draft_data()
+    candidate["scenario"]["phone"]["eligible_activities"] = value
+
+    with pytest.raises(ValidationError):
+        _parse_draft(candidate)
+
+
 def test_wire_draft_rejects_duplicate_and_overlapping_members() -> None:
     duplicate_interest = draft_data()
     duplicate_interest["cohort"]["interests"] = ["technology", "technology"]
@@ -273,6 +306,31 @@ def _normalized_draft():
     )
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("city_id",),
+        ("scenario", "scenario_id"),
+        ("scenario", "campaign", "campaign_id"),
+        ("scenario", "campaign", "creative_template_id"),
+        ("scenario", "roadside", "road_id"),
+        ("settings", "run_id"),
+    ],
+)
+def test_normalized_draft_rejects_credential_shaped_identifiers(
+    path: tuple[str, ...],
+) -> None:
+    models = _models()
+    candidate = _normalized_draft().model_dump(mode="json")
+    target: Any = candidate
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = "sk-" + "a" * 32
+
+    with pytest.raises(ValidationError, match="credential"):
+        models.NormalizedWorkbenchRunDraft.model_validate_json(json.dumps(candidate))
+
+
 def test_normalized_input_is_frozen_canonical_and_hashes_complete_template() -> None:
     models = _models()
     template = models.CreativeTemplate(
@@ -325,6 +383,21 @@ def test_packaged_creative_catalog_is_bounded_safe_sorted_and_selectable() -> No
     assert len(selected.fingerprint) == 64
     with pytest.raises(creatives.UnknownCreativeTemplate, match="unknown"):
         creatives.select_creative_template("missing-template")
+
+
+def test_creative_template_rejects_credential_shaped_identifier() -> None:
+    models = _models()
+
+    with pytest.raises(ValidationError, match="credential"):
+        models.CreativeTemplate(
+            template_id="sk-" + "a" * 32,
+            template_version=1,
+            product_name="Fictional product",
+            product_category="fictional category",
+            message="Fictional message.",
+            call_to_action="Explore the fictional concept",
+            disclosure="Fictional creative for synthetic simulation only.",
+        )
 
 
 def test_creative_catalog_refuses_oversize_duplicates_and_unsafe_text(tmp_path: Path) -> None:

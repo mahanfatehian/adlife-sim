@@ -32,6 +32,12 @@ def _safe_public_text(value: str) -> str:
     return checked
 
 
+def _safe_identifier(value: str) -> str:
+    if contains_provider_secret_text(value):
+        raise ValueError("workbench identifier contains credential-shaped content")
+    return value
+
+
 def _unique_text_members(value: object, *, label: str) -> object:
     if isinstance(value, (list, tuple, set, frozenset)) and all(
         isinstance(item, str) for item in value
@@ -90,6 +96,11 @@ class WorkbenchCampaignDraft(DomainModel):
     target_interests: frozenset[PublicText] = Field(min_length=1, max_length=12)
     relative_price: float = Field(gt=0, le=100)
 
+    @field_validator("campaign_id", "creative_template_id")
+    @classmethod
+    def safe_identifiers(cls, value: str) -> str:
+        return _safe_identifier(value)
+
     @field_validator("name")
     @classmethod
     def safe_name(cls, value: str) -> str:
@@ -131,6 +142,8 @@ class WorkbenchPhonePlacementDraft(_WorkbenchPlacementDraft):
     def unique_activities(cls, value: object) -> object:
         if isinstance(value, (list, tuple)):
             items = tuple(value)
+            if not all(isinstance(item, str) for item in items):
+                return value
             if len(items) != len(set(items)):
                 raise ValueError("eligible phone activities must be unique")
             return items
@@ -152,6 +165,11 @@ class WorkbenchRoadsidePlacementDraft(_WorkbenchPlacementDraft):
     orientation_degrees: float = Field(ge=0, lt=360)
     max_view_distance_meters: float = Field(gt=0, le=1_000)
 
+    @field_validator("road_id")
+    @classmethod
+    def safe_road_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
 
 class WorkbenchScenarioDraft(DomainModel):
     scenario_id: str = Field(pattern=_ID_PATTERN)
@@ -159,6 +177,11 @@ class WorkbenchScenarioDraft(DomainModel):
     campaign: WorkbenchCampaignDraft
     phone: WorkbenchPhonePlacementDraft | None = None
     roadside: WorkbenchRoadsidePlacementDraft | None = None
+
+    @field_validator("scenario_id")
+    @classmethod
+    def safe_scenario_id(cls, value: str) -> str:
+        return _safe_identifier(value)
 
     @field_validator("name")
     @classmethod
@@ -208,7 +231,7 @@ class WorkbenchRunSettings(DomainModel):
     @field_validator("run_id")
     @classmethod
     def portable_run_id(cls, value: str) -> str:
-        return validate_portable_run_identifier(value)
+        return _safe_identifier(validate_portable_run_identifier(value))
 
 
 class WorkbenchRunDraft(DomainModel):
@@ -217,6 +240,11 @@ class WorkbenchRunDraft(DomainModel):
     scenario: WorkbenchScenarioDraft
     cohort: WorkbenchCohortDraft
     settings: WorkbenchRunSettings
+
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
 
 
 class _NormalizedPlacementDraft(DomainModel):
@@ -255,6 +283,11 @@ class NormalizedRoadsidePlacementDraft(_NormalizedPlacementDraft):
     orientation_degrees: float = Field(ge=0, lt=360)
     max_view_distance_meters: float = Field(gt=0, le=1_000)
 
+    @field_validator("road_id")
+    @classmethod
+    def safe_road_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
 
 class NormalizedWorkbenchScenarioDraft(DomainModel):
     scenario_id: str = Field(pattern=_ID_PATTERN)
@@ -262,6 +295,11 @@ class NormalizedWorkbenchScenarioDraft(DomainModel):
     campaign: WorkbenchCampaignDraft
     phone: NormalizedPhonePlacementDraft | None = None
     roadside: NormalizedRoadsidePlacementDraft | None = None
+
+    @field_validator("scenario_id")
+    @classmethod
+    def safe_scenario_id(cls, value: str) -> str:
+        return _safe_identifier(value)
 
     @field_validator("name")
     @classmethod
@@ -282,6 +320,11 @@ class NormalizedWorkbenchRunDraft(DomainModel):
     cohort: WorkbenchCohortDraft
     settings: WorkbenchRunSettings
 
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
 
 class CreativeTemplate(DomainModel):
     template_id: str = Field(pattern=_ID_PATTERN)
@@ -291,6 +334,11 @@ class CreativeTemplate(DomainModel):
     message: str = Field(min_length=1, max_length=240)
     call_to_action: str = Field(min_length=1, max_length=120)
     disclosure: Literal["Fictional creative for synthetic simulation only."] = CREATIVE_DISCLOSURE
+
+    @field_validator("template_id")
+    @classmethod
+    def safe_template_id(cls, value: str) -> str:
+        return _safe_identifier(value)
 
     @field_validator("template_version", mode="before")
     @classmethod

@@ -289,12 +289,83 @@ def test_validation_maps_strict_json_and_pydantic_failures_without_input_echo(
     assert oversized.json()["error"]["code"] == "request-too-large"
     assert invalid.status_code == 422
     fields = invalid.json()["error"]["fields"]
-    assert set(fields) == {"api_key", "settings.agent_count"}
+    assert set(fields) == {"request", "settings.agent_count"}
     assert secret not in invalid.text
     assert absolute_path not in invalid.text
     assert unknown.status_code == 404
     assert unknown.json()["error"]["code"] == "not-found"
     assert _snapshot(root) == before == ()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("scenario", "scenario_id"),
+        ("scenario", "campaign", "campaign_id"),
+    ],
+)
+def test_validation_refuses_secret_identifiers_without_echo(
+    tmp_path: Path,
+    path: tuple[str, ...],
+) -> None:
+    client, root = _client(tmp_path)
+    secret = "sk-" + "a" * 32
+    payload = _valid_draft()
+    target: Any = payload
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = secret
+
+    with client:
+        response = _post(client, payload)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid-fields"
+    assert secret not in response.text
+    assert _snapshot(root) == ()
+
+
+@pytest.mark.parametrize("unknown_key", ["Unknown", "sk-" + "a" * 32])
+def test_validation_maps_unknown_keys_to_constant_field_without_echo(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    unknown_key: str,
+) -> None:
+    client, root = _client(tmp_path)
+    secret_value = "Authorization: Bearer sk-never-log-this-1234567890"
+    payload = _valid_draft()
+    payload[unknown_key] = secret_value
+
+    with caplog.at_level(logging.ERROR), client:
+        response = _post(client, payload)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["fields"] == {"request": "Unknown field."}
+    combined = response.text + caplog.text
+    assert unknown_key not in response.json()["error"]["fields"]
+    assert unknown_key not in caplog.text
+    if unknown_key.startswith("sk-"):
+        assert unknown_key not in response.text
+    assert secret_value not in combined
+    assert "Traceback" not in combined
+    assert _snapshot(root) == ()
+
+
+@pytest.mark.parametrize("activities", [[{}], [[]]])
+def test_validation_maps_malformed_activity_members_to_422(
+    tmp_path: Path,
+    activities: list[object],
+) -> None:
+    client, root = _client(tmp_path)
+    payload = _valid_draft()
+    payload["scenario"]["phone"]["eligible_activities"] = activities
+
+    with client:
+        response = _post(client, payload)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid-fields"
+    assert _snapshot(root) == ()
 
 
 def test_request_validation_and_unexpected_failures_are_screened(
@@ -303,7 +374,7 @@ def test_request_validation_and_unexpected_failures_are_screened(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     module = _module()
-    client, root = _client(tmp_path, raise_server_exceptions=False)
+    client, root = _client(tmp_path)
     secret = "sk-unexpected-secret-value-1234567890"
     absolute_path = r"C:\private\workspace\run.json"
     before = _snapshot(root)
@@ -330,7 +401,10 @@ def test_request_validation_and_unexpected_failures_are_screened(
     assert secret not in request_response.text
 
     def unexpected_failure(_draft: object) -> None:
-        raise RuntimeError(f"{secret} at {absolute_path}")
+        try:
+            raise ValueError(secret)
+        except ValueError as cause:
+            raise RuntimeError(f"at {absolute_path}") from cause
 
     monkeypatch.setattr(module, "construct_workbench_run", unexpected_failure)
     with caplog.at_level(logging.ERROR), client:

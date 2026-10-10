@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import re
 import secrets
 from collections.abc import Mapping
@@ -26,6 +27,7 @@ _SECURITY_HEADERS = (
     (b"cache-control", b"no-store"),
     (b"x-content-type-options", b"nosniff"),
 )
+_LOGGER = logging.getLogger(__name__)
 
 
 class WorkbenchJsonError(ValueError):
@@ -186,6 +188,28 @@ class WorkbenchSecurityMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        response_started = False
+
+        async def observed_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self._handle_http(scope, receive, observed_send)
+        except Exception as error:
+            _LOGGER.error("workbench request failed with %s", type(error).__name__)
+            if response_started:
+                return
+            await workbench_error(
+                500,
+                "internal-error",
+                "The workbench could not complete the request.",
+            )(scope, receive, _secured_send(send))
+
+    async def _handle_http(self, scope: Scope, receive: Receive, send: Send) -> None:
 
         secured_send = _secured_send(send)
         method = str(scope.get("method", "")).upper()

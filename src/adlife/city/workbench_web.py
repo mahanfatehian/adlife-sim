@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import html
 import json
-import logging
-import re
 from collections.abc import Mapping, Sequence
 from importlib.resources import files
 from typing import Any
@@ -38,10 +36,56 @@ from adlife.city.workbench_workspace import (
     verify_workbench_workspace,
 )
 
-_LOGGER = logging.getLogger(__name__)
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _ASSET_LIMIT_BYTES = 262_144
-_SAFE_FIELD_COMPONENT = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
+_WORKBENCH_FIELD_COMPONENTS = frozenset(
+    {
+        "active_windows",
+        "advertising_skepticism",
+        "agent_count",
+        "brand_sentiment",
+        "campaign",
+        "campaign_id",
+        "city_id",
+        "cohort",
+        "creative_template_id",
+        "day",
+        "days",
+        "eligible_activities",
+        "end_minute",
+        "frequency_cap_per_agent_per_day",
+        "impulsivity",
+        "initial_state",
+        "interests",
+        "max_view_distance_meters",
+        "mobile_recall_encoding",
+        "name",
+        "novelty_seeking",
+        "opportunity_probability_per_minute",
+        "orientation_degrees",
+        "phone",
+        "price_sensitivity",
+        "purchase_intention",
+        "recall_strength",
+        "relative_price",
+        "response_mode",
+        "road_fraction",
+        "road_id",
+        "roadside",
+        "roadside_recall_encoding",
+        "run_id",
+        "scenario",
+        "scenario_id",
+        "schema_version",
+        "seed",
+        "settings",
+        "side",
+        "start_minute",
+        "target_interests",
+        "traits",
+        "travel_direction",
+    }
+)
 _CSP = (
     "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; "
     "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -86,10 +130,7 @@ def _validation_fields(errors: Sequence[Mapping[str, Any]]) -> dict[str, str]:
                 continue
             if isinstance(component, int) and not isinstance(component, bool) and component >= 0:
                 components.append(str(component))
-            elif (
-                isinstance(component, str)
-                and _SAFE_FIELD_COMPONENT.fullmatch(component) is not None
-            ):
+            elif isinstance(component, str) and component in _WORKBENCH_FIELD_COMPONENTS:
                 components.append(component)
             else:
                 safe = False
@@ -254,18 +295,6 @@ def create_city_workbench_app(
             status_code,
             "request-failed",
             "The request could not be completed.",
-        )
-
-    @app.exception_handler(Exception)
-    async def unexpected_error_handler(
-        _request: Request,
-        error: Exception,
-    ) -> JSONResponse:
-        _LOGGER.error("workbench request failed with %s", type(error).__name__)
-        return workbench_error(
-            500,
-            "internal-error",
-            "The workbench could not complete the request.",
         )
 
     @app.get("/", include_in_schema=False)
