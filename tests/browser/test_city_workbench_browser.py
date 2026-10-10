@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,16 @@ def _library_page(*, offset: int, run_id: str) -> WorkbenchRunPage:
         truncated=False,
         runs=(_library_summary(run_id),),
     )
+
+
+def _artifact_hashes(directory: Path) -> dict[str, str]:
+    """Snapshot every persisted byte without depending on filesystem metadata."""
+
+    return {
+        path.relative_to(directory).as_posix(): sha256(path.read_bytes()).hexdigest()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
 
 
 def test_city_stage_boots_from_verified_local_catalog_without_external_requests(
@@ -500,6 +511,270 @@ def test_real_job_completes_without_auto_navigation_and_enters_verified_library(
             page.locator("#stage-inspect").click()
             expect(page.locator("#run-library")).to_contain_text("browser-complete")
             expect(page.locator("#run-library a[href='/runs/browser-complete']")).to_be_visible()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    external_requests: list[str] = []
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    run_id = "browser-combined-study"
+
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+
+            def keep_browser_offline(route: Route) -> None:
+                if route.request.url.startswith(base_url):
+                    route.continue_()
+                else:
+                    external_requests.append(route.request.url)
+                    route.abort()
+
+            page.route("**/*", keep_browser_offline)
+            page.on(
+                "console",
+                lambda message: (
+                    console_errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(base_url, wait_until="networkidle")
+
+            page.locator("#city-continue").click()
+            page.locator("#scenario-name").fill("Browser combined city study")
+            page.locator("#campaign-name").fill("Browser phone and roadside campaign")
+            page.locator("#roadside-enabled").check()
+            page.locator("#road-id").select_option("middle-east")
+            page.locator("#road-direction").select_option("backward")
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill(run_id)
+            page.locator("#agent-count").fill("2")
+            page.locator("#days").fill("2")
+            page.locator("#seed").fill("9223372036854775807")
+            page.locator("#validate-run").click()
+
+            expect(page.locator("#validation-review")).to_be_visible(timeout=15_000)
+            expect(page.locator("#review-placements")).to_have_text(
+                "mobile-feed + roadside-billboard"
+            )
+            review_hashes = {
+                "workbench-input": page.locator("#review-input-hash").inner_text(),
+                "city": page.locator("#review-city-hash").inner_text(),
+                "scenario": page.locator("#review-scenario-hash").inner_text(),
+                "creative": page.locator("#review-creative-hash").inner_text(),
+            }
+            expect(page.locator("#review-seed")).to_have_text("9223372036854775807")
+            page.locator("#start-run").click()
+
+            inspect_link = page.locator("#job-inspect-link")
+            expect(inspect_link).to_be_visible(timeout=30_000)
+            expect(inspect_link).to_have_attribute("href", f"/runs/{run_id}")
+            run_directory = root / "city-runs" / run_id
+            before_inspection = _artifact_hashes(run_directory)
+            assert "run.json" in before_inspection
+            assert "inputs/workbench.json" in before_inspection
+            assert len(before_inspection) >= 10
+
+            inspect_link.click()
+            page.wait_for_url(f"{base_url}/runs/{run_id}")
+            expect(page.locator("#assumptions-status")).to_have_text(
+                "VERIFIED IMMUTABLE INPUT", timeout=30_000
+            )
+            expect(page.locator("#assumptions-scenario")).to_have_text(
+                "Browser combined city study"
+            )
+            expect(page.locator("#assumptions-campaign")).to_have_text(
+                "Browser phone and roadside campaign"
+            )
+            expect(page.locator("#assumptions-seed")).to_have_text("9223372036854775807")
+            expect(page.locator("#assumptions-population")).to_have_text("2 SYNTHETIC AGENTS")
+            expect(page.locator("#assumptions-days")).to_have_text("2 MODEL DAYS")
+            expect(page.locator("#assumptions-mode")).to_have_text("DETERMINISTIC-RULES")
+            placement_text = page.locator("#assumptions-placements").inner_text()
+            assert all(
+                token in placement_text
+                for token in ("PHONE", "ROADSIDE", "MIDDLE-EAST", "BACKWARD")
+            )
+            assert (
+                page.locator("#assumptions-manifest-sha256").inner_text()
+                == (before_inspection["run.json"])
+            )
+            for name, expected_hash in review_hashes.items():
+                assert page.locator(f"#assumptions-{name}-sha256").inner_text() == expected_hash
+
+            page.locator("#time-slider").fill("480")
+            expect(page.locator("#day-label")).to_have_text("DAY 01", timeout=15_000)
+            expect(page.locator("#clock-label")).to_have_text("08:00")
+            expect(page.locator("#people-list .person")).to_have_count(2)
+            second_person = page.locator("#people-list .person").nth(1)
+            second_id = second_person.locator("strong").inner_text()
+            second_person.click()
+            expect(page.locator("#selected-id")).to_have_text(second_id, timeout=15_000)
+            assert _artifact_hashes(run_directory) == before_inspection
+
+            page.locator("#workbench-back-link").click()
+            page.wait_for_url(base_url + "/")
+            expect(
+                page.get_by_role("heading", name="Choose a verified fictional city")
+            ).to_be_visible(timeout=15_000)
+            page.locator("#stage-inspect").click()
+            library_link = page.locator(f"#run-library a[href='/runs/{run_id}']")
+            expect(library_link).to_be_visible(timeout=15_000)
+            library_link.click()
+            page.wait_for_url(f"{base_url}/runs/{run_id}")
+            expect(page.locator("#assumptions-status")).to_have_text(
+                "VERIFIED IMMUTABLE INPUT", timeout=30_000
+            )
+            expect(page.locator("#assumptions-seed")).to_have_text("9223372036854775807")
+
+            assert _artifact_hashes(run_directory) == before_inspection
+            assert external_requests == []
+            assert console_errors == []
+            assert page_errors == []
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    external_requests: list[str] = []
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    pending_requests: set[object] = set()
+    run_id = "browser-maximum-load"
+    total_started = time.perf_counter()
+
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+
+            def keep_browser_offline(route: Route) -> None:
+                if route.request.url.startswith(base_url):
+                    route.continue_()
+                else:
+                    external_requests.append(route.request.url)
+                    route.abort()
+
+            def request_started(request: object) -> None:
+                if str(getattr(request, "url", "")).startswith(base_url):
+                    pending_requests.add(request)
+
+            def request_finished(request: object) -> None:
+                pending_requests.discard(request)
+
+            page.route("**/*", keep_browser_offline)
+            page.on("request", request_started)
+            page.on("requestfinished", request_finished)
+            page.on("requestfailed", request_finished)
+            page.on(
+                "console",
+                lambda message: (
+                    console_errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(base_url, wait_until="networkidle")
+
+            page.locator("#city-continue").click()
+            page.locator("input[name='phone-activity'][value='home']").check()
+            page.locator("#phone-probability").fill("1")
+            page.locator("#phone-cap").fill("100")
+            page.locator("#phone-window-0-start").fill("00:00")
+            page.locator("#phone-window-0-end").fill("00:01")
+            page.locator("#phone-windows .remove-window").nth(1).click()
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill(run_id)
+            page.locator("#agent-count").fill("30")
+            page.locator("#days").fill("7")
+            page.locator("#seed").fill("9223372036854775807")
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+
+            run_started = time.perf_counter()
+            page.locator("#start-run").click()
+            inspect_link = page.locator("#job-inspect-link")
+            expect(inspect_link).to_be_visible(timeout=60_000)
+            run_elapsed = time.perf_counter() - run_started
+            run_directory = root / "city-runs" / run_id
+            before_inspection = _artifact_hashes(run_directory)
+            assert len(before_inspection) >= 10
+            inspector_started = time.perf_counter()
+            inspect_link.click()
+            page.wait_for_url(f"{base_url}/runs/{run_id}")
+            expect(page.locator("#assumptions-status")).to_have_text(
+                "VERIFIED IMMUTABLE INPUT", timeout=60_000
+            )
+            expect(page.locator("#people-list .person")).to_have_count(30, timeout=60_000)
+            expect(page.locator("#opportunity-list")).to_be_visible(timeout=60_000)
+            inspector_ready_elapsed = time.perf_counter() - inspector_started
+            evidence_dom_counts = {
+                "opportunity": page.locator("#opportunity-list > *").count(),
+                "attention": page.locator("#attention-list > *").count(),
+                "response": page.locator("#response-list > *").count(),
+            }
+            assert 0 < evidence_dom_counts["opportunity"] <= 100
+            assert evidence_dom_counts["attention"] <= 100
+            assert evidence_dom_counts["response"] <= 100
+
+            last_person = page.locator("#people-list .person").nth(29)
+            last_id = last_person.locator("strong").inner_text()
+            selection_started = time.perf_counter()
+            last_person.click()
+            expect(page.locator("#selected-id")).to_have_text(last_id, timeout=60_000)
+            selection_elapsed = time.perf_counter() - selection_started
+            day_seven_started = time.perf_counter()
+            page.locator("#time-slider").fill("10079")
+            expect(page.locator("#day-label")).to_have_text("DAY 07", timeout=60_000)
+            expect(page.locator("#clock-label")).to_have_text("23:59")
+            day_seven_elapsed = time.perf_counter() - day_seven_started
+            day_one_started = time.perf_counter()
+            page.locator("#time-slider").fill("0")
+            expect(page.locator("#clock-label")).to_have_text("00:00", timeout=60_000)
+            day_one_elapsed = time.perf_counter() - day_one_started
+            playback_started = time.perf_counter()
+            page.locator("#play-button").click()
+            expect(page.locator("#play-button")).to_have_attribute("aria-label", "Pause timeline")
+            page.locator("#play-button").click()
+            expect(page.locator("#play-button")).to_have_attribute("aria-label", "Play timeline")
+            playback_control_elapsed = time.perf_counter() - playback_started
+
+            library_started = time.perf_counter()
+            page.locator("#workbench-back-link").click()
+            page.wait_for_url(base_url + "/")
+            expect(page.locator("#run-library .run-card")).to_have_count(1, timeout=60_000)
+            page.locator("#stage-inspect").click()
+            expect(page.locator("#run-library .run-card")).to_be_visible()
+            assert page.locator("#run-library .run-card").count() <= 20
+            page.wait_for_load_state("networkidle", timeout=60_000)
+            library_elapsed = time.perf_counter() - library_started
+
+            total_elapsed = time.perf_counter() - total_started
+            print(
+                f"\nmaximum workbench browser run: {run_elapsed:.2f}s worker, "
+                f"{inspector_ready_elapsed:.2f}s inspector readiness, "
+                f"{selection_elapsed:.2f}s agent selection, "
+                f"{day_seven_elapsed:.2f}s day-7 scrub, "
+                f"{day_one_elapsed:.2f}s day-1 scrub, "
+                f"{playback_control_elapsed:.2f}s play/pause controls, "
+                f"{library_elapsed:.2f}s verified-library return, "
+                f"{total_elapsed:.2f}s complete UI exercise; "
+                f"evidence DOM {evidence_dom_counts}; 30 agents x 7 days"
+            )
+            assert _artifact_hashes(run_directory) == before_inspection
+            assert pending_requests == set()
+            assert external_requests == []
+            assert console_errors == []
+            assert page_errors == []
+            expect(page.locator("#error-banner")).to_be_hidden()
         finally:
             browser.close()
             playwright.stop()
