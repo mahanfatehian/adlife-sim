@@ -3,7 +3,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 
 import pytest
 from typer.testing import CliRunner
@@ -141,7 +141,7 @@ def test_city_import_incomplete_write_or_sync_failure_never_publishes_a_pack(
         raise OSError("private-publication-diagnostic")
 
     @contextmanager
-    def faulty_destination(descriptor: int, mode: str) -> Iterator[BinaryIO]:
+    def faulty_destination(descriptor: int, mode: Literal["wb"]) -> Iterator[BinaryIO]:
         with original_fdopen(descriptor, mode) as destination:
             original_write = destination.write
 
