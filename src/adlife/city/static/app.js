@@ -1,7 +1,7 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, spatialResponseMetrics: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
+const state = { meta: null, metaSeedToken: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, spatialResponseMetrics: null, spatialResponseSeedToken: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -11,6 +11,58 @@ async function fetchJson(url) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`Could not load ${url} (${response.status})`);
   return response.json();
+}
+
+function topLevelIntegerToken(source, wantedKey) {
+  let depth = 0;
+  let found = null;
+  for (let index = 0; index < source.length;) {
+    const character = source[index];
+    if (character === '"') {
+      const start = index;
+      index += 1;
+      let escaped = false;
+      while (index < source.length) {
+        const stringCharacter = source[index];
+        if (escaped) escaped = false;
+        else if (stringCharacter === "\\") escaped = true;
+        else if (stringCharacter === '"') break;
+        index += 1;
+      }
+      if (index >= source.length) throw new Error(`Spatial response ${wantedKey} is invalid`);
+      index += 1;
+      if (depth !== 1) continue;
+      let cursor = index;
+      while (/\s/.test(source[cursor] || "")) cursor += 1;
+      if (source[cursor] !== ":") continue;
+      const key = JSON.parse(source.slice(start, index));
+      if (key !== wantedKey) continue;
+      cursor += 1;
+      while (/\s/.test(source[cursor] || "")) cursor += 1;
+      const match = /^(?:0|[1-9][0-9]*)/.exec(source.slice(cursor));
+      if (!match) throw new Error(`Spatial response ${wantedKey} is invalid`);
+      let end = cursor + match[0].length;
+      while (/\s/.test(source[end] || "")) end += 1;
+      if (![",", "}"].includes(source[end]) || found !== null) {
+        throw new Error(`Spatial response ${wantedKey} is invalid`);
+      }
+      found = match[0];
+      continue;
+    }
+    if (character === "{" || character === "[") depth += 1;
+    else if (character === "}" || character === "]") depth -= 1;
+    index += 1;
+  }
+  if (found === null) throw new Error(`Spatial response ${wantedKey} is invalid`);
+  return found;
+}
+
+async function fetchJsonWithIntegerToken(url, key) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Could not load ${url} (${response.status})`);
+  const source = await response.text();
+  const document = JSON.parse(source);
+  return { document, integerToken: topLevelIntegerToken(source, key) };
 }
 
 function showError(message) {
@@ -401,7 +453,8 @@ function renderAttentionEvidence() {
 
 function proxyText(value, label) {
   if (!Number.isFinite(value)) throw new Error(`${label} is not finite`);
-  return String(Number(value.toFixed(4)));
+  const rounded = Number(value.toFixed(4));
+  return String(rounded === 0 && value !== 0 ? Number(value.toPrecision(4)) : rounded);
 }
 
 function signedProxyText(value, label) {
@@ -535,6 +588,59 @@ const responseStateNames = [
   ["recall_strength", "Recall strength"],
   ["purchase_intention_proxy", "Purchase intention proxy"],
 ];
+const responseHashFields = [
+  "scenario_sha256",
+  "city_sha256",
+  "agents_sha256",
+  "trace_sha256",
+  "opportunity_structure_sha256",
+  "response_input_sha256",
+  "response_assumption_structure_sha256",
+  "response_stream_sha256",
+  "response_state_sha256",
+];
+const responseMetricReceiptKeys = [
+  "schema_version",
+  "name",
+  "numerator",
+  "denominator",
+  "value",
+  "source_event_types",
+  "source_artifacts",
+];
+const responseStateReceiptKeys = [
+  "schema_version",
+  "name",
+  "initial_total",
+  "final_total",
+  "change_total",
+  "denominator",
+  "initial_mean",
+  "final_mean",
+  "mean_change",
+  "source_artifacts",
+];
+const responseDocumentKeys = [
+  "schema_version",
+  "model_id",
+  "claim_scope",
+  "source_run_schema_version",
+  "opportunity_model_id",
+  "attention_model_id",
+  "response_model_id",
+  ...responseHashFields,
+  "seed",
+  "population_size",
+  "days",
+  "campaign_count",
+  "overall",
+  "channels",
+  "campaigns",
+];
+const maxSpatialResponses = 520800;
+const maxResponseStateRows = 600;
+const smallestNormalBinary64 = 2 ** -1022;
+const binary64View = new DataView(new ArrayBuffer(8));
 
 function requireRecord(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -550,38 +656,79 @@ function requireFiniteNumber(value, label) {
   return value;
 }
 
+function requireBoundedNumber(value, minimum, maximum, label) {
+  const number = requireFiniteNumber(value, label);
+  if (number < minimum || number > maximum) throw new Error(`${label} is invalid`);
+  return number;
+}
+
+function requireBoundedInteger(value, minimum, maximum, label) {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
 function sameStrings(actual, expected) {
   return Array.isArray(actual)
     && actual.length === expected.length
     && actual.every((value, index) => value === expected[index]);
 }
 
+function hasExactKeys(record, expected) {
+  return sameStrings(Object.keys(record).sort(), [...expected].sort());
+}
+
 function validateResponseMetricReceipt(receiptValue, name) {
   const receipt = requireRecord(receiptValue, "Response metric receipt");
   if (
-    receipt.schema_version !== 1
+    !hasExactKeys(receipt, responseMetricReceiptKeys)
+    || receipt.schema_version !== 1
     || receipt.name !== name
-    || !Number.isInteger(receipt.denominator)
-    || receipt.denominator < 0
     || !sameStrings(receipt.source_event_types, ["spatial.response"])
     || !sameStrings(receipt.source_artifacts, ["outputs/spatial-responses.jsonl"])
   ) {
     throw new Error("Response metric receipt is invalid");
   }
-  const numerator = requireFiniteNumber(receipt.numerator, "Response metric numerator");
-  const value = requireFiniteNumber(receipt.value, "Response metric value");
-  const expected = receipt.denominator === 0 ? 0 : numerator / receipt.denominator;
-  if (value !== expected) throw new Error("Response metric receipt is inconsistent");
+  const denominator = requireBoundedInteger(
+    receipt.denominator,
+    0,
+    maxSpatialResponses,
+    "Response metric denominator",
+  );
+  const countReceipt = ["response_count", "response_reach", "response_frequency"].includes(name);
+  const numerator = countReceipt
+    ? requireBoundedInteger(
+      receipt.numerator,
+      0,
+      maxSpatialResponses,
+      "Response metric numerator",
+    )
+    : requireBoundedNumber(
+      receipt.numerator,
+      -maxSpatialResponses,
+      maxSpatialResponses,
+      "Response metric numerator",
+    );
+  const value = requireBoundedNumber(
+    receipt.value,
+    countReceipt ? 0 : -maxSpatialResponses,
+    maxSpatialResponses,
+    "Response metric value",
+  );
+  const expected = denominator === 0 ? 0 : numerator / denominator;
+  if (value !== expected || Object.is(value, -0)) {
+    throw new Error("Response metric receipt is inconsistent");
+  }
   return receipt;
 }
 
 function validateResponseStateReceipt(receiptValue, name) {
   const receipt = requireRecord(receiptValue, "Response state receipt");
   if (
-    receipt.schema_version !== 1
+    !hasExactKeys(receipt, responseStateReceiptKeys)
+    || receipt.schema_version !== 1
     || receipt.name !== name
-    || !Number.isInteger(receipt.denominator)
-    || receipt.denominator < 1
     || !sameStrings(receipt.source_artifacts, [
       "inputs/spatial-response.json",
       "outputs/response-state.json",
@@ -589,72 +736,301 @@ function validateResponseStateReceipt(receiptValue, name) {
   ) {
     throw new Error("Response state receipt is invalid");
   }
-  const initialTotal = requireFiniteNumber(receipt.initial_total, "Response initial total");
-  const finalTotal = requireFiniteNumber(receipt.final_total, "Response final total");
-  const changeTotal = requireFiniteNumber(receipt.change_total, "Response change total");
-  const initialMean = requireFiniteNumber(receipt.initial_mean, "Response initial mean");
-  const finalMean = requireFiniteNumber(receipt.final_mean, "Response final mean");
-  const meanChange = requireFiniteNumber(receipt.mean_change, "Response mean change");
+  const denominator = requireBoundedInteger(
+    receipt.denominator,
+    1,
+    maxResponseStateRows,
+    "Response state denominator",
+  );
+  const minimum = name === "brand_sentiment" ? -maxResponseStateRows : 0;
+  const initialTotal = requireBoundedNumber(
+    receipt.initial_total,
+    minimum,
+    maxResponseStateRows,
+    "Response initial total",
+  );
+  const finalTotal = requireBoundedNumber(
+    receipt.final_total,
+    minimum,
+    maxResponseStateRows,
+    "Response final total",
+  );
+  const changeTotal = requireBoundedNumber(
+    receipt.change_total,
+    -(maxResponseStateRows * 2),
+    maxResponseStateRows * 2,
+    "Response change total",
+  );
+  const meanMinimum = name === "brand_sentiment" ? -1 : 0;
+  const initialMean = requireBoundedNumber(
+    receipt.initial_mean,
+    meanMinimum,
+    1,
+    "Response initial mean",
+  );
+  const finalMean = requireBoundedNumber(
+    receipt.final_mean,
+    meanMinimum,
+    1,
+    "Response final mean",
+  );
+  const meanChange = requireBoundedNumber(
+    receipt.mean_change,
+    -2,
+    2,
+    "Response mean change",
+  );
   if (
     changeTotal !== finalTotal - initialTotal
-    || initialMean !== initialTotal / receipt.denominator
-    || finalMean !== finalTotal / receipt.denominator
-    || meanChange !== changeTotal / receipt.denominator
+    || initialMean !== initialTotal / denominator
+    || finalMean !== finalTotal / denominator
+    || meanChange !== changeTotal / denominator
+    || Object.is(meanChange, -0)
   ) {
     throw new Error("Response state receipt is inconsistent");
   }
   return receipt;
 }
 
-function validateResponseEventSeries(seriesValue) {
+function validateResponseEventSeries(seriesValue, additionalKeys = []) {
   const series = requireRecord(seriesValue, "Response metric series");
+  const expectedKeys = ["schema_version", ...responseMetricNames.map(([name]) => name), ...additionalKeys];
+  if (!hasExactKeys(series, expectedKeys) || series.schema_version !== 1) {
+    throw new Error("Response metric series is invalid");
+  }
   for (const [name] of responseMetricNames) validateResponseMetricReceipt(series[name], name);
+  if (
+    series.response_count.denominator !== 1
+    || series.response_frequency.numerator !== series.response_count.numerator
+    || series.response_frequency.denominator !== series.response_reach.numerator
+    || series.mean_rule_sentiment_delta.denominator !== series.response_count.numerator
+    || series.mean_rule_recall_delta.denominator !== series.response_count.numerator
+  ) {
+    throw new Error("Response metric series is inconsistent");
+  }
   return series;
 }
 
-function validateResponseAggregateSeries(seriesValue) {
-  const series = validateResponseEventSeries(seriesValue);
+function validateResponseAggregateSeries(seriesValue, additionalKeys = []) {
+  const series = validateResponseEventSeries(
+    seriesValue,
+    [...responseStateNames.map(([name]) => name), ...additionalKeys],
+  );
   for (const [name] of responseStateNames) validateResponseStateReceipt(series[name], name);
+  const denominators = new Set(responseStateNames.map(([name]) => series[name].denominator));
+  if (denominators.size !== 1) throw new Error("Response state series is inconsistent");
   return series;
 }
 
-function validateSpatialResponseMetrics(documentValue) {
+function preciseEvidenceSum(values) {
+  const partials = [];
+  for (const value of values) {
+    let highInput = value;
+    let count = 0;
+    for (const partial of partials) {
+      let lowInput = partial;
+      if (Math.abs(highInput) < Math.abs(lowInput)) {
+        [highInput, lowInput] = [lowInput, highInput];
+      }
+      const high = highInput + lowInput;
+      const low = lowInput - (high - highInput);
+      if (low !== 0) partials[count++] = low;
+      highInput = high;
+    }
+    partials.length = count;
+    partials.push(highInput);
+  }
+  if (partials.length === 0) return 0;
+  let count = partials.length;
+  let high = partials[--count];
+  let low = 0;
+  while (count > 0) {
+    const value = partials[--count];
+    const combined = high + value;
+    const roundedValue = combined - high;
+    low = value - roundedValue;
+    high = combined;
+    if (low !== 0) break;
+  }
+  if (
+    count > 0
+    && ((low < 0 && partials[count - 1] < 0) || (low > 0 && partials[count - 1] > 0))
+  ) {
+    const correction = low * 2;
+    const corrected = high + correction;
+    if (correction === corrected - high) high = corrected;
+  }
+  return high;
+}
+
+function binary64Ulp(value) {
+  const absolute = Math.abs(value);
+  if (absolute === 0 || absolute < smallestNormalBinary64) return Number.MIN_VALUE;
+  binary64View.setFloat64(0, absolute, false);
+  const biasedExponent = (binary64View.getUint32(0, false) >>> 20) & 0x7ff;
+  return 2 ** (biasedExponent - 1023 - 52);
+}
+
+function matchesPartitionedEvidence(total, parts) {
+  const regrouped = preciseEvidenceSum(parts);
+  if (total === regrouped) return true;
+  if (
+    parts.length <= 1
+    || parts.every((part) => Math.abs(part) < smallestNormalBinary64)
+  ) return false;
+  const roundingBudget = preciseEvidenceSum([
+    binary64Ulp(total),
+    binary64Ulp(regrouped),
+    ...parts.map(binary64Ulp),
+  ]) / 2;
+  return Math.abs(total - regrouped) <= roundingBudget;
+}
+
+function containsCredentialShapedCampaignId(value) {
+  return [
+    /(?:^|-)(?:sk|pk|rk)-(?:live|test|proj)-?[a-z0-9][a-z0-9-]{7,}/i,
+    /(?:^|-)(?:sk|pk|rk)-[a-z0-9][a-z0-9-]{19,}/i,
+    /(?:^|-)xox[abeprs]-[a-z0-9-]{10,}/i,
+    /(?:^|-)xapp-[a-z0-9-]{10,}/i,
+  ].some((pattern) => pattern.test(value));
+}
+
+function validatePartitionedResponseEvidence(overall, slices) {
+  const count = slices.reduce((total, series) => total + series.response_count.numerator, 0);
+  if (overall.response_count.numerator !== count) {
+    throw new Error("Response metric partitions are inconsistent");
+  }
+  for (const name of ["mean_rule_sentiment_delta", "mean_rule_recall_delta"]) {
+    const numerators = slices.map((series) => series[name].numerator);
+    const denominator = slices.reduce((total, series) => total + series[name].denominator, 0);
+    if (
+      !matchesPartitionedEvidence(overall[name].numerator, numerators)
+      || overall[name].denominator !== denominator
+    ) {
+      throw new Error("Response metric partitions are inconsistent");
+    }
+  }
+}
+
+function validateSpatialResponseSeed(value, token) {
+  if (
+    typeof token !== "string"
+    || !/^(?:0|[1-9][0-9]*)$/.test(token)
+    || BigInt(token) > 9223372036854775807n
+    || !Number.isInteger(value)
+    || Number(token) !== value
+  ) {
+    throw new Error("Spatial response seed is invalid");
+  }
+}
+
+function validateSpatialResponseMetrics(documentValue, seedToken) {
   const document = requireRecord(documentValue, "Spatial response metrics");
   if (
-    document.schema_version !== 1
+    !hasExactKeys(document, responseDocumentKeys)
+    || document.schema_version !== 1
     || document.model_id !== "spatial-response-metrics-v1"
     || document.claim_scope !== "synthetic-response-metrics-not-observed-outcomes"
     || document.source_run_schema_version !== 6
-    || !Number.isInteger(document.campaign_count)
-    || document.campaign_count < 1
-    || document.campaign_count > 20
+    || document.opportunity_model_id !== "spatial-opportunity-v1"
+    || document.attention_model_id !== "spatial-attention-v1"
+    || document.response_model_id !== "spatial-response-v1"
   ) {
     throw new Error("Spatial response metrics contract is invalid");
   }
-  validateResponseAggregateSeries(document.overall);
+  for (const field of responseHashFields) {
+    if (typeof document[field] !== "string" || !/^[0-9a-f]{64}$/.test(document[field])) {
+      throw new Error("Spatial response metrics contract is invalid");
+    }
+  }
+  validateSpatialResponseSeed(document.seed, seedToken);
+  if (seedToken !== state.metaSeedToken) {
+    throw new Error("Spatial response seed is inconsistent");
+  }
+  const populationSize = requireBoundedInteger(
+    document.population_size,
+    1,
+    30,
+    "Spatial response population",
+  );
+  requireBoundedInteger(document.days, 1, 7, "Spatial response days");
+  const campaignCount = requireBoundedInteger(
+    document.campaign_count,
+    1,
+    20,
+    "Spatial response campaign count",
+  );
+  const overall = validateResponseAggregateSeries(document.overall);
   if (
     !Array.isArray(document.channels)
     || document.channels.length !== 2
-    || document.channels[0].channel !== "roadside"
-    || document.channels[1].channel !== "mobile"
   ) {
     throw new Error("Spatial response metric channels are invalid");
   }
-  for (const channel of document.channels) validateResponseEventSeries(channel);
-  if (!Array.isArray(document.campaigns) || document.campaigns.length !== document.campaign_count) {
+  const channels = document.channels.map((channel) => (
+    validateResponseEventSeries(channel, ["channel"])
+  ));
+  if (channels[0].channel !== "roadside" || channels[1].channel !== "mobile") {
+    throw new Error("Spatial response metric channels are invalid");
+  }
+  if (!Array.isArray(document.campaigns) || document.campaigns.length !== campaignCount) {
     throw new Error("Spatial response metric campaigns are invalid");
   }
   let previousCampaign = "";
+  const campaigns = [];
   for (const campaign of document.campaigns) {
-    validateResponseAggregateSeries(campaign);
+    const validatedCampaign = validateResponseAggregateSeries(campaign, ["campaign_id"]);
     if (
       typeof campaign.campaign_id !== "string"
       || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(campaign.campaign_id)
-      || campaign.campaign_id <= previousCampaign
+      || containsCredentialShapedCampaignId(campaign.campaign_id)
     ) {
+      throw new Error("Spatial response metric campaign identity is invalid");
+    }
+    if (campaign.campaign_id <= previousCampaign) {
       throw new Error("Spatial response metric campaign order is invalid");
     }
     previousCampaign = campaign.campaign_id;
+    campaigns.push(validatedCampaign);
+  }
+  const sourceCampaigns = state.opportunitySummary && Array.isArray(state.opportunitySummary.campaigns)
+    ? state.opportunitySummary.campaigns
+    : [];
+  if (
+    sourceCampaigns.length !== campaigns.length
+    || campaigns.some((campaign, index) => sourceCampaigns[index].campaign_id !== campaign.campaign_id)
+  ) {
+    throw new Error("Spatial response metric campaign identity is invalid");
+  }
+  const allSeries = [overall, ...channels, ...campaigns];
+  for (const series of allSeries) {
+    if (
+      series.response_reach.denominator !== populationSize
+      || series.response_reach.numerator > populationSize
+    ) {
+      throw new Error("Response metric population evidence is inconsistent");
+    }
+  }
+  validatePartitionedResponseEvidence(overall, channels);
+  validatePartitionedResponseEvidence(overall, campaigns);
+  const overallStateDenominator = populationSize * campaignCount;
+  for (const [name] of responseStateNames) {
+    const overallState = overall[name];
+    const campaignStates = campaigns.map((campaign) => campaign[name]);
+    if (
+      overallState.denominator !== overallStateDenominator
+      || campaignStates.some((receipt) => receipt.denominator !== populationSize)
+      || !matchesPartitionedEvidence(
+        overallState.initial_total,
+        campaignStates.map((receipt) => receipt.initial_total),
+      )
+      || !matchesPartitionedEvidence(
+        overallState.final_total,
+        campaignStates.map((receipt) => receipt.final_total),
+      )
+    ) {
+      throw new Error("Response state partitions are inconsistent");
+    }
   }
   return document;
 }
@@ -670,7 +1046,7 @@ function responseMetricValueText(name, value) {
 }
 
 function compactReceiptNumber(value) {
-  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
+  return Number.isInteger(value) ? String(value) : proxyText(value, "Response receipt numerator");
 }
 
 function responseStateValueCell(name, kind, value, receipt) {
@@ -685,7 +1061,7 @@ function responseStateValueCell(name, kind, value, receipt) {
   strong.textContent = visible;
   const small = document.createElement("small");
   small.textContent = `n = ${receipt.denominator}`;
-  const provenance = `Denominator ${receipt.denominator}. Sources: ${receipt.source_artifacts.join(", ")}.`;
+  const provenance = `Exact value ${value}. Denominator ${receipt.denominator}. Sources: ${receipt.source_artifacts.join(", ")}.`;
   cell.title = provenance;
   cell.setAttribute("aria-label", `${name.replaceAll("_", " ")} ${kind}: ${visible}. ${provenance}`);
   cell.append(strong, small);
@@ -723,7 +1099,10 @@ function responseCampaignName(campaignId) {
 }
 
 function renderSpatialResponseMetrics() {
-  const metrics = validateSpatialResponseMetrics(state.spatialResponseMetrics);
+  const metrics = validateSpatialResponseMetrics(
+    state.spatialResponseMetrics,
+    state.spatialResponseSeedToken,
+  );
   const eventBody = byId("response-metrics-event-body");
   const eventFragment = document.createDocumentFragment();
   const groups = [
@@ -852,8 +1231,15 @@ function attachMapControls() {
 
 async function boot() {
   try {
-    const [meta, city, agents] = await Promise.all([fetchJson("/api/meta"), fetchJson("/api/city"), fetchJson("/api/agents")]);
-    state.meta = meta; state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
+    const [metaResponse, city, agents] = await Promise.all([
+      fetchJsonWithIntegerToken("/api/meta", "seed"),
+      fetchJson("/api/city"),
+      fetchJson("/api/agents"),
+    ]);
+    const meta = metaResponse.document;
+    validateSpatialResponseSeed(meta.seed, metaResponse.integerToken);
+    state.meta = meta; state.metaSeedToken = metaResponse.integerToken;
+    state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
     if (meta.place_set_sha256) {
       const [places, assignmentDocument] = await Promise.all([fetchJson("/api/places"), fetchJson("/api/place-assignments")]);
       state.places = places;
@@ -896,7 +1282,12 @@ async function boot() {
       renderSpatialMetrics();
     }
     if (meta.spatial_response_metrics === true) {
-      state.spatialResponseMetrics = await fetchJson("/api/spatial-response-metrics");
+      const responseMetrics = await fetchJsonWithIntegerToken(
+        "/api/spatial-response-metrics",
+        "seed",
+      );
+      state.spatialResponseMetrics = responseMetrics.document;
+      state.spatialResponseSeedToken = responseMetrics.integerToken;
       renderSpatialResponseMetrics();
     }
     byId("city-name").textContent = meta.city_name;
@@ -907,7 +1298,7 @@ async function boot() {
     byId("map-title").textContent = meta.city_name;
     byId("agent-count").textContent = String(meta.agent_count).padStart(2, "0");
     byId("road-count").textContent = String(city.roads.length).padStart(2, "0");
-    byId("seed-value").textContent = String(meta.seed);
+    byId("seed-value").textContent = state.metaSeedToken;
     byId("model-label").textContent = meta.model.replace("illustrative-road-", "").replaceAll("-", " ").toUpperCase();
     byId("people-total").textContent = `${agents.length} ACTIVE`;
     byId("attribution").textContent = meta.attribution;

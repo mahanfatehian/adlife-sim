@@ -28,7 +28,8 @@ must require:
 - one overall direct-response receipt set;
 - the canonical `roadside` and `mobile` direct-response receipt sets;
 - one overall committed-state receipt set; and
-- zero to twenty canonical campaign committed-state receipt sets.
+- one to twenty canonical campaign committed-state receipt sets, matching the run's
+  campaign catalog exactly.
 
 The browser must not derive, repair, interpolate, or persist metrics. It must not invent a
 zero when a request fails or when a legacy run has no response metrics. Backend startup

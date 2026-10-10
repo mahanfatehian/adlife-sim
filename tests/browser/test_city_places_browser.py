@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import socket
 import threading
 import time
@@ -787,22 +788,22 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
             if campaign.campaign_id == "campaign-6"
         )
         assert zero_campaign.response_count.value == 0.0
+        for state_name in (
+            "brand_sentiment",
+            "recall_strength",
+            "purchase_intention_proxy",
+        ):
+            assert getattr(zero_campaign, state_name).mean_change == 0.0
         campaign_selector.select_option("campaign-6")
         assert page.locator("#response-metrics-series-label").inner_text().endswith("CAMPAIGN-6")
-        assert (
-            float(
-                page.locator("#response-metrics-state-recall-strength-change").get_attribute(
-                    "data-value"
-                )
-                or "nan"
-            )
-            == zero_campaign.recall_strength.mean_change
-        )
-        assert (
-            page.locator("#response-metrics-state-recall-strength-change")
-            .inner_text()
-            .startswith("+0")
-        )
+        for state_name in (
+            "brand-sentiment",
+            "recall-strength",
+            "purchase-intention-proxy",
+        ):
+            change = page.locator(f"#response-metrics-state-{state_name}-change")
+            assert float(change.get_attribute("data-value") or "nan") == 0.0
+            assert change.inner_text().startswith("+0")
         campaign_selector.select_option("overall")
         assert page.locator("#response-metrics-state-body").inner_text() == initial_overall_state
 
@@ -961,7 +962,33 @@ def test_response_viewer_ignores_a_superseded_request_failure_during_playback() 
     assert int(snapshot["committedMinute"]) >= 2
 
 
-def test_response_viewer_refuses_malformed_full_run_metrics_without_fabricating_evidence() -> None:
+@pytest.mark.parametrize(
+    ("corruption", "expected_error"),
+    [
+        ("claim", "Spatial response metrics contract is invalid"),
+        ("projection-model", "Spatial response metrics contract is invalid"),
+        ("response-model", "Spatial response metrics contract is invalid"),
+        ("missing-series", "Response metric series is invalid"),
+        ("extra-field", "Spatial response metrics contract is invalid"),
+        ("series", "Response metric series is inconsistent"),
+        ("rounding-budget", "Response metric partitions are inconsistent"),
+        ("subnormal-partition", "Response metric partitions are inconsistent"),
+        ("power-boundary-partition", "Response metric partitions are inconsistent"),
+        ("half-even-partition", "Response metric partitions are inconsistent"),
+        ("seed-upper-bound", "Spatial response seed is invalid"),
+        ("credential-campaign", "Spatial response metric campaign identity is invalid"),
+        ("unknown-campaign", "Spatial response metric campaign identity is invalid"),
+        ("channel-partition", "Response metric partitions are inconsistent"),
+        ("population", "Response metric population evidence is inconsistent"),
+        ("state-partition", "Response state partitions are inconsistent"),
+        ("http-failure", "Could not load /api/spatial-response-metrics (503)"),
+        ("non-finite", "Spatial response population is invalid"),
+    ],
+)
+def test_response_viewer_refuses_malformed_full_run_metrics_without_fabricating_evidence(
+    corruption: str,
+    expected_error: str,
+) -> None:
     browser_path = _installed_browser()
     with _response_viewer() as (base_url, _, _, response_metrics), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -971,21 +998,257 @@ def test_response_viewer_refuses_malformed_full_run_metrics_without_fabricating_
         )
         page = browser.new_page()
 
-        def corrupt_metrics(route: Route) -> None:
-            document = response_metrics.model_dump(mode="json")
-            document["claim_scope"] = "observed-sales"
+        def corrupt_opportunity_summary(route: Route) -> None:
+            response = route.fetch()
+            document = response.json()
+            campaigns = document["campaigns"]
+            assert isinstance(campaigns, list)
+            campaign = campaigns[-1]
+            assert isinstance(campaign, dict)
+            campaign["campaign_id"] = "sk-live-abcdef1234"
             route.fulfill(json=document)
 
+        def corrupt_metrics(route: Route) -> None:
+            if corruption == "http-failure":
+                route.fulfill(status=503, body="temporarily unavailable")
+                return
+            if corruption == "non-finite":
+                body = response_metrics.model_dump_json().replace(
+                    '"population_size":30',
+                    '"population_size":1e400',
+                )
+                route.fulfill(body=body, content_type="application/json")
+                return
+            document = response_metrics.model_dump(mode="json")
+            if corruption == "claim":
+                document["claim_scope"] = "observed-sales"
+            elif corruption == "projection-model":
+                document["model_id"] = "unknown-projection-model"
+            elif corruption == "response-model":
+                document["response_model_id"] = "unknown-response-model"
+            elif corruption == "missing-series":
+                overall = document["overall"]
+                assert isinstance(overall, dict)
+                del overall["response_frequency"]
+            elif corruption == "extra-field":
+                document["unexpected_credential"] = "sk-live-abcdef1234"
+            elif corruption == "rounding-budget":
+                overall = document["overall"]
+                assert isinstance(overall, dict)
+                receipt = overall["mean_rule_sentiment_delta"]
+                assert isinstance(receipt, dict)
+                numerator = float(receipt["numerator"])
+                numerator = math.nextafter(math.nextafter(numerator, math.inf), math.inf)
+                receipt["numerator"] = numerator
+                receipt["value"] = numerator / int(receipt["denominator"])
+            elif corruption == "subnormal-partition":
+                overall = document["overall"]
+                channels = document["channels"]
+                campaigns = document["campaigns"]
+                assert isinstance(overall, dict)
+                assert isinstance(channels, list)
+                assert isinstance(campaigns, list)
+                smallest_subnormal = math.ulp(0.0)
+                series_with_values = [
+                    (overall, smallest_subnormal),
+                    *((channel, smallest_subnormal) for channel in channels),
+                    *(
+                        (campaign, smallest_subnormal if index < 2 else 0.0)
+                        for index, campaign in enumerate(campaigns)
+                    ),
+                ]
+                for series, numerator in series_with_values:
+                    assert isinstance(series, dict)
+                    receipt = series["mean_rule_sentiment_delta"]
+                    assert isinstance(receipt, dict)
+                    denominator = int(receipt["denominator"])
+                    receipt["numerator"] = numerator
+                    receipt["value"] = numerator / denominator if denominator else 0.0
+            elif corruption == "power-boundary-partition":
+                overall = document["overall"]
+                channels = document["channels"]
+                campaigns = document["campaigns"]
+                assert isinstance(overall, dict)
+                assert isinstance(channels, list)
+                assert isinstance(campaigns, list)
+                total = 15.999999999999998
+                campaign_parts = [
+                    3.9999999999999982,
+                    8.0,
+                    0.4999999999999996,
+                    0.4999999999999997,
+                    0.9999999999999993,
+                    1.9999999999999982,
+                ]
+                series_with_values = [
+                    (overall, total),
+                    (channels[0], 0.0),
+                    (channels[1], total),
+                    *zip(campaigns, campaign_parts, strict=True),
+                ]
+                for series, numerator in series_with_values:
+                    assert isinstance(series, dict)
+                    receipt = series["mean_rule_sentiment_delta"]
+                    assert isinstance(receipt, dict)
+                    denominator = int(receipt["denominator"])
+                    receipt["numerator"] = numerator
+                    receipt["value"] = numerator / denominator if denominator else 0.0
+            elif corruption == "half-even-partition":
+                overall = document["overall"]
+                channels = document["channels"]
+                campaigns = document["campaigns"]
+                assert isinstance(overall, dict)
+                assert isinstance(channels, list)
+                assert isinstance(campaigns, list)
+                total = 1.596434553705404e-17
+                campaign_parts = [
+                    -3.878577591183869e-226,
+                    -5.340434698482726e-213,
+                    -9.205851459807051e-191,
+                    2.112101272004847e-17,
+                    -5.156667182994425e-18,
+                    6.744381928370066e-122,
+                ]
+                series_with_values = [
+                    (overall, total),
+                    (channels[0], 0.0),
+                    (channels[1], total),
+                    *zip(campaigns, campaign_parts, strict=True),
+                ]
+                for series, numerator in series_with_values:
+                    assert isinstance(series, dict)
+                    receipt = series["mean_rule_sentiment_delta"]
+                    assert isinstance(receipt, dict)
+                    denominator = int(receipt["denominator"])
+                    receipt["numerator"] = numerator
+                    receipt["value"] = numerator / denominator if denominator else 0.0
+            elif corruption == "seed-upper-bound":
+                document["seed"] = 2**63
+            elif corruption in {"credential-campaign", "unknown-campaign"}:
+                campaigns = document["campaigns"]
+                assert isinstance(campaigns, list)
+                campaign = campaigns[-1]
+                assert isinstance(campaign, dict)
+                campaign["campaign_id"] = (
+                    "sk-live-abcdef1234"
+                    if corruption == "credential-campaign"
+                    else "campaign-unknown"
+                )
+            elif corruption == "channel-partition":
+                channels = document["channels"]
+                assert isinstance(channels, list)
+                roadside = channels[0]
+                assert isinstance(roadside, dict)
+                for name in ("response_count", "response_frequency"):
+                    receipt = roadside[name]
+                    assert isinstance(receipt, dict)
+                    receipt["numerator"] = 1
+                    receipt["value"] = 1 if name == "response_count" else 0
+                for name in ("mean_rule_sentiment_delta", "mean_rule_recall_delta"):
+                    receipt = roadside[name]
+                    assert isinstance(receipt, dict)
+                    receipt["denominator"] = 1
+            elif corruption == "population":
+                overall = document["overall"]
+                assert isinstance(overall, dict)
+                response_reach = overall["response_reach"]
+                assert isinstance(response_reach, dict)
+                response_reach["denominator"] = response_reach["numerator"]
+                response_reach["value"] = 1
+            elif corruption == "state-partition":
+                campaigns = document["campaigns"]
+                assert isinstance(campaigns, list)
+                campaign = campaigns[-1]
+                assert isinstance(campaign, dict)
+                receipt = campaign["brand_sentiment"]
+                assert isinstance(receipt, dict)
+                initial_total = float(receipt["initial_total"])
+                final_total = initial_total + 0.01
+                denominator = int(receipt["denominator"])
+                receipt["final_total"] = final_total
+                receipt["change_total"] = final_total - initial_total
+                receipt["final_mean"] = final_total / denominator
+                receipt["mean_change"] = (final_total - initial_total) / denominator
+            else:
+                overall = document["overall"]
+                assert isinstance(overall, dict)
+                response_count = overall["response_count"]
+                assert isinstance(response_count, dict)
+                response_count["numerator"] = 0
+                response_count["value"] = 0
+            route.fulfill(json=document)
+
+        if corruption == "credential-campaign":
+            page.route("**/api/opportunity-summary", corrupt_opportunity_summary)
         page.route("**/api/spatial-response-metrics", corrupt_metrics)
         page.goto(base_url, wait_until="networkidle")
 
         expect(page.locator("#error-banner")).to_be_visible()
-        expect(page.locator("#error-banner")).to_contain_text(
-            "Spatial response metrics contract is invalid"
-        )
+        expect(page.locator("#error-banner")).to_contain_text(expected_error)
+        assert "sk-live-abcdef1234" not in page.locator("#error-banner").inner_text()
         assert not page.locator("#response-metrics-panel").is_visible()
         assert page.locator("#response-metrics-event-body tr").count() == 0
         assert page.locator("#response-metrics-state-body tr").count() == 0
+        browser.close()
+
+
+def test_response_metrics_endpoint_is_not_requested_without_its_capability() -> None:
+    browser_path = _installed_browser()
+    metric_requests: list[str] = []
+    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def hide_metrics_capability(route: Route) -> None:
+            response = route.fetch()
+            document = response.json()
+            assert document.pop("spatial_response_metrics") is True
+            route.fulfill(json=document)
+
+        def observe_metrics_request(route: Route) -> None:
+            metric_requests.append(route.request.url)
+            route.continue_()
+
+        page.route("**/api/meta", hide_metrics_capability)
+        page.route("**/api/spatial-response-metrics", observe_metrics_request)
+        page.goto(base_url, wait_until="networkidle")
+
+        assert page.locator("#response-panel").is_visible()
+        assert not page.locator("#response-metrics-panel").is_visible()
+        assert page.locator("#response-metrics-event-body tr").count() == 0
+        assert page.locator("#response-metrics-state-body tr").count() == 0
+        assert metric_requests == []
+        browser.close()
+
+
+def test_response_viewer_preserves_the_maximum_seed_without_javascript_rounding() -> None:
+    browser_path = _installed_browser()
+    maximum_seed = 2**63 - 1
+    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def use_maximum_seed(route: Route) -> None:
+            response = route.fetch()
+            document = response.json()
+            document["seed"] = maximum_seed
+            route.fulfill(json=document)
+
+        page.route("**/api/meta", use_maximum_seed)
+        page.route("**/api/spatial-response-metrics", use_maximum_seed)
+        page.goto(base_url, wait_until="networkidle")
+
+        assert page.locator("#seed-value").inner_text() == str(maximum_seed)
+        assert page.locator("#response-metrics-panel").is_visible()
+        assert not page.locator("#error-banner").is_visible()
         browser.close()
 
 
@@ -1048,6 +1311,8 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
               ),
             })"""
         )
+        assert page.evaluate("() => signedProxyText(0.00001, 'small change')") == "+0.00001"
+        assert page.evaluate("() => compactReceiptNumber(0.00001)") == "0.00001"
         browser.close()
 
     violations: list[str] = []
