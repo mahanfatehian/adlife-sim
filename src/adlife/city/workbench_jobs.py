@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from threading import Lock
 from typing import Literal, Protocol, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from adlife.city.run_store import StoredCityRun
 from adlife.city.runs import PreparedCityRun
@@ -33,6 +33,7 @@ WorkbenchJobPhase = Literal[
 
 _TERMINAL_PHASES = frozenset({"completed", "failed", "cancelled"})
 _CANCELLABLE_PHASES = frozenset({"queued", "evaluating"})
+_SEED_PATTERN = r"^(?:0|[1-9][0-9]{0,18})$"
 
 
 class WorkbenchJobBusy(RuntimeError):
@@ -77,12 +78,48 @@ class WorkbenchJobFailure(DomainModel):
         return self
 
 
+class WorkbenchAcceptedSettings(DomainModel):
+    """Bounded immutable scientific settings retained through every job phase."""
+
+    schema_version: Literal[1] = 1
+    city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
+    scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
+    campaign_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
+    seed: str = Field(pattern=_SEED_PATTERN, max_length=19)
+    agent_count: int = Field(ge=1, le=30)
+    days: int = Field(ge=1, le=7)
+    response_mode: Literal["deterministic-rules"]
+
+    @field_validator("seed")
+    @classmethod
+    def bounded_seed(cls, value: str) -> str:
+        if int(value) > 2**63 - 1:
+            raise ValueError("accepted job seed exceeds the supported range")
+        return value
+
+
+def _summary_matches_accepted_settings(
+    summary: WorkbenchRunSummary,
+    settings: WorkbenchAcceptedSettings,
+) -> bool:
+    return (
+        summary.run_schema_version == 7
+        and summary.city_id == settings.city_id
+        and summary.scenario_id == settings.scenario_id
+        and summary.campaign_ids == (settings.campaign_id,)
+        and summary.seed == settings.seed
+        and summary.agent_count == settings.agent_count
+        and summary.days == settings.days
+    )
+
+
 class WorkbenchJobView(DomainModel):
     """Immutable bounded operational state; timestamps never enter artifacts."""
 
     schema_version: Literal[1] = 1
     job_id: str = Field(pattern=r"^job-[0-9a-f]{32}$")
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    accepted_settings: WorkbenchAcceptedSettings
     phase: WorkbenchJobPhase
     created_at: str = Field(pattern=ISO_UTC_PATTERN)
     updated_at: str = Field(pattern=ISO_UTC_PATTERN)
@@ -107,6 +144,8 @@ class WorkbenchJobView(DomainModel):
                 raise ValueError("completed workbench job requires only a verified result")
             if self.result.run_id != self.run_id:
                 raise ValueError("completed workbench job result has a different run identifier")
+            if not _summary_matches_accepted_settings(self.result, self.accepted_settings):
+                raise ValueError("completed workbench job result has different accepted settings")
         elif self.phase == "failed":
             if self.error is None or self.result is not None:
                 raise ValueError("failed workbench job requires only a screened error")
@@ -132,6 +171,7 @@ class _RunOperations(Protocol):
 class _JobRecord:
     job_id: str
     run_id: str
+    accepted_settings: WorkbenchAcceptedSettings
     validated: ValidatedWorkbenchRun
     phase: WorkbenchJobPhase
     created_at: str
@@ -191,6 +231,7 @@ class CityJobManager:
         return WorkbenchJobView(
             job_id=record.job_id,
             run_id=record.run_id,
+            accepted_settings=record.accepted_settings,
             phase=record.phase,
             created_at=record.created_at,
             updated_at=record.updated_at,
@@ -232,6 +273,16 @@ class CityJobManager:
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
         run_id = validated.workbench_input.draft.settings.run_id
+        draft = validated.workbench_input.draft
+        accepted_settings = WorkbenchAcceptedSettings(
+            city_id=draft.city_id,
+            scenario_id=draft.scenario.scenario_id,
+            campaign_id=draft.scenario.campaign.campaign_id,
+            seed=str(draft.settings.seed),
+            agent_count=draft.settings.agent_count,
+            days=draft.settings.days,
+            response_mode=draft.settings.response_mode,
+        )
         with self._lock:
             if self._closed:
                 raise WorkbenchJobManagerClosed("The workbench worker is closed.")
@@ -243,6 +294,7 @@ class CityJobManager:
             record = _JobRecord(
                 job_id=job_id,
                 run_id=run_id,
+                accepted_settings=accepted_settings,
                 validated=validated,
                 phase="queued",
                 created_at=created_at,
@@ -313,7 +365,11 @@ class CityJobManager:
         except Exception:
             self._fail(job_id, "verifying")
             return
-        if not isinstance(summary, WorkbenchRunSummary) or summary.run_id != run_id:
+        if (
+            not isinstance(summary, WorkbenchRunSummary)
+            or summary.run_id != run_id
+            or not _summary_matches_accepted_settings(summary, record.accepted_settings)
+        ):
             self._fail(job_id, "verifying")
             return
 
@@ -371,6 +427,7 @@ class CityJobManager:
 __all__ = [
     "MAX_TERMINAL_JOBS",
     "CityJobManager",
+    "WorkbenchAcceptedSettings",
     "WorkbenchJobBusy",
     "WorkbenchJobCancellationConflict",
     "WorkbenchJobFailure",

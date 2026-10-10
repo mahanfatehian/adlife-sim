@@ -94,6 +94,47 @@ class _DeferredExecutor:
         self.shutdown_called = True
 
 
+def test_every_job_view_carries_the_exact_frozen_accepted_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+    manager = jobs.CityJobManager(runs.WorkbenchRunRepository(workspace))
+    validated = _validated(
+        run_id="accepted-settings",
+        seed=2**63 - 1,
+        agents=30,
+        days=7,
+    )
+
+    submitted = manager.submit(validated)
+    try:
+        expected = {
+            "schema_version": 1,
+            "city_id": "fictional-grid-v2",
+            "scenario_id": "launch-study",
+            "campaign_id": "fictional-launch",
+            "seed": "9223372036854775807",
+            "agent_count": 30,
+            "days": 7,
+            "response_mode": "deterministic-rules",
+        }
+        assert submitted.model_dump(mode="json")["accepted_settings"] == expected
+        assert (
+            manager.get(submitted.job_id).model_dump(mode="json")["accepted_settings"] == expected
+        )
+        with pytest.raises(ValidationError, match="frozen"):
+            submitted.accepted_settings.seed = "0"
+    finally:
+        manager.cancel(submitted.job_id)
+        deferred.run()
+        _await_terminal(manager, submitted.job_id)
+        manager.close()
+
+
 def test_success_exposes_each_truthful_phase_and_only_verified_result(tmp_path: Path) -> None:
     jobs, runs = _modules()
     workspace = prepare_workbench_workspace(tmp_path / "state")
@@ -252,6 +293,11 @@ def test_one_active_job_and_late_cancellation_are_stable_conflicts(tmp_path: Pat
             "verification-failed",
             "The persisted city run could not be verified.",
         ),
+        (
+            "verifying-settings-mismatch",
+            "verification-failed",
+            "The persisted city run could not be verified.",
+        ),
     ],
 )
 def test_failures_are_terminal_bounded_and_never_expose_exception_text(
@@ -287,6 +333,8 @@ def test_failures_are_terminal_bounded_and_never_expose_exception_text(
                         "inspector_url": "/runs/different-run",
                     }
                 )
+            if stage == "verifying-settings-mismatch":
+                return summary.model_copy(update={"seed": "43"})
             return summary
 
     manager = jobs.CityJobManager(FailingRepository())
@@ -319,6 +367,7 @@ def test_public_records_are_exact_frozen_bounded_and_use_utc_operational_times(
             "schema_version",
             "job_id",
             "run_id",
+            "accepted_settings",
             "phase",
             "created_at",
             "updated_at",
@@ -378,12 +427,12 @@ def test_terminal_history_is_bounded_to_32_most_recent_records() -> None:
             return runs.WorkbenchRunSummary(
                 run_id=run_id,
                 run_schema_version=7,
-                city_id="fictional-grid-city-v2",
+                city_id="fictional-grid-v2",
                 city_schema_version=2,
                 city_sha256="1" * 64,
                 scenario_id="launch-study",
                 scenario_sha256="2" * 64,
-                campaign_ids=("campaign-alpha",),
+                campaign_ids=("fictional-launch",),
                 channels=("mobile-feed",),
                 seed="42",
                 days=2,
