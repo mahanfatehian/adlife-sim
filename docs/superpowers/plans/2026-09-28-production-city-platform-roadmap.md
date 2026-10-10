@@ -298,6 +298,13 @@ also depend on E. Keep existing CLI/TUI/report paths working.
   offline resources, XSS/CSP, large timeline and slow API responses. A live browser
   smoke uses a fresh sample artifact; no screenshots substitute for assertions.
 
+  **D3/D4 progress (2026-10-10):** the saved-run browser now presents the verified
+  schema-v6 full-run response ledger with direct-rule and campaign-state receipts,
+  keyboard provenance, safe text insertion, malformed-response refusal, narrow-screen
+  containment, and no external resources. D remains open: scenario/study operation,
+  jobs, report download, broader timeline mechanisms, authentication, provider settings,
+  and the complete shell-free workflow are not implemented here.
+
 **Exit gate:** A complete local geographic study can be operated through the UI
 without a shell, and every displayed outcome can be traced to a stored event.
 

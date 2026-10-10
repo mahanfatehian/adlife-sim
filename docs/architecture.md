@@ -133,10 +133,12 @@ above; ordinary `--spatial-campaign` runs remain v5, while `--spatial-response` 
 `city-replay` regenerates every minute and each applicable evidence layer before reporting
 equality, and `city-view`
 validates before serving one immutable mobility projection. For V4 through V6, the same
-loopback-only adapter serves a bounded summary and canonical, paged
+loopback-only read-only adapter serves a bounded summary and canonical, paged
 current-minute opportunity evidence; V5 and V6 additionally serve current-minute attention
 evidence. V6 adds bounded current-minute response records plus final end-of-run campaign
-state, explicitly not state at the scrubbed minute. It does not create or mutate evidence.
+state, explicitly not state at the scrubbed minute. `city-view` also presents the verified
+full-run `/api/spatial-response-metrics` projection as separate direct-rule and committed-state
+receipts. It does not create or mutate evidence.
 V4 remains opportunity-only evidence, V5 adds bounded synthetic attention evidence, and V6
 adds bounded rules-only response evidence; none is an observed advertising-outcome run.
 

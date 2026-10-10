@@ -246,7 +246,10 @@ change.
 `city-replay` recomputes and verifies every layer without changing the source. For verified
 schema-v5 and schema-v6 runs, `city-view` shows read-only current-minute opportunity and
 current-minute attention evidence on the map and in bounded evidence rails; schema-v6 also
-shows response records and complete end-of-run campaign state. The existing
+shows response records and complete end-of-run campaign state. It also renders the verified
+full-run response ledger, keeping planned rule deltas separate from committed state and
+retaining exact receipt provenance without changing the scrubbed timeline or source run. The
+existing
 `/api/spatial-metrics` ledger and default `city-metrics` output remain attention-only for both
 schema versions under `synthetic-metrics-not-observed-outcomes`. Schema-v6 adds the separate
 `spatial-response-metrics-v1` projection under

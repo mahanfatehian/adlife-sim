@@ -97,6 +97,28 @@
             <p class="response-state-page-note" id="response-state-page-note" hidden></p>
           </section>
         </section>
+        <section class="response-metrics-panel" id="response-metrics-panel" aria-labelledby="response-metrics-title" aria-describedby="response-metrics-claim response-metrics-disclosure" tabindex="0" hidden>
+          <div class="response-metrics-heading"><div><span class="eyebrow">VERIFIED RECEIPTS / FULL RUN</span><h2 id="response-metrics-title">Response evidence summary</h2></div><span class="response-metrics-seal" aria-hidden="true">R&Sigma;</span></div>
+          <p class="response-metrics-claim" id="response-metrics-claim">SYNTHETIC RESPONSE METRICS &middot; NOT OBSERVED OUTCOMES</p>
+          <p class="response-metrics-disclosure" id="response-metrics-disclosure">Response counts are deterministic rule-processing records, not observed engagement. Planned rule deltas are distinct from bounded committed state changes. Purchase intention is an uncalibrated synthetic proxy, not purchase probability, transactions, sales, or a sales forecast.</p>
+          <div class="response-metrics-table-wrap" tabindex="0" aria-label="Scrollable direct rule-response receipt table">
+            <table class="response-metrics-table" id="response-metrics-event-table">
+              <caption>Direct rule-response values and numerator-denominator receipts for all channels, roadside, and phone</caption>
+              <thead><tr><th scope="col">RULE RECEIPT</th><th scope="col">ALL</th><th scope="col">ROAD</th><th scope="col">PHONE</th></tr></thead>
+              <tbody id="response-metrics-event-body"></tbody>
+            </table>
+          </div>
+          <p class="response-metrics-source">Focus a value for its exact source artifact and event type. Receipts read numerator / denominator.</p>
+          <div class="response-metrics-state-heading"><div><span class="eyebrow">COMMITTED STATE / END OF RUN</span><strong id="response-metrics-series-label">ALL CAMPAIGNS</strong></div><label for="response-metrics-campaign">STATE SERIES<select id="response-metrics-campaign"><option value="overall">All campaigns</option></select></label></div>
+          <p class="response-metrics-state-note" id="response-metrics-state-note">Committed state is not allocated by channel: simultaneous road and phone notices can share one nonlinear state update.</p>
+          <div class="response-metrics-table-wrap" tabindex="0" aria-label="Scrollable committed response-state receipt table">
+            <table class="response-metrics-table response-metrics-state-table" id="response-metrics-state-table">
+              <caption>Initial, final, and changed mean committed state with complete-grid provenance</caption>
+              <thead><tr><th scope="col">STATE RECEIPT</th><th scope="col">INITIAL</th><th scope="col">FINAL</th><th scope="col">CHANGE</th></tr></thead>
+              <tbody id="response-metrics-state-body"></tbody>
+            </table>
+          </div>
+        </section>
         <div class="section-title"><span>SELECTED AGENT</span><span id="selected-id">—</span></div>
         <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose an agent</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
         <div class="detail-rows"><div><span>HOME</span><strong id="home-place">Generated node</strong><small id="home-node">—</small></div><div><span>WORKPLACE</span><strong id="work-place">Generated node</strong><small id="work-node">—</small></div><div><span>LEISURE</span><strong id="leisure-place">Generated node</strong><small id="leisure-node">—</small></div><div><span>ROAD SEGMENT</span><strong id="road-segment">—</strong></div></div>

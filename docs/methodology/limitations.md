@@ -90,7 +90,9 @@ What this model cannot support. Read alongside the
   uncalibrated internal proxy, not purchase probability, sales, or a transaction. Schema-v6
   adds no cognition, memory, social propagation, budget mutation, purchase event, or
   movement change. It does not join the zone simulator or make the city population
-  calibrated. C3 therefore remains open for those broader causal mechanisms.
+  calibrated. The saved-run browser's full-run response ledger makes the proxy visible with
+  receipts; purchase intention remains not purchase probability or an observed outcome. C3
+  therefore remains open for those broader causal mechanisms.
 - **Geographic evidence omits important mechanisms.** Road proximity and the half-plane
   orientation heuristic omit occlusion, lanes, buildings, traffic, speed variation and
   measured viewability. Phone probability is an analyst assumption, not an observed usage

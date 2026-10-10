@@ -14,6 +14,10 @@ from playwright.sync_api import Route, expect, sync_playwright
 from adlife.city.web import create_city_app
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
+from adlife.core.experiments.spatial_response_metrics import (
+    SpatialResponseMetrics,
+    derive_spatial_response_metrics,
+)
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.spatial_attention import (
     SpatialAttentionEvaluation,
@@ -175,7 +179,14 @@ def _attention_viewer() -> Iterator[
 
 
 @contextmanager
-def _response_viewer() -> Iterator[tuple[str, SpatialCampaignScenario, SpatialResponseEvaluation]]:
+def _response_viewer() -> Iterator[
+    tuple[
+        str,
+        SpatialCampaignScenario,
+        SpatialResponseEvaluation,
+        SpatialResponseMetrics,
+    ]
+]:
     pack = load_pack(pack_data())
     simulation = CityMobility(pack, seed=42, agent_count=30, days=1)
     scenario = _scenario(
@@ -188,6 +199,15 @@ def _response_viewer() -> Iterator[tuple[str, SpatialCampaignScenario, SpatialRe
                 cap=1,
             )
             for index in range(1, 6)
+        ]
+        + [
+            _phone(
+                placement_id="phone-6",
+                campaign_id="campaign-6",
+                probability=0.0,
+                windows=[{"start_minute": 0, "end_minute": 1}],
+                cap=1,
+            )
         ],
     )
     hostile_name = "پویش پاسخ </script><img src=x onerror=alert(1)>"
@@ -220,6 +240,15 @@ def _response_viewer() -> Iterator[tuple[str, SpatialCampaignScenario, SpatialRe
         days=simulation.days,
         source_run_schema_version=6,
     )
+    response_metrics = derive_spatial_response_metrics(
+        response_input,
+        response_evaluation,
+        scenario=scenario,
+        opportunities=opportunities,
+        attention=attention,
+        attention_metrics=metrics,
+        agent_ids=agent_ids,
+    )
     application = create_city_app(
         simulation,
         run_id="browser-response-study",
@@ -230,9 +259,10 @@ def _response_viewer() -> Iterator[tuple[str, SpatialCampaignScenario, SpatialRe
         spatial_metrics=metrics,
         response_input=response_input,
         response_evaluation=response_evaluation,
+        spatial_response_metrics=response_metrics,
     )
     with _serve(application) as base_url:
-        yield base_url, scenario, response_evaluation
+        yield base_url, scenario, response_evaluation, response_metrics
 
 
 def test_place_viewer_renders_provenance_and_scrubs_without_external_requests(
@@ -430,6 +460,7 @@ def test_attention_viewer_renders_causal_timeline_without_external_requests(
         assert page.locator("#saved-run-label").inner_text().endswith("V5")
         assert page.locator("#attention-panel").is_visible()
         assert page.locator("#metrics-panel").is_visible()
+        assert not page.locator("#response-metrics-panel").is_visible()
         assert page.locator("#metrics-panel").get_attribute("tabindex") == "0"
         assert page.locator("#metrics-claim").inner_text() == (
             "SYNTHETIC METRICS \u00b7 NOT OBSERVED OUTCOMES"
@@ -562,7 +593,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
     console_errors: list[str] = []
     page_errors: list[str] = []
     with (
-        _response_viewer() as (base_url, scenario, response_evaluation),
+        _response_viewer() as (base_url, scenario, response_evaluation, response_metrics),
         sync_playwright() as playwright,
     ):
         response_before = response_evaluation.model_dump(mode="json")
@@ -606,7 +637,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
             state for state in response_evaluation.final_states if state.agent_id == "person-001"
         )
         assert len(minute_zero) == 144
-        assert len(selected_states) == 5
+        assert len(selected_states) == 6
         assert page.locator("#saved-run-label").inner_text().endswith("V6")
         assert page.locator("#response-panel").is_visible()
         assert page.locator("#response-scenario").inner_text() == scenario.name
@@ -653,6 +684,137 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert page.locator("#response-state-warning").inner_text() == (
             "NOT STATE AT THE SCRUBBED MINUTE"
         )
+
+        assert page.locator("#response-metrics-panel").is_visible()
+        assert page.locator("#response-metrics-panel").get_attribute("tabindex") == "0"
+        assert page.locator("#response-metrics-claim").inner_text() == (
+            "SYNTHETIC RESPONSE METRICS · NOT OBSERVED OUTCOMES"
+        )
+        assert (
+            "deterministic rule-processing records"
+            in page.locator("#response-metrics-disclosure").inner_text()
+        )
+        assert "not purchase probability, transactions, sales, or a sales forecast" in (
+            page.locator("#response-metrics-disclosure").inner_text().lower()
+        )
+        assert (
+            "Committed state is not allocated by channel"
+            in page.locator("#response-metrics-state-note").inner_text()
+        )
+        assert page.locator("#response-metrics-event-body tr").count() == 5
+        assert page.locator("#response-metrics-state-body tr").count() == 3
+        assert page.locator("#response-metrics-state-table th").filter(has_text="ROAD").count() == 0
+        assert (
+            page.locator("#response-metrics-state-table th").filter(has_text="PHONE").count() == 0
+        )
+
+        event_names = (
+            "response_count",
+            "response_reach",
+            "response_frequency",
+            "mean_rule_sentiment_delta",
+            "mean_rule_recall_delta",
+        )
+        groups = (
+            ("overall", response_metrics.overall),
+            ("roadside", response_metrics.channels[0]),
+            ("mobile", response_metrics.channels[1]),
+        )
+        for group_name, group in groups:
+            for metric_name in event_names:
+                receipt = getattr(group, metric_name)
+                cell = page.locator(
+                    f"#response-metrics-{group_name}-{metric_name.replace('_', '-')}"
+                )
+                assert float(cell.get_attribute("data-value") or "nan") == receipt.value
+                numerator_text, denominator_text = cell.locator("small").inner_text().split("/")
+                assert float(numerator_text) == pytest.approx(receipt.numerator, abs=0.00005)
+                assert int(denominator_text) == receipt.denominator
+                provenance = cell.get_attribute("aria-label") or ""
+                assert "Numerator" in provenance
+                assert "denominator" in provenance
+                assert "outputs/spatial-responses.jsonl" in provenance
+                assert "spatial.response" in provenance
+
+        campaign_selector = page.locator("#response-metrics-campaign")
+        assert campaign_selector.locator("option").count() == 7
+        assert scenario.campaigns[0].name in campaign_selector.locator("option").nth(1).inner_text()
+        assert page.locator("#response-metrics-panel img").count() == 0
+        initial_overall_state = page.locator("#response-metrics-state-body").inner_text()
+        overall_receipt = response_metrics.overall.purchase_intention_proxy
+        assert (
+            float(
+                page.locator(
+                    "#response-metrics-state-purchase-intention-proxy-initial"
+                ).get_attribute("data-value")
+                or "nan"
+            )
+            == overall_receipt.initial_mean
+        )
+        assert (
+            float(
+                page.locator(
+                    "#response-metrics-state-purchase-intention-proxy-final"
+                ).get_attribute("data-value")
+                or "nan"
+            )
+            == overall_receipt.final_mean
+        )
+        assert (
+            float(
+                page.locator(
+                    "#response-metrics-state-purchase-intention-proxy-change"
+                ).get_attribute("data-value")
+                or "nan"
+            )
+            == overall_receipt.mean_change
+        )
+        state_provenance = (
+            page.locator("#response-metrics-state-purchase-intention-proxy-change").get_attribute(
+                "aria-label"
+            )
+            or ""
+        )
+        assert "Denominator" in state_provenance
+        assert "inputs/spatial-response.json" in state_provenance
+        assert "outputs/response-state.json" in state_provenance
+        assert "NaN" not in page.locator("#response-metrics-panel").inner_text()
+        assert "Infinity" not in page.locator("#response-metrics-panel").inner_text()
+
+        zero_campaign = next(
+            campaign
+            for campaign in response_metrics.campaigns
+            if campaign.campaign_id == "campaign-6"
+        )
+        assert zero_campaign.response_count.value == 0.0
+        campaign_selector.select_option("campaign-6")
+        assert page.locator("#response-metrics-series-label").inner_text().endswith("CAMPAIGN-6")
+        assert (
+            float(
+                page.locator("#response-metrics-state-recall-strength-change").get_attribute(
+                    "data-value"
+                )
+                or "nan"
+            )
+            == zero_campaign.recall_strength.mean_change
+        )
+        assert (
+            page.locator("#response-metrics-state-recall-strength-change")
+            .inner_text()
+            .startswith("+0")
+        )
+        campaign_selector.select_option("overall")
+        assert page.locator("#response-metrics-state-body").inner_text() == initial_overall_state
+
+        first_response_metric = page.locator("#response-metrics-overall-response-count")
+        first_response_metric.focus()
+        assert first_response_metric.evaluate("element => document.activeElement === element")
+        assert first_response_metric.evaluate(
+            "element => getComputedStyle(element).outlineStyle"
+        ) != ("none")
+        campaign_selector.focus()
+        assert campaign_selector.evaluate("element => document.activeElement === element")
+        full_run_ledger = page.locator("#response-metrics-panel").inner_text()
         assert page.locator("#response-state-claim").inner_text() == (
             "UNCALIBRATED SYNTHETIC PROXIES · PURCHASE INTENTION IS NOT PURCHASE "
             "PROBABILITY OR SALES"
@@ -682,19 +844,21 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         )
         assert page.locator(".response-card").count() == 0
         assert page.locator("#response-empty").is_visible()
-        assert page.locator(".response-state-card").count() == 5
+        assert page.locator(".response-state-card").count() == 6
         assert page.locator("#response-state-warning").inner_text() == (
             "NOT STATE AT THE SCRUBBED MINUTE"
         )
+        assert page.locator("#response-metrics-panel").inner_text() == full_run_ledger
 
         person_five = page.locator("#people-list .person").nth(4)
         person_five.focus()
         page.keyboard.press("Enter")
         expect(page.locator("#selected-id")).to_have_text("PERSON-005")
         expect(page.locator(".response-state-card").first).to_contain_text("PERSON-005")
-        assert page.locator(".response-state-card").count() == 5
-        assert page.locator(".response-state-card").filter(has_text="0 RESPONSES").count() == 5
+        assert page.locator(".response-state-card").count() == 6
+        assert page.locator(".response-state-card").filter(has_text="0 RESPONSES").count() == 6
         assert any("agent_id=person-005" in url for url in response_state_requests)
+        assert page.locator("#response-metrics-panel").inner_text() == full_run_ledger
 
         page.locator("#response-state-panel").focus()
         assert page.locator("#response-state-panel").evaluate(
@@ -709,9 +873,12 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.locator("#response-panel").is_visible()
         assert page.locator("#response-state-panel").is_visible()
+        assert page.locator("#response-metrics-panel").is_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         response_box = page.locator("#response-panel").bounding_box()
         assert response_box is not None and response_box["width"] <= 390
+        response_metrics_box = page.locator("#response-metrics-panel").bounding_box()
+        assert response_metrics_box is not None and response_metrics_box["width"] <= 390
         narrow_screenshot = tmp_path / "city-spatial-response-viewer-narrow.png"
         page.screenshot(path=narrow_screenshot, full_page=True)
         assert narrow_screenshot.stat().st_size > 25_000
@@ -724,7 +891,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
 
 def test_response_viewer_ignores_a_superseded_request_failure_during_playback() -> None:
     browser_path = _installed_browser()
-    with _response_viewer() as (base_url, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -794,9 +961,37 @@ def test_response_viewer_ignores_a_superseded_request_failure_during_playback() 
     assert int(snapshot["committedMinute"]) >= 2
 
 
+def test_response_viewer_refuses_malformed_full_run_metrics_without_fabricating_evidence() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, response_metrics), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def corrupt_metrics(route: Route) -> None:
+            document = response_metrics.model_dump(mode="json")
+            document["claim_scope"] = "observed-sales"
+            route.fulfill(json=document)
+
+        page.route("**/api/spatial-response-metrics", corrupt_metrics)
+        page.goto(base_url, wait_until="networkidle")
+
+        expect(page.locator("#error-banner")).to_be_visible()
+        expect(page.locator("#error-banner")).to_contain_text(
+            "Spatial response metrics contract is invalid"
+        )
+        assert not page.locator("#response-metrics-panel").is_visible()
+        assert page.locator("#response-metrics-event-body tr").count() == 0
+        assert page.locator("#response-metrics-state-body tr").count() == 0
+        browser.close()
+
+
 def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenance() -> None:
     browser_path = _installed_browser()
-    with _response_viewer() as (base_url, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -885,7 +1080,7 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
 
 def test_response_viewer_busy_minute_is_legible_and_contained_at_narrow_width() -> None:
     browser_path = _installed_browser()
-    with _response_viewer() as (base_url, _, _), sync_playwright() as playwright:
+    with _response_viewer() as (base_url, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,

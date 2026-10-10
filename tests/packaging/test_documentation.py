@@ -764,6 +764,55 @@ def test_spatial_response_metrics_are_an_additive_schema_v6_public_contract() ->
     )
 
 
+def test_saved_run_response_ledger_is_documented_as_read_only_incremental_workbench_progress() -> (
+    None
+):
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    )
+
+    _assert_terms_share_paragraph(
+        readme,
+        "city-view",
+        "full-run response ledger",
+        "planned rule deltas",
+        "committed state",
+    )
+    _assert_terms_share_paragraph(
+        architecture,
+        "city-view",
+        "/api/spatial-response-metrics",
+        "read-only",
+        "full-run",
+    )
+    _assert_terms_share_paragraph(
+        city_pilot,
+        "/api/spatial-response-metrics",
+        "full-run response ledger",
+        "not written back",
+        "channel",
+    )
+    _assert_terms_share_paragraph(
+        limitations,
+        "saved-run browser",
+        "full-run",
+        "purchase intention",
+        "not purchase probability",
+    )
+    _assert_terms_share_paragraph(
+        roadmap,
+        "D3/D4 progress",
+        "response ledger",
+        "D remains open",
+        "authentication",
+        "jobs",
+    )
+
+
 def test_spatial_study_docs_pin_seed_statistics_and_provenance_contract() -> None:
     architecture = _read("docs", "architecture.md")
     cli = _read("docs", "cli-reference.md")

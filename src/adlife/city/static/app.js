@@ -1,7 +1,7 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
+const state = { meta: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, spatialResponseMetrics: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -523,6 +523,270 @@ function renderSpatialMetrics() {
   byId("metrics-panel").hidden = false;
 }
 
+const responseMetricNames = [
+  ["response_count", "Response count"],
+  ["response_reach", "Response reach"],
+  ["response_frequency", "Response frequency"],
+  ["mean_rule_sentiment_delta", "Mean planned sentiment delta"],
+  ["mean_rule_recall_delta", "Mean planned recall delta"],
+];
+const responseStateNames = [
+  ["brand_sentiment", "Brand sentiment"],
+  ["recall_strength", "Recall strength"],
+  ["purchase_intention_proxy", "Purchase intention proxy"],
+];
+
+function requireRecord(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function requireFiniteNumber(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function sameStrings(actual, expected) {
+  return Array.isArray(actual)
+    && actual.length === expected.length
+    && actual.every((value, index) => value === expected[index]);
+}
+
+function validateResponseMetricReceipt(receiptValue, name) {
+  const receipt = requireRecord(receiptValue, "Response metric receipt");
+  if (
+    receipt.schema_version !== 1
+    || receipt.name !== name
+    || !Number.isInteger(receipt.denominator)
+    || receipt.denominator < 0
+    || !sameStrings(receipt.source_event_types, ["spatial.response"])
+    || !sameStrings(receipt.source_artifacts, ["outputs/spatial-responses.jsonl"])
+  ) {
+    throw new Error("Response metric receipt is invalid");
+  }
+  const numerator = requireFiniteNumber(receipt.numerator, "Response metric numerator");
+  const value = requireFiniteNumber(receipt.value, "Response metric value");
+  const expected = receipt.denominator === 0 ? 0 : numerator / receipt.denominator;
+  if (value !== expected) throw new Error("Response metric receipt is inconsistent");
+  return receipt;
+}
+
+function validateResponseStateReceipt(receiptValue, name) {
+  const receipt = requireRecord(receiptValue, "Response state receipt");
+  if (
+    receipt.schema_version !== 1
+    || receipt.name !== name
+    || !Number.isInteger(receipt.denominator)
+    || receipt.denominator < 1
+    || !sameStrings(receipt.source_artifacts, [
+      "inputs/spatial-response.json",
+      "outputs/response-state.json",
+    ])
+  ) {
+    throw new Error("Response state receipt is invalid");
+  }
+  const initialTotal = requireFiniteNumber(receipt.initial_total, "Response initial total");
+  const finalTotal = requireFiniteNumber(receipt.final_total, "Response final total");
+  const changeTotal = requireFiniteNumber(receipt.change_total, "Response change total");
+  const initialMean = requireFiniteNumber(receipt.initial_mean, "Response initial mean");
+  const finalMean = requireFiniteNumber(receipt.final_mean, "Response final mean");
+  const meanChange = requireFiniteNumber(receipt.mean_change, "Response mean change");
+  if (
+    changeTotal !== finalTotal - initialTotal
+    || initialMean !== initialTotal / receipt.denominator
+    || finalMean !== finalTotal / receipt.denominator
+    || meanChange !== changeTotal / receipt.denominator
+  ) {
+    throw new Error("Response state receipt is inconsistent");
+  }
+  return receipt;
+}
+
+function validateResponseEventSeries(seriesValue) {
+  const series = requireRecord(seriesValue, "Response metric series");
+  for (const [name] of responseMetricNames) validateResponseMetricReceipt(series[name], name);
+  return series;
+}
+
+function validateResponseAggregateSeries(seriesValue) {
+  const series = validateResponseEventSeries(seriesValue);
+  for (const [name] of responseStateNames) validateResponseStateReceipt(series[name], name);
+  return series;
+}
+
+function validateSpatialResponseMetrics(documentValue) {
+  const document = requireRecord(documentValue, "Spatial response metrics");
+  if (
+    document.schema_version !== 1
+    || document.model_id !== "spatial-response-metrics-v1"
+    || document.claim_scope !== "synthetic-response-metrics-not-observed-outcomes"
+    || document.source_run_schema_version !== 6
+    || !Number.isInteger(document.campaign_count)
+    || document.campaign_count < 1
+    || document.campaign_count > 20
+  ) {
+    throw new Error("Spatial response metrics contract is invalid");
+  }
+  validateResponseAggregateSeries(document.overall);
+  if (
+    !Array.isArray(document.channels)
+    || document.channels.length !== 2
+    || document.channels[0].channel !== "roadside"
+    || document.channels[1].channel !== "mobile"
+  ) {
+    throw new Error("Spatial response metric channels are invalid");
+  }
+  for (const channel of document.channels) validateResponseEventSeries(channel);
+  if (!Array.isArray(document.campaigns) || document.campaigns.length !== document.campaign_count) {
+    throw new Error("Spatial response metric campaigns are invalid");
+  }
+  let previousCampaign = "";
+  for (const campaign of document.campaigns) {
+    validateResponseAggregateSeries(campaign);
+    if (
+      typeof campaign.campaign_id !== "string"
+      || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(campaign.campaign_id)
+      || campaign.campaign_id <= previousCampaign
+    ) {
+      throw new Error("Spatial response metric campaign order is invalid");
+    }
+    previousCampaign = campaign.campaign_id;
+  }
+  return document;
+}
+
+function responseMetricValueText(name, value) {
+  if (name === "response_count") return String(value);
+  if (name === "response_reach") {
+    const percentage = value * 100;
+    return `${Number.isInteger(percentage) ? percentage : Number(percentage.toFixed(1))}%`;
+  }
+  if (name.startsWith("mean_rule_")) return signedProxyText(value, name);
+  return proxyText(value, name);
+}
+
+function compactReceiptNumber(value) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
+}
+
+function responseStateValueCell(name, kind, value, receipt) {
+  const cell = document.createElement("td");
+  cell.id = `response-metrics-state-${name.replaceAll("_", "-")}-${kind}`;
+  cell.dataset.value = String(value);
+  cell.tabIndex = 0;
+  const visible = kind === "change"
+    ? signedProxyText(value, `${name} ${kind}`)
+    : proxyText(value, `${name} ${kind}`);
+  const strong = document.createElement("strong");
+  strong.textContent = visible;
+  const small = document.createElement("small");
+  small.textContent = `n = ${receipt.denominator}`;
+  const provenance = `Denominator ${receipt.denominator}. Sources: ${receipt.source_artifacts.join(", ")}.`;
+  cell.title = provenance;
+  cell.setAttribute("aria-label", `${name.replaceAll("_", " ")} ${kind}: ${visible}. ${provenance}`);
+  cell.append(strong, small);
+  return cell;
+}
+
+function renderResponseMetricsState(series, label) {
+  const body = byId("response-metrics-state-body");
+  const fragment = document.createDocumentFragment();
+  for (const [name, displayName] of responseStateNames) {
+    const receipt = series[name];
+    const row = document.createElement("tr");
+    const heading = document.createElement("th");
+    heading.scope = "row";
+    heading.textContent = displayName;
+    row.append(
+      heading,
+      responseStateValueCell(name, "initial", receipt.initial_mean, receipt),
+      responseStateValueCell(name, "final", receipt.final_mean, receipt),
+      responseStateValueCell(name, "change", receipt.mean_change, receipt),
+    );
+    fragment.append(row);
+  }
+  while (body.firstChild) body.removeChild(body.firstChild);
+  body.append(fragment);
+  byId("response-metrics-series-label").textContent = label;
+}
+
+function responseCampaignName(campaignId) {
+  const campaigns = state.opportunitySummary && Array.isArray(state.opportunitySummary.campaigns)
+    ? state.opportunitySummary.campaigns
+    : [];
+  const campaign = campaigns.find((item) => item.campaign_id === campaignId);
+  return campaign && typeof campaign.name === "string" ? campaign.name : campaignId;
+}
+
+function renderSpatialResponseMetrics() {
+  const metrics = validateSpatialResponseMetrics(state.spatialResponseMetrics);
+  const eventBody = byId("response-metrics-event-body");
+  const eventFragment = document.createDocumentFragment();
+  const groups = [
+    ["overall", metrics.overall],
+    ["roadside", metrics.channels[0]],
+    ["mobile", metrics.channels[1]],
+  ];
+  for (const [name, displayName] of responseMetricNames) {
+    const row = document.createElement("tr");
+    const heading = document.createElement("th");
+    heading.scope = "row";
+    heading.textContent = displayName;
+    row.append(heading);
+    for (const [groupName, group] of groups) {
+      const receipt = group[name];
+      const cell = document.createElement("td");
+      cell.id = `response-metrics-${groupName}-${name.replaceAll("_", "-")}`;
+      cell.dataset.value = String(receipt.value);
+      cell.tabIndex = 0;
+      const valueText = responseMetricValueText(name, receipt.value);
+      const strong = document.createElement("strong");
+      strong.textContent = valueText;
+      const small = document.createElement("small");
+      small.textContent = `${compactReceiptNumber(receipt.numerator)}/${receipt.denominator}`;
+      const provenance = `Numerator ${receipt.numerator}; denominator ${receipt.denominator}. Sources: ${receipt.source_artifacts.join(", ")} (${receipt.source_event_types.join(", ")}).`;
+      cell.title = provenance;
+      cell.setAttribute(
+        "aria-label",
+        `${groupName} ${name.replaceAll("_", " ")}: ${valueText}. ${provenance}`,
+      );
+      cell.append(strong, small);
+      row.append(cell);
+    }
+    eventFragment.append(row);
+  }
+  while (eventBody.firstChild) eventBody.removeChild(eventBody.firstChild);
+  eventBody.append(eventFragment);
+
+  const selector = byId("response-metrics-campaign");
+  while (selector.options.length > 1) selector.remove(1);
+  for (const campaign of metrics.campaigns) {
+    const option = document.createElement("option");
+    option.value = campaign.campaign_id;
+    option.textContent = `${responseCampaignName(campaign.campaign_id)} · ${campaign.campaign_id.toUpperCase()}`;
+    selector.append(option);
+  }
+  selector.addEventListener("change", () => {
+    try {
+      if (selector.value === "overall") {
+        renderResponseMetricsState(metrics.overall, "ALL CAMPAIGNS");
+        return;
+      }
+      const campaign = metrics.campaigns.find((item) => item.campaign_id === selector.value);
+      if (!campaign) throw new Error("Unknown response metric campaign");
+      renderResponseMetricsState(campaign, `CAMPAIGN / ${campaign.campaign_id.toUpperCase()}`);
+    } catch (error) {
+      showError(String(error));
+    }
+  });
+  renderResponseMetricsState(metrics.overall, "ALL CAMPAIGNS");
+  byId("response-metrics-panel").hidden = false;
+}
+
 async function setMinute(minute) {
   if (!state.meta) return;
   const next = Math.max(0, Math.min(state.meta.days * 1440 - 1, Math.floor(minute)));
@@ -630,6 +894,10 @@ async function boot() {
     if (meta.spatial_metrics === true) {
       state.spatialMetrics = await fetchJson("/api/spatial-metrics");
       renderSpatialMetrics();
+    }
+    if (meta.spatial_response_metrics === true) {
+      state.spatialResponseMetrics = await fetchJson("/api/spatial-response-metrics");
+      renderSpatialResponseMetrics();
     }
     byId("city-name").textContent = meta.city_name;
     if (meta.saved === true && typeof meta.run_id === "string") {

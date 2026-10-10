@@ -554,8 +554,9 @@ state belongs to the scrubbed minute. Schema-v5 and schema-v6 runs also expose
 full artifact validation and has exact
 numerator/denominator/source receipts; it remains attention-only and is not written back to
 the run. A fully prevalidated schema-v6 viewer additionally exposes the separate GET-only
-`/api/spatial-response-metrics` projection; it is likewise derived in memory and never
-written back.
+`/api/spatial-response-metrics` projection as a full-run response ledger; it is likewise
+derived in memory, never written back, and keeps channel receipts event-only rather than
+inventing channel attribution for nonlinear committed state.
 `city-compare` requires matched city, assignment, trace, seed, duration, and population
 provenance. Identical A/A inputs produce exact-zero deltas. A different normalized
 placement/channel structure is labeled `opportunity-confounded`, and every result carries
