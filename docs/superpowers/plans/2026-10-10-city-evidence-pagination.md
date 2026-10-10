@@ -82,7 +82,7 @@ Ruff, and mypy.
 - [x] Run browser, city-web, documentation, security, formatting, lint, strict typing, and full
   repository gates appropriate to the final diff.
 - [x] Request independent review and resolve all Critical or Important findings test-first.
-- [ ] Commit the logical slice with the configured identity and attempt the existing authorized
+- [x] Commit the logical slice with the configured identity and attempt the existing authorized
   push without interactive desktop authentication.
 
 ## Completion evidence
@@ -114,4 +114,7 @@ Ruff, and mypy.
   reports without network access or source-checkout dependence.
 - Two independent final reviews reported no remaining Critical or Important findings in the
   settled pagination/validation and release-provenance slices.
-- Commit and non-interactive push evidence is recorded after the local history is finalized.
+- The final implementation was committed under the configured repository identity in focused
+  city, release, and packaging commits. A non-interactive push to the unchanged `origin` was
+  attempted with terminal prompts disabled and was refused because this background session had no
+  usable HTTPS credential; no authentication window was opened and no remote was changed.
