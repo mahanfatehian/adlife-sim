@@ -6,6 +6,8 @@ import importlib.util
 import json
 import logging
 import socket
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -58,11 +60,45 @@ def _post(client: TestClient, payload: dict[str, Any]):
     )
 
 
+def _secure_post(client: TestClient, path: str, payload: dict[str, Any]):
+    return client.post(
+        path,
+        headers={
+            "Content-Type": "application/json",
+            "Origin": ORIGIN,
+            "X-AdLife-CSRF": TOKEN,
+        },
+        content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
+    )
+
+
 def _valid_draft(*, phone: bool = True, roadside: bool = False) -> dict[str, Any]:
     payload = draft_data(phone=phone, roadside=roadside)
     if roadside:
         payload["scenario"]["roadside"]["road_id"] = "middle-west"
     return payload
+
+
+def _tiny_draft(*, run_id: str = "browser-run") -> dict[str, Any]:
+    payload = _valid_draft()
+    payload["settings"].update({"run_id": run_id, "agent_count": 1, "days": 1})
+    payload["scenario"]["phone"]["active_windows"] = [
+        {"day": 1, "start_minute": 480, "end_minute": 540}
+    ]
+    return payload
+
+
+def _await_job(client: TestClient, status_url: str, *, timeout: float = 15.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    pause = threading.Event()
+    while time.monotonic() < deadline:
+        response = client.get(status_url)
+        assert response.status_code == 200
+        job = response.json()
+        if job["phase"] in {"completed", "failed", "cancelled"}:
+            return job
+        pause.wait(0.005)
+    raise AssertionError(f"job at {status_url} did not terminate")
 
 
 def _snapshot(root: Path) -> tuple[tuple[str, str, str], ...]:
@@ -85,11 +121,11 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
     assert response.status_code == 200
     assert response.json() == {
         "schema_version": 1,
-        "phase": "validation-foundation",
+        "phase": "bounded-jobs",
         "capabilities": {
             "scenario_validation": True,
-            "jobs": False,
-            "run_execution": False,
+            "jobs": True,
+            "run_execution": True,
             "run_inspection": False,
             "provider_configuration": False,
             "oauth": False,
@@ -110,6 +146,407 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
     }
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery(
+    tmp_path: Path,
+) -> None:
+    client, root = _client(tmp_path)
+    with client:
+        accepted = _secure_post(client, "/api/jobs", _tiny_draft())
+
+        assert accepted.status_code == 202
+        document = accepted.json()
+        assert set(document) == {"schema_version", "job", "status_url"}
+        assert document["schema_version"] == 1
+        assert document["status_url"] == f"/api/jobs/{document['job']['job_id']}"
+        assert document["job"]["run_id"] == "browser-run"
+        assert document["job"]["phase"] in {"queued", "evaluating"}
+
+        completed = _await_job(client, document["status_url"])
+        assert set(completed) == {
+            "schema_version",
+            "job_id",
+            "run_id",
+            "phase",
+            "created_at",
+            "updated_at",
+            "cancellation_requested",
+            "can_cancel",
+            "error",
+            "result",
+        }
+        assert completed["phase"] == "completed"
+        assert completed["error"] is None
+        assert completed["result"]["run_id"] == "browser-run"
+        assert completed["result"]["run_schema_version"] == 7
+
+        page = client.get("/api/runs?offset=0&limit=1")
+        assert page.status_code == 200
+        assert page.json()["returned_count"] == 1
+        assert page.json()["runs"] == [completed["result"]]
+
+    assert (root / "city-runs" / "browser-run" / "inputs" / "workbench.json").is_file()
+
+    restarted = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root), csrf_token=TOKEN
+    )
+    with TestClient(restarted, base_url=ORIGIN) as restarted_client:
+        page = restarted_client.get("/api/runs")
+    assert page.status_code == 200
+    assert [item["run_id"] for item in page.json()["runs"]] == ["browser-run"]
+
+
+def test_submit_returns_while_evaluation_is_blocked_then_busy_job_can_cancel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    entered = threading.Event()
+    release = threading.Event()
+    original_prepare = module.WorkbenchRunRepository.prepare
+
+    def blocked_prepare(repository: Any, validated: Any):
+        entered.set()
+        if not release.wait(10):
+            raise RuntimeError("test evaluation gate timed out")
+        return original_prepare(repository, validated)
+
+    monkeypatch.setattr(module.WorkbenchRunRepository, "prepare", blocked_prepare)
+    client, root = _client(tmp_path)
+    try:
+        with client:
+            accepted = _secure_post(client, "/api/jobs", _tiny_draft(run_id="blocked-run"))
+            assert accepted.status_code == 202
+            assert entered.wait(5)
+
+            busy = _secure_post(client, "/api/jobs", _tiny_draft(run_id="other-run"))
+            assert busy.status_code == 409
+            assert busy.json()["error"]["code"] == "job-busy"
+            capabilities = client.get("/api/workbench")
+            assert capabilities.status_code == 200
+            assert capabilities.json()["active_job"]["job_id"] == accepted.json()["job"]["job_id"]
+            assert capabilities.json()["active_job"]["run_id"] == "blocked-run"
+            assert capabilities.json()["active_job"]["phase"] == "evaluating"
+
+            cancelled = _secure_post(
+                client,
+                accepted.json()["status_url"] + "/cancel",
+                {},
+            )
+            assert cancelled.status_code == 200
+            assert cancelled.json()["cancellation_requested"] is True
+            assert cancelled.json()["can_cancel"] is False
+            release.set()
+            terminal = _await_job(client, accepted.json()["status_url"])
+            assert terminal["phase"] == "cancelled"
+    finally:
+        release.set()
+
+    assert not (root / "city-runs" / "blocked-run").exists()
+    assert not (root / "city-runs" / "other-run").exists()
+
+
+def test_concurrent_submissions_cannot_both_be_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    submission_barrier = threading.Barrier(2)
+    evaluation_entered = threading.Event()
+    release_evaluation = threading.Event()
+    original_prepare = module.WorkbenchRunRepository.prepare
+
+    def blocked_prepare(repository: Any, validated: Any):
+        evaluation_entered.set()
+        if not release_evaluation.wait(10):
+            raise RuntimeError("test evaluation gate timed out")
+        return original_prepare(repository, validated)
+
+    monkeypatch.setattr(module.WorkbenchRunRepository, "prepare", blocked_prepare)
+    client, root = _client(tmp_path)
+    responses: list[Any] = []
+    response_lock = threading.Lock()
+
+    def submit(run_id: str) -> None:
+        submission_barrier.wait(5)
+        response = _secure_post(client, "/api/jobs", _tiny_draft(run_id=run_id))
+        with response_lock:
+            responses.append(response)
+
+    first = threading.Thread(target=submit, args=("race-first",))
+    second = threading.Thread(target=submit, args=("race-second",))
+    try:
+        with client:
+            first.start()
+            second.start()
+            first.join(10)
+            second.join(10)
+            assert not first.is_alive()
+            assert not second.is_alive()
+            assert sorted(response.status_code for response in responses) == [202, 409]
+            accepted = next(response for response in responses if response.status_code == 202)
+            refused = next(response for response in responses if response.status_code == 409)
+            assert refused.json()["error"]["code"] == "job-busy"
+            assert evaluation_entered.wait(5)
+            cancelled = _secure_post(client, accepted.json()["status_url"] + "/cancel", {})
+            assert cancelled.status_code == 200
+            release_evaluation.set()
+            assert _await_job(client, accepted.json()["status_url"])["phase"] == "cancelled"
+    finally:
+        release_evaluation.set()
+        first.join(10)
+        second.join(10)
+
+    assert not (root / "city-runs").exists()
+
+
+def test_application_lifespan_closes_its_owned_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    closed = threading.Event()
+    original_close = module.CityJobManager.close
+
+    def observed_close(manager: Any) -> None:
+        original_close(manager)
+        closed.set()
+
+    monkeypatch.setattr(module.CityJobManager, "close", observed_close)
+    client, _ = _client(tmp_path)
+    with client:
+        assert not closed.is_set()
+        assert client.get("/api/workbench").status_code == 200
+
+    assert closed.is_set()
+
+
+def test_duplicate_unknown_job_late_cancel_and_cancel_body_are_stable_refusals(
+    tmp_path: Path,
+) -> None:
+    client, _ = _client(tmp_path)
+    with client:
+        accepted = _secure_post(client, "/api/jobs", _tiny_draft(run_id="conflict-run"))
+        completed = _await_job(client, accepted.json()["status_url"])
+        assert completed["phase"] == "completed"
+
+        duplicate = _secure_post(client, "/api/jobs", _tiny_draft(run_id="conflict-run"))
+        missing = client.get("/api/jobs/job-00000000000000000000000000000000")
+        malformed = client.get("/api/jobs/not-a-job")
+        late = _secure_post(client, accepted.json()["status_url"] + "/cancel", {})
+        nonempty = _secure_post(
+            client,
+            accepted.json()["status_url"] + "/cancel",
+            {"unexpected": "value-never-echoed"},
+        )
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "run-conflict"
+    assert missing.status_code == malformed.status_code == 404
+    assert missing.json()["error"]["code"] == "job-not-found"
+    assert malformed.json()["error"]["code"] == "job-not-found"
+    assert late.status_code == 409
+    assert late.json()["error"]["code"] == "job-state-conflict"
+    assert nonempty.status_code == 422
+    assert nonempty.json()["error"]["fields"] == {"request": "Unknown field."}
+    assert "value-never-echoed" not in nonempty.text
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "offset=-1",
+        "offset=1.0",
+        "offset=true",
+        "offset=01",
+        "offset=10001",
+        "limit=0",
+        "limit=101",
+        "limit=1.0",
+        "limit=true",
+        "limit=01",
+        "offset=0&offset=1",
+        "limit=1&limit=2",
+        "unknown=1",
+        pytest.param("offset=" + "9" * 5_000, id="very-large-offset"),
+    ],
+)
+def test_run_pagination_refuses_noncanonical_duplicate_or_unknown_query(
+    tmp_path: Path,
+    query: str,
+) -> None:
+    client, _ = _client(tmp_path)
+    with client:
+        response = client.get(f"/api/runs?{query}")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid-query"
+    assert "true" not in response.text
+    assert "unknown" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("get", "/api/workbench?unexpected=true", None),
+        ("get", "/api/catalog/cities?unexpected=true", None),
+        ("get", "/api/creative-templates?unexpected=true", None),
+        ("post", "/api/scenarios/validate?dry_run=true", _tiny_draft()),
+        ("post", "/api/jobs?dry_run=true", _tiny_draft()),
+        ("get", "/api/jobs/job-00000000000000000000000000000000?x=1", None),
+        ("post", "/api/jobs/job-00000000000000000000000000000000/cancel?x=1", {}),
+    ],
+)
+def test_fixed_control_routes_refuse_every_query_parameter_without_side_effects(
+    tmp_path: Path,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None,
+) -> None:
+    client, root = _client(tmp_path)
+    with client:
+        response = (
+            client.get(path) if method == "get" else _secure_post(client, path, payload or {})
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid-query"
+    assert "dry_run" not in response.text
+    assert not (root / "city-runs").exists()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        b'{"settings":',
+        b'{"schema_version":1,"schema_version":1}',
+        b'{"value":NaN}',
+        b"[]",
+    ],
+)
+def test_invalid_job_documents_create_neither_job_nor_artifact(
+    tmp_path: Path,
+    document: bytes,
+) -> None:
+    client, root = _client(tmp_path)
+    with client:
+        response = client.post(
+            "/api/jobs",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": ORIGIN,
+                "X-AdLife-CSRF": TOKEN,
+            },
+            content=document,
+        )
+        capabilities = client.get("/api/workbench")
+        page = client.get("/api/runs")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "malformed-json"
+    assert capabilities.json()["active_job"] is None
+    assert page.json()["verified_total"] == 0
+    assert not (root / "city-runs").exists()
+
+
+def test_structurally_invalid_job_draft_is_screened_and_never_registered(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, root = _client(tmp_path)
+    secret = "sk-never-return-invalid-job-draft-1234567890"
+    payload = _tiny_draft(run_id="invalid-draft")
+    payload["settings"]["agent_count"] = True
+    payload["api_key"] = secret
+
+    with caplog.at_level(logging.ERROR), client:
+        response = _secure_post(client, "/api/jobs", payload)
+        capabilities = client.get("/api/workbench")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid-fields"
+    assert response.json()["error"]["fields"] == {
+        "request": "Unknown field.",
+        "settings.agent_count": "This field is invalid.",
+    }
+    assert secret not in response.text + caplog.text
+    assert capabilities.json()["active_job"] is None
+    assert not (root / "city-runs").exists()
+
+
+def test_worker_submission_refusal_is_constant_and_value_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _module()
+    secret = "Authorization: Bearer sk-never-return-submission-1234567890"
+    absolute_path = r"C:\private\workspace\executor.txt"
+
+    def refuse_submission(*_args: object, **_kwargs: object) -> None:
+        raise module.WorkbenchJobSubmissionError(f"{secret} at {absolute_path}")
+
+    monkeypatch.setattr(module.CityJobManager, "submit", refuse_submission)
+    client, root = _client(tmp_path)
+    with caplog.at_level(logging.ERROR), client:
+        response = _secure_post(client, "/api/jobs", _tiny_draft(run_id="submit-failure"))
+        capabilities = client.get("/api/workbench")
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "worker-unavailable",
+        "message": "The workbench worker is not accepting jobs.",
+        "fields": {},
+    }
+    assert secret not in response.text + caplog.text
+    assert absolute_path not in response.text + caplog.text
+    assert capabilities.json()["active_job"] is None
+    assert not (root / "city-runs").exists()
+
+
+@pytest.mark.parametrize("phase", ["prepare", "publish", "verified_summary"])
+def test_worker_failures_expose_only_screened_terminal_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    phase: str,
+) -> None:
+    module = _module()
+    secret = "Authorization: Bearer sk-never-expose-worker-failure-1234567890"
+    absolute_path = r"C:\private\workspace\job.json"
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(f"{secret} at {absolute_path}")
+
+    monkeypatch.setattr(module.WorkbenchRunRepository, phase, fail)
+    client, root = _client(tmp_path)
+    with caplog.at_level(logging.ERROR), client:
+        accepted = _secure_post(
+            client,
+            "/api/jobs",
+            _tiny_draft(run_id=f"fail-{phase.replace('_', '-')}"),
+        )
+        assert accepted.status_code == 202
+        terminal = _await_job(client, accepted.json()["status_url"])
+
+    assert terminal["phase"] == "failed"
+    assert (
+        terminal["error"]["code"]
+        == {
+            "prepare": "evaluation-failed",
+            "publish": "persistence-failed",
+            "verified_summary": "verification-failed",
+        }[phase]
+    )
+    combined = json.dumps(terminal) + caplog.text
+    assert secret not in combined
+    assert absolute_path not in combined
+    for path in root.rglob("*"):
+        if path.is_file():
+            content = path.read_bytes()
+            assert secret.encode() not in content
+            assert absolute_path.encode() not in content
 
 
 def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(
@@ -465,8 +902,10 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell.text
     assert "SYNTHETIC" in shell.text
     assert "not real residents" in shell.text
-    assert "Validation foundation" in shell.text
-    assert "Run execution is not enabled" in shell.text
+    assert "Bounded run foundation" in shell.text
+    assert "Bounded run execution is available" in shell.text
+    assert "Run execution is not enabled" not in shell.text
+    assert "creates no job or run directory" not in shell.text
     assert "Provider configuration is not enabled" in shell.text
     for control in ("<form", "<input", "<select", "<button"):
         assert control not in shell.text.lower()

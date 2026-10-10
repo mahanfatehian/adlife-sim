@@ -23,18 +23,18 @@
   <main>
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="kicker">VALIDATION FOUNDATION <span>01</span></p>
+        <p class="kicker">BOUNDED RUN FOUNDATION <span>02</span></p>
         <h1 id="hero-title">Build city studies<br><em>on evidence, not theatre.</em></h1>
-        <p class="lede">A deterministic gateway for composing fictional city campaigns, binding them to verified geometry, and inspecting every assumption before a run exists.</p>
+        <p class="lede">A deterministic local gateway for validating fictional city campaigns, running one bounded study at a time, and reopening only verified artifacts.</p>
         <div class="status-row" aria-label="Current foundation status">
-          <span class="status ready">VALIDATION READY</span>
+          <span class="status ready">BOUNDED JOBS READY</span>
           <span class="status">NO NETWORK REQUIRED</span>
-          <span class="status">NO ARTIFACT WRITES</span>
+          <span class="status">VERIFIED / NO-CLOBBER</span>
         </div>
       </div>
 
       <aside class="signal-card" aria-label="Foundation signal">
-        <div class="signal-head"><span>FOUNDATION / D1a</span><strong>01</strong></div>
+        <div class="signal-head"><span>FOUNDATION / D1b</span><strong>02</strong></div>
         <div class="signal-orbit" aria-hidden="true">
           <span class="orbit orbit-one"></span>
           <span class="orbit orbit-two"></span>
@@ -43,7 +43,7 @@
         <dl>
           <div><dt>MODEL</dt><dd>DETERMINISTIC RULES</dd></div>
           <div><dt>CITY</dt><dd>VERIFIED FICTIONAL PACK</dd></div>
-          <div><dt>STATE</dt><dd>SIDE-EFFECT FREE</dd></div>
+          <div><dt>STATE</dt><dd>VERIFIED ARTIFACTS</dd></div>
         </dl>
       </aside>
     </section>
@@ -84,15 +84,17 @@
           <li><code>GET</code><span>/api/workbench</span><small>capabilities</small></li>
           <li><code>GET</code><span>/api/catalog/cities</span><small>verified cities</small></li>
           <li><code>GET</code><span>/api/creative-templates</span><small>fictional creatives</small></li>
+          <li><code>GET</code><span>/api/runs</span><small>verified runs</small></li>
           <li class="post"><code>POST</code><span>/api/scenarios/validate</span><small>no writes</small></li>
+          <li class="post"><code>POST</code><span>/api/jobs</span><small>bounded execution</small></li>
         </ul>
       </article>
 
       <article class="panel boundary-panel">
         <div class="panel-heading"><p class="kicker">CURRENT BOUNDARY</p><span>HONEST CAPABILITIES</span></div>
-        <div class="boundary-item"><span class="boundary-icon">×</span><div><strong>Run execution is not enabled</strong><p>This milestone validates complete inputs but creates no job or run directory.</p></div></div>
+        <div class="boundary-item available"><span class="boundary-icon">✓</span><div><strong>Bounded run execution is available</strong><p>The local API validates, queues, persists, and independently verifies one deterministic study at a time. The complete browser editor arrives in the next milestone.</p></div></div>
         <div class="boundary-item"><span class="boundary-icon">×</span><div><strong>Provider configuration is not enabled</strong><p>City responses currently use the transparent deterministic-rules model only.</p></div></div>
-        <div class="boundary-item available"><span class="boundary-icon">✓</span><div><strong>Validation foundation is active</strong><p>Catalog, creative, geography, cohort, and hash bindings can be verified locally.</p></div></div>
+        <div class="boundary-item available"><span class="boundary-icon">✓</span><div><strong>Verified discovery is active</strong><p>Catalog, creative, geography, cohort, hashes, and completed run artifacts are verified locally.</p></div></div>
       </article>
     </section>
 
@@ -106,6 +108,6 @@
     </section>
   </main>
 
-  <footer><span>ADLIFE LAB / LOCAL CITY SYSTEMS</span><span>Validation foundation · Synthetic only</span></footer>
+  <footer><span>ADLIFE LAB / LOCAL CITY SYSTEMS</span><span>Bounded run foundation · Synthetic only</span></footer>
 </body>
 </html>

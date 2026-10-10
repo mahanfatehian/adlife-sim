@@ -1,10 +1,12 @@
-"""Local-only FastAPI composition for the city workbench validation foundation."""
+"""Local-only FastAPI control plane for bounded city workbench runs."""
 
 from __future__ import annotations
 
 import html
 import json
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from importlib.resources import files
 from typing import Any
 
@@ -18,6 +20,20 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from adlife.city.catalog import load_city_catalog
 from adlife.city.workbench_creatives import load_creative_template_catalog
 from adlife.city.workbench_input import WorkbenchRunDraft
+from adlife.city.workbench_jobs import (
+    CityJobManager,
+    WorkbenchJobBusy,
+    WorkbenchJobCancellationConflict,
+    WorkbenchJobManagerClosed,
+    WorkbenchJobNotFound,
+    WorkbenchJobSubmissionError,
+)
+from adlife.city.workbench_runs import (
+    DEFAULT_RUN_PAGE_LIMIT,
+    MAX_RUN_PAGE_LIMIT,
+    MAX_RUN_PAGE_OFFSET,
+    WorkbenchRunRepository,
+)
 from adlife.city.workbench_security import (
     MAX_WORKBENCH_BODY_BYTES,
     WorkbenchJsonError,
@@ -32,12 +48,16 @@ from adlife.city.workbench_validation import (
     construct_workbench_run,
 )
 from adlife.city.workbench_workspace import (
+    UnsafeWorkbenchWorkspace,
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
+from adlife.core.ports.run_store import DuplicateRun, StorageError
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _ASSET_LIMIT_BYTES = 262_144
+_CANONICAL_UNSIGNED_INTEGER = re.compile(r"^(?:0|[1-9][0-9]*)$")
+_JOB_ID = re.compile(r"^job-[0-9a-f]{32}$")
 _WORKBENCH_FIELD_COMPONENTS = frozenset(
     {
         "active_windows",
@@ -97,6 +117,10 @@ _SHELL_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
 }
+
+
+class WorkbenchQueryError(ValueError):
+    """A value-free refusal for a noncanonical or unbounded run-list query."""
 
 
 def _read_packaged_text(relative: str) -> str:
@@ -206,19 +230,79 @@ def _validation_summary(result: ValidatedWorkbenchRun) -> dict[str, object]:
     }
 
 
+def _construct_validated_run(payload: dict[str, object]) -> ValidatedWorkbenchRun:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    draft = WorkbenchRunDraft.model_validate_json(encoded)
+    return construct_workbench_run(draft)
+
+
+def _pagination(request: Request) -> tuple[int, int]:
+    items = request.query_params.multi_items()
+    if len(items) > 2 or any(name not in {"offset", "limit"} for name, _value in items):
+        raise WorkbenchQueryError("run pagination is invalid")
+    values: dict[str, str] = {}
+    for name, value in items:
+        if name in values:
+            raise WorkbenchQueryError("run pagination is invalid")
+        values[name] = value
+
+    def bounded(name: str, default: int, minimum: int, maximum: int) -> int:
+        value = values.get(name)
+        if value is None:
+            return default
+        if len(value) > len(str(maximum)) or _CANONICAL_UNSIGNED_INTEGER.fullmatch(value) is None:
+            raise WorkbenchQueryError("run pagination is invalid")
+        parsed = int(value)
+        if not minimum <= parsed <= maximum:
+            raise WorkbenchQueryError("run pagination is invalid")
+        return parsed
+
+    return (
+        bounded("offset", 0, 0, MAX_RUN_PAGE_OFFSET),
+        bounded("limit", DEFAULT_RUN_PAGE_LIMIT, 1, MAX_RUN_PAGE_LIMIT),
+    )
+
+
+def _require_empty_query(request: Request) -> None:
+    if request.query_params.multi_items():
+        raise WorkbenchQueryError("this route does not accept query fields")
+
+
+def _require_job_id(job_id: str) -> str:
+    if _JOB_ID.fullmatch(job_id) is None:
+        raise WorkbenchJobNotFound("The workbench job does not exist.")
+    return job_id
+
+
 def create_city_workbench_app(
     workspace: WorkbenchWorkspace,
     *,
     csrf_token: str | None = None,
 ) -> FastAPI:
-    """Build one process-local validation app after rechecking its pinned workspace."""
+    """Build one process-local control app after rechecking its pinned workspace."""
     verify_workbench_workspace(workspace)
     token = new_csrf_token() if csrf_token is None else csrf_token
+    repository = WorkbenchRunRepository(workspace)
+    jobs = CityJobManager(repository)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            jobs.close()
+
     app = FastAPI(
         title="AdLife local city workbench",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.add_middleware(
         TrustedHostMiddleware,
@@ -283,6 +367,92 @@ def create_city_workbench_app(
             {error.field: error.safe_message},
         )
 
+    @app.exception_handler(WorkbenchQueryError)
+    async def query_error_handler(
+        _request: Request,
+        _error: WorkbenchQueryError,
+    ) -> JSONResponse:
+        return workbench_error(
+            422,
+            "invalid-query",
+            "One or more query fields are invalid.",
+            {"request": "The query is invalid."},
+        )
+
+    @app.exception_handler(WorkbenchJobNotFound)
+    async def job_not_found_handler(
+        _request: Request,
+        _error: WorkbenchJobNotFound,
+    ) -> JSONResponse:
+        return workbench_error(404, "job-not-found", "The workbench job was not found.")
+
+    @app.exception_handler(DuplicateRun)
+    async def duplicate_run_handler(
+        _request: Request,
+        _error: DuplicateRun,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "run-conflict",
+            "The run identifier is already in use.",
+        )
+
+    @app.exception_handler(WorkbenchJobBusy)
+    async def job_busy_handler(
+        _request: Request,
+        _error: WorkbenchJobBusy,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "job-busy",
+            "Another workbench run is already active.",
+        )
+
+    @app.exception_handler(WorkbenchJobCancellationConflict)
+    async def cancellation_conflict_handler(
+        _request: Request,
+        _error: WorkbenchJobCancellationConflict,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "job-state-conflict",
+            "The workbench job can no longer be cancelled.",
+        )
+
+    @app.exception_handler(WorkbenchJobManagerClosed)
+    @app.exception_handler(WorkbenchJobSubmissionError)
+    async def worker_unavailable_handler(
+        _request: Request,
+        _error: WorkbenchJobManagerClosed | WorkbenchJobSubmissionError,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "worker-unavailable",
+            "The workbench worker is not accepting jobs.",
+        )
+
+    @app.exception_handler(UnsafeWorkbenchWorkspace)
+    async def workspace_unavailable_handler(
+        _request: Request,
+        _error: UnsafeWorkbenchWorkspace,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "workspace-unavailable",
+            "The workbench workspace is unavailable.",
+        )
+
+    @app.exception_handler(StorageError)
+    async def storage_conflict_handler(
+        _request: Request,
+        _error: StorageError,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "artifact-conflict",
+            "The workbench artifact state conflicts with this request.",
+        )
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error_handler(
         _request: Request,
@@ -323,20 +493,22 @@ def create_city_workbench_app(
         )
 
     @app.get("/api/workbench")
-    def capabilities() -> dict[str, object]:
+    def capabilities(request: Request) -> dict[str, object]:
+        _require_empty_query(request)
+        active = jobs.active_job()
         return {
             "schema_version": 1,
-            "phase": "validation-foundation",
+            "phase": "bounded-jobs",
             "capabilities": {
                 "scenario_validation": True,
-                "jobs": False,
-                "run_execution": False,
+                "jobs": True,
+                "run_execution": True,
                 "run_inspection": False,
                 "provider_configuration": False,
                 "oauth": False,
                 "response_modes": ["deterministic-rules"],
             },
-            "active_job": None,
+            "active_job": None if active is None else active.model_dump(mode="json"),
             "limits": {
                 "request_body_bytes": MAX_WORKBENCH_BODY_BYTES,
                 "agent_count": {"minimum": 1, "maximum": 30},
@@ -351,7 +523,8 @@ def create_city_workbench_app(
         }
 
     @app.get("/api/catalog/cities")
-    def cities() -> dict[str, object]:
+    def cities(request: Request) -> dict[str, object]:
+        _require_empty_query(request)
         catalog = load_city_catalog()
         entries: list[dict[str, object]] = []
         for entry in catalog.entries:
@@ -361,7 +534,8 @@ def create_city_workbench_app(
         return {"schema_version": 1, "cities": entries}
 
     @app.get("/api/creative-templates")
-    def creative_templates() -> dict[str, object]:
+    def creative_templates(request: Request) -> dict[str, object]:
+        _require_empty_query(request)
         catalog = load_creative_template_catalog()
         templates = [
             {
@@ -374,16 +548,48 @@ def create_city_workbench_app(
 
     @app.post("/api/scenarios/validate")
     async def validate_scenario(request: Request) -> dict[str, object]:
+        _require_empty_query(request)
         payload = strict_json_object(await request.body())
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        )
-        draft = WorkbenchRunDraft.model_validate_json(encoded)
-        result = construct_workbench_run(draft)
+        result = _construct_validated_run(payload)
         return _validation_summary(result)
+
+    @app.get("/api/runs")
+    def list_runs(request: Request) -> dict[str, object]:
+        offset, limit = _pagination(request)
+        return repository.list_runs(offset=offset, limit=limit).model_dump(mode="json")
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str, request: Request) -> dict[str, object]:
+        _require_empty_query(request)
+        return jobs.get(_require_job_id(job_id)).model_dump(mode="json")
+
+    @app.post("/api/jobs")
+    async def submit_job(request: Request) -> JSONResponse:
+        _require_empty_query(request)
+        payload = strict_json_object(await request.body())
+        validated = _construct_validated_run(payload)
+        job = jobs.submit(validated)
+        return JSONResponse(
+            status_code=202,
+            content={
+                "schema_version": 1,
+                "job": job.model_dump(mode="json"),
+                "status_url": f"/api/jobs/{job.job_id}",
+            },
+        )
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    async def cancel_job(job_id: str, request: Request) -> JSONResponse:
+        _require_empty_query(request)
+        payload = strict_json_object(await request.body())
+        if payload:
+            return workbench_error(
+                422,
+                "invalid-fields",
+                "One or more request fields are invalid.",
+                {"request": "Unknown field."},
+            )
+        return JSONResponse(content=jobs.cancel(_require_job_id(job_id)).model_dump(mode="json"))
 
     return app
 
