@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -8,6 +9,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from hashlib import sha256
 from importlib import resources
 from pathlib import Path
 
@@ -15,7 +17,12 @@ import pytest
 import uvicorn
 from playwright.sync_api import Route, expect, sync_playwright
 
+from adlife.city.runs import create_city_run
 from adlife.city.web import create_city_app
+from adlife.city.workbench_input import WorkbenchRunDraft
+from adlife.city.workbench_validation import construct_workbench_run
+from adlife.city.workbench_web import create_city_workbench_app
+from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
 from adlife.core.experiments.spatial_response_metrics import (
@@ -42,6 +49,7 @@ from tests.unit.city.test_spatial_opportunity import (
     _scenario,
 )
 from tests.unit.city.test_spatial_response import _response_input
+from tests.unit.city.test_workbench_input import draft_data
 
 _BROWSER_PATHS = (
     Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
@@ -52,6 +60,9 @@ _BROWSER_PATHS = (
     Path("/usr/bin/chromium"),
     Path("/usr/bin/chromium-browser"),
 )
+_MAXIMUM_RUN_ID = "r" + ("a" * 39)
+_MAXIMUM_SCENARIO_ID = "s" + ("a" * 79)
+_MAXIMUM_CAMPAIGN_ID = "c" + ("a" * 79)
 
 
 def _installed_browser() -> Path:
@@ -313,6 +324,71 @@ def _response_viewer(
         )
 
 
+@contextmanager
+def _workbench_assumptions_viewer(
+    tmp_path: Path,
+) -> Iterator[tuple[str, Path, dict[str, object]]]:
+    root = tmp_path / "workbench"
+    workspace = prepare_workbench_workspace(root)
+    hostile_prefix = "پویش آزمایشی <img src=x onerror=alert(1)> "
+    hostile_name = hostile_prefix + (chr(0x1F600) * (120 - len(hostile_prefix)))
+    campaign_name = "پویش <img src=x onerror=alert(1)> / campaign"
+    document = draft_data(phone=True, roadside=True)
+    document["scenario"]["scenario_id"] = _MAXIMUM_SCENARIO_ID
+    document["scenario"]["name"] = hostile_name
+    document["scenario"]["campaign"].update(
+        {
+            "campaign_id": _MAXIMUM_CAMPAIGN_ID,
+            "name": campaign_name,
+        }
+    )
+    document["scenario"]["phone"]["active_windows"] = [
+        {"day": 1, "start_minute": 480, "end_minute": 540}
+    ]
+    document["scenario"]["roadside"].update(
+        {
+            "active_windows": [{"day": 1, "start_minute": 420, "end_minute": 480}],
+            "road_id": "middle-west",
+            "travel_direction": "backward",
+        }
+    )
+    document["settings"].update(
+        {
+            "run_id": _MAXIMUM_RUN_ID,
+            "agent_count": 1,
+            "days": 1,
+            "seed": 2**63 - 1,
+        }
+    )
+    draft = WorkbenchRunDraft.model_validate_json(json.dumps(document, ensure_ascii=False))
+    validated = construct_workbench_run(draft)
+    settings = validated.workbench_input.draft.settings
+    stored = create_city_run(
+        validated.pack,
+        root=root,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+    application = create_city_workbench_app(workspace, csrf_token="browser-assumptions-token")
+    expected = {
+        "run_id": settings.run_id,
+        "manifest_sha256": sha256((stored.directory / "run.json").read_bytes()).hexdigest(),
+        "workbench_input_sha256": validated.workbench_input.fingerprint,
+        "city_sha256": validated.pack.fingerprint,
+        "scenario_sha256": validated.scenario.fingerprint,
+        "creative_sha256": validated.workbench_input.creative_template.fingerprint,
+        "hostile_name": hostile_name,
+        "campaign_name": campaign_name,
+    }
+    with _serve(application) as base_url:
+        yield base_url, root, expected
+
+
 def test_viewer_default_document_uses_one_legacy_same_origin_api_base() -> None:
     browser_path = _installed_browser()
     api_requests: list[str] = []
@@ -481,6 +557,227 @@ def test_viewer_refuses_hostile_api_base_metadata_before_any_api_request() -> No
             assert not api_requests, label
             assert not external_requests, label
             assert not page_errors, label
+            page.close()
+        browser.close()
+
+
+def test_schema_v7_inspector_renders_verified_frozen_assumptions_as_inert_text(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    input_requests: list[str] = []
+    external_requests: list[str] = []
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    with (
+        _workbench_assumptions_viewer(tmp_path) as (
+            base_url,
+            _root,
+            expected,
+        ),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 1440, "height": 1100})
+        input_url = f"{base_url}/api/runs/{expected['run_id']}/workbench-input"
+
+        def route_request(route: Route) -> None:
+            url = route.request.url
+            if url == input_url:
+                input_requests.append(url)
+                route.continue_()
+            elif url.startswith(base_url):
+                route.continue_()
+            else:
+                external_requests.append(url)
+                route.abort()
+
+        page.route("**/*", route_request)
+        page.on(
+            "console",
+            lambda message: (
+                console_errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+
+        expect(page.locator("#assumptions-panel")).to_be_visible()
+        expect(page.locator("#assumptions-drawer")).to_have_attribute("open", "")
+        expect(page.locator("#assumptions-status")).to_have_text("VERIFIED IMMUTABLE INPUT")
+        expect(page.locator("#workbench-back-link")).to_be_visible()
+        assert page.locator("#workbench-back-link").get_attribute("href") == "/"
+        assert page.locator("#assumptions-run").inner_text() == _MAXIMUM_RUN_ID
+        assert page.locator("#assumptions-seed").inner_text() == "9223372036854775807"
+        assert page.locator("#assumptions-scenario").inner_text() == expected["hostile_name"]
+        assert page.locator("#assumptions-scenario-id").inner_text() == _MAXIMUM_SCENARIO_ID
+        assert page.locator("#assumptions-campaign").inner_text() == expected["campaign_name"]
+        assert page.locator("#assumptions-campaign-id").inner_text() == _MAXIMUM_CAMPAIGN_ID
+        assert page.locator("#assumptions-creative-template-id").inner_text() == (
+            "fictional-device-launch-v1"
+        )
+        assert page.locator("#assumptions-creative-product").inner_text() == "Lumen Pocket"
+        assert (
+            "fictional compact device" in page.locator("#assumptions-creative-message").inner_text()
+        )
+        assert page.locator("#assumptions-target-interests").inner_text() == (
+            "commuting · technology"
+        )
+        assert page.locator("#assumptions-cohort-interests").inner_text() == (
+            "commuting · technology"
+        )
+        assert "PRICE SENSITIVITY 0.5" in page.locator("#assumptions-traits").inner_text()
+        assert "PURCHASE INTENTION 0.2" in page.locator("#assumptions-initial-state").inner_text()
+        placements = page.locator("#assumptions-placements").inner_text()
+        assert "PHONE" in placements and "DAY 01 · 08:00\u201309:00" in placements
+        assert all(token in placements for token in ("ROADSIDE", "MIDDLE-WEST", "BACKWARD"))
+        for field in (
+            "manifest_sha256",
+            "workbench_input_sha256",
+            "city_sha256",
+            "scenario_sha256",
+            "creative_sha256",
+        ):
+            assert page.locator(f"#assumptions-{field.replace('_', '-')}").inner_text() == str(
+                expected[field]
+            )
+        assert (
+            "homogeneous synthetic cohort"
+            in page.locator("#assumptions-disclosure").inner_text().lower()
+        )
+        assert page.locator("#assumptions-panel bdi").count() >= 15
+        assert page.locator("#assumptions-panel img").count() == 0
+        assert page.locator("#assumptions-panel script").count() == 0
+        assert input_requests == [input_url]
+        assert external_requests == []
+        assert console_errors == []
+        assert page_errors == []
+        browser.close()
+
+
+def test_schema_v1_through_v6_inspector_never_requests_workbench_input() -> None:
+    browser_path = _installed_browser()
+    input_requests: list[str] = []
+    with _place_viewer() as base_url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        for version in range(1, 7):
+            page = browser.new_page()
+
+            def rewrite_schema(route: Route, *, schema_version: int = version) -> None:
+                response = route.fetch()
+                document = response.json()
+                document["run_schema_version"] = schema_version
+                document.pop("workbench_input_available", None)
+                document.pop("workbench_input_sha256", None)
+                route.fulfill(json=document)
+
+            page.route("**/api/meta", rewrite_schema)
+            page.route(
+                "**/api/workbench-input",
+                lambda route: (input_requests.append(route.request.url), route.abort()),
+            )
+            page.goto(base_url, wait_until="networkidle")
+
+            expect(page.locator("#assumptions-panel"), message=f"schema v{version}").to_be_visible()
+            expect(page.locator("#assumptions-status"), message=f"schema v{version}").to_have_text(
+                f"UNAVAILABLE FOR SCHEMA V{version}"
+            )
+            expect(page.locator("#assumptions-content")).to_be_hidden()
+            expect(page.locator("#workbench-back-link")).to_be_hidden()
+            assert not page.locator("#error-banner").is_visible(), version
+            page.close()
+        assert input_requests == []
+        browser.close()
+
+
+def test_schema_v7_inspector_refuses_a_malformed_assumptions_projection(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    with (
+        _workbench_assumptions_viewer(tmp_path) as (
+            base_url,
+            _root,
+            _expected,
+        ),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        input_url = f"{base_url}/api/runs/{_expected['run_id']}/workbench-input"
+
+        def corrupt_input(route: Route) -> None:
+            response = route.fetch()
+            document = response.json()
+            document["settings"]["seed"] = "9223372036854775808"
+            document["creative_template"]["message"] = "<img src=https://attacker.invalid/x>"
+            route.fulfill(json=document)
+
+        page.route(input_url, corrupt_input)
+        page.goto(f"{base_url}/runs/{_expected['run_id']}", wait_until="networkidle")
+
+        expect(page.locator("#assumptions-status")).to_have_text("VERIFICATION FAILED")
+        expect(page.locator("#assumptions-content")).to_be_hidden()
+        expect(page.locator("#error-banner")).to_contain_text("Frozen workbench input is invalid")
+        assert page.locator("#assumptions-panel img").count() == 0
+        assert "attacker.invalid" not in page.locator("body").inner_text()
+        browser.close()
+
+
+def test_schema_v7_inspector_cross_checks_assumption_identity_with_run_summary(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    with (
+        _workbench_assumptions_viewer(tmp_path) as (
+            base_url,
+            _root,
+            expected,
+        ),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        for field in ("scenario_id", "campaign_id"):
+            page = browser.new_page()
+
+            def corrupt_summary(route: Route, *, changed_field: str = field) -> None:
+                response = route.fetch()
+                document = response.json()
+                if changed_field == "scenario_id":
+                    document["scenario_id"] = "different-scenario"
+                else:
+                    document["campaigns"][0]["campaign_id"] = "different-campaign"
+                route.fulfill(json=document)
+
+            page.route(
+                f"{base_url}/api/runs/{expected['run_id']}/opportunity-summary",
+                corrupt_summary,
+            )
+            page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+
+            expect(page.locator("#assumptions-status"), message=field).to_have_text(
+                "VERIFICATION FAILED"
+            )
+            expect(page.locator("#assumptions-content"), message=field).to_be_hidden()
+            expect(page.locator("#error-banner"), message=field).to_contain_text(
+                "Frozen workbench input is invalid"
+            )
             page.close()
         browser.close()
 

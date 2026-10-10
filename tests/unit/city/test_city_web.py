@@ -307,6 +307,14 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'id="work-place"' in html.text
     assert 'id="leisure-place"' in html.text
     assert 'id="model-label"' in html.text
+    assert 'id="workbench-back-link" href="/" hidden' in html.text
+    assert 'id="assumptions-panel"' in html.text
+    assert 'id="assumptions-drawer"' in html.text
+    assert 'id="assumptions-status"' in html.text
+    assert 'id="assumptions-content" hidden' in html.text
+    assert 'id="assumptions-seed"' in html.text
+    assert 'id="assumptions-placements"' in html.text
+    assert 'id="assumptions-workbench-input-sha256"' in html.text
     assert 'id="attention-panel"' in html.text
     assert 'id="attention-claim"' in html.text
     for list_id in (
@@ -326,6 +334,10 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'endpoint: "/attention-events"' in js.text
     assert "function validatedApiBase()" in js.text
     assert "function apiPath(relative)" in js.text
+    assert '"/workbench-input"' in js.text
+    assert "function validateWorkbenchInput" in js.text
+    assert "function renderWorkbenchAssumptions" in js.text
+    assert 'fetchJson("/workbench-input")' in js.text
     assert "const url = apiPath(relative);" in js.text
     assert 'fetch(url, { cache: "no-store" })' in js.text
     assert 'fetchJson(evidencePageUrl("attention", next, offsets.attention))' in js.text
@@ -338,6 +350,8 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert "http://" not in html.text and "https://" not in html.text
     assert "textContent" in js.text
     assert "innerHTML" not in js.text
+    assert "insertAdjacentHTML" not in js.text
+    assert "outerHTML" not in js.text
     policy = html.headers["Content-Security-Policy"]
     assert "default-src 'none'" in policy
     assert "script-src 'self'" in policy

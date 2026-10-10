@@ -29,6 +29,7 @@ const viewerApiEndpoints = new Set([
   "/response-events",
   "/response-state",
   "/frame",
+  "/workbench-input",
 ]);
 
 function invalidApiBase() {
@@ -141,7 +142,7 @@ const responseStateUpdateKeys = [
   "caused_by_event_ids", "response_input_sha256", "scenario_sha256", "city_sha256",
   "campaign_id", "agent_id", "day_index", "model_minute", "previous_state", "state",
 ];
-const state = { meta: null, metaSeedToken: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, spatialResponseMetrics: null, spatialResponseSeedToken: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0, timelineLoading: false, evidenceRequests: { opportunity: 0, attention: 0, response: 0 } };
+const state = { meta: null, metaSeedToken: null, workbenchInput: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, spatialResponseMetrics: null, spatialResponseSeedToken: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0, timelineLoading: false, evidenceRequests: { opportunity: 0, attention: 0, response: 0 } };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
@@ -1867,6 +1868,413 @@ async function setMinute(minute, selectedAgent = state.selected) {
   }
 }
 
+function invalidWorkbenchInput() {
+  throw new Error("Frozen workbench input is invalid");
+}
+
+function requireWorkbenchText(value, minimum, maximum) {
+  if (
+    typeof value !== "string"
+    || Array.from(value).length < minimum
+    || Array.from(value).length > maximum
+    || /[\u0000-\u001f\u007f-\u009f]/.test(value)
+  ) invalidWorkbenchInput();
+  return value;
+}
+
+function requireWorkbenchId(value, maximum = 80) {
+  if (
+    typeof value !== "string"
+    || value.length > maximum
+    || !/^[a-z0-9][a-z0-9-]*$/.test(value)
+  ) invalidWorkbenchInput();
+  return value;
+}
+
+function validateWorkbenchStringList(value, minimum, maximum) {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
+    invalidWorkbenchInput();
+  }
+  const items = value.map((item) => requireWorkbenchText(item, 1, 80));
+  if (new Set(items).size !== items.length) invalidWorkbenchInput();
+  return items;
+}
+
+function validateWorkbenchWindow(value, days) {
+  const windowValue = requireRecord(value, "Frozen workbench input");
+  if (!hasExactKeys(windowValue, ["start_minute", "end_minute"])) invalidWorkbenchInput();
+  const maximum = days * 1440;
+  const start = requireBoundedInteger(
+    windowValue.start_minute,
+    0,
+    maximum - 1,
+    "Frozen workbench input",
+  );
+  const end = requireBoundedInteger(
+    windowValue.end_minute,
+    1,
+    maximum,
+    "Frozen workbench input",
+  );
+  if (end <= start || Math.floor(start / 1440) !== Math.floor((end - 1) / 1440)) {
+    invalidWorkbenchInput();
+  }
+  return windowValue;
+}
+
+function validateWorkbenchWindows(value, days) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 14) {
+    invalidWorkbenchInput();
+  }
+  const windows = value.map((windowValue) => validateWorkbenchWindow(windowValue, days));
+  for (let index = 1; index < windows.length; index += 1) {
+    if (
+      windows[index].start_minute < windows[index - 1].end_minute
+      || windows[index].start_minute < windows[index - 1].start_minute
+    ) invalidWorkbenchInput();
+  }
+  return windows;
+}
+
+function validateWorkbenchPhone(value, days) {
+  if (value === null) return null;
+  const phone = requireRecord(value, "Frozen workbench input");
+  if (!hasExactKeys(phone, [
+    "active_windows",
+    "frequency_cap_per_agent_per_day",
+    "placement_id",
+    "eligible_activities",
+    "opportunity_probability_per_minute",
+  ])) invalidWorkbenchInput();
+  if (phone.placement_id !== "phone-placement") invalidWorkbenchInput();
+  validateWorkbenchWindows(phone.active_windows, days);
+  requireBoundedInteger(
+    phone.frequency_cap_per_agent_per_day,
+    1,
+    100,
+    "Frozen workbench input",
+  );
+  if (
+    !Array.isArray(phone.eligible_activities)
+    || phone.eligible_activities.length < 1
+    || phone.eligible_activities.length > 4
+    || new Set(phone.eligible_activities).size !== phone.eligible_activities.length
+    || phone.eligible_activities.some(
+      (activity) => !["home", "commute", "work", "leisure"].includes(activity),
+    )
+  ) invalidWorkbenchInput();
+  requireBoundedNumber(
+    phone.opportunity_probability_per_minute,
+    0,
+    1,
+    "Frozen workbench input",
+  );
+  return phone;
+}
+
+function validateWorkbenchRoadside(value, days) {
+  if (value === null) return null;
+  const roadside = requireRecord(value, "Frozen workbench input");
+  if (!hasExactKeys(roadside, [
+    "active_windows",
+    "frequency_cap_per_agent_per_day",
+    "placement_id",
+    "road_id",
+    "travel_direction",
+    "road_fraction",
+    "side",
+    "orientation_degrees",
+    "max_view_distance_meters",
+  ])) invalidWorkbenchInput();
+  if (
+    roadside.placement_id !== "roadside-placement"
+    || !["forward", "backward"].includes(roadside.travel_direction)
+    || !["left", "right"].includes(roadside.side)
+  ) invalidWorkbenchInput();
+  requireWorkbenchId(roadside.road_id);
+  validateWorkbenchWindows(roadside.active_windows, days);
+  requireBoundedInteger(
+    roadside.frequency_cap_per_agent_per_day,
+    1,
+    100,
+    "Frozen workbench input",
+  );
+  const roadFraction = requireBoundedNumber(
+    roadside.road_fraction,
+    0,
+    1,
+    "Frozen workbench input",
+  );
+  if (roadFraction === 0 || roadFraction === 1) invalidWorkbenchInput();
+  requireBoundedNumber(
+    roadside.orientation_degrees,
+    0,
+    359.99999999999994,
+    "Frozen workbench input",
+  );
+  const distance = requireBoundedNumber(
+    roadside.max_view_distance_meters,
+    0,
+    1000,
+    "Frozen workbench input",
+  );
+  if (distance === 0) invalidWorkbenchInput();
+  return roadside;
+}
+
+function validateWorkbenchInput(value) {
+  const documentValue = requireRecord(value, "Frozen workbench input");
+  if (!hasExactKeys(documentValue, [
+    "run_id",
+    "run_schema_version",
+    "workbench_input_schema_version",
+    "manifest_sha256",
+    "workbench_input_sha256",
+    "city_sha256",
+    "scenario_sha256",
+    "creative_sha256",
+    "scenario",
+    "cohort",
+    "settings",
+    "creative_template",
+  ])) invalidWorkbenchInput();
+  const settings = requireRecord(documentValue.settings, "Frozen workbench input");
+  if (!hasExactKeys(settings, [
+    "run_id", "agent_count", "days", "seed", "response_mode",
+  ])) invalidWorkbenchInput();
+  const runId = requireWorkbenchId(documentValue.run_id, 40);
+  if (
+    documentValue.run_schema_version !== 7
+    || documentValue.workbench_input_schema_version !== 1
+    || runId !== settings.run_id
+    || runId !== state.meta.run_id
+    || settings.response_mode !== "deterministic-rules"
+    || settings.agent_count !== state.meta.agent_count
+    || settings.days !== state.meta.days
+  ) invalidWorkbenchInput();
+  if (
+    typeof settings.seed !== "string"
+    || !/^(?:0|[1-9][0-9]{0,18})$/.test(settings.seed)
+    || BigInt(settings.seed) > 9223372036854775807n
+    || settings.seed !== state.metaSeedToken
+  ) invalidWorkbenchInput();
+  requireBoundedInteger(settings.agent_count, 1, 30, "Frozen workbench input");
+  const days = requireBoundedInteger(settings.days, 1, 7, "Frozen workbench input");
+  for (const field of [
+    "manifest_sha256",
+    "workbench_input_sha256",
+    "city_sha256",
+    "scenario_sha256",
+    "creative_sha256",
+  ]) {
+    if (!validEvidenceHash(documentValue[field])) invalidWorkbenchInput();
+  }
+  if (
+    documentValue.workbench_input_sha256 !== state.meta.workbench_input_sha256
+    || documentValue.city_sha256 !== state.meta.city_sha256
+  ) invalidWorkbenchInput();
+
+  const scenario = requireRecord(documentValue.scenario, "Frozen workbench input");
+  if (!hasExactKeys(scenario, ["scenario_id", "name", "campaign", "phone", "roadside"])) {
+    invalidWorkbenchInput();
+  }
+  requireWorkbenchId(scenario.scenario_id);
+  requireWorkbenchText(scenario.name, 1, 120);
+  const campaign = requireRecord(scenario.campaign, "Frozen workbench input");
+  if (!hasExactKeys(campaign, [
+    "campaign_id", "name", "creative_template_id", "target_interests", "relative_price",
+  ])) invalidWorkbenchInput();
+  requireWorkbenchId(campaign.campaign_id);
+  requireWorkbenchText(campaign.name, 1, 120);
+  requireWorkbenchId(campaign.creative_template_id);
+  validateWorkbenchStringList(campaign.target_interests, 1, 12);
+  const relativePrice = requireBoundedNumber(
+    campaign.relative_price,
+    0,
+    100,
+    "Frozen workbench input",
+  );
+  if (relativePrice === 0) invalidWorkbenchInput();
+  const phone = validateWorkbenchPhone(scenario.phone, days);
+  const roadside = validateWorkbenchRoadside(scenario.roadside, days);
+  if (phone === null && roadside === null) invalidWorkbenchInput();
+
+  const cohort = requireRecord(documentValue.cohort, "Frozen workbench input");
+  if (!hasExactKeys(cohort, ["interests", "traits", "initial_state"])) {
+    invalidWorkbenchInput();
+  }
+  validateWorkbenchStringList(cohort.interests, 1, 12);
+  const traits = requireRecord(cohort.traits, "Frozen workbench input");
+  const traitKeys = [
+    "price_sensitivity",
+    "novelty_seeking",
+    "advertising_skepticism",
+    "mobile_recall_encoding",
+    "roadside_recall_encoding",
+    "impulsivity",
+  ];
+  if (!hasExactKeys(traits, traitKeys)) invalidWorkbenchInput();
+  for (const key of traitKeys) {
+    requireBoundedNumber(traits[key], 0, 1, "Frozen workbench input");
+  }
+  const initialState = requireRecord(cohort.initial_state, "Frozen workbench input");
+  if (!hasExactKeys(initialState, [
+    "brand_sentiment", "recall_strength", "purchase_intention",
+  ])) invalidWorkbenchInput();
+  requireBoundedNumber(initialState.brand_sentiment, -1, 1, "Frozen workbench input");
+  requireBoundedNumber(initialState.recall_strength, 0, 1, "Frozen workbench input");
+  requireBoundedNumber(initialState.purchase_intention, 0, 1, "Frozen workbench input");
+
+  const creative = requireRecord(documentValue.creative_template, "Frozen workbench input");
+  if (!hasExactKeys(creative, [
+    "template_id",
+    "template_version",
+    "product_name",
+    "product_category",
+    "message",
+    "call_to_action",
+    "disclosure",
+  ])) invalidWorkbenchInput();
+  if (
+    creative.template_version !== 1
+    || creative.template_id !== campaign.creative_template_id
+    || creative.disclosure !== "Fictional creative for synthetic simulation only."
+  ) invalidWorkbenchInput();
+  requireWorkbenchId(creative.template_id);
+  requireWorkbenchText(creative.product_name, 1, 80);
+  requireWorkbenchText(creative.product_category, 1, 80);
+  requireWorkbenchText(creative.message, 1, 240);
+  requireWorkbenchText(creative.call_to_action, 1, 120);
+  requireWorkbenchText(creative.disclosure, 1, 80);
+  return documentValue;
+}
+
+function validateWorkbenchSummaryBinding(summaryValue, input) {
+  const summary = requireRecord(summaryValue, "Frozen workbench input");
+  const scenario = input.scenario;
+  if (
+    summary.scenario_id !== scenario.scenario_id
+    || summary.scenario_name !== scenario.name
+    || summary.scenario_sha256 !== input.scenario_sha256
+    || !Array.isArray(summary.campaigns)
+    || summary.campaigns.length !== 1
+  ) invalidWorkbenchInput();
+  const summaryCampaign = requireRecord(summary.campaigns[0], "Frozen workbench input");
+  if (
+    !hasExactKeys(summaryCampaign, ["campaign_id", "name", "creative_sha256"])
+    || summaryCampaign.campaign_id !== scenario.campaign.campaign_id
+    || summaryCampaign.name !== scenario.campaign.name
+    || summaryCampaign.creative_sha256 !== input.creative_sha256
+  ) invalidWorkbenchInput();
+}
+
+function workbenchClock(minute, endMinute = false) {
+  const withinDay = minute % 1440;
+  if (endMinute && withinDay === 0 && minute > 0) return "24:00";
+  return `${String(Math.floor(withinDay / 60)).padStart(2, "0")}:${String(withinDay % 60).padStart(2, "0")}`;
+}
+
+function workbenchWindowText(windowValue) {
+  const day = Math.floor(windowValue.start_minute / 1440) + 1;
+  return `DAY ${String(day).padStart(2, "0")} · ${workbenchClock(windowValue.start_minute)}–${workbenchClock(windowValue.end_minute, true)}`;
+}
+
+function appendWorkbenchPlacement(label, details) {
+  const card = document.createElement("article");
+  card.className = "assumption-placement";
+  const title = document.createElement("strong");
+  title.textContent = label;
+  const value = document.createElement("bdi");
+  value.textContent = details;
+  card.append(title, value);
+  byId("assumptions-placements").append(card);
+}
+
+function renderWorkbenchAssumptions(input) {
+  const scenario = input.scenario;
+  const campaign = scenario.campaign;
+  const cohort = input.cohort;
+  const creative = input.creative_template;
+  const settings = input.settings;
+  byId("assumptions-run").textContent = input.run_id;
+  byId("assumptions-scenario").textContent = scenario.name;
+  byId("assumptions-scenario-id").textContent = scenario.scenario_id;
+  byId("assumptions-campaign").textContent = campaign.name;
+  byId("assumptions-campaign-id").textContent = campaign.campaign_id;
+  byId("assumptions-target-interests").textContent = campaign.target_interests.join(" · ");
+  byId("assumptions-relative-price").textContent = String(campaign.relative_price);
+  byId("assumptions-creative-product").textContent = creative.product_name;
+  byId("assumptions-creative-category").textContent = creative.product_category;
+  byId("assumptions-creative-template-id").textContent = creative.template_id;
+  byId("assumptions-creative-message").textContent = creative.message;
+  byId("assumptions-creative-action").textContent = creative.call_to_action;
+  byId("assumptions-creative-disclosure").textContent = creative.disclosure;
+  byId("assumptions-cohort-interests").textContent = cohort.interests.join(" · ");
+  byId("assumptions-traits").textContent = [
+    ["PRICE SENSITIVITY", cohort.traits.price_sensitivity],
+    ["NOVELTY SEEKING", cohort.traits.novelty_seeking],
+    ["AD SKEPTICISM", cohort.traits.advertising_skepticism],
+    ["MOBILE RECALL", cohort.traits.mobile_recall_encoding],
+    ["ROADSIDE RECALL", cohort.traits.roadside_recall_encoding],
+    ["IMPULSIVITY", cohort.traits.impulsivity],
+  ].map(([label, value]) => `${label} ${value}`).join(" · ");
+  byId("assumptions-initial-state").textContent = [
+    `SENTIMENT ${cohort.initial_state.brand_sentiment}`,
+    `RECALL ${cohort.initial_state.recall_strength}`,
+    `PURCHASE INTENTION ${cohort.initial_state.purchase_intention}`,
+  ].join(" · ");
+  byId("assumptions-seed").textContent = settings.seed;
+  byId("assumptions-population").textContent = `${settings.agent_count} SYNTHETIC ${settings.agent_count === 1 ? "AGENT" : "AGENTS"}`;
+  byId("assumptions-days").textContent = `${settings.days} MODEL ${settings.days === 1 ? "DAY" : "DAYS"}`;
+  byId("assumptions-mode").textContent = settings.response_mode.toUpperCase();
+  for (const field of [
+    "manifest_sha256",
+    "workbench_input_sha256",
+    "city_sha256",
+    "scenario_sha256",
+    "creative_sha256",
+  ]) {
+    byId(`assumptions-${field.replaceAll("_", "-")}`).textContent = input[field];
+  }
+  const placements = byId("assumptions-placements");
+  placements.textContent = "";
+  if (scenario.phone) {
+    const windows = scenario.phone.active_windows.map(workbenchWindowText).join(" · ");
+    appendWorkbenchPlacement(
+      "PHONE",
+      `${windows} · ACTIVITIES ${scenario.phone.eligible_activities.join(", ").toUpperCase()} · P ${scenario.phone.opportunity_probability_per_minute}/MIN · CAP ${scenario.phone.frequency_cap_per_agent_per_day}/AGENT/DAY`,
+    );
+  }
+  if (scenario.roadside) {
+    const windows = scenario.roadside.active_windows.map(workbenchWindowText).join(" · ");
+    appendWorkbenchPlacement(
+      "ROADSIDE",
+      `${windows} · ROAD ${scenario.roadside.road_id.toUpperCase()} · ${scenario.roadside.travel_direction.toUpperCase()} · FRACTION ${scenario.roadside.road_fraction} · ${scenario.roadside.side.toUpperCase()} · ${scenario.roadside.orientation_degrees}° · ${scenario.roadside.max_view_distance_meters} M · CAP ${scenario.roadside.frequency_cap_per_agent_per_day}/AGENT/DAY`,
+    );
+  }
+  byId("assumptions-content").hidden = false;
+  byId("assumptions-status").textContent = "VERIFIED IMMUTABLE INPUT";
+  byId("assumptions-drawer").open = true;
+  byId("workbench-back-link").hidden = false;
+}
+
+function renderWorkbenchUnavailable(meta) {
+  const status = meta.saved === true && Number.isInteger(meta.run_schema_version)
+    ? `UNAVAILABLE FOR SCHEMA V${meta.run_schema_version}`
+    : "UNAVAILABLE FOR TEMPORARY VIEW";
+  byId("assumptions-status").textContent = status;
+  byId("assumptions-content").hidden = true;
+  byId("assumptions-drawer").open = false;
+  byId("workbench-back-link").hidden = true;
+}
+
+function renderWorkbenchFailure() {
+  byId("assumptions-status").textContent = "VERIFICATION FAILED";
+  byId("assumptions-content").hidden = true;
+  byId("assumptions-drawer").open = false;
+  byId("workbench-back-link").hidden = true;
+}
+
 function stopPlayback() {
   state.playing = false;
   if (state.timer) clearInterval(state.timer);
@@ -1911,6 +2319,21 @@ async function boot() {
     validateSpatialResponseSeed(meta.seed, metaResponse.integerToken);
     state.meta = meta; state.metaSeedToken = metaResponse.integerToken;
     state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
+    if (meta.workbench_input_available === true) {
+      try {
+        if (
+          meta.run_schema_version !== 7
+          || !validEvidenceHash(meta.workbench_input_sha256)
+          || !validatedApiBase().startsWith("/api/runs/")
+        ) invalidWorkbenchInput();
+        state.workbenchInput = validateWorkbenchInput(await fetchJson("/workbench-input"));
+      } catch (_) {
+        renderWorkbenchFailure();
+        invalidWorkbenchInput();
+      }
+    } else {
+      renderWorkbenchUnavailable(meta);
+    }
     if (meta.place_set_sha256) {
       const [places, assignmentDocument] = await Promise.all([fetchJson("/places"), fetchJson("/place-assignments")]);
       state.places = places;
@@ -1919,6 +2342,14 @@ async function boot() {
     }
     if (meta.spatial_opportunities === true) {
       state.opportunitySummary = await fetchJson("/opportunity-summary");
+      if (state.workbenchInput) {
+        try {
+          validateWorkbenchSummaryBinding(state.opportunitySummary, state.workbenchInput);
+        } catch (_) {
+          renderWorkbenchFailure();
+          invalidWorkbenchInput();
+        }
+      }
       byId("opportunity-scenario").textContent = state.opportunitySummary.scenario_name;
       byId("opportunity-total").textContent = String(state.opportunitySummary.counts.opportunity_count);
       byId("opportunity-roadside").textContent = String(state.opportunitySummary.counts.roadside_opportunity_count);
@@ -1977,6 +2408,7 @@ async function boot() {
     byId("source-link").href = meta.source_url;
     byId("timeline-duration").textContent = `${meta.days} ${meta.days === 1 ? "DAY" : "DAYS"}`;
     byId("time-slider").max = String(meta.days * 1440 - 1);
+    if (state.workbenchInput) renderWorkbenchAssumptions(state.workbenchInput);
     await setMinute(0);
   } catch (error) { showError(String(error)); }
 }

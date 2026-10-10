@@ -14,7 +14,7 @@
     <header class="masthead">
       <div class="identity">
         <span class="mark" aria-hidden="true"><span></span></span>
-        <div><span class="eyebrow">ADLIFE LAB / CITY SYSTEMS</span><h1>Mobility observatory</h1><span class="eyebrow" id="saved-run-label" hidden></span></div>
+        <div><span class="eyebrow">ADLIFE LAB / CITY SYSTEMS</span><h1>Mobility observatory</h1><span class="eyebrow" id="saved-run-label" hidden></span><a class="workbench-back" id="workbench-back-link" href="/" hidden>&larr; Back to city workbench</a></div>
       </div>
       <div class="masthead-right"><span class="status-dot" aria-hidden="true"></span><span>LOCAL SIMULATION</span><span class="division">/</span><span id="city-name">Loading city…</span></div>
     </header>
@@ -36,6 +36,68 @@
 
       <aside class="sidebar" aria-label="Simulation details">
         <div class="sidebar-intro"><span class="eyebrow">SCENARIO / OVERVIEW</span><h2>A city in motion.</h2><p>Follow synthetic agents through a deterministic daily routine on a directed street graph.</p></div>
+        <section class="assumptions-panel" id="assumptions-panel" aria-labelledby="assumptions-title">
+          <details id="assumptions-drawer">
+            <summary><span><span class="eyebrow">VERIFIED PROVENANCE</span><strong id="assumptions-title">Frozen run assumptions</strong></span><span id="assumptions-status" role="status" aria-live="polite" aria-atomic="true">CHECKING AVAILABILITY</span></summary>
+            <div class="assumptions-content" id="assumptions-content" hidden>
+              <p class="assumptions-disclosure" id="assumptions-disclosure">One homogeneous synthetic cohort shares these explicit response traits and initial state. It is not a sample of real residents.</p>
+              <section aria-labelledby="assumptions-study-title">
+                <h3 id="assumptions-study-title">Study identity</h3>
+                <dl class="assumptions-grid">
+                  <div><dt>Run</dt><dd><bdi id="assumptions-run">&mdash;</bdi></dd></div>
+                  <div><dt>Scenario</dt><dd><bdi id="assumptions-scenario">&mdash;</bdi></dd></div>
+                  <div><dt>Scenario ID</dt><dd><bdi id="assumptions-scenario-id">&mdash;</bdi></dd></div>
+                  <div><dt>Campaign</dt><dd><bdi id="assumptions-campaign">&mdash;</bdi></dd></div>
+                  <div><dt>Campaign ID</dt><dd><bdi id="assumptions-campaign-id">&mdash;</bdi></dd></div>
+                  <div><dt>Target interests</dt><dd><bdi id="assumptions-target-interests">&mdash;</bdi></dd></div>
+                  <div><dt>Relative price</dt><dd><bdi id="assumptions-relative-price">&mdash;</bdi></dd></div>
+                </dl>
+              </section>
+              <section aria-labelledby="assumptions-creative-title">
+                <h3 id="assumptions-creative-title">Frozen fictional creative</h3>
+                <dl class="assumptions-grid">
+                  <div><dt>Product</dt><dd><bdi id="assumptions-creative-product">&mdash;</bdi></dd></div>
+                  <div><dt>Category</dt><dd><bdi id="assumptions-creative-category">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Template ID</dt><dd><bdi id="assumptions-creative-template-id">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Message</dt><dd><bdi id="assumptions-creative-message">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Call to action</dt><dd><bdi id="assumptions-creative-action">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Disclosure</dt><dd><bdi id="assumptions-creative-disclosure">&mdash;</bdi></dd></div>
+                </dl>
+              </section>
+              <section aria-labelledby="assumptions-placement-title">
+                <h3 id="assumptions-placement-title">Placement schedule</h3>
+                <div class="assumptions-placements" id="assumptions-placements"></div>
+              </section>
+              <section aria-labelledby="assumptions-cohort-title">
+                <h3 id="assumptions-cohort-title">Synthetic cohort</h3>
+                <dl class="assumptions-grid">
+                  <div class="assumptions-wide"><dt>Interests</dt><dd><bdi id="assumptions-cohort-interests">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Response traits</dt><dd><bdi id="assumptions-traits">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Common initial state</dt><dd><bdi id="assumptions-initial-state">&mdash;</bdi></dd></div>
+                </dl>
+              </section>
+              <section aria-labelledby="assumptions-settings-title">
+                <h3 id="assumptions-settings-title">Execution settings</h3>
+                <dl class="assumptions-grid">
+                  <div><dt>Seed</dt><dd><bdi id="assumptions-seed">&mdash;</bdi></dd></div>
+                  <div><dt>Population</dt><dd><bdi id="assumptions-population">&mdash;</bdi></dd></div>
+                  <div><dt>Duration</dt><dd><bdi id="assumptions-days">&mdash;</bdi></dd></div>
+                  <div><dt>Response mode</dt><dd><bdi id="assumptions-mode">&mdash;</bdi></dd></div>
+                </dl>
+              </section>
+              <section aria-labelledby="assumptions-hashes-title">
+                <h3 id="assumptions-hashes-title">Artifact receipts</h3>
+                <dl class="assumptions-grid assumptions-hashes">
+                  <div class="assumptions-wide"><dt>Manifest</dt><dd><bdi id="assumptions-manifest-sha256">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Workbench input</dt><dd><bdi id="assumptions-workbench-input-sha256">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>City</dt><dd><bdi id="assumptions-city-sha256">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Scenario</dt><dd><bdi id="assumptions-scenario-sha256">&mdash;</bdi></dd></div>
+                  <div class="assumptions-wide"><dt>Creative</dt><dd><bdi id="assumptions-creative-sha256">&mdash;</bdi></dd></div>
+                </dl>
+              </section>
+            </div>
+          </details>
+        </section>
         <div class="metric-grid">
           <div class="metric"><span>AGENTS</span><strong id="agent-count">—</strong></div>
           <div class="metric"><span>STREETS</span><strong id="road-count">—</strong></div>
