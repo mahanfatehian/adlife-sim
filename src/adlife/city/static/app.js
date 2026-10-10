@@ -142,15 +142,52 @@ const responseStateUpdateKeys = [
   "caused_by_event_ids", "response_input_sha256", "scenario_sha256", "city_sha256",
   "campaign_id", "agent_id", "day_index", "model_minute", "previous_state", "state",
 ];
-const state = { meta: null, metaSeedToken: null, workbenchInput: null, city: null, agents: [], places: null, placeAssignments: [], opportunitySummary: null, opportunityPage: null, attentionSummary: null, attentionPage: null, responseSummary: null, responsePage: null, responseStatePage: null, spatialMetrics: null, spatialResponseMetrics: null, spatialResponseSeedToken: null, frame: null, selected: null, minute: 0, playing: false, timer: null, zoom: 1, panX: 0, panY: 0, request: 0, timelineLoading: false, evidenceRequests: { opportunity: 0, attention: 0, response: 0 } };
+const state = {
+  meta: null,
+  metaSeedToken: null,
+  workbenchInput: null,
+  city: null,
+  agents: [],
+  places: null,
+  placeAssignments: [],
+  opportunitySummary: null,
+  opportunityPage: null,
+  attentionSummary: null,
+  attentionPage: null,
+  responseSummary: null,
+  responsePage: null,
+  responseStatePage: null,
+  spatialMetrics: null,
+  spatialResponseMetrics: null,
+  spatialResponseSeedToken: null,
+  frame: null,
+  selected: null,
+  selectedCampaign: null,
+  selectedEvidence: null,
+  minute: 0,
+  playing: false,
+  playbackGeneration: 0,
+  playbackDelay: null,
+  playbackSpeed: 1,
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+  request: 0,
+  timelineLoading: false,
+  timelineAbortController: null,
+  evidenceRequests: { opportunity: 0, attention: 0, response: 0 },
+};
+const MINIMUM_ZOOM = 0.5;
+const MAXIMUM_ZOOM = 8;
+const PLAYBACK_DELAY_MILLISECONDS = { 0.5: 800, 1: 400, 2: 200, 4: 100 };
 const canvas = byId("city-map");
 const ctx = canvas.getContext("2d");
 const stage = byId("map-stage");
 const activities = { home: "At home", commute: "Travelling on streets", work: "At work", leisure: "Leisure visit" };
 
-async function fetchJson(relative) {
+async function fetchJson(relative, signal = null) {
   const url = apiPath(relative);
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) throw new Error(`Could not load ${url} (${response.status})`);
   return response.json();
 }
@@ -236,6 +273,12 @@ function nightAt(minute) {
   return hour < 6 || hour >= 19;
 }
 
+function modelTimeZone() {
+  return state.city && typeof state.city.time_zone === "string"
+    ? state.city.time_zone
+    : "not declared";
+}
+
 function updateLabels() {
   const minute = state.minute;
   const night = nightAt(minute);
@@ -247,8 +290,13 @@ function updateLabels() {
   slider.value = String(minute);
   slider.setAttribute(
     "aria-valuetext",
-    `Day ${Math.floor(minute / 1440) + 1}, ${clockText(minute)}`,
+    `Day ${Math.floor(minute / 1440) + 1}, ${clockText(minute)} model time (${modelTimeZone()})`,
   );
+  if (state.meta) {
+    const dayIndex = Math.floor(minute / 1440);
+    byId("previous-day-button").disabled = dayIndex === 0 || state.timelineLoading;
+    byId("next-day-button").disabled = dayIndex === state.meta.days - 1 || state.timelineLoading;
+  }
   document.body.classList.toggle("night", night);
 }
 
@@ -289,6 +337,14 @@ function spatialCampaignById(campaignId) {
   return state.opportunitySummary.campaigns.find((item) => item.campaign_id === campaignId) || null;
 }
 
+function isCausalEvidence(item, evidenceId) {
+  if (state.selectedEvidence && state.selectedEvidence.id === evidenceId) return true;
+  if (state.selectedEvidence && item.placement_id === state.selectedEvidence.placementId) {
+    return true;
+  }
+  return state.selectedCampaign !== null && item.campaign_id === state.selectedCampaign;
+}
+
 function drawPlaceMarker(place, x, y, selected) {
   const offsets = { home: -10, workplace: 0, leisure: 10 };
   const colors = { home: "#8fb7ff", workplace: "#dfb66b", leisure: "#d68fc4" };
@@ -317,12 +373,13 @@ function drawOpportunityMarker(opportunity, project) {
     : position ? [position.longitude, position.latitude] : null;
   if (!coordinate) return;
   const [x, y] = project(coordinate[0], coordinate[1]);
-  const selected = opportunity.agent_id === state.selected;
+  const causal = isCausalEvidence(opportunity, opportunity.opportunity_id);
+  const selected = opportunity.agent_id === state.selected || causal;
   ctx.save();
   ctx.translate(x, y);
   ctx.strokeStyle = selected ? "#fff3c8" : "#f0ca83";
   ctx.fillStyle = opportunity.channel === "roadside-billboard" ? "#f0ca83" : "#69d7e4";
-  ctx.lineWidth = selected ? 3 : 2;
+  ctx.lineWidth = causal ? 5 : selected ? 3 : 2;
   ctx.shadowColor = ctx.fillStyle;
   ctx.shadowBlur = selected ? 14 : 8;
   ctx.beginPath();
@@ -346,11 +403,12 @@ function drawAttentionMarker(event, project) {
     : position ? [position.longitude, position.latitude] : null;
   if (!coordinate) return;
   const [x, y] = project(coordinate[0], coordinate[1]);
-  const selected = event.agent_id === state.selected;
+  const causal = isCausalEvidence(event, event.event_id);
+  const selected = event.agent_id === state.selected || causal;
   ctx.save();
   ctx.translate(x, y);
   ctx.strokeStyle = event.noticed ? "#77d6bd" : "#b6a7ef";
-  ctx.lineWidth = selected ? 3 : 2;
+  ctx.lineWidth = causal ? 5 : selected ? 3 : 2;
   ctx.shadowColor = ctx.strokeStyle;
   ctx.shadowBlur = event.noticed ? 15 : 7;
   ctx.beginPath(); ctx.arc(0, 0, selected ? 18 : 15, 0, Math.PI * 2); ctx.stroke();
@@ -527,6 +585,89 @@ function renderSelected() {
   } else {
     byId("route-summary").textContent = "Loading route…";
   }
+}
+
+function pageScopeText(label, page) {
+  if (!page) return `${label}: unavailable`;
+  if (page.total === 0) return `${label}: 0 records`;
+  return `${label}: records ${page.offset + 1}-${page.offset + page.items.length} of ${page.total}`;
+}
+
+function renderCausalPresentation() {
+  const campaignId = state.selectedCampaign;
+  for (const id of ["response-causal", "response-metrics-panel"]) {
+    const element = byId(id);
+    element.classList.toggle("causal-selected", campaignId !== null);
+    if (campaignId === null) delete element.dataset.campaignId;
+    else element.dataset.campaignId = campaignId;
+  }
+  const campaignSelector = byId("response-metrics-campaign");
+  if (campaignId === null) delete campaignSelector.dataset.causalCampaignId;
+  else campaignSelector.dataset.causalCampaignId = campaignId;
+}
+
+function renderMapTextAlternative() {
+  if (!state.frame) return;
+  const position = state.frame.positions.find((item) => item.agent_id === state.selected);
+  if (!position) return;
+  const road = position.road_id ? position.road_id.toUpperCase() : "AT DESTINATION";
+  let causal = "No campaign or evidence record selected.";
+  if (state.selectedCampaign !== null) {
+    causal = `Selected campaign ${state.selectedCampaign.toUpperCase()}.`;
+  }
+  if (state.selectedEvidence !== null) {
+    const evidence = state.selectedEvidence;
+    const placement = evidence.placementId
+      ? spatialPlacementById(evidence.placementId)
+      : null;
+    const placementText = evidence.placementId
+      ? ` Placement ${evidence.placementId.toUpperCase()}${placement ? ` (${placement.channel})` : ""}.`
+      : " Placement provenance is carried by the selected state-update causes.";
+    causal = `Selected ${evidence.kind} evidence ${evidence.id.toUpperCase()}; campaign ${evidence.campaignId.toUpperCase()}.${placementText}`;
+  }
+  byId("map-text-summary").textContent = `Day ${Math.floor(state.minute / 1440) + 1}, ${clockText(state.minute)} model time. ${state.selected.toUpperCase()} activity ${position.activity.toUpperCase()}, road ${road}. ${causal}`;
+  byId("map-evidence-scope").textContent = `page-scoped map markers; ${pageScopeText("opportunities", state.opportunityPage)}; ${pageScopeText("attention", state.attentionPage)}; ${pageScopeText("responses", state.responsePage)}. Full-run totals remain unfiltered.`;
+  renderCausalPresentation();
+}
+
+function selectedEvidenceIdentity(kind, item) {
+  return {
+    kind,
+    id: kind === "opportunity" ? item.opportunity_id : item.event_id,
+    campaignId: item.campaign_id,
+    placementId: typeof item.placement_id === "string" ? item.placement_id : null,
+  };
+}
+
+function showResponseMetricSeries(campaignId) {
+  if (!state.spatialResponseMetrics) return;
+  const selector = byId("response-metrics-campaign");
+  if (campaignId === null) {
+    selector.value = "overall";
+    renderResponseMetricsState(state.spatialResponseMetrics.overall, "ALL CAMPAIGNS");
+    return;
+  }
+  const campaign = state.spatialResponseMetrics.campaigns.find(
+    (item) => item.campaign_id === campaignId,
+  );
+  if (!campaign) return;
+  selector.value = campaignId;
+  renderResponseMetricsState(campaign, `CAMPAIGN / ${campaignId.toUpperCase()}`);
+}
+
+async function selectCausalEvidence(kind, item) {
+  stopPlayback();
+  const previousCampaign = state.selectedCampaign;
+  const previousEvidence = state.selectedEvidence;
+  state.selectedCampaign = item.campaign_id;
+  state.selectedEvidence = selectedEvidenceIdentity(kind, item);
+  if (await setMinute(state.minute, item.agent_id)) return;
+  state.selectedCampaign = previousCampaign;
+  state.selectedEvidence = previousEvidence;
+  renderOpportunityEvidence();
+  renderAttentionEvidence();
+  renderResponseEvidence();
+  renderMapTextAlternative();
 }
 
 function evidenceLabel(kind) {
@@ -949,7 +1090,14 @@ function renderOpportunityEvidence() {
     card.type = "button";
     card.className = "opportunity-card";
     card.dataset.evidenceId = opportunity.opportunity_id;
+    card.dataset.campaignId = opportunity.campaign_id;
+    card.dataset.placementId = opportunity.placement_id;
     card.classList.toggle("selected", opportunity.agent_id === state.selected);
+    card.classList.toggle(
+      "causal-selected",
+      state.selectedEvidence !== null && state.selectedEvidence.id === opportunity.opportunity_id,
+    );
+    card.classList.toggle("causal-related", isCausalEvidence(opportunity, opportunity.opportunity_id));
     const channel = document.createElement("span");
     channel.className = `opportunity-channel ${opportunity.channel === "mobile-feed" ? "phone" : "roadside"}`;
     channel.textContent = opportunity.channel === "mobile-feed" ? "PHONE" : "ROADSIDE BILLBOARD";
@@ -961,7 +1109,7 @@ function renderOpportunityEvidence() {
     const detail = document.createElement("small");
     detail.textContent = `${campaign ? campaign.name : opportunity.campaign_id} · ordinal ${opportunity.ordinal_for_agent_placement_day}`;
     card.append(channel, at, identity, detail);
-    card.addEventListener("click", () => setMinute(state.minute, opportunity.agent_id));
+    card.addEventListener("click", () => selectCausalEvidence("opportunity", opportunity));
     fragment.append(card);
   }
   list.replaceChildren(fragment);
@@ -981,7 +1129,14 @@ function renderAttentionEvidence() {
     card.type = "button";
     card.className = `attention-card ${event.event_type === "spatial.noticed" ? "notice" : "impression"}`;
     card.dataset.evidenceId = event.event_id;
+    card.dataset.campaignId = event.campaign_id;
+    card.dataset.placementId = event.placement_id;
     card.classList.toggle("selected", event.agent_id === state.selected);
+    card.classList.toggle(
+      "causal-selected",
+      state.selectedEvidence !== null && state.selectedEvidence.id === event.event_id,
+    );
+    card.classList.toggle("causal-related", isCausalEvidence(event, event.event_id));
     const stageLabel = document.createElement("span");
     stageLabel.className = "attention-stage";
     stageLabel.textContent = event.event_type === "spatial.noticed" ? "NOTICE" : "IMPRESSION";
@@ -994,7 +1149,7 @@ function renderAttentionEvidence() {
     const comparison = event.notice_draw < event.notice_probability ? "<" : "\u2265";
     decision.textContent = `DRAW ${event.notice_draw.toFixed(4)} ${comparison} ${event.notice_probability.toFixed(4)} \u00b7 CAUSE ${event.caused_by.slice(0, 10).toUpperCase()}`;
     card.append(stageLabel, at, identity, decision);
-    card.addEventListener("click", () => setMinute(state.minute, event.agent_id));
+    card.addEventListener("click", () => selectCausalEvidence("attention", event));
     fragment.append(card);
   }
   list.replaceChildren(fragment);
@@ -1025,7 +1180,17 @@ function renderResponseEvidence() {
     card.type = "button";
     card.className = "response-card";
     card.dataset.evidenceId = record.event_id;
+    card.dataset.campaignId = record.campaign_id;
+    if (typeof record.placement_id === "string") card.dataset.placementId = record.placement_id;
     card.classList.toggle("selected", record.agent_id === state.selected);
+    card.classList.toggle(
+      "causal-selected",
+      state.selectedEvidence !== null && state.selectedEvidence.id === record.event_id,
+    );
+    card.classList.toggle(
+      "causal-related",
+      state.selectedCampaign !== null && record.campaign_id === state.selectedCampaign,
+    );
     const stageLabel = document.createElement("span");
     stageLabel.className = "response-stage";
     const at = document.createElement("span");
@@ -1047,7 +1212,7 @@ function renderResponseEvidence() {
       throw new Error("Unknown spatial response record type");
     }
     card.append(stageLabel, at, identity, detail);
-    card.addEventListener("click", () => setMinute(state.minute, record.agent_id));
+    card.addEventListener("click", () => selectCausalEvidence("response", record));
     fragment.append(card);
   }
   list.replaceChildren(fragment);
@@ -1700,13 +1865,16 @@ function renderSpatialResponseMetrics() {
   }
   selector.addEventListener("change", () => {
     try {
-      if (selector.value === "overall") {
-        renderResponseMetricsState(metrics.overall, "ALL CAMPAIGNS");
-        return;
-      }
-      const campaign = metrics.campaigns.find((item) => item.campaign_id === selector.value);
-      if (!campaign) throw new Error("Unknown response metric campaign");
-      renderResponseMetricsState(campaign, `CAMPAIGN / ${campaign.campaign_id.toUpperCase()}`);
+      stopPlayback();
+      const campaignId = selector.value === "overall" ? null : selector.value;
+      if (
+        campaignId !== null
+        && !metrics.campaigns.some((item) => item.campaign_id === campaignId)
+      ) throw new Error("Unknown response metric campaign");
+      state.selectedCampaign = campaignId;
+      state.selectedEvidence = null;
+      showResponseMetricSeries(campaignId);
+      if (state.frame) renderTimeline();
     } catch (error) {
       showError(String(error));
     }
@@ -1747,6 +1915,7 @@ async function loadEvidencePage(kind, offset) {
     try {
       renderMap();
       renderEvidenceKind(kind);
+      renderMapTextAlternative();
     } catch (error) {
       state[contract.pageKey] = committedPage;
       try {
@@ -1788,16 +1957,25 @@ function renderTimeline() {
   renderResponseEvidence();
   renderResponseState();
   renderMap();
+  renderMapTextAlternative();
 }
 
-async function setMinute(minute, selectedAgent = state.selected) {
-  if (!state.meta) return;
+async function setMinute(
+  minute,
+  selectedAgent = state.selected,
+  playbackGeneration = null,
+) {
+  if (!state.meta) return false;
+  if (playbackGeneration === null) stopPlayback();
+  else if (!state.playing || playbackGeneration !== state.playbackGeneration) return false;
   if (!state.agents.some((agent) => agent.agent_id === selectedAgent)) {
     showError("Could not select an unknown simulated person");
-    return;
+    return false;
   }
   const next = Math.max(0, Math.min(state.meta.days * 1440 - 1, Math.floor(minute)));
   const request = ++state.request;
+  const abortController = new AbortController();
+  state.timelineAbortController = abortController;
   const sameMinute = state.frame !== null && next === state.minute;
   const offsets = {};
   state.timelineLoading = true;
@@ -1807,16 +1985,32 @@ async function setMinute(minute, selectedAgent = state.selected) {
     state.evidenceRequests[kind] += 1;
     setEvidencePaginationBusy(kind, true);
   }
+  updateLabels();
   try {
-    const requests = [fetchJson(`/frame?minute=${next}&agent_id=${encodeURIComponent(selectedAgent)}`)];
+    const requests = [fetchJson(
+      `/frame?minute=${next}&agent_id=${encodeURIComponent(selectedAgent)}`,
+      abortController.signal,
+    )];
     const opportunityIndex = state.opportunitySummary ? requests.length : null;
-    if (opportunityIndex !== null) requests.push(fetchJson(evidencePageUrl("opportunity", next, offsets.opportunity)));
+    if (opportunityIndex !== null) requests.push(fetchJson(
+      evidencePageUrl("opportunity", next, offsets.opportunity),
+      abortController.signal,
+    ));
     const attentionIndex = state.attentionSummary ? requests.length : null;
-    if (attentionIndex !== null) requests.push(fetchJson(evidencePageUrl("attention", next, offsets.attention)));
+    if (attentionIndex !== null) requests.push(fetchJson(
+      evidencePageUrl("attention", next, offsets.attention),
+      abortController.signal,
+    ));
     const responseIndex = state.responseSummary ? requests.length : null;
-    if (responseIndex !== null) requests.push(fetchJson(evidencePageUrl("response", next, offsets.response)));
+    if (responseIndex !== null) requests.push(fetchJson(
+      evidencePageUrl("response", next, offsets.response),
+      abortController.signal,
+    ));
     const responseStateIndex = state.responseSummary ? requests.length : null;
-    if (responseStateIndex !== null) requests.push(fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`));
+    if (responseStateIndex !== null) requests.push(fetchJson(
+      `/response-state?agent_id=${encodeURIComponent(selectedAgent)}`,
+      abortController.signal,
+    ));
     const responses = await Promise.all(requests);
     const frame = responses[0];
     const opportunityPage = opportunityIndex === null
@@ -1829,7 +2023,14 @@ async function setMinute(minute, selectedAgent = state.selected) {
       ? null
       : validateEvidencePage("response", responses[responseIndex], next, offsets.response);
     const responseStatePage = responseStateIndex === null ? null : responses[responseStateIndex];
-    if (request !== state.request) return;
+    if (
+      request !== state.request
+      || state.timelineAbortController !== abortController
+      || (
+        playbackGeneration !== null
+        && (!state.playing || playbackGeneration !== state.playbackGeneration)
+      )
+    ) return false;
     state.timelineLoading = false;
     const committedTimeline = {
       frame: state.frame,
@@ -1858,13 +2059,26 @@ async function setMinute(minute, selectedAgent = state.selected) {
       }
       throw error;
     }
+    state.timelineAbortController = null;
+    return true;
   } catch (error) {
-    if (request !== state.request) return;
+    const current = request === state.request
+      && state.timelineAbortController === abortController;
+    if (current) state.timelineAbortController = null;
+    if (
+      !current
+      || (error instanceof Error && error.name === "AbortError")
+      || (
+        playbackGeneration !== null
+        && (!state.playing || playbackGeneration !== state.playbackGeneration)
+      )
+    ) return false;
     state.timelineLoading = false;
     for (const kind of evidencePageKinds) setEvidencePaginationBusy(kind, false);
     updateLabels();
     showError(String(error));
-    stopPlayback();
+    stopPlayback("STOPPED · LAST COMMITTED FRAME RETAINED");
+    return false;
   }
 }
 
@@ -2275,23 +2489,102 @@ function renderWorkbenchFailure() {
   byId("workbench-back-link").hidden = true;
 }
 
-function stopPlayback() {
+function reducedMotionRequested() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function updatePlaybackControl(message) {
+  const button = byId("play-button");
+  const reduced = reducedMotionRequested();
+  button.disabled = reduced;
+  button.textContent = state.playing ? "Ⅱ" : "▶";
+  button.setAttribute("aria-label", state.playing ? "Pause timeline" : "Play timeline");
+  byId("playback-status").textContent = reduced
+    ? "AUTOMATIC PLAYBACK OFF · reduced motion preference"
+    : message;
+}
+
+function stopPlayback(message = "PAUSED") {
   state.playing = false;
-  if (state.timer) clearInterval(state.timer);
-  state.timer = null;
-  byId("play-button").textContent = "▶";
-  byId("play-button").setAttribute("aria-label", "Play timeline");
+  state.playbackGeneration += 1;
+  if (state.playbackDelay !== null) window.clearTimeout(state.playbackDelay);
+  state.playbackDelay = null;
+  if (state.timelineAbortController !== null) {
+    state.timelineAbortController.abort();
+    state.timelineAbortController = null;
+    state.timelineLoading = false;
+    for (const kind of evidencePageKinds) setEvidencePaginationBusy(kind, false);
+    updateLabels();
+  }
+  updatePlaybackControl(message);
+}
+
+function schedulePlaybackStep(generation) {
+  if (!state.playing || generation !== state.playbackGeneration) return;
+  const delay = PLAYBACK_DELAY_MILLISECONDS[state.playbackSpeed];
+  state.playbackDelay = window.setTimeout(() => {
+    state.playbackDelay = null;
+    playbackStep(generation);
+  }, delay);
+}
+
+async function playbackStep(generation) {
+  if (!state.playing || generation !== state.playbackGeneration || !state.meta) return;
+  const finalMinute = state.meta.days * 1440 - 1;
+  if (state.minute >= finalMinute) {
+    stopPlayback("END OF RUN · PAUSED");
+    return;
+  }
+  const committed = await setMinute(state.minute + 1, state.selected, generation);
+  if (!committed || !state.playing || generation !== state.playbackGeneration) return;
+  byId("playback-status").textContent = `PLAYING · ${dayText(state.minute)} ${clockText(state.minute)} · ${state.playbackSpeed}×`;
+  schedulePlaybackStep(generation);
 }
 
 function togglePlayback() {
-  if (state.playing) { stopPlayback(); return; }
+  if (state.playing) {
+    stopPlayback();
+    return;
+  }
+  if (reducedMotionRequested() || !state.meta || state.timelineLoading) {
+    updatePlaybackControl("PAUSED");
+    return;
+  }
+  if (state.minute >= state.meta.days * 1440 - 1) {
+    updatePlaybackControl("END OF RUN · PAUSED");
+    return;
+  }
   state.playing = true;
-  byId("play-button").textContent = "Ⅱ";
-  byId("play-button").setAttribute("aria-label", "Pause timeline");
-  state.timer = setInterval(() => {
-    if (!state.meta) return;
-    setMinute((state.minute + 5) % (state.meta.days * 1440));
-  }, 150);
+  state.playbackGeneration += 1;
+  const generation = state.playbackGeneration;
+  updatePlaybackControl(`PLAYING · ${state.playbackSpeed}×`);
+  playbackStep(generation);
+}
+
+function updateZoomControls() {
+  byId("zoom-level").textContent = `${Math.round(state.zoom * 100)}%`;
+  byId("zoom-out-button").disabled = state.zoom <= MINIMUM_ZOOM;
+  byId("zoom-in-button").disabled = state.zoom >= MAXIMUM_ZOOM;
+}
+
+function setZoom(zoom) {
+  state.zoom = Math.max(MINIMUM_ZOOM, Math.min(MAXIMUM_ZOOM, zoom));
+  updateZoomControls();
+  renderMap();
+}
+
+function resetMapView() {
+  state.panX = 0;
+  state.panY = 0;
+  setZoom(1);
+}
+
+function jumpModelDay(direction) {
+  if (!state.meta || !Number.isInteger(direction) || Math.abs(direction) !== 1) return;
+  const dayIndex = Math.floor(state.minute / 1440);
+  const targetDay = Math.max(0, Math.min(state.meta.days - 1, dayIndex + direction));
+  if (targetDay === dayIndex) return;
+  setMinute(targetDay * 1440 + (state.minute % 1440));
 }
 
 function attachMapControls() {
@@ -2304,7 +2597,14 @@ function attachMapControls() {
   });
   canvas.addEventListener("pointerup", () => { drag = null; });
   canvas.addEventListener("pointercancel", () => { drag = null; });
-  canvas.addEventListener("wheel", (event) => { event.preventDefault(); state.zoom = Math.max(.5, Math.min(8, state.zoom * (event.deltaY < 0 ? 1.1 : .9))); renderMap(); }, { passive: false });
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    setZoom(state.zoom * (event.deltaY < 0 ? 1.1 : .9));
+  }, { passive: false });
+  byId("zoom-out-button").addEventListener("click", () => setZoom(state.zoom / 1.25));
+  byId("zoom-reset-button").addEventListener("click", resetMapView);
+  byId("zoom-in-button").addEventListener("click", () => setZoom(state.zoom * 1.25));
+  updateZoomControls();
   new ResizeObserver(renderMap).observe(stage);
 }
 
@@ -2319,6 +2619,7 @@ async function boot() {
     validateSpatialResponseSeed(meta.seed, metaResponse.integerToken);
     state.meta = meta; state.metaSeedToken = metaResponse.integerToken;
     state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
+    byId("model-clock-note").textContent = `MODEL TIME ZONE ${modelTimeZone()} · ILLUSTRATIVE LIGHT RULE: DAY FROM 06:00 UNTIL 19:00; not local sunrise, calendar time, traffic or DST behavior.`;
     if (meta.workbench_input_available === true) {
       try {
         if (
@@ -2415,6 +2716,23 @@ async function boot() {
 
 byId("time-slider").addEventListener("input", (event) => setMinute(Number(event.target.value)));
 byId("play-button").addEventListener("click", togglePlayback);
+byId("previous-day-button").addEventListener("click", () => jumpModelDay(-1));
+byId("next-day-button").addEventListener("click", () => jumpModelDay(1));
+byId("playback-speed").addEventListener("change", (event) => {
+  const speed = Number(event.target.value);
+  if (!Object.hasOwn(PLAYBACK_DELAY_MILLISECONDS, String(speed))) return;
+  state.playbackSpeed = speed;
+  byId("playback-speed-label").textContent = `${speed}×`;
+  if (state.playing) {
+    byId("playback-status").textContent = `PLAYING · ${speed}×`;
+  }
+});
+const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+reducedMotionQuery.addEventListener("change", () => {
+  if (reducedMotionRequested()) stopPlayback();
+  else updatePlaybackControl("PAUSED");
+});
+window.addEventListener("pagehide", () => stopPlayback("PAUSED"));
 for (const kind of evidencePageKinds) {
   byId(`${kind}-page-previous`).addEventListener(
     "click",

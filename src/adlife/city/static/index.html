@@ -28,9 +28,20 @@
         <div class="map-stage" id="map-stage">
           <canvas id="city-map" aria-label="Road map and simulated agent positions"></canvas>
           <div class="map-compass" aria-hidden="true"><span>N</span><span class="compass-needle"></span></div>
-          <div class="map-help">Drag to pan <span>·</span> Scroll to zoom</div>
+          <div class="map-help">Drag to pan <span>·</span> Scroll or use controls to zoom</div>
+          <div class="map-zoom-controls" role="group" aria-label="Map zoom controls">
+            <button id="zoom-out-button" type="button" aria-label="Zoom map out">&minus;</button>
+            <button id="zoom-reset-button" type="button" aria-label="Reset map view">RESET</button>
+            <output id="zoom-level" aria-live="polite" aria-atomic="true">100%</output>
+            <button id="zoom-in-button" type="button" aria-label="Zoom map in">+</button>
+          </div>
           <div class="map-legend" aria-label="Map legend"><span><i class="legend-road"></i>Road network</span><span><i class="legend-agent"></i>Agent</span><span><i class="legend-selected"></i>Selected</span><span class="place-key" hidden><i class="legend-home"></i>Home</span><span class="place-key" hidden><i class="legend-work"></i>Work</span><span class="place-key" hidden><i class="legend-leisure"></i>Leisure</span><span class="opportunity-key" hidden><i class="legend-billboard"></i>Roadside opportunity</span><span class="opportunity-key" hidden><i class="legend-phone"></i>Phone opportunity</span><span class="attention-key" hidden><i class="legend-impression"></i>Model impression</span><span class="attention-key" hidden><i class="legend-notice"></i>Model notice</span></div>
         </div>
+        <section class="map-text-alternative" aria-labelledby="map-text-title">
+          <div><span class="eyebrow">TEXT MAP / PRESENTATION STATE</span><h3 id="map-text-title">Current frame in words</h3></div>
+          <p id="map-text-summary" role="status" aria-live="polite" aria-atomic="true">Loading the committed frame&hellip;</p>
+          <p id="map-evidence-scope">Evidence markers are page-scoped.</p>
+        </section>
         <div class="map-footer"><div class="map-copyright"><span id="attribution">Loading data attribution…</span><span aria-hidden="true"> · </span><span id="license-label"></span></div><a id="source-link" target="_blank" rel="noopener noreferrer">Data source ↗</a></div>
       </section>
 
@@ -208,9 +219,17 @@
     </main>
 
     <footer class="timeline" aria-label="Simulation timeline">
-      <div class="timeline-controls"><button id="play-button" type="button" aria-label="Play timeline">▶</button><div><span class="eyebrow">SIMULATED TIME</span><strong id="timeline-time">DAY 01 · 00:00</strong></div></div>
+      <div class="timeline-controls">
+        <div class="timeline-button-group" role="group" aria-label="Timeline playback controls">
+          <button id="previous-day-button" type="button" aria-label="Previous model day">−1D</button>
+          <button id="play-button" type="button" aria-label="Play timeline">▶</button>
+          <button id="next-day-button" type="button" aria-label="Next model day">+1D</button>
+        </div>
+        <div class="timeline-clock"><span class="eyebrow">SIMULATED TIME</span><strong id="timeline-time">DAY 01 · 00:00</strong><span id="playback-status" role="status" aria-live="polite" aria-atomic="true">PAUSED</span></div>
+      </div>
       <div class="timeline-track"><input id="time-slider" type="range" min="0" max="1439" value="0" aria-label="Simulation minute" aria-valuetext="Day 1, 00:00"><div class="time-marks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div></div>
-      <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-MINUTE MOBILITY FRAMES</span></div>
+      <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-MINUTE MOBILITY FRAMES</span><label for="playback-speed">PRESENTATION SPEED <select id="playback-speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><output id="playback-speed-label" aria-live="polite" aria-atomic="true">1×</output></div>
+      <p class="model-clock-note" id="model-clock-note">MODEL TIME ZONE LOADING · ILLUSTRATIVE LIGHT RULE: DAY FROM 06:00 UNTIL 19:00; not local sunrise, calendar time, traffic or DST behavior.</p>
     </footer>
   </div>
   <div class="error-banner" id="error-banner" role="alert" hidden></div>

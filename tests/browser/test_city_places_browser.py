@@ -103,6 +103,14 @@ def _viewer_html_with_api_bases(*values: str) -> str:
     return source.replace('<meta charset="utf-8">', f'<meta charset="utf-8">{tags}', 1)
 
 
+def _artifact_hashes(directory: Path) -> dict[str, str]:
+    return {
+        path.relative_to(directory).as_posix(): sha256(path.read_bytes()).hexdigest()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
+
+
 @contextmanager
 def _serve(application: object) -> Iterator[str]:
     with socket.socket() as probe:
@@ -1594,7 +1602,7 @@ def test_delayed_evidence_page_cannot_overwrite_a_newer_timeline_minute() -> Non
         page = browser.new_page()
         page.goto(base_url, wait_until="networkidle")
         page.evaluate(
-            """() => {
+            r"""() => {
               const originalFetch = window.fetch.bind(window);
               document.documentElement.dataset.delayedPageStarted = 'false';
               document.documentElement.dataset.delayedPageSettled = 'false';
@@ -2068,7 +2076,7 @@ def test_failed_coordinated_refresh_keeps_the_last_committed_selection_and_minut
         browser.close()
 
 
-def test_response_viewer_ignores_a_superseded_request_failure_during_playback() -> None:
+def test_manual_scrub_stops_playback_and_ignores_its_superseded_failure() -> None:
     browser_path = _installed_browser()
     with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -2079,7 +2087,7 @@ def test_response_viewer_ignores_a_superseded_request_failure_during_playback() 
         page = browser.new_page()
         page.goto(base_url, wait_until="networkidle")
         page.evaluate(
-            """() => {
+            r"""() => {
               const originalFetch = window.fetch.bind(window);
               document.documentElement.dataset.staleFailureStarted = 'false';
               document.documentElement.dataset.staleFailureSettled = 'false';
@@ -2088,7 +2096,7 @@ def test_response_viewer_ignores_a_superseded_request_failure_during_playback() 
                 const url = String(args[0]);
                 if (
                   document.documentElement.dataset.staleFailureStarted === 'false'
-                  && url.includes('/api/frame?minute=5')
+                  && /\/api\/frame\?minute=(?!0(?:&|$))/.test(url)
                 ) {
                   document.documentElement.dataset.staleFailureStarted = 'true';
                   return new Promise((_, reject) => setTimeout(() => {
@@ -2134,10 +2142,270 @@ def test_response_viewer_ignores_a_superseded_request_failure_during_playback() 
         )
         browser.close()
 
-    assert snapshot["playLabel"] == "Pause timeline"
+    assert snapshot["playLabel"] == "Play timeline"
     assert snapshot["errorHidden"] is True
     assert "superseded request failed" not in snapshot["errorText"]
-    assert int(snapshot["committedMinute"]) >= 2
+    assert snapshot["committedMinute"] == "2"
+
+
+def test_model_clock_day_speed_and_zoom_controls_are_bounded_keyboard_operable() -> None:
+    browser_path = _installed_browser()
+    request_methods: list[str] = []
+    with _place_viewer() as base_url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.on(
+            "request",
+            lambda request: (
+                request_methods.append(request.method) if "/api/" in request.url else None
+            ),
+        )
+        page.goto(base_url, wait_until="networkidle")
+
+        expect(page.locator("#model-clock-note")).to_contain_text("Etc/UTC")
+        expect(page.locator("#model-clock-note")).to_contain_text("06:00")
+        expect(page.locator("#model-clock-note")).to_contain_text("19:00")
+        expect(page.locator("#model-clock-note")).to_contain_text("not local sunrise")
+        expect(page.locator("#model-clock-note")).to_contain_text("traffic or DST")
+        expect(page.locator("#playback-speed-label")).to_have_text("1\N{MULTIPLICATION SIGN}")
+
+        next_day = page.locator("#next-day-button")
+        next_day.focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => state.timelineLoading === false")
+        expect(page.locator("#time-slider")).to_have_attribute(
+            "aria-valuetext", "Day 2, 00:00 model time (Etc/UTC)"
+        )
+        assert page.locator("#time-slider").input_value() == "1440"
+
+        previous_day = page.locator("#previous-day-button")
+        previous_day.focus()
+        page.keyboard.press("Space")
+        page.wait_for_function("() => state.timelineLoading === false")
+        assert page.locator("#time-slider").input_value() == "0"
+        expect(previous_day).to_be_disabled()
+
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = String(6 * 1440 + 123); "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        page.wait_for_function("() => state.timelineLoading === false")
+        expect(page.locator("#next-day-button")).to_be_disabled()
+        assert page.locator("#time-slider").input_value() == str(6 * 1440 + 123)
+
+        speed = page.locator("#playback-speed")
+        speed.select_option("4")
+        expect(page.locator("#playback-speed-label")).to_have_text("4\N{MULTIPLICATION SIGN}")
+        assert page.evaluate("() => state.playbackSpeed") == 4
+
+        zoom_in = page.locator("#zoom-in-button")
+        zoom_in.focus()
+        for _ in range(30):
+            page.keyboard.press("Enter")
+        expect(zoom_in).to_be_disabled()
+        expect(page.locator("#zoom-level")).to_have_text("800%")
+        assert page.evaluate("() => state.zoom") == 8
+
+        page.locator("#zoom-reset-button").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#zoom-level")).to_have_text("100%")
+        assert page.evaluate("() => [state.zoom, state.panX, state.panY]") == [1, 0, 0]
+
+        zoom_out = page.locator("#zoom-out-button")
+        for _ in range(30):
+            zoom_out.press("Enter")
+        expect(zoom_out).to_be_disabled()
+        expect(page.locator("#zoom-level")).to_have_text("50%")
+        assert request_methods and set(request_methods) == {"GET"}
+        browser.close()
+
+
+def test_playback_awaits_each_slow_timeline_batch_without_timer_backlog() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.evaluate(
+            """() => {
+              const originalFetch = window.fetch.bind(window);
+              window.playbackProbe = { active: 0, maximum: 0, starts: 0 };
+              window.fetch = (...args) => {
+                const url = String(args[0]);
+                if (!url.includes('/api/frame?minute=')) return originalFetch(...args);
+                window.playbackProbe.active += 1;
+                window.playbackProbe.starts += 1;
+                window.playbackProbe.maximum = Math.max(
+                  window.playbackProbe.maximum,
+                  window.playbackProbe.active,
+                );
+                return new Promise((resolve, reject) => setTimeout(() => {
+                  originalFetch(...args).then(resolve, reject).finally(() => {
+                    window.playbackProbe.active -= 1;
+                  });
+                }, 350));
+              };
+            }"""
+        )
+
+        page.locator("#playback-speed").select_option("4")
+        page.locator("#play-button").click()
+        page.wait_for_function("() => window.playbackProbe.starts >= 2", timeout=5_000)
+        probe = page.evaluate("() => ({ ...window.playbackProbe })")
+        assert probe["maximum"] == 1
+
+        committed_before_pause = page.locator("#time-slider").input_value()
+        page.locator("#play-button").click()
+        expect(page.locator("#play-button")).to_have_attribute("aria-label", "Play timeline")
+        page.wait_for_function("() => window.playbackProbe.active === 0")
+        paused_minute = page.locator("#time-slider").input_value()
+        assert paused_minute == committed_before_pause
+        starts = page.evaluate("() => window.playbackProbe.starts")
+        page.wait_for_timeout(500)
+        assert page.locator("#time-slider").input_value() == paused_minute
+        assert page.evaluate("() => window.playbackProbe.starts") == starts
+
+        page.locator("#play-button").click()
+        page.wait_for_function("() => window.playbackProbe.active === 1")
+        page.evaluate("() => window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+        page.wait_for_function("() => window.playbackProbe.active === 0")
+        expect(page.locator("#play-button")).to_have_attribute("aria-label", "Play timeline")
+        assert page.locator("#time-slider").input_value() == paused_minute
+        app_source = (
+            resources.files("adlife.city").joinpath("static", "app.js").read_text(encoding="utf-8")
+        )
+        assert "setInterval(" not in app_source
+        browser.close()
+
+
+def test_text_map_alternative_tracks_causal_evidence_without_filtering_totals() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+
+        alternative = page.locator("#map-text-summary")
+        expect(alternative).to_contain_text("Day 1, 00:00")
+        expect(alternative).to_contain_text("PERSON-001")
+        expect(alternative).to_contain_text("activity")
+        expect(page.locator("#map-evidence-scope")).to_contain_text("page-scoped")
+        totals_before = page.evaluate(
+            """() => ({
+              opportunities: document.getElementById('opportunity-total').textContent,
+              impressions: document.getElementById('attention-impressions').textContent,
+              responses: document.getElementById('response-responses').textContent,
+            })"""
+        )
+
+        record = page.locator(".response-card.rule-response").first
+        expect(record).to_be_visible()
+        evidence_id = record.get_attribute("data-evidence-id")
+        campaign_id = record.get_attribute("data-campaign-id")
+        placement_id = record.get_attribute("data-placement-id")
+        assert evidence_id and campaign_id and placement_id
+        record.click()
+        page.wait_for_function("() => state.timelineLoading === false")
+
+        selected = page.locator(f'[data-evidence-id="{evidence_id}"]')
+        expect(selected).to_have_class(re.compile(r"\bcausal-selected\b"))
+        expect(page.locator("#response-causal")).to_have_attribute("data-campaign-id", campaign_id)
+        expect(page.locator("#response-metrics-panel")).to_have_attribute(
+            "data-campaign-id", campaign_id
+        )
+        expect(page.locator("#response-metrics-campaign")).to_have_value("overall")
+        expect(page.locator("#response-metrics-campaign")).to_have_attribute(
+            "data-causal-campaign-id", campaign_id
+        )
+        expect(alternative).to_contain_text(evidence_id.upper())
+        expect(alternative).to_contain_text(campaign_id.upper())
+        expect(alternative).to_contain_text(placement_id.upper())
+        expect(page.locator("#map-evidence-scope")).to_contain_text("page-scoped")
+        assert (
+            page.evaluate(
+                """() => ({
+              opportunities: document.getElementById('opportunity-total').textContent,
+              impressions: document.getElementById('attention-impressions').textContent,
+              responses: document.getElementById('response-responses').textContent,
+            })"""
+            )
+            == totals_before
+        )
+        browser.close()
+
+
+def test_inspector_controls_respect_accessibility_preferences_and_leave_artifacts_immutable(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    with (
+        _workbench_assumptions_viewer(tmp_path) as (base_url, root, expected),
+        sync_playwright() as playwright,
+    ):
+        run_directory = root / "city-runs" / str(expected["run_id"])
+        before = _artifact_hashes(run_directory)
+        methods: list[str] = []
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page.emulate_media(reduced_motion="reduce", forced_colors="active")
+        page.on(
+            "request",
+            lambda request: methods.append(request.method) if "/api/" in request.url else None,
+        )
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+        page.evaluate("() => { document.documentElement.style.fontSize = '200%'; }")
+
+        expect(page.locator("#play-button")).to_be_disabled()
+        expect(page.locator("#playback-status")).to_contain_text("reduced motion")
+        for selector in (
+            "#previous-day-button",
+            "#play-button",
+            "#next-day-button",
+            "#zoom-out-button",
+            "#zoom-reset-button",
+            "#zoom-in-button",
+        ):
+            box = page.locator(selector).bounding_box()
+            assert box is not None and box["height"] >= 44 and box["width"] >= 44
+
+        page.locator("#zoom-reset-button").focus()
+        assert page.locator("#zoom-reset-button").evaluate(
+            "element => getComputedStyle(element).outlineStyle !== 'none'"
+        )
+        overflow = page.evaluate(
+            """() => ({
+              documentWidth: document.documentElement.scrollWidth,
+              viewportWidth: window.innerWidth,
+              elements: Array.from(document.querySelectorAll('body *'))
+                .map((element) => {
+                  const rect = element.getBoundingClientRect();
+                  return { tag: element.tagName, id: element.id, className: element.className,
+                    left: rect.left, right: rect.right, width: rect.width };
+                })
+                .filter((item) => item.left < -0.5 || item.right > window.innerWidth + 0.5)
+                .slice(0, 12),
+            })"""
+        )
+        assert overflow["documentWidth"] <= overflow["viewportWidth"], overflow
+        assert methods and set(methods) == {"GET"}
+        browser.close()
+        assert _artifact_hashes(run_directory) == before
 
 
 @pytest.mark.parametrize(
@@ -2522,7 +2790,7 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
     expected_status = {"role": "status", "live": "polite", "atomic": "true"}
     if semantics["compactStatuses"] != [expected_status] * 4:
         violations.append(f"compact statuses are not atomic live regions: {semantics!r}")
-    if semantics["sliderValueText"] != "Day 1, 00:00":
+    if semantics["sliderValueText"] != "Day 1, 00:00 model time (not declared)":
         violations.append(f"timeline lacks human-readable value text: {semantics!r}")
     assert not violations, "\n".join(violations)
 
