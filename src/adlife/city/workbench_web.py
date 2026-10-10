@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import json
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -11,7 +10,6 @@ from importlib.resources import files
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
@@ -22,16 +20,20 @@ from adlife.city.analysis import (
     metrics_for_stored_city_run,
     response_metrics_for_stored_city_run,
 )
-from adlife.city.catalog import load_city_catalog
+from adlife.city.catalog import (
+    CityCatalogError,
+    UnknownCatalogCity,
+    load_city_catalog,
+)
 from adlife.city.web import (
     CityViewContext,
     city_dashboard_response,
     city_static_asset_response,
+    city_validation_error_response,
     create_city_view_context,
     install_city_view_routes,
 )
 from adlife.city.workbench_creatives import load_creative_template_catalog
-from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_jobs import (
     CityJobManager,
     WorkbenchJobBusy,
@@ -53,6 +55,11 @@ from adlife.city.workbench_security import (
     new_csrf_token,
     strict_json_object,
     workbench_error,
+)
+from adlife.city.workbench_transport import (
+    WorkbenchDraftTransportError,
+    build_workbench_city_detail,
+    parse_workbench_http_draft,
 )
 from adlife.city.workbench_validation import (
     ValidatedWorkbenchRun,
@@ -219,7 +226,7 @@ def _validation_summary(result: ValidatedWorkbenchRun) -> dict[str, object]:
             "run_id": draft.settings.run_id,
             "agent_count": draft.settings.agent_count,
             "days": draft.settings.days,
-            "seed": draft.settings.seed,
+            "seed": str(draft.settings.seed),
             "response_mode": draft.settings.response_mode,
         },
         "city": {
@@ -257,14 +264,7 @@ def _validation_summary(result: ValidatedWorkbenchRun) -> dict[str, object]:
 
 
 def _construct_validated_run(payload: dict[str, object]) -> ValidatedWorkbenchRun:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-    )
-    draft = WorkbenchRunDraft.model_validate_json(encoded)
-    return construct_workbench_run(draft)
+    return construct_workbench_run(parse_workbench_http_draft(payload))
 
 
 def _pagination(request: Request) -> tuple[int, int]:
@@ -400,10 +400,7 @@ def create_city_workbench_app(
         error: RequestValidationError,
     ) -> JSONResponse:
         if request.url.path.startswith("/api/runs/"):
-            return JSONResponse(
-                status_code=422,
-                content=jsonable_encoder({"detail": error.errors()}),
-            )
+            return city_validation_error_response()
         return workbench_error(
             422,
             "invalid-fields",
@@ -417,6 +414,18 @@ def create_city_workbench_app(
         error: ValidationError,
     ) -> JSONResponse:
         return await validation_error_response(error)
+
+    @app.exception_handler(WorkbenchDraftTransportError)
+    async def draft_transport_error_handler(
+        _request: Request,
+        error: WorkbenchDraftTransportError,
+    ) -> JSONResponse:
+        return workbench_error(
+            422,
+            "invalid-fields",
+            "One or more request fields are invalid.",
+            {error.field: error.message},
+        )
 
     @app.exception_handler(WorkbenchValidationError)
     async def workbench_validation_handler(
@@ -434,6 +443,24 @@ def create_city_workbench_app(
             error.code,
             "The scenario could not be validated.",
             {error.field: error.safe_message},
+        )
+
+    @app.exception_handler(UnknownCatalogCity)
+    async def unknown_catalog_city_handler(
+        _request: Request,
+        _error: UnknownCatalogCity,
+    ) -> JSONResponse:
+        return workbench_error(404, "not-found", "The requested resource was not found.")
+
+    @app.exception_handler(CityCatalogError)
+    async def city_catalog_error_handler(
+        _request: Request,
+        _error: CityCatalogError,
+    ) -> JSONResponse:
+        return workbench_error(
+            500,
+            "catalog-unavailable",
+            "The verified city catalog is unavailable.",
         )
 
     @app.exception_handler(WorkbenchQueryError)
@@ -616,6 +643,10 @@ def create_city_workbench_app(
                 "request_body_bytes": MAX_WORKBENCH_BODY_BYTES,
                 "agent_count": {"minimum": 1, "maximum": 30},
                 "days": {"minimum": 1, "maximum": 7},
+                "seed": {
+                    "minimum": "0",
+                    "maximum": "9223372036854775807",
+                },
                 "placements": ["mobile-feed", "roadside-billboard"],
             },
             "disclosure": {
@@ -635,6 +666,11 @@ def create_city_workbench_app(
             document.pop("resource_name", None)
             entries.append(document)
         return {"schema_version": 1, "cities": entries}
+
+    @app.get("/api/catalog/cities/{city_id}")
+    def city_detail(city_id: str, request: Request) -> dict[str, object]:
+        _require_empty_query(request)
+        return build_workbench_city_detail(city_id).model_dump(mode="json")
 
     @app.get("/api/creative-templates")
     def creative_templates(request: Request) -> dict[str, object]:

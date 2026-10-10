@@ -19,6 +19,7 @@ from adlife.city.analysis import (
     metrics_for_stored_city_run,
     response_metrics_for_stored_city_run,
 )
+from adlife.city.catalog import CityCatalogError, load_city_catalog, select_catalog_city
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run
 from adlife.city.web import create_city_app
@@ -83,6 +84,7 @@ def _secure_post(client: TestClient, path: str, payload: dict[str, Any]):
 
 def _valid_draft(*, phone: bool = True, roadside: bool = False) -> dict[str, Any]:
     payload = draft_data(phone=phone, roadside=roadside)
+    payload["settings"]["seed"] = str(payload["settings"]["seed"])
     if roadside:
         payload["scenario"]["roadside"]["road_id"] = "middle-west"
     return payload
@@ -123,9 +125,9 @@ def _snapshot(root: Path) -> tuple[tuple[str, str, str], ...]:
 
 
 def _saved_workbench_run(root: Path, *, run_id: str, schema_version: int):
-    draft = WorkbenchRunDraft.model_validate_json(
-        json.dumps(_tiny_draft(run_id=run_id), separators=(",", ":"))
-    )
+    payload = _tiny_draft(run_id=run_id)
+    payload["settings"]["seed"] = int(payload["settings"]["seed"])
+    draft = WorkbenchRunDraft.model_validate_json(json.dumps(payload, separators=(",", ":")))
     validated = construct_workbench_run(draft)
     settings = validated.workbench_input.draft.settings
     return create_city_run(
@@ -179,6 +181,7 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
             "request_body_bytes": 131072,
             "agent_count": {"minimum": 1, "maximum": 30},
             "days": {"minimum": 1, "maximum": 7},
+            "seed": {"minimum": "0", "maximum": "9223372036854775807"},
             "placements": ["mobile-feed", "roadside-billboard"],
         },
         "disclosure": {
@@ -412,6 +415,32 @@ def test_run_scoped_reads_report_a_valid_run_with_an_unsafe_location_as_unavaila
     assert unsafe_detail not in second.text + page.text
 
 
+def test_run_scoped_validation_errors_never_echo_query_values(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    stored = _saved_workbench_run(root, run_id="screened-query", schema_version=7)
+    workbench = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+    legacy = _legacy_saved_run_app(stored)
+    secret = "Authorization: Bearer sk-never-echo-scoped-query-1234567890"
+
+    with (
+        TestClient(workbench, base_url=ORIGIN) as scoped_client,
+        TestClient(legacy, base_url=ORIGIN) as legacy_client,
+    ):
+        scoped = scoped_client.get(
+            "/api/runs/screened-query/frame",
+            params={"minute": secret},
+        )
+        direct = legacy_client.get("/api/frame", params={"minute": secret})
+
+    assert scoped.status_code == direct.status_code == 422
+    assert scoped.json() == direct.json() == {"detail": "request validation failed"}
+    assert secret not in scoped.text + direct.text
+
+
 def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery(
     tmp_path: Path,
 ) -> None:
@@ -425,6 +454,7 @@ def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery
         assert document["schema_version"] == 1
         assert document["status_url"] == f"/api/jobs/{document['job']['job_id']}"
         assert document["job"]["run_id"] == "browser-run"
+        assert document["job"]["accepted_settings"]["seed"] == "42"
         assert document["job"]["phase"] in {"queued", "evaluating"}
 
         completed = _await_job(client, document["status_url"])
@@ -432,6 +462,7 @@ def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery
             "schema_version",
             "job_id",
             "run_id",
+            "accepted_settings",
             "phase",
             "created_at",
             "updated_at",
@@ -444,6 +475,7 @@ def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery
         assert completed["error"] is None
         assert completed["result"]["run_id"] == "browser-run"
         assert completed["result"]["run_schema_version"] == 7
+        assert completed["result"]["seed"] == "42"
 
         page = client.get("/api/runs?offset=0&limit=1")
         assert page.status_code == 200
@@ -655,6 +687,11 @@ def test_run_pagination_refuses_noncanonical_duplicate_or_unknown_query(
     [
         ("get", "/api/workbench?unexpected=true", None),
         ("get", "/api/catalog/cities?unexpected=true", None),
+        (
+            "get",
+            "/api/catalog/cities/fictional-grid-v2?unexpected=true",
+            None,
+        ),
         ("get", "/api/creative-templates?unexpected=true", None),
         ("post", "/api/scenarios/validate?dry_run=true", _tiny_draft()),
         ("post", "/api/jobs?dry_run=true", _tiny_draft()),
@@ -851,6 +888,74 @@ def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(
     )
 
 
+def test_city_detail_returns_the_exact_verified_pack_without_resource_paths(
+    tmp_path: Path,
+) -> None:
+    catalog = load_city_catalog()
+    entry = catalog.entries[0]
+    pack = select_catalog_city(entry.city_id)
+    client, _ = _client(tmp_path)
+
+    with client:
+        response = client.get(f"/api/catalog/cities/{entry.city_id}")
+
+    assert response.status_code == 200
+    document = response.json()
+    assert document["schema_version"] == 1
+    assert document["city_id"] == entry.city_id
+    assert document["city_sha256"] == entry.pack_sha256 == pack.fingerprint
+    assert document["pack"] == pack.model_dump(mode="json")
+    assert document["coverage"] == entry.coverage.model_dump(mode="json")
+    assert document["source"] == entry.source.model_dump(mode="json")
+    assert document["known_omissions"] == list(entry.known_omissions)
+    assert "resource_name" not in response.text
+    assert entry.resource_name not in response.text
+
+
+@pytest.mark.parametrize("city_id", ["unknown-city", "INVALID", "..%2Fprivate"])
+def test_city_detail_unknown_or_malformed_identifiers_are_screened(
+    tmp_path: Path,
+    city_id: str,
+) -> None:
+    client, _ = _client(tmp_path)
+
+    with client:
+        response = client.get(f"/api/catalog/cities/{city_id}")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == {
+        "code": "not-found",
+        "message": "The requested resource was not found.",
+        "fields": {},
+    }
+    assert city_id not in response.text
+
+
+def test_city_detail_catalog_integrity_failure_is_screened(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _module()
+    client, _ = _client(tmp_path, raise_server_exceptions=False)
+    secret = "sk-catalog-integrity-secret-1234567890"
+
+    def unavailable(_city_id: str) -> None:
+        raise CityCatalogError(secret)
+
+    monkeypatch.setattr(module, "build_workbench_city_detail", unavailable)
+    with caplog.at_level(logging.ERROR), client:
+        response = client.get("/api/catalog/cities/fictional-grid-v2")
+
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "catalog-unavailable",
+        "message": "The verified city catalog is unavailable.",
+        "fields": {},
+    }
+    assert secret not in response.text + caplog.text
+
+
 @pytest.mark.parametrize(
     ("phone", "roadside", "channels"),
     [
@@ -881,7 +986,7 @@ def test_validation_endpoint_returns_only_bound_summaries_and_stable_hashes(
         "run_id": "launch-run",
         "agent_count": 20,
         "days": 2,
-        "seed": 42,
+        "seed": "42",
         "response_mode": "deterministic-rules",
     }
     assert document["city"]["city_id"] == "fictional-grid-v2"
@@ -908,6 +1013,62 @@ def test_validation_endpoint_returns_only_bound_summaries_and_stable_hashes(
         "disclosure",
     }
     assert _snapshot(root) == before == ()
+
+
+@pytest.mark.parametrize("path", ["/api/scenarios/validate", "/api/jobs"])
+@pytest.mark.parametrize(
+    "seed",
+    [42, True, "01", "+42", " 42", "42.0", "9223372036854775808"],
+)
+def test_write_endpoints_require_a_canonical_decimal_seed_string(
+    tmp_path: Path,
+    path: str,
+    seed: object,
+) -> None:
+    client, root = _client(tmp_path)
+    payload = _tiny_draft(run_id="invalid-seed")
+    payload["settings"]["seed"] = seed
+
+    with client:
+        response = _secure_post(client, path, payload)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "invalid-fields",
+        "message": "One or more request fields are invalid.",
+        "fields": {
+            "settings.seed": ("Enter a whole-number seed from 0 through 9223372036854775807.")
+        },
+    }
+    assert _snapshot(root) == ()
+
+
+def test_maximum_seed_remains_an_exact_string_in_validation_jobs_and_limits(
+    tmp_path: Path,
+) -> None:
+    maximum = "9223372036854775807"
+    client, _ = _client(tmp_path)
+    validation_payload = _tiny_draft(run_id="maximum-seed-validation")
+    validation_payload["settings"]["seed"] = maximum
+    job_payload = _tiny_draft(run_id="maximum-seed-job")
+    job_payload["settings"]["seed"] = maximum
+
+    with client:
+        capabilities = client.get("/api/workbench")
+        validation = _post(client, validation_payload)
+        accepted = _secure_post(client, "/api/jobs", job_payload)
+        completed = _await_job(client, accepted.json()["status_url"])
+
+    assert capabilities.status_code == validation.status_code == 200
+    assert capabilities.json()["limits"]["seed"] == {
+        "minimum": "0",
+        "maximum": maximum,
+    }
+    assert validation.json()["run"]["seed"] == maximum
+    assert accepted.status_code == 202
+    assert accepted.json()["job"]["accepted_settings"]["seed"] == maximum
+    assert completed["accepted_settings"]["seed"] == maximum
+    assert completed["result"]["seed"] == maximum
 
 
 @pytest.mark.parametrize(
