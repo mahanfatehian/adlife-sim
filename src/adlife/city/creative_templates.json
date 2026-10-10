@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {
+      "template_id": "fictional-crispy-meal-v1",
+      "template_version": 1,
+      "product_name": "Cinder Crunch Box",
+      "product_category": "fictional quick-service meal",
+      "message": "A bright fictional meal concept for a synthetic city break.",
+      "call_to_action": "Explore the fictional meal",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    },
+    {
+      "template_id": "fictional-device-launch-v1",
+      "template_version": 1,
+      "product_name": "Lumen Pocket",
+      "product_category": "fictional consumer device",
+      "message": "A fictional compact device concept for a synthetic commute.",
+      "call_to_action": "Explore the fictional concept",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    }
+  ]
+}
