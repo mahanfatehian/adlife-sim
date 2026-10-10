@@ -10,6 +10,10 @@ from pathlib import Path
 
 from adlife import __version__
 from adlife.city.run_store import CityRunStore, StoredCityRun
+from adlife.city.workbench_input import (
+    WorkbenchRunInput,
+    parse_workbench_run_input_json,
+)
 from adlife.core.domain.city import CityPackDocument, CityPackV2
 from adlife.core.domain.city_places import CityPlaceSet
 from adlife.core.domain.city_run import (
@@ -22,7 +26,12 @@ from adlife.core.domain.city_run import (
     CityRunManifestV6,
 )
 from adlife.core.domain.serialization import canonical_json
-from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
+from adlife.core.domain.spatial_campaign import (
+    PhoneOpportunityPlacement,
+    RoadsideBillboardPlacement,
+    SpatialCampaignScenario,
+    road_coordinate,
+)
 from adlife.core.domain.spatial_response import (
     SpatialResponseInput,
     parse_spatial_response_input_json,
@@ -90,14 +99,161 @@ class CityReplayResult:
     response_counts: SpatialResponseCounts | None
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedCityRun:
+    """Complete deterministic city evidence that has not been published."""
+
+    manifest: CityRunManifestDocument
+    pack: CityPackDocument
+    mobility: CityMobility
+    spatial_scenario: SpatialCampaignScenario | None = None
+    opportunity_evaluation: SpatialOpportunityEvaluation | None = None
+    attention_evaluation: SpatialAttentionEvaluation | None = None
+    response_input: SpatialResponseInput | None = None
+    response_evaluation: SpatialResponseEvaluation | None = None
+    workbench_input: WorkbenchRunInput | None = None
+
+
 def _document_sha256(value: Mapping[str, object]) -> str:
     return sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def create_city_run(
+def _validated_workbench_input(
+    workbench_input: WorkbenchRunInput | None,
+    *,
+    pack: CityPackDocument,
+    run_id: str,
+    seed: int,
+    agent_count: int,
+    days: int,
+    places: CityPlaceSet | None,
+    spatial_scenario: SpatialCampaignScenario | None,
+    spatial_response: SpatialResponseInput | None,
+) -> WorkbenchRunInput | None:
+    if workbench_input is None:
+        return None
+    workbench_input = parse_workbench_run_input_json(canonical_json(workbench_input))
+    settings = workbench_input.draft.settings
+    if settings.run_id != run_id:
+        raise ValueError("workbench run identifier does not match execution")
+    if settings.seed != seed:
+        raise ValueError("workbench seed does not match execution")
+    if settings.agent_count != agent_count:
+        raise ValueError("workbench population does not match execution")
+    if settings.days != days:
+        raise ValueError("workbench duration does not match execution")
+    if workbench_input.draft.city_id != pack.city_id:
+        raise ValueError("workbench city does not match execution")
+    if not isinstance(pack, CityPackV2):
+        raise ValueError("workbench execution requires a version 2 city")
+    if places is not None:
+        raise ValueError("workbench schema 1 does not represent a place set")
+    if spatial_scenario is None or spatial_response is None:
+        raise ValueError("workbench execution requires scenario and response evidence")
+    draft_scenario = workbench_input.draft.scenario
+    if (
+        spatial_scenario.scenario_id != draft_scenario.scenario_id
+        or spatial_scenario.name != draft_scenario.name
+        or spatial_scenario.days != days
+        or spatial_scenario.city_id != pack.city_id
+        or spatial_scenario.city_sha256 != pack.fingerprint
+        or len(spatial_scenario.campaigns) != 1
+    ):
+        raise ValueError("workbench scenario does not match execution")
+    campaign = spatial_scenario.campaigns[0]
+    draft_campaign = draft_scenario.campaign
+    creative_sha256 = workbench_input.creative_template.fingerprint
+    if (
+        campaign.campaign_id != draft_campaign.campaign_id
+        or campaign.name != draft_campaign.name
+        or campaign.creative_sha256 != creative_sha256
+    ):
+        raise ValueError("workbench campaign does not match execution")
+    placements = {placement.placement_id: placement for placement in spatial_scenario.placements}
+    expected_placement_count = int(draft_scenario.phone is not None) + int(
+        draft_scenario.roadside is not None
+    )
+    if len(placements) != expected_placement_count:
+        raise ValueError("workbench placements do not match execution")
+    phone_draft = draft_scenario.phone
+    phone = placements.get("phone-placement")
+    if phone_draft is None:
+        if phone is not None:
+            raise ValueError("workbench phone placement does not match execution")
+    elif not isinstance(phone, PhoneOpportunityPlacement) or (
+        phone.campaign_id != campaign.campaign_id
+        or phone.active_windows != phone_draft.active_windows
+        or phone.frequency_cap_per_agent_per_day != phone_draft.frequency_cap_per_agent_per_day
+        or phone.eligible_activities != phone_draft.eligible_activities
+        or phone.opportunity_probability_per_minute
+        != phone_draft.opportunity_probability_per_minute
+    ):
+        raise ValueError("workbench phone placement does not match execution")
+    roadside_draft = draft_scenario.roadside
+    roadside = placements.get("roadside-placement")
+    if roadside_draft is None:
+        if roadside is not None:
+            raise ValueError("workbench roadside placement does not match execution")
+    else:
+        expected_coordinate = road_coordinate(
+            pack,
+            road_id=roadside_draft.road_id,
+            travel_direction=roadside_draft.travel_direction,
+            road_fraction=roadside_draft.road_fraction,
+        )
+        if not isinstance(roadside, RoadsideBillboardPlacement) or (
+            roadside.campaign_id != campaign.campaign_id
+            or roadside.active_windows != roadside_draft.active_windows
+            or roadside.frequency_cap_per_agent_per_day
+            != roadside_draft.frequency_cap_per_agent_per_day
+            or roadside.road_id != roadside_draft.road_id
+            or roadside.travel_direction != roadside_draft.travel_direction
+            or roadside.road_fraction != roadside_draft.road_fraction
+            or (roadside.longitude, roadside.latitude) != expected_coordinate
+            or roadside.side != roadside_draft.side
+            or roadside.orientation_degrees != roadside_draft.orientation_degrees
+            or roadside.max_view_distance_meters != roadside_draft.max_view_distance_meters
+        ):
+            raise ValueError("workbench roadside placement does not match execution")
+    response_campaign = spatial_response.campaigns[0]
+    if (
+        spatial_response.city_sha256 != pack.fingerprint
+        or spatial_response.scenario_sha256 != spatial_scenario.fingerprint
+        or len(spatial_response.campaigns) != 1
+        or response_campaign.campaign_id != campaign.campaign_id
+        or response_campaign.creative_sha256 != creative_sha256
+        or response_campaign.target_interests != draft_campaign.target_interests
+        or response_campaign.relative_price != draft_campaign.relative_price
+    ):
+        raise ValueError("workbench response input does not match execution")
+    expected_agent_ids = tuple(f"person-{index:03d}" for index in range(1, agent_count + 1))
+    cohort = workbench_input.draft.cohort
+    if tuple(
+        profile.agent_id for profile in spatial_response.profiles
+    ) != expected_agent_ids or any(
+        not profile.fictional
+        or profile.interests != cohort.interests
+        or profile.traits != cohort.traits
+        for profile in spatial_response.profiles
+    ):
+        raise ValueError("workbench response population does not match execution")
+    initial = cohort.initial_state
+    if tuple(
+        state.agent_id for state in spatial_response.initial_states
+    ) != expected_agent_ids or any(
+        state.campaign_id != campaign.campaign_id
+        or state.brand_sentiment != initial.brand_sentiment
+        or state.recall_strength != initial.recall_strength
+        or state.purchase_intention != initial.purchase_intention
+        for state in spatial_response.initial_states
+    ):
+        raise ValueError("workbench initial response state does not match execution")
+    return workbench_input
+
+
+def prepare_city_run(
     pack: CityPackDocument,
     *,
-    root: Path,
     run_id: str,
     seed: int,
     agent_count: int,
@@ -105,8 +261,9 @@ def create_city_run(
     places: CityPlaceSet | None = None,
     spatial_scenario: SpatialCampaignScenario | None = None,
     spatial_response: SpatialResponseInput | None = None,
-) -> StoredCityRun:
-    """Freeze a bounded mobility trace under a fresh, never-reused city run ID."""
+    workbench_input: WorkbenchRunInput | None = None,
+) -> PreparedCityRun:
+    """Evaluate a bounded mobility trace without reserving or writing a run ID."""
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
         raise ValueError("city run seed must be between 0 and 2^63-1")
     if type(agent_count) is not int or not 1 <= agent_count <= 30:
@@ -117,6 +274,17 @@ def create_city_run(
         raise ValueError("spatial response input requires a spatial campaign scenario")
     if spatial_response is not None:
         spatial_response = parse_spatial_response_input_json(canonical_json(spatial_response))
+    workbench_input = _validated_workbench_input(
+        workbench_input,
+        pack=pack,
+        run_id=run_id,
+        seed=seed,
+        agent_count=agent_count,
+        days=days,
+        places=places,
+        spatial_scenario=spatial_scenario,
+        spatial_response=spatial_response,
+    )
     mobility = CityMobility(
         pack,
         seed=seed,
@@ -249,29 +417,74 @@ def create_city_run(
             frame_count=summary.frame_count,
             position_count=summary.position_count,
         )
-    directory = CityRunStore(root).save(
-        manifest,
-        pack,
-        mobility.agents,
-        places=places,
-        place_assignments=mobility.place_assignments,
-        spatial_scenario=spatial_scenario,
-        opportunity_evaluation=opportunity_evaluation,
-        attention_evaluation=attention_evaluation,
-        response_input=spatial_response,
-        response_evaluation=response_evaluation,
-    )
-    return StoredCityRun(
+    return PreparedCityRun(
         manifest,
         pack,
         mobility,
-        directory,
         spatial_scenario=spatial_scenario,
         opportunity_evaluation=opportunity_evaluation,
         attention_evaluation=attention_evaluation,
         response_input=spatial_response,
         response_evaluation=response_evaluation,
+        workbench_input=workbench_input,
     )
+
+
+def publish_city_run(prepared: PreparedCityRun, *, root: Path) -> StoredCityRun:
+    """Publish already evaluated evidence through the no-clobber city store."""
+    if not isinstance(prepared, PreparedCityRun):
+        raise TypeError("prepared must be a PreparedCityRun")
+    if prepared.workbench_input is not None:
+        raise ValueError("workbench publication requires schema-v7 sidecar support")
+    directory = CityRunStore(root).save(
+        prepared.manifest,
+        prepared.pack,
+        prepared.mobility.agents,
+        places=prepared.mobility.places,
+        place_assignments=prepared.mobility.place_assignments,
+        spatial_scenario=prepared.spatial_scenario,
+        opportunity_evaluation=prepared.opportunity_evaluation,
+        attention_evaluation=prepared.attention_evaluation,
+        response_input=prepared.response_input,
+        response_evaluation=prepared.response_evaluation,
+    )
+    return StoredCityRun(
+        prepared.manifest,
+        prepared.pack,
+        prepared.mobility,
+        directory,
+        spatial_scenario=prepared.spatial_scenario,
+        opportunity_evaluation=prepared.opportunity_evaluation,
+        attention_evaluation=prepared.attention_evaluation,
+        response_input=prepared.response_input,
+        response_evaluation=prepared.response_evaluation,
+    )
+
+
+def create_city_run(
+    pack: CityPackDocument,
+    *,
+    root: Path,
+    run_id: str,
+    seed: int,
+    agent_count: int,
+    days: int,
+    places: CityPlaceSet | None = None,
+    spatial_scenario: SpatialCampaignScenario | None = None,
+    spatial_response: SpatialResponseInput | None = None,
+) -> StoredCityRun:
+    """Prepare and publish a fresh, never-reused city run."""
+    prepared = prepare_city_run(
+        pack,
+        run_id=run_id,
+        seed=seed,
+        agent_count=agent_count,
+        days=days,
+        places=places,
+        spatial_scenario=spatial_scenario,
+        spatial_response=spatial_response,
+    )
+    return publish_city_run(prepared, root=root)
 
 
 def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
@@ -476,4 +689,11 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     )
 
 
-__all__ = ["CityReplayResult", "create_city_run", "replay_city_run"]
+__all__ = [
+    "CityReplayResult",
+    "PreparedCityRun",
+    "create_city_run",
+    "prepare_city_run",
+    "publish_city_run",
+    "replay_city_run",
+]
