@@ -40,7 +40,7 @@ async def test_city_view_loads_saved_run_before_binding_and_serves_exact_core_fr
     assert options["host"] == "127.0.0.1"
     assert options["port"] == 8766
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=application), base_url="http://city.test"
+        transport=httpx.ASGITransport(app=application), base_url="http://127.0.0.1"
     ) as web:
         metadata = await web.get("/api/meta")
         frame = await web.get("/api/frame?minute=480")
@@ -133,7 +133,7 @@ async def test_city_view_serves_saved_v3_places_and_exact_manifest_version(
     result = CliRunner().invoke(app, ["city-view", str(tmp_path), "place-study"])
     assert result.exit_code == 0, result.output
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=calls[0]), base_url="http://city.test"
+        transport=httpx.ASGITransport(app=calls[0]), base_url="http://127.0.0.1"
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         places = await web.get("/api/places")
@@ -184,7 +184,7 @@ async def test_city_view_serves_verified_v5_opportunity_evidence_without_mutatio
 
     assert result.exit_code == 0, result.output
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=calls[0]), base_url="http://city.test"
+        transport=httpx.ASGITransport(app=calls[0]), base_url="http://127.0.0.1"
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         summary = (await web.get("/api/opportunity-summary")).json()
@@ -285,7 +285,7 @@ async def test_city_view_passes_verified_v6_response_evidence_and_metrics_read_o
     assert options["port"] == 8767
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         summary = await web.get("/api/response-summary")

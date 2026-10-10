@@ -1,5 +1,8 @@
+import warnings
+
 import httpx
 import pytest
+from starlette.exceptions import StarletteDeprecationWarning
 
 from adlife.city.web import create_city_app
 from adlife.core.domain.serialization import canonical_json
@@ -112,8 +115,75 @@ def client() -> httpx.AsyncClient:
     simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=3, days=2)
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_city_app(simulation)),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("host", "forwarded_host"),
+    [
+        ("attacker.example", None),
+        ("attacker.example:8765", None),
+        ("localhost.attacker.example", None),
+        ("attacker.example, localhost", None),
+        ("", None),
+        ("attacker.example", "localhost"),
+    ],
+)
+async def test_city_api_refuses_untrusted_host_header_without_exposing_metadata(
+    host: str,
+    forwarded_host: str | None,
+) -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=1, days=1)
+    headers = {"Host": host}
+    if forwarded_host is not None:
+        headers["X-Forwarded-Host"] = forwarded_host
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_city_app(simulation)),
+        base_url="http://127.0.0.1",
+    ) as web:
+        response = await web.get("/api/meta", headers=headers)
+
+    assert response.status_code == 400
+    assert simulation.pack.city_id not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8765",
+        "http://localhost:8765",
+        "http://[::1]:8765",
+    ],
+)
+async def test_city_api_accepts_loopback_host_headers_with_ports(base_url: str) -> None:
+    simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=1, days=1)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_city_app(simulation)),
+        base_url=base_url,
+    ) as web:
+        response = await web.get("/api/meta")
+
+    assert response.status_code == 200
+    assert response.json()["city_id"] == simulation.pack.city_id
+
+
+def test_city_app_remains_usable_with_testclient_on_loopback() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", StarletteDeprecationWarning)
+        from fastapi.testclient import TestClient
+
+    simulation = CityMobility(load_pack(pack_data()), seed=42, agent_count=1, days=1)
+    with TestClient(
+        create_city_app(simulation),
+        base_url="http://127.0.0.1:8765",
+    ) as web:
+        response = web.get("/api/meta")
+
+    assert response.status_code == 200
+    assert response.json()["city_id"] == simulation.pack.city_id
 
 
 @pytest.mark.asyncio
@@ -135,7 +205,7 @@ async def test_api_exposes_v2_geometry_timezone_and_provenance() -> None:
     simulation = CityMobility(load_pack_v2(pack_v2_data()), seed=42, agent_count=2, days=1)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_city_app(simulation)),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         city = (await web.get("/api/city")).json()
@@ -152,7 +222,7 @@ async def test_selected_route_is_core_computed_and_unknown_agents_are_refused() 
     selected = simulation.agents[0].agent_id
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_city_app(simulation)),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         route = await web.get(f"/api/frame?minute=480&agent_id={selected}")
         missing = await web.get("/api/frame?minute=480&agent_id=person-999")
@@ -182,7 +252,7 @@ async def test_place_api_exposes_exact_core_inputs_and_assignments_read_only() -
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_city_app(simulation)),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         place_response = await web.get("/api/places")
         assignment_response = await web.get("/api/place-assignments")
@@ -266,7 +336,7 @@ async def test_saved_run_identity_is_visible_but_ephemeral_viewer_is_not_mislabe
     async with (
         httpx.AsyncClient(
             transport=httpx.ASGITransport(app=create_city_app(simulation, run_id="saved-study")),
-            base_url="http://city.test",
+            base_url="http://127.0.0.1",
         ) as saved,
         client() as ephemeral,
     ):
@@ -292,7 +362,7 @@ async def test_saved_v2_run_reports_its_actual_manifest_schema() -> None:
     simulation = CityMobility(load_pack_v2(pack_v2_data()), seed=42, agent_count=2, days=1)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_city_app(simulation, run_id="saved-v2-study")),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
     assert metadata["saved"] is True
@@ -310,7 +380,7 @@ async def test_saved_v3_run_reports_manifest_schema_and_place_evidence() -> None
         transport=httpx.ASGITransport(
             app=create_city_app(simulation, run_id="saved-v3-study", run_schema_version=3)
         ),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
     assert metadata["saved"] is True
@@ -341,7 +411,7 @@ async def test_saved_v4_run_remains_available_as_a_read_only_mobility_view() -> 
                 opportunity_evaluation=evaluation,
             )
         ),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         summary = await web.get("/api/opportunity-summary")
@@ -421,7 +491,7 @@ async def test_saved_v5_run_exposes_exact_paged_attention_evidence_read_only() -
                 attention_evaluation=attention,
             )
         ),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         summary = await web.get("/api/attention-summary")
@@ -536,7 +606,7 @@ async def test_saved_v5_view_exposes_exact_prevalidated_metrics_read_only() -> N
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         response = await web.get("/api/spatial-metrics")
@@ -569,7 +639,7 @@ async def test_metrics_endpoint_is_absent_without_prevalidated_v5_metrics() -> N
                 attention_evaluation=attention,
             )
         ),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as v5_without_metrics:
         omitted_response = await v5_without_metrics.get("/api/spatial-metrics")
 
@@ -695,7 +765,7 @@ async def test_saved_v6_view_exposes_exact_response_resources_without_mutating_s
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         summary = await web.get("/api/response-summary")
@@ -885,7 +955,7 @@ async def test_saved_v6_view_exposes_exact_prevalidated_response_metrics_get_onl
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         response = await web.get("/api/spatial-response-metrics")
         ignored_path = await web.get("/api/spatial-response-metrics?path=../../run.json")
@@ -931,7 +1001,7 @@ async def test_response_metrics_endpoint_is_absent_for_legacy_or_omitted_v6_metr
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as without_metrics:
         omitted_response = await without_metrics.get("/api/spatial-response-metrics")
 
@@ -999,7 +1069,7 @@ async def test_saved_v6_response_routes_enforce_filters_bounds_and_get_only_sema
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         missing_minute = await web.get("/api/response-events")
         negative_minute = await web.get("/api/response-events?minute=-1")
@@ -1058,7 +1128,7 @@ async def test_saved_v6_zero_response_view_still_exposes_every_final_campaign_st
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         summary = await web.get("/api/response-summary")
         events = await web.get("/api/response-events?minute=0")
@@ -1106,7 +1176,7 @@ async def test_schema_v1_through_v5_views_have_no_response_resources(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
-        base_url="http://city.test",
+        base_url="http://127.0.0.1",
     ) as web:
         metadata = (await web.get("/api/meta")).json()
         results = [

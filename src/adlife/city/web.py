@@ -9,6 +9,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from adlife.core.domain.spatial_campaign import (
     SpatialCampaignScenario,
@@ -44,6 +45,7 @@ _ASSETS = {
     "app.css": "text/css; charset=utf-8",
 }
 _MAX_SPATIAL_RESPONSE_STATES = 600
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; "
     "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; "
@@ -228,6 +230,11 @@ def create_city_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=_LOOPBACK_HOSTS,
+        www_redirect=False,
     )
 
     @app.get("/", include_in_schema=False)
