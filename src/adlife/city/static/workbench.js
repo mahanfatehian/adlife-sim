@@ -20,6 +20,11 @@
     "failed",
     "cancelled",
   ]);
+  const WORKER_FAILURE_MESSAGES = new Map([
+    ["evaluation-failed", "The deterministic city evaluation failed."],
+    ["persistence-failed", "The city run could not be persisted."],
+    ["verification-failed", "The persisted city run could not be verified."],
+  ]);
   const STAGES = ["city", "campaign", "run", "inspect"];
   const POLL_DELAYS = [250, 500, 1000, 2000];
 
@@ -1195,9 +1200,15 @@
       throw new RequestError("An active worker record carried a completed result.");
     }
     if (value.phase === "failed") {
-      if (!isObject(value.error) || !boundedText(value.error.message, 240)) {
+      if (
+        !isObject(value.error) ||
+        !WORKER_FAILURE_MESSAGES.has(value.error.code) ||
+        WORKER_FAILURE_MESSAGES.get(value.error.code) !== value.error.message
+      ) {
         throw new RequestError("The worker returned an incompatible failure record.");
       }
+    } else if (value.error !== null) {
+      throw new RequestError("A non-failed worker record carried a failure.");
     }
     return value;
   }
