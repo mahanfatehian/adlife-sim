@@ -1897,8 +1897,15 @@ def test_smoke_cleans_workspace_when_installation_fails(
     assert not workspace.exists()
 
 
+@pytest.mark.parametrize(
+    ("platform_name", "launcher_name"),
+    (("linux", "adlife"), ("win32", "adlife.exe")),
+)
 def test_smoke_exercises_verified_catalog_run_and_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+    launcher_name: str,
 ) -> None:
     """Catch a wheel smoke that omits any packaged-catalog consumer boundary."""
     workspace = tmp_path / "smoke-workspace"
@@ -1988,6 +1995,7 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
         "final_state_count": 2,
     }
 
+    monkeypatch.setattr(smoke_release.sys, "platform", platform_name)
     monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: str(workspace))
     monkeypatch.setattr(
         smoke_release,
@@ -2389,7 +2397,7 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
     assert artifact_hash_call_positions[1:] == boundary_positions
     assert study_certifications == [
         {
-            "adlife": workspace / "venv" / "Scripts" / "adlife.exe",
+            "adlife": workspace / "venv" / "Scripts" / launcher_name,
             "scratch": scratch,
             "places_path": scratch / "fictional-grid-v2-places.json",
             "spatial_path": scratch / "fictional-grid-v2-spatial-campaign.json",

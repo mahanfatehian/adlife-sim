@@ -7,6 +7,7 @@ import inspect
 from pathlib import Path
 
 import pytest
+from click.utils import strip_ansi
 from fastapi import FastAPI
 from typer.testing import CliRunner
 
@@ -14,17 +15,26 @@ from adlife.cli.app import app
 
 
 def test_city_workbench_is_registered_with_required_workspace_and_honest_help() -> None:
-    root_help = CliRunner().invoke(app, ["--help"])
-    command_help = CliRunner().invoke(app, ["city-workbench", "--help"])
+    runner = CliRunner()
+    color_environment = {"FORCE_COLOR": "1", "TERM": "xterm-256color"}
+    root_help = runner.invoke(app, ["--help"], env=color_environment, color=True)
+    command_help = runner.invoke(
+        app,
+        ["city-workbench", "--help"],
+        env=color_environment,
+        color=True,
+    )
+    root_output = strip_ansi(root_help.output)
+    command_output = strip_ansi(command_help.output)
 
     assert root_help.exit_code == 0
-    assert "city-workbench" in root_help.output
+    assert "city-workbench" in root_output
     assert command_help.exit_code == 0
-    assert "--workspace" in command_help.output
-    assert "[required]" in command_help.output
-    assert "--port" in command_help.output
-    assert "validation" in command_help.output.lower()
-    assert "provider" not in command_help.output.lower()
+    assert "--workspace" in command_output
+    assert "[required]" in command_output
+    assert "--port" in command_output
+    assert "validation" in command_output.lower()
+    assert "provider" not in command_output.lower()
 
 
 def test_city_workbench_requires_workspace_and_bounds_port_before_server_start(
