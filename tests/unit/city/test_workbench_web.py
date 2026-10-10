@@ -369,12 +369,13 @@ def test_validation_reaches_no_network_store_worker_or_artifact(
     assert not (root / "city-runs").exists()
 
 
-def test_shell_and_css_are_local_escaped_honest_and_csp_restricted(tmp_path: Path) -> None:
+def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path) -> None:
     hostile_token = 'token"><script>alert("x")</script>'
     client, _ = _client(tmp_path, token=hostile_token)
     with client:
         shell = client.get("/")
         css = client.get("/assets/workbench.css")
+        icon = client.get("/assets/workbench-icon.svg")
         hostile_host = client.get("/", headers={"Host": "example.test"})
 
     assert shell.status_code == 200
@@ -387,6 +388,7 @@ def test_shell_and_css_are_local_escaped_honest_and_csp_restricted(tmp_path: Pat
     assert "&quot;&gt;&lt;script&gt;" in shell.text
     assert "<script" not in shell.text.lower()
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell.text
+    assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell.text
     assert "SYNTHETIC" in shell.text
     assert "not real residents" in shell.text
     assert "Validation foundation" in shell.text
@@ -404,8 +406,15 @@ def test_shell_and_css_are_local_escaped_honest_and_csp_restricted(tmp_path: Pat
     assert "http://" not in css.text
     assert "https://" not in css.text
     assert "url(" not in css.text.lower()
+
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+    assert icon.text.startswith("<svg")
+    assert "<script" not in icon.text.lower()
+    assert "<foreignobject" not in icon.text.lower()
+    assert "href=" not in icon.text.lower()
     assert hostile_host.status_code == 400
-    for response in (shell, css, hostile_host):
+    for response in (shell, css, icon, hostile_host):
         assert response.headers["cache-control"] == "no-store"
         assert response.headers["x-content-type-options"] == "nosniff"
         assert "access-control-allow-origin" not in response.headers

@@ -285,6 +285,14 @@ def create_city_workbench_app(
             headers={"X-Content-Type-Options": "nosniff"},
         )
 
+    @app.get("/assets/workbench-icon.svg", include_in_schema=False)
+    def icon() -> Response:
+        return Response(
+            _read_packaged_text("workbench-icon.svg"),
+            media_type="image/svg+xml",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+
     @app.get("/api/workbench")
     def capabilities() -> dict[str, object]:
         return {

@@ -70,6 +70,7 @@ include = [
   "src/adlife/**/*.html",
   "src/adlife/**/*.js",
   "src/adlife/**/*.json",
+  "src/adlife/**/*.svg",
   "src/adlife/**/*.tcss",
 ]
 

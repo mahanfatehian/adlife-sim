@@ -126,10 +126,12 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         creative_bytes = wheel.read("adlife/city/creative_templates.json")
         shell = wheel.read("adlife/city/static/workbench.html").decode("utf-8")
         style = wheel.read("adlife/city/static/workbench.css").decode("utf-8")
+        icon = wheel.read("adlife/city/static/workbench-icon.svg").decode("utf-8")
     for resource in (
         "adlife/city/creative_templates.json",
         "adlife/city/static/workbench.html",
         "adlife/city/static/workbench.css",
+        "adlife/city/static/workbench-icon.svg",
     ):
         assert resource in names
     catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
@@ -139,9 +141,11 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     ]
     assert "__ADLIFE_CSRF_TOKEN__" in shell
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell
+    assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell
     assert "<script" not in shell.lower()
     assert "http://" not in shell and "https://" not in shell
     assert "@import" not in style.lower() and "url(" not in style.lower()
+    assert icon.startswith("<svg") and "<script" not in icon.lower()
 
     scratch = tmp_path / "workbench-clean-room"
     scratch.mkdir()
@@ -173,6 +177,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/creative-templates",
         "/api/scenarios/validate",
         "/api/workbench",
+        "/assets/workbench-icon.svg",
         "/assets/workbench.css",
     ]
 
