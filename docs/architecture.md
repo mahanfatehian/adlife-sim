@@ -48,25 +48,70 @@ frames, and exposes assignments as data rather than mutable agent fields. Neithe
 web adapter nor the CLI can inject an unvalidated assignment.
 
 The separate local city workbench is an application-layer adapter under `adlife.city`,
-not a new core dependency. Its D1a path is deliberately one-way:
+not a new core dependency. Its browser-operated local deterministic path is deliberately
+bounded:
 
 ```text
-loopback HTML / schema-1 HTTP
+CITY -> CAMPAIGN -> RUN -> INSPECT (packaged vanilla browser)
+        -> loopback schema-1 HTTP
         -> same-origin, CSRF, size and strict-JSON boundary
         -> packaged city + fictional creative resolution
         -> immutable CityMobility / SpatialCampaignScenario / SpatialResponseInput
+        -> one process-local worker: prepare -> publish -> verify
+        -> schema-v7 artifact + immutable run-scoped viewer
 ```
 
 `adlife city-workbench --workspace PATH` first checks every unresolved workspace path
 component for links, junctions, reparse points and non-directories, then pins the resolved
 directory identity. HTTP clients never submit filesystem paths, creative copy, derived
 coordinates/hashes, agent IDs or fictional flags. Validation constructs and independently
-checks complete domain inputs but performs no network request, starts no worker, reserves
-no run ID and writes no artifact. The static shell reports those limits rather than
-presenting job, provider or OAuth controls that do not work yet. FastAPI, workspace
-pinning, CSRF and packaged-resource loading stay outside `adlife.core`; the only core
-addition is the pure road-coordinate helper shared by construction and geographic
+checks complete domain inputs but performs no network request, reserves no run ID and
+writes no artifact. Job submission repeats that construction synchronously, freezes the
+accepted values, refuses collisions, and hands them to one process-local worker. Its
+truthful phases are `queued`, `evaluating`, `persisting`, `verifying`, then one terminal
+state. Cancellation is cooperative through evaluation. Late cancellation is refused after
+persistence starts; publication and independent verification continue, may still fail
+safely, and reach `completed` only after the verified result matches the frozen receipt.
+Wall-clock transition timestamps are operational display metadata and never enter
+scientific state or hashes.
+Every job view also carries the same frozen `accepted_settings` receipt through every
+phase (city, scenario, campaign, exact decimal seed, agent count, days, and rules mode);
+completion is accepted only when the verified result matches that receipt.
+
+The browser owns one unsaved draft and presentation state only. It retrieves verified city
+and creative choices, sends the seed as a canonical exact decimal string, and asks the
+server to validate the complete draft before enabling schema-v7 execution. The HTTP adapter
+converts that string once to a bounded Python integer; the existing strict domain
+construction is still authoritative. A browser refresh can recover the active
+process-local job and resume polling from `/api/workbench`, but a process restart cannot
+recover transient job history.
+The four-stage client never computes a route, coordinate, hash, metric, or simulation
+result and stores nothing in browser persistence.
+
+The run repository scans a bounded number of portable run identifiers, reloads each
+candidate through `CityRunStore`, and lists only fully verified artifacts in stable order.
+Every run-scoped inspector request loads the selected artifact afresh, so corruption after
+an earlier successful request is not hidden by a cache. The legacy single-run viewer and
+the workbench routes share one immutable projection service; the latter mirrors the
+scientific reads under `/api/runs/{run_id}/...` and serves the same packaged inspector at
+`/runs/{run_id}`. For schema-v7, `/api/runs/{run_id}/workbench-input` projects the freshly
+verified frozen assumptions and exact creative snapshot; it never exposes a filesystem
+path or treats the presentation projection as canonical artifact bytes. A run-scoped
+response-capable interaction uses the additive GET-only
+`/api/runs/{run_id}/timeline` projection: frame, bounded
+opportunity/attention/response pages, and selected-agent final state are built from one
+freshly verified context. The legacy `/api/timeline` contract uses its startup-validated
+immutable context, and legacy individual endpoints remain compatible. FastAPI, the worker,
+workspace pinning, CSRF and packaged-resource loading stay outside `adlife.core`; the only
+core addition remains the pure road-coordinate helper shared by construction and geographic
 validation.
+
+A workbench execution extends the schema-v6 evidence receipt as schema-v7. Canonical
+`inputs/workbench.json` freezes the complete accepted draft and selected creative-template
+snapshot; the final manifest binds its schema and `workbench_input_sha256`. Publication,
+load, replay, metrics, studies and run inspection require a canonical, hash-matching,
+execution-consistent sidecar. Ordinary CLI `city-run --spatial-response` output remains
+schema-v6 because it did not receive that complete workbench provenance.
 
 `core/domain/spatial_campaign.py` is another separate immutable boundary. A schema-v1
 spatial scenario is content-addressed, binds to an exact city ID/hash, references
@@ -139,32 +184,36 @@ viewing do not contact a public tile service or geocoder and do not accept an ar
 resource URL.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6
+misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6/v7
 `CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
 `CityRunStore`; v1-v3 remain mobility-only.
 V3 freezes the canonical place set and its generated assignment document alongside the
-pack under `city-runs/<run-id>/`; their hashes are part of the final manifest.
+pack under `<workspace>/city-runs/<run-id>/`; their hashes are part of the final manifest.
 V4 additionally freezes the validated spatial scenario, opportunity stream and summary.
 V5 adds canonical `outputs/spatial-attention.jsonl` and
 `outputs/attention-summary.json`, with their hashes, sizes, counts, fixed model identity,
 0.5 probability and claim scope bound into the manifest.
 V6 retains all v5 evidence and adds the four manifest-bound C3c response artifacts described
 above; ordinary `--spatial-campaign` runs remain v5, while `--spatial-response` selects v6.
+V7 retains the exact V6 scientific evidence and adds only the canonical, manifest-bound
+workbench input sidecar described above.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute and each applicable evidence layer before reporting
 equality, and `city-view`
-validates before serving one immutable mobility projection. For V4 through V6, the same
+validates before serving one immutable mobility projection. For V4 through V7, the same
 loopback-only read-only adapter serves a bounded summary and canonical, paged
-current-minute opportunity evidence; V5 and V6 additionally serve current-minute attention
-evidence. V6 adds bounded current-minute response records plus final end-of-run campaign
-state, explicitly not state at the scrubbed minute. `city-view` also presents the verified
+current-minute opportunity evidence; V5, V6, and V7 additionally serve
+current-minute attention evidence. V6 and V7 add bounded current-minute response records plus final
+end-of-run campaign state, explicitly not state at the scrubbed minute. `city-view` also
+presents the verified
 full-run `/api/spatial-response-metrics` projection as separate direct-rule and committed-state
 receipts. It does not create or mutate evidence.
-V4 remains opportunity-only evidence, V5 adds bounded synthetic attention evidence, and V6
-adds bounded rules-only response evidence; none is an observed advertising-outcome run.
+V4 remains opportunity-only evidence, V5 adds bounded synthetic attention evidence, V6
+adds bounded rules-only response evidence, and V7 freezes workbench provenance; none is an
+observed advertising-outcome run.
 
 The adapter-free core exposes the original read-only spatial-metrics projection over
-verified V5 and V6 artifacts. That C4a projection remains attention-only in both schemas:
+verified V5, V6, and V7 artifacts. That C4a projection remains attention-only in all three:
 it folds opportunity and attention evidence, not response or final-state evidence. Each
 value has an exact numerator, denominator, and source paths and carries
 `synthetic-metrics-not-observed-outcomes`. The matched comparison requires identical city,
@@ -173,16 +222,16 @@ deltas, and labels changed normalized placement/channel structure
 `opportunity-confounded`. It carries
 `synthetic-comparison-not-causal-or-observed-effect`.
 
-Schema V6 has a separate additive `spatial-response-metrics-v1` projection under
+Schema V6 and V7 have a separate additive `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`. Its event receipts summarize response
 count, reach, frequency, and mean planned rule deltas overall, by channel, and by campaign.
 Its complete-grid state receipts summarize initial, final, and changed brand sentiment,
 recall strength, and purchase-intention proxy overall and by campaign. Channel state is
 intentionally absent: notices from different channels can share one nonlinear committed
 state update, so allocating that state to a channel would invent evidence. The response
-comparison requires V6 and reports opportunity and response-assumption classifications
+comparison requires V6 or V7 and reports opportunity and response-assumption classifications
 independently. `/api/spatial-metrics` remains the attention-only endpoint;
-`/api/spatial-response-metrics` is a separate GET-only, path-free V6 endpoint.
+`/api/spatial-response-metrics` is a separate GET-only, path-free V6/V7 endpoint.
 
 Bounded C4b evidence is complete without closing the parent C4 gate. The immutable,
 path-free study definition names 2–100 committed seed pairs. `city-study` verifies and
@@ -193,10 +242,13 @@ paired intervals per metric. After `city-report` performs the same source verifi
 analysis, its renderer consumes only that revalidated result and publishes a fixed-path,
 zero-JavaScript, no-network evidence ledger; the renderer never receives raw events,
 response inputs, provider bodies, or source paths. Both analysis and report are read-only.
-Broader spatial social/purchase mechanisms, automatic workbench jobs and persistence, the
-full scenario/timeline UI, authentication, provider settings, calibration, and external
-validity remain open. The shipped D1a workbench is a side-effect-free validation
-foundation, not the complete operator workflow.
+The packaged `CITY -> CAMPAIGN -> RUN -> INSPECT` workflow now operates the complete local
+deterministic slice, including validation, cooperative cancellation, verified run-library
+reopening, and transfer to the run-scoped inspector. Broader spatial social/purchase
+mechanisms, provider/OAuth configuration, browser report download/comparison operation,
+authentication, rights-reviewed real-city data, calibration, and external validity remain
+open. It is still a single-operator loopback application rather than an authenticated or
+process-recoverable service.
 
 ## The cognition seam
 

@@ -121,6 +121,34 @@ schema-v5 attention addition, and C3c adds a validated `--spatial-response` docu
 create a schema-v6 artifact with deterministic bounded response/state evidence. Older
 schema-v4 artifacts remain readable as opportunity-only evidence.
 
+The D1b workbench creates schema-v7 rather than changing the CLI contract. V7 is the exact
+schema-v6 scientific receipt plus canonical `inputs/workbench.json`, which freezes the
+complete accepted draft and creative-template snapshot. Its canonical bytes must match
+`workbench_input_sha256`, and its city, settings, run ID, campaign, creative and response
+bindings must match the other frozen inputs. Load and replay refuse a missing,
+noncanonical, oversized, linked, changed, or inconsistent sidecar. Replay uses that
+validated recorded workbench input; it never reconstructs an accepted request from the
+current package catalog. Process-local job IDs, phases, and wall-clock transition times
+are operational metadata and do not enter the run, keyed draws, or artifact hashes.
+
+The browser control contract preserves every seed as a canonical decimal string, including
+`9223372036854775807`, until the HTTP adapter validates it and converts it exactly once to
+the bounded Python integer used by domain construction. The browser's unsaved draft, stage,
+validation display, polling interval, playback state, selected agent/evidence, filters, map
+zoom, and model-clock position are presentation state only and never enter a schema-v7
+artifact. Refresh may resume polling a live process-local job from its frozen
+`accepted_settings`; process restart does not reconstruct transient job history. Reopening
+a completed run starts from a fresh artifact verification and the persisted canonical
+`inputs/workbench.json`, not browser storage or the current catalog.
+
+For the run-scoped workbench inspector, one GET-only `/api/runs/{run_id}/timeline` request
+projects the frame and four bounded evidence/state documents from one freshly verified run
+context. The legacy `/api/timeline` route returns the same projection contract from the
+immutable context validated when that viewer starts. The nested documents are contract-equal
+to the existing individual endpoint projections. Batching changes neither canonical bytes
+nor simulation ordering, and a failed or superseded request cannot replace the last
+committed browser frame.
+
 The pure C2 evaluator is nevertheless deterministic evidence. Continuous route crossings
 come from the same frozen paths and speeds as the unchanged minute trace. Crossing time is
 quantized to the nearest model millisecond before half-open-window checks. Phone stream
@@ -131,8 +159,8 @@ upper 53 bits form the `[0,1)` draw. Probability and cap are not part of that st
 so paired variants reuse common random numbers. Records are ordered by continuous time,
 agent, campaign, placement and channel; IDs hash scenario/city fingerprints and that
 canonical identity. Campaign, placement, window and activity input order and
-`PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4, schema-v5, and
-schema-v6 runs this same computation is also artifact replay: the frozen scenario is
+`PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4, schema-v5, schema-v6,
+and schema-v7 runs this same computation is also artifact replay: the frozen scenario is
 re-evaluated and the canonical stream and independently derived summary must match their
 manifest-bound evidence.
 
@@ -163,12 +191,13 @@ purchase probability, sales, or a transaction.
 
 `adlife city-metrics ROOT ID` derives canonical read-only projections only after complete
 artifact verification. The default attention layer remains the exact C4a contract for
-schema-v5 and schema-v6: it reads opportunity and attention evidence, records the source
-schema version, and does not consume response records or final campaign state. Every value
+schema-v5, schema-v6, and schema-v7: it reads opportunity and attention evidence, records
+the source schema version, and does not consume response records or final campaign state.
+Every value
 carries its exact numerator, denominator, and source paths plus
 `synthetic-metrics-not-observed-outcomes`.
 
-For schema-v6 only, `city-metrics --layer response` derives the separate
+For schema-v6 and schema-v7, `city-metrics --layer response` derives the separate
 `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`. It re-evaluates response evidence from
 the frozen response input and notice stream before folding it. Direct rule responses have
@@ -179,10 +208,11 @@ derived in memory, and never stored back into the source run.
 
 `adlife city-compare ROOT CONTROL_ID TREATMENT_ID` preserves the attention layer by default
 and requires identical city, assignment, trace model, seed, duration, and population
-provenance. Same-run A/A deltas are exactly zero. Its additive schema-v6 response layer
-separately classifies opportunity structure and numeric response assumptions; a different
-normalized placement/channel structure is `opportunity-confounded`, and changed assumptions
-are `response-assumption-confounded`. Attention comparisons carry
+provenance. Same-run A/A deltas are exactly zero. Its additive schema-v6/schema-v7
+response layer separately classifies opportunity structure and numeric response
+assumptions; a different normalized placement/channel structure is
+`opportunity-confounded`, and changed assumptions are `response-assumption-confounded`.
+Attention comparisons carry
 `synthetic-comparison-not-causal-or-observed-effect`; response comparisons carry their
 separate response claim scope. Both explicitly refuse causal or observed-effect
 interpretation.
@@ -194,7 +224,8 @@ interpretation.
 pair is the experimental unit; the analyzer never pools agents, events, opportunities,
 notices, or campaign-state rows as independent samples. Matching assignment, mobility trace,
 and optional place-assignment hashes provide the within-pair common-random-number evidence.
-Attention studies are homogeneous all-v5 or all-v6; attention-and-response requires v6.
+Attention studies are homogeneous all-v5, all-v6, or all-v7; attention-and-response studies
+are homogeneous all-v6 or all-v7.
 
 Each metric's treatment-minus-control vector yields its mean, sample standard deviation,
 median, nullable paired standardized difference, exact sign counts, agreement, direction,
@@ -271,22 +302,27 @@ state-update counts, campaign count, and complete final-state count. All files a
 and verified before the final manifest is atomically published; a failed publication leaves
 a reserved, non-loadable directory rather than a partially trusted run.
 
+Workbench publication retains all of those v6 files as schema-v7 and adds only canonical
+`inputs/workbench.json` plus its manifest schema/hash binding. The sidecar is written and
+verified before the final manifest becomes authoritative.
+
 `adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
-without changing source files; for v4, v5, and v6 it also recomputes and compares the
-normalized opportunity stream and summary, for v5 and v6 it independently recomputes
-attention, and for v6 it re-evaluates the response stream, final-state document, and
-summary. A mismatch, partial publication, or incompatible artifact is refused.
+without changing source files; for v4 through v7 it also recomputes and compares the
+normalized opportunity stream and summary, for v5 through v7 it independently recomputes
+attention, and for v6/v7 it re-evaluates the response stream, final-state document, and
+summary. V7 also verifies and reuses its immutable workbench sidecar. A mismatch, partial
+publication, or incompatible artifact is refused.
 `adlife city-view ROOT ID` performs the same load verification before
 opening the read-only mobility timeline. For schema-v4 it also presents canonical,
 persisted current-minute opportunity evidence; scrubbing or selecting an evidence record
 does not recompute, append to or mutate the source artifact. Schema-v5 additionally presents
 persisted current-minute attention evidence with the synthetic claim and 0.5 assumption.
-Schema-v6 also presents persisted current-minute response/state-update records and complete
-final end-of-run state explicitly labeled as not state at the scrubbed minute. Schema-v5 and
-schema-v6 viewers derive the same attention-only, receipt-bearing spatial metrics ledger in
-memory; a fully prevalidated schema-v6 viewer also re-derives the separate response metrics
-document. Viewing, scrubbing, metrics, comparison, study analysis, and reporting never
-modify the saved artifact. A
-digest proves equality against that artifact, not authenticity against an owner rewriting
-all files. Identical frames are expected on a compatible implementation/runtime;
+Schema-v6 and schema-v7 present persisted current-minute response/state-update records and
+complete final end-of-run state explicitly labeled as not state at the scrubbed minute.
+Schema-v5, schema-v6, and schema-v7 viewers derive the same attention-only, receipt-bearing
+spatial metrics ledger in memory; a fully prevalidated schema-v6/schema-v7 viewer also
+re-derives the separate response metrics document. Viewing, scrubbing, metrics, comparison,
+study analysis, and reporting never modify the saved artifact. A digest proves equality
+against that artifact, not authenticity against an owner rewriting all files. Identical
+frames are expected on a compatible implementation/runtime;
 cross-platform bitwise identity of floating-point interpolation is not claimed.

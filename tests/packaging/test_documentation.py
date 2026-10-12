@@ -805,11 +805,19 @@ def test_saved_run_response_ledger_is_documented_as_read_only_incremental_workbe
     )
     _assert_terms_share_paragraph(
         roadmap,
-        "D3/D4 progress",
-        "response ledger",
-        "D remains open",
-        "authentication",
-        "jobs",
+        "D3 progress",
+        "scenario operation",
+        "D3 remains open",
+        "provider",
+        "report download",
+    )
+    _assert_terms_share_paragraph(
+        roadmap,
+        "D4 evidence",
+        "local deterministic profile",
+        "maximum fixture",
+        "one peak in-flight timeline read",
+        "complete",
     )
 
 
@@ -1057,6 +1065,284 @@ def test_spatial_public_status_is_complete_only_for_bounded_c4b() -> None:
         "spatial",
         "campaign-scoped",
     )
+
+
+def test_d1b_workbench_contract_is_documented_without_claiming_later_gates() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+    changelog = _read("CHANGELOG.md")
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    )
+
+    public = (
+        readme,
+        architecture,
+        cli,
+        reproducibility,
+        city_pilot,
+        model_card,
+        limitations,
+        changelog,
+    )
+    for text in public:
+        lowered = text.lower()
+        assert "schema-v7" in lowered
+        assert "inputs/workbench.json" in lowered
+
+    _assert_terms_share_paragraph(
+        architecture,
+        "process-local",
+        "one",
+        "worker",
+        "evaluating",
+        "persisting",
+        "verifying",
+    )
+    for text in (architecture, cli):
+        _assert_terms_share_paragraph(
+            text,
+            "accepted_settings",
+            "every",
+            "phase",
+            "verified",
+            "result",
+        )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "schema-v7",
+        "canonical",
+        "workbench_input_sha256",
+        "replay",
+    )
+    for route in (
+        "POST /api/jobs",
+        "GET /api/jobs/{job_id}",
+        "POST /api/jobs/{job_id}/cancel",
+        "GET /api/runs?offset=&limit=",
+        "GET /runs/{run_id}",
+    ):
+        assert route in cli, route
+
+    _assert_terms_share_paragraph(
+        limitations,
+        "process-local",
+        "restart",
+        "authentication",
+        "provider",
+        "report download",
+        "real city",
+    )
+    assert "[x] **D1b" in roadmap
+    assert "[x] **D2" in roadmap
+    assert "[ ] **D3" in roadmap
+    assert "[x] **D4" in roadmap
+
+    current_claims = "\n".join(public).lower()
+    for stale_claim in (
+        "does **not** start simulation jobs",
+        "automatic workbench jobs and persistence",
+        "jobs, persistence and run discovery are explicitly false",
+    ):
+        assert stale_claim not in current_claims
+
+
+def test_d1b_plan_records_implemented_tasks_without_preclaiming_certification() -> None:
+    plan = _read("docs", "superpowers", "plans", "2026-10-10-local-city-workbench-jobs.md")
+    for task in range(1, 8):
+        start = plan.split(f"### Task {task}:", maxsplit=1)[1]
+        section = start.split(f"### Task {task + 1}:", maxsplit=1)[0]
+        assert "- [ ]" not in section, f"Task {task} still has an unchecked implementation step"
+    certification = plan.split("### Task 8:", maxsplit=1)[1]
+    assert "- [ ]" in certification
+
+
+def test_browser_operation_plan_records_completed_product_tasks_before_final_gates() -> None:
+    plan = _read(
+        "docs",
+        "superpowers",
+        "plans",
+        "2026-10-10-local-city-workbench-browser-operation.md",
+    )
+    for task in range(1, 10):
+        start = plan.split(f"### Task {task}:", maxsplit=1)[1]
+        section = start.split(f"### Task {task + 1}:", maxsplit=1)[0]
+        assert "- [ ]" not in section, f"Task {task} still has an unchecked product step"
+    final_gates = plan.split("### Task 10:", maxsplit=1)[1]
+    assert "- [ ]" in final_gates
+
+
+def test_local_browser_workbench_is_documented_without_enterprise_overclaim() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+    changelog = _read("CHANGELOG.md")
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    )
+
+    for text in (readme, architecture, cli, city_pilot, changelog):
+        assert "CITY -> CAMPAIGN -> RUN -> INSPECT" in text
+
+    for term in (
+        "http://127.0.0.1:8765",
+        "workspace",
+        "exact decimal",
+        "verified library",
+    ):
+        assert term in readme
+    for route in (
+        "GET /api/catalog/cities/{city_id}",
+        "POST /api/scenarios/validate",
+        "GET /api/runs/{run_id}/workbench-input",
+        "GET /runs/{run_id}",
+    ):
+        assert route in cli, route
+    _assert_terms_share_paragraph(
+        architecture,
+        "browser",
+        "unsaved draft",
+        "server",
+        "authoritative",
+        "schema-v7",
+    )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "canonical decimal string",
+        "python integer",
+        "presentation state",
+        "artifact",
+    )
+    _assert_terms_share_paragraph(
+        model_card,
+        "homogeneous",
+        "cohort",
+        "not",
+        "calibration",
+    )
+    _assert_terms_share_paragraph(
+        limitations,
+        "provider",
+        "oauth",
+        "authentication",
+        "real city",
+        "report download",
+        "comparison",
+    )
+
+    combined = "\n".join(
+        (readme, architecture, cli, city_pilot, model_card, limitations, changelog)
+    ).lower()
+    for stale_claim in (
+        "does not yet ship the four-stage browser campaign editor",
+        "current shell is not yet the complete four-stage campaign editor",
+        "packaged shell does not yet provide the four-stage campaign editor",
+        "four-stage browser scenario editor and job controls",
+        "full browser editor, authentication",
+    ):
+        assert stale_claim not in combined
+
+    assert "[x] **D2" in roadmap
+    assert "[ ] **D3" in roadmap
+    assert "[x] **D4" in roadmap
+    _assert_terms_share_paragraph(
+        roadmap,
+        "D2",
+        "local deterministic",
+        "worldwide",
+        "month",
+        "not",
+    )
+    _assert_terms_share_paragraph(
+        roadmap,
+        "D3",
+        "scenario",
+        "provider",
+        "report download",
+        "remains open",
+    )
+    _assert_terms_share_paragraph(
+        roadmap,
+        "D4",
+        "local deterministic profile",
+        "maximum fixture",
+        "timeline read",
+        "complete",
+    )
+
+
+def test_workbench_docs_cover_v7_and_late_failure_boundaries() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    reproducibility = _read("docs", "reproducibility.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+    roadmap = _read(
+        "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
+    )
+
+    public = "\n".join((readme, architecture, cli, reproducibility, city_pilot)).lower()
+    for stale_schema_scope in (
+        "schema-v5 and schema-v6 runs",
+        "requires schema-v6 throughout",
+        "attention-and-response requires v6",
+    ):
+        assert stale_schema_scope not in public, stale_schema_scope
+
+    assert "workbench input and control seed values" in readme.lower()
+    assert "<workspace>/city-runs/<run-id>/" in readme
+    for text in (readme, architecture, cli):
+        _assert_terms_share_paragraph(
+            text,
+            "late cancellation",
+            "refused",
+            "publication",
+            "verification",
+            "fail safely",
+        )
+    _assert_terms_share_paragraph(
+        limitations,
+        "observed",
+        "calibrated",
+        "attention",
+        "claim",
+    )
+
+    assert "play/pause/speed/scrub" not in roadmap
+    _assert_terms_share_paragraph(
+        roadmap,
+        "D4 evidence",
+        "local deterministic profile",
+        "timeline read",
+        "complete",
+    )
+
+
+def test_workbench_docs_describe_one_verified_timeline_projection() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    cli = _read("docs", "cli-reference.md")
+    reproducibility = _read("docs", "reproducibility.md")
+
+    for text in (readme, architecture, reproducibility):
+        _assert_terms_share_paragraph(
+            text,
+            "/timeline",
+            "one",
+            "verified",
+            "individual",
+        )
+    assert "GET /api/runs/{run_id}/timeline?minute=&agent_id=&..." in cli
 
 
 def test_spatial_study_plan_records_completed_tasks_and_exact_evidence() -> None:

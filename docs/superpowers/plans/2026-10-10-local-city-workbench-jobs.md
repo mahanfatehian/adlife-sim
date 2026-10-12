@@ -18,7 +18,9 @@
 - Persist only normalized accepted input and the complete selected fictional creative snapshot. Never persist CSRF tokens, job IDs/timestamps, request bodies, headers, credentials, absolute workspace paths, or exception text.
 - Validate and freeze a job synchronously before acceptance. Invalid input creates no job and no run directory.
 - Permit at most one queued/evaluating/persisting/verifying job. Keep only a bounded number of terminal records and use one process-local worker with no subprocess or shell command.
-- Cancellation is cooperative only in `queued` or `evaluating`; after the atomic transition to `persisting`, return a conflict and finish publication/verification.
+- Cancellation is cooperative only in `queued` or `evaluating`; after the atomic transition
+  to `persisting`, return a conflict and continue publication/verification. That attempt may
+  still fail safely, and the job becomes completed only after independent verification.
 - Recheck the pinned workspace and run-ID collision before queueing and again before publication. `CityRunStore` remains the final no-clobber authority.
 - Only independently loaded and verified artifacts appear in completed-run discovery or completed job summaries. Partial/corrupt directories are never silently advertised as completed.
 - Keep every HTTP collection, query, identifier, error envelope, and operational string bounded. Clients never submit filesystem paths.
@@ -29,7 +31,9 @@
 - A missing, non-canonical, tampered, oversized, symlinked, or creative-mismatched `inputs/workbench.json` must make a schema-v7 artifact unreadable and unreplayable: Tasks 1 and 3.
 - Preparation must not reserve or write a run; publication must refuse collisions; the compatibility wrapper must preserve schema-v1-through-v6 behavior: Tasks 2 and 3.
 - Invalid drafts, duplicate run IDs, and a busy worker must produce stable refusals without creating jobs or artifacts: Tasks 4 and 5.
-- A cancellation before publication must leave no run artifact, while a late cancellation must return a stable conflict and allow verification to finish: Task 4.
+- A cancellation before publication must leave no run artifact, while a late cancellation
+  must return a stable conflict without aborting the publication/verification attempt; the
+  attempt may still fail safely: Task 4.
 - Run discovery and completed job results must be derived only from a fresh verified `CityRunStore.load()`, with corrupt entries screened and never treated as successful: Tasks 4-6.
 
 ---
@@ -65,6 +69,7 @@ The new D1b API adds:
 | `GET /api/jobs/{job_id}` | One bounded process-local job record. |
 | `POST /api/jobs` | Revalidate/freeze the complete draft synchronously and return `202` with job/status URL. |
 | `POST /api/jobs/{job_id}/cancel` | Request cooperative cancellation or return a stable phase conflict. |
+| `GET /api/runs/{run_id}/workbench-input` | Freshly verify schema-v7 and project its bounded immutable accepted inputs. |
 | `GET /runs/{run_id}` | Existing immutable inspector HTML configured with a validated run-scoped API base. |
 | `GET /api/runs/{run_id}/...` | Existing verified viewer reads mirrored beneath a portable run ID. |
 
@@ -78,12 +83,12 @@ The new D1b API adds:
 - `CityRunManifestDocument` and `parse_city_run_manifest_json()` recognize 1-7 while retaining exact unsupported-version and extra-field refusals.
 - `parse_workbench_run_input_json(data: str | bytes) -> WorkbenchRunInput` performs strict Pydantic parsing; storage separately enforces canonical bytes and size.
 
-- [ ] Add RED tests for a valid v7 receipt, strict integer schema values, hash format, unknown/missing fields, v1-v6 parser compatibility, and unsupported v8 refusal.
-- [ ] Add RED round-trip/refusal tests for persisted workbench input, including unknown fields, wrong creative snapshot, non-finite values, and malformed UTF-8/JSON.
-- [ ] Run `uv run pytest tests/unit/city/test_city_run_contract.py tests/unit/city/test_workbench_input.py -q`; confirm RED at missing v7/parser behavior.
-- [ ] Implement the smallest strict extensions; do not import workbench/application models into `adlife.core`.
-- [ ] Run the narrow files, `uv run ruff check` on changed files, and `uv run mypy src`; require PASS.
-- [ ] Inspect the diff for any altered v1-v6 contract, then commit as `feat(workbench): define schema v7 artifacts`.
+- [x] Add RED tests for a valid v7 receipt, strict integer schema values, hash format, unknown/missing fields, v1-v6 parser compatibility, and unsupported v8 refusal.
+- [x] Add RED round-trip/refusal tests for persisted workbench input, including unknown fields, wrong creative snapshot, non-finite values, and malformed UTF-8/JSON.
+- [x] Run `uv run pytest tests/unit/city/test_city_run_contract.py tests/unit/city/test_workbench_input.py -q`; confirm RED at missing v7/parser behavior.
+- [x] Implement the smallest strict extensions; do not import workbench/application models into `adlife.core`.
+- [x] Run the narrow files, `uv run ruff check` on changed files, and `uv run mypy src`; require PASS.
+- [x] Inspect the diff for any altered v1-v6 contract, then commit as `feat(workbench): define schema v7 artifacts`.
 
 ### Task 2: Split deterministic preparation from publication
 
@@ -96,13 +101,13 @@ The new D1b API adds:
 - `publish_city_run(prepared, *, root: Path) -> StoredCityRun` saves once through `CityRunStore`, then returns the published in-memory result; independent job verification remains a caller step.
 - `create_city_run(...)` remains a compatibility wrapper. Through the end of this task it produces the same schema-v1-through-v6 manifests and canonical bytes as before; Task 3 atomically enables v7 publication when a complete workbench input is present.
 
-- [ ] Write RED tests proving preparation creates no root/directory, duplicate IDs are not silently overwritten, wrapper and explicit prepare/publish evidence are equal, and ordinary CLI-style response runs remain v6.
-- [ ] Test that a supplied workbench input must match run ID, seed, agent count, days, city, scenario, response campaign/creative binding, and deterministic mobility, and that current workbench input refuses any non-`None` place set because that scientific choice is not represented by schema 1; mismatches fail before publication.
-- [ ] Test identical accepted scientific inputs under different run IDs yield identical normalized evidence after removing receipt-owned run identifiers.
-- [ ] Run `uv run pytest tests/unit/city/test_city_run_preparation.py -q`; confirm RED at missing seams.
-- [ ] Extract the existing evaluation code without changing ordering, hashes, rule parameters, or exception types. Build v7 only when the complete workbench input is present.
-- [ ] Run the narrow file plus `tests/integration/test_city_run_store.py tests/integration/test_city_run_replay.py tests/integration/test_city_response_run.py tests/cli/test_city_run.py -q`, Ruff, and mypy.
-- [ ] Inspect canonical v6 fixture bytes and the adapter-free core boundary, then commit as `refactor(city): separate run preparation and publication`.
+- [x] Write RED tests proving preparation creates no root/directory, duplicate IDs are not silently overwritten, wrapper and explicit prepare/publish evidence are equal, and ordinary CLI-style response runs remain v6.
+- [x] Test that a supplied workbench input must match run ID, seed, agent count, days, city, scenario, response campaign/creative binding, and deterministic mobility, and that current workbench input refuses any non-`None` place set because that scientific choice is not represented by schema 1; mismatches fail before publication.
+- [x] Test identical accepted scientific inputs under different run IDs yield identical normalized evidence after removing receipt-owned run identifiers.
+- [x] Run `uv run pytest tests/unit/city/test_city_run_preparation.py -q`; confirm RED at missing seams.
+- [x] Extract the existing evaluation code without changing ordering, hashes, rule parameters, or exception types. Build v7 only when the complete workbench input is present.
+- [x] Run the narrow file plus `tests/integration/test_city_run_store.py tests/integration/test_city_run_replay.py tests/integration/test_city_response_run.py tests/cli/test_city_run.py -q`, Ruff, and mypy.
+- [x] Inspect canonical v6 fixture bytes and the adapter-free core boundary, then commit as `refactor(city): separate run preparation and publication`.
 
 ### Task 3: Persist, bind, load, and replay the workbench sidecar
 
@@ -116,15 +121,15 @@ The new D1b API adds:
 - `replay_city_run()` accepts v7 anywhere v6 response evidence is accepted and verifies the sidecar binding without letting it alter deterministic evaluation.
 - Task 3 atomically enables `CityRunManifestV7` creation and publication only after save/load/replay understand the required sidecar. Existing metrics, study validation, comparison, CLI-view, and viewer projection contracts preserve the truthful source value `7`; they accept v7 in exactly the evidence paths that accept v6 and do not coerce it back to 6.
 
-- [ ] Add RED integration tests for canonical v7 layout/load/replay and continued v6 readability.
-- [ ] Add one mutation test each for missing, non-canonical, oversized, invalid, symlinked, hash-mismatched, run-setting-mismatched, city-mismatched, and creative-mismatched sidecars; every case must fail cleanly.
-- [ ] Add strict projection tests proving v7 metrics/studies/comparisons/CLI-view responses retain `source_run_schema_version: 7`, while response-free schema constraints and legacy v5/v6 outputs remain unchanged. Extend every hard-coded v6 consumer found by repository search deliberately; do not use a catch-all version comparison.
-- [ ] Inject a write failure before final manifest publication and prove no valid run can load; prove an existing run is never overwritten and temporary files are bounded/cleaned where the store promises cleanup.
-- [ ] Hash all source artifact files before/after replay and assert replay never mutates them.
-- [ ] Run `uv run pytest tests/integration/test_city_workbench_artifacts.py tests/integration/test_city_run_replay.py -q`; confirm RED.
-- [ ] Implement the sidecar as another bounded frozen input using existing canonical-byte and containment helpers. Extend all V4/V5/V6 type families deliberately to include V7 where response evidence semantics apply.
-- [ ] Run the narrow/related store, replay, response, web, analysis, study and CLI suites; run Ruff and mypy.
-- [ ] Inspect every filesystem path and version branch, then commit as `feat(workbench): bind immutable run inputs`.
+- [x] Add RED integration tests for canonical v7 layout/load/replay and continued v6 readability.
+- [x] Add one mutation test each for missing, non-canonical, oversized, invalid, symlinked, hash-mismatched, run-setting-mismatched, city-mismatched, and creative-mismatched sidecars; every case must fail cleanly.
+- [x] Add strict projection tests proving v7 metrics/studies/comparisons/CLI-view responses retain `source_run_schema_version: 7`, while response-free schema constraints and legacy v5/v6 outputs remain unchanged. Extend every hard-coded v6 consumer found by repository search deliberately; do not use a catch-all version comparison.
+- [x] Inject a write failure before final manifest publication and prove no valid run can load; prove an existing run is never overwritten and temporary files are bounded/cleaned where the store promises cleanup.
+- [x] Hash all source artifact files before/after replay and assert replay never mutates them.
+- [x] Run `uv run pytest tests/integration/test_city_workbench_artifacts.py tests/integration/test_city_run_replay.py -q`; confirm RED.
+- [x] Implement the sidecar as another bounded frozen input using existing canonical-byte and containment helpers. Extend all V4/V5/V6 type families deliberately to include V7 where response evidence semantics apply.
+- [x] Run the narrow/related store, replay, response, web, analysis, study and CLI suites; run Ruff and mypy.
+- [x] Inspect every filesystem path and version branch, then commit as `feat(workbench): bind immutable run inputs`.
 
 ### Task 4: Discover verified runs and execute one bounded job
 
@@ -138,17 +143,17 @@ The new D1b API adds:
 - `CityJobManager` uses exactly one `ThreadPoolExecutor(max_workers=1)`, permits one active record, and retains at most 32 terminal records.
 - Phases are `queued`, `evaluating`, `persisting`, `verifying`, then `completed`, `failed`, or `cancelled`. Public records contain ISO-8601 UTC operational times, safe codes/messages, and a verified run summary only on completion.
 - Server job IDs use bounded process entropy and never affect scientific artifacts. `close()` stops acceptance and drains/shuts down safely for tests/app lifecycle.
-- Strict frozen public DTOs pin exact response keys. `WorkbenchRunSummary` includes run ID/schema, city/scenario IDs and hashes, seed/days/agent/frame/evidence counts, channels, and `inspector_url`; `WorkbenchJobView` includes job/run IDs, phase, UTC timestamps, `cancellation_requested`, `can_cancel`, optional constant error, and optional completed summary. The paged result includes offset, limit, returned count, verified total within the bounded scan, scanned/corrupt counts, and `truncated`.
+- Strict frozen public DTOs pin exact response keys. `WorkbenchRunSummary` includes run ID/schema, city/scenario IDs and hashes, seed/days/agent/frame/evidence counts, channels, and `inspector_url`; `WorkbenchJobView` includes job/run IDs, a frozen `accepted_settings` receipt retained through every phase, UTC timestamps, `cancellation_requested`, `can_cancel`, optional constant error, and optional completed summary. Completion cross-checks the verified result against the accepted city, scenario, campaign, exact seed, agent count, days, and rules mode. The paged result includes offset, limit, returned count, verified total within the bounded scan, scanned/corrupt counts, and `truncated`.
 - Job registration and executor scheduling are one failure-safe operation: if `executor.submit()` refuses because of shutdown or injection, the prospective record is removed (or made a bounded terminal failure) and `_active_job_id` is cleared before a safe exception escapes. Submission racing `close()` can never strand a ghost active job.
 
-- [ ] Write RED repository tests for empty discovery, stable pagination, verified v6/v7 inclusion, corrupt/partial/symlink exclusion, strict offset/limit bounds, collision checks, workspace replacement, and fresh-load behavior.
-- [ ] Write RED job tests for the exact success transition sequence, at-most-one active job, bounded history, unknown IDs, queued/evaluating cancellation with no artifact, late-cancel conflict, evaluation/storage/verification failure, safe redaction, and manager shutdown.
-- [ ] Fault-inject executor submission failure and a submit/close race; prove there is no ghost active job, no artifact, no leaked exception text, and a later manager query remains internally consistent.
-- [ ] Use barriers/events in tests instead of sleeps. Assert the submit call returns before a blocked evaluation completes and no subprocess/shell path exists.
-- [ ] Run `uv run pytest tests/unit/city/test_workbench_runs.py tests/unit/city/test_workbench_jobs.py -q`; confirm RED.
-- [ ] Implement lock-owned transitions and immutable public snapshots. Freeze `ValidatedWorkbenchRun` in the record before starting the worker; check cancellation before evaluation, after evaluation, and immediately before the `persisting` transition.
-- [ ] Run the narrow files repeatedly, then with `PYTHONHASHSEED=0` and `12345`; run related workspace/store tests, Ruff, and mypy.
-- [ ] Review every transition and failure path, then commit as `feat(workbench): execute bounded city jobs`.
+- [x] Write RED repository tests for empty discovery, stable pagination, verified v6/v7 inclusion, corrupt/partial/symlink exclusion, strict offset/limit bounds, collision checks, workspace replacement, and fresh-load behavior.
+- [x] Write RED job tests for the exact success transition sequence, at-most-one active job, bounded history, unknown IDs, queued/evaluating cancellation with no artifact, late-cancel conflict, evaluation/storage/verification failure, safe redaction, and manager shutdown.
+- [x] Fault-inject executor submission failure and a submit/close race; prove there is no ghost active job, no artifact, no leaked exception text, and a later manager query remains internally consistent.
+- [x] Use barriers/events in tests instead of sleeps. Assert the submit call returns before a blocked evaluation completes and no subprocess/shell path exists.
+- [x] Run `uv run pytest tests/unit/city/test_workbench_runs.py tests/unit/city/test_workbench_jobs.py -q`; confirm RED.
+- [x] Implement lock-owned transitions and immutable public snapshots. Freeze `ValidatedWorkbenchRun` in the record before starting the worker; check cancellation before evaluation, after evaluation, and immediately before the `persisting` transition.
+- [x] Run the narrow files repeatedly, then with `PYTHONHASHSEED=0` and `12345`; run related workspace/store tests, Ruff, and mypy.
+- [x] Review every transition and failure path, then commit as `feat(workbench): execute bounded city jobs`.
 
 ### Task 5: Expose the D1b control API
 
@@ -162,14 +167,14 @@ The new D1b API adds:
 - `GET /api/runs` accepts strict non-boolean integers `offset >= 0`, `1 <= limit <= 100`, and returns the exact bounded page DTO, including scan truncation rather than an unbounded total claim.
 - Expected errors map to constant safe 400/404/409/413/422 envelopes. Unexpected worker failures are recorded safely and never echo secrets, paths, tracebacks, or request data.
 
-- [ ] Add RED end-to-end API tests for submit returning before a blocked worker, polling to verified completion, cancellation, duplicate/busy conflicts, restart discovery, bounded pagination, and truthful active-job capabilities.
-- [ ] Assert malformed/invalid drafts create no job or directory; all state-changing requests still require exact origin/content-type/CSRF; query/path injection and unknown job/run IDs are clean refusals.
-- [ ] Inject credential-shaped request values and failures from validation/evaluation/storage/verification; assert response bodies, job records, logs, and artifacts contain none of them.
-- [ ] Prove concurrent POSTs cannot both be accepted and that no HTTP request waits for deterministic evaluation.
-- [ ] Run `uv run pytest tests/unit/city/test_workbench_web.py tests/unit/city/test_workbench_security.py -q`; confirm RED.
-- [ ] Implement routes through the new repository/manager only. Update capabilities to `phase=bounded-jobs`, jobs/execution true, inspection false, and provider/OAuth false.
-- [ ] Run the narrow files plus all `tests/unit/city/test_city_web.py tests/security -q`, Ruff, and mypy.
-- [ ] Inspect OpenAPI/routes and strict response DTO serialization for any accepted path, credential field, unbounded string, or dead inspector URL, then commit as `feat(workbench): expose bounded run jobs`.
+- [x] Add RED end-to-end API tests for submit returning before a blocked worker, polling to verified completion, cancellation, duplicate/busy conflicts, restart discovery, bounded pagination, and truthful active-job capabilities.
+- [x] Assert malformed/invalid drafts create no job or directory; all state-changing requests still require exact origin/content-type/CSRF; query/path injection and unknown job/run IDs are clean refusals.
+- [x] Inject credential-shaped request values and failures from validation/evaluation/storage/verification; assert response bodies, job records, logs, and artifacts contain none of them.
+- [x] Prove concurrent POSTs cannot both be accepted and that no HTTP request waits for deterministic evaluation.
+- [x] Run `uv run pytest tests/unit/city/test_workbench_web.py tests/unit/city/test_workbench_security.py -q`; confirm RED.
+- [x] Implement routes through the new repository/manager only. Update capabilities to `phase=bounded-jobs`, jobs/execution true, inspection false, and provider/OAuth false.
+- [x] Run the narrow files plus all `tests/unit/city/test_city_web.py tests/security -q`, Ruff, and mypy.
+- [x] Inspect OpenAPI/routes and strict response DTO serialization for any accepted path, credential field, unbounded string, or dead inspector URL, then commit as `feat(workbench): expose bounded run jobs`.
 
 ### Task 6: Compose verified run-scoped inspector reads
 
@@ -183,23 +188,29 @@ The new D1b API adds:
 - All viewer fetches resolve a same-origin root-relative API base read from that meta value. Only `/api` or `/api/runs/<validated-portable-id>` is accepted; malformed bases fail closed before a request.
 - A completed run summary receives its working `inspector_url` only after these routes exist. D1b includes immutable run inspection/read APIs, not report generation/download; the latter remains explicitly deferred by the more specific approved workbench design.
 
-- [ ] Add RED parity tests comparing every legacy and run-scoped scientific response for the same verified v6 and v7 artifacts, including error/status/header parity, minute/agent bounds, filters, and all evidence pages.
-- [ ] Add RED tests for invalid/unknown/corrupt run IDs, workspace replacement between requests, local artifact tampering after a prior successful read, and no cache masking corruption.
-- [ ] Add RED DOM/JavaScript tests for legacy `/api`, nested run base resolution, malicious meta values, encoded run IDs, stale response protection, and no external requests or unsafe HTML interpolation.
-- [ ] Run the affected unit/browser tests and confirm RED at the missing shared context/base behavior.
-- [ ] Extract pure response builders conservatively, add run-scoped routes, then update every viewer fetch through one validated base helper. Preserve legacy route payloads byte-for-byte where canonical serialization is asserted.
-- [ ] Run all city-web/view/browser suites for v1-v7, Ruff, and mypy. Test a freshly tampered run after first load to prove every request verifies current disk state.
-- [ ] Inspect the diff for duplicated handlers, unvalidated route parameters, or CSP changes, then commit as `feat(workbench): compose verified run inspection`.
+- [x] Add RED parity tests comparing every legacy and run-scoped scientific response for the same verified v6 and v7 artifacts, including error/status/header parity, minute/agent bounds, filters, and all evidence pages.
+- [x] Add RED tests for invalid/unknown/corrupt run IDs, workspace replacement between requests, local artifact tampering after a prior successful read, and no cache masking corruption.
+- [x] Add RED DOM/JavaScript tests for legacy `/api`, nested run base resolution, malicious meta values, encoded run IDs, stale response protection, and no external requests or unsafe HTML interpolation.
+- [x] Run the affected unit/browser tests and confirm RED at the missing shared context/base behavior.
+- [x] Extract pure response builders conservatively, add run-scoped routes, then update every viewer fetch through one validated base helper. Preserve legacy route payloads byte-for-byte where canonical serialization is asserted.
+- [x] Run all city-web/view/browser suites for v1-v7, Ruff, and mypy. Test a freshly tampered run after first load to prove every request verifies current disk state.
+- [x] Inspect the diff for duplicated handlers, unvalidated route parameters, or CSP changes, then commit as `feat(workbench): compose verified run inspection`.
 
 ### Task 7: Document and package the completed D1b contract
 
 **Files:** Modify `docs/architecture.md`, `docs/cli-reference.md`, `docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md`, `CHANGELOG.md`, `tests/packaging/test_wheel.py`; mark this plan's completed checkboxes only after evidence exists.
 
-- [ ] Add RED wheel/installed-app coverage that submits a tiny deterministic workbench job, polls it, discovers and inspects the verified run, and confirms `inputs/workbench.json` exists without relying on the source checkout.
-- [ ] Update documentation to explain one process-local worker, phase/cancellation boundaries, schema-v7 sidecar binding, verified discovery, deterministic-rules-only scope, and the continued absence of the full browser editor/inspector workflow.
-- [ ] Mark roadmap D1b complete only when all Task 1-5 acceptance evidence passes. Do not mark D2-D4 complete or claim report download/provider settings/real city calibration.
-- [ ] Run packaging tests, docs link/contract tests, Ruff, and mypy; inspect the built resource list.
-- [ ] Commit as `docs(workbench): document bounded run jobs`.
+- [x] Add RED wheel/installed-app coverage that submits a tiny deterministic workbench job, polls it, discovers and inspects the verified run, and confirms `inputs/workbench.json` exists without relying on the source checkout.
+- [x] Update documentation to explain one process-local worker, phase/cancellation boundaries,
+  schema-v7 sidecar binding, verified discovery and run-scoped inspection, and the
+  deterministic-rules-only scope. The later browser-operation plan now documents the
+  shipped four-stage editor and verified library.
+- [x] Mark roadmap D1b complete only when all Task 1-5 acceptance evidence passes. D2 was
+  subsequently completed for the bounded local deterministic profile; D4 was completed by
+  the later browser certification plan, while D3 remains open. Do not claim report download,
+  provider settings, or real-city calibration.
+- [x] Run packaging tests, docs link/contract tests, Ruff, and mypy; inspect the built resource list.
+- [x] Commit as `docs(workbench): document bounded run jobs`.
 
 ### Task 8: Certify D1b before proceeding to the browser-operation plan
 
@@ -216,4 +227,8 @@ The new D1b API adds:
 
 ## Completion handoff
 
-Report commit IDs, RED/green evidence, exact gate counts, coverage, wheel smoke, API lifecycle evidence, and any review findings. D1b completion unlocks the separate D2/D3 browser-operation plan: run-scoped viewer composition, the four-stage `CITY -> CAMPAIGN -> RUN -> INSPECT` shell, browser polling/cancellation, and verified run-library reopening. Do not launch the owner's final hidden preview until that browser slice and its D4 QA are complete.
+Report commit IDs, RED/green evidence, exact gate counts, coverage, wheel smoke, API lifecycle
+evidence, and any review findings. D1b supplied the immutable artifact, bounded-job, discovery,
+and run-scoped inspection foundation. The later browser-operation plan has since delivered the
+bounded local D2 `CITY -> CAMPAIGN -> RUN -> INSPECT` workflow; the roadmap remains
+authoritative for unfinished D3 work and the completed local-only D4 certification boundary.

@@ -9,16 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Local city workbench validation foundation (D1a)** — a human-only
-  `city-workbench --workspace PATH` command serves a polished, no-network FastAPI/vanilla
-  shell on loopback with verified fictional city and creative catalogs. Its strict
-  schema-1 validation endpoint applies exact same-origin/CSRF/content-type and 128 KiB
-  streaming limits, derives road coordinates from verified geometry, constructs complete
-  deterministic cohort inputs, and returns stable hashes without creating jobs or run
-  artifacts. Workspace components reject symlinks, Windows junctions/reparse points and
-  replacement races before startup; the exact wheel carries and instantiates all new
-  resources outside the checkout. Job execution, persistence, provider/OAuth settings,
-  real-city calibration and outcome prediction remain explicitly unavailable.
+- **Browser-operated local city workbench and immutable inspection (D1b/D2 local)** —
+  `city-workbench --workspace PATH` now validates and freezes a complete packaged-city,
+  fictional-creative scenario, executes at most one deterministic-rules job through
+  truthful process-local phases, and lists only independently verified completed runs.
+  Successful workbench runs extend schema-v6 evidence as schema-v7 with canonical
+  `inputs/workbench.json` bound by `workbench_input_sha256`; load and replay refuse missing,
+  noncanonical, changed, or inconsistent provenance. Run-scoped APIs and the shared
+  immutable inspector verify current artifacts on every request. Same-origin/CSRF/body
+  bounds, no-path HTTP inputs, workspace link/reparse refusal, no-clobber publication, and
+  exact-wheel coverage remain enforced. Every phase retains a frozen `accepted_settings`
+  receipt, which completion cross-checks against the independently verified run. The
+  packaged `CITY -> CAMPAIGN -> RUN -> INSPECT` workflow selects verified fictional
+  geography, edits bounded campaign assumptions, transports seeds as exact decimal strings,
+  validates, operates/cancels/resumes polling of the process-local job, and reopens the
+  verified library in the scoped inspector. Provider/OAuth settings, report download,
+  comparison/paired-study operation, real-city calibration, authentication, process-restart
+  recovery, and outcome prediction remain explicitly unavailable.
 - **City-pack v2 and offline catalog foundation** — backwards-compatible city packs
   can now preserve directed road geometry, exact bounds, IANA time-zone metadata,
   source provenance and known omissions; mobility-only v2 runs freeze those inputs and
@@ -51,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failures now print a concise diagnostic only (see Fixed).
 
 ### Fixed
+
+- **Verified timeline interaction and causal presentation** — the run-scoped workbench
+  inspector now obtains each frame and its bounded evidence/state pages through one GET-only
+  projection from one freshly verified run context. The legacy viewer exposes the same
+  projection contract over its startup-validated immutable context. Superseded evidence
+  selections cannot roll back a newer choice, causal highlighting follows persisted event
+  identifiers rather than every
+  record in a campaign, the selected campaign receipt is visible without filtering the
+  full-run event totals, and autoplay uses one concise screen-reader announcement region.
+  Legacy individual viewer reads remain supported.
 
 - **Provider identity in run manifests** — a hybrid run answering through a real
   configured local or remote OpenAI-compatible provider was persisted with manifest

@@ -21,6 +21,58 @@ before use. It reads packaged resources only, makes no network request, and acce
 arbitrary resource URL. Running `adlife city` without a selector retains the original
 bundled fictional v1 grid.
 
+## Local browser city workbench
+
+Start the bounded single-operator workbench with:
+
+```bash
+uv run adlife city-workbench --workspace ./workbench
+```
+
+The command binds loopback only and never opens a browser automatically. Open
+`http://127.0.0.1:8765` yourself and operate `CITY -> CAMPAIGN -> RUN -> INSPECT`. CITY
+selects a re-verified packaged fictional city. CAMPAIGN chooses a complete packaged
+fictional creative and bounded phone/billboard assumptions; the server derives roadside
+coordinates. RUN validates without writing, then revalidates and submits one job. INSPECT
+lists only verified completed artifacts and opens the immutable run-scoped timeline. The
+browser holds one unsaved in-memory draft and never accepts a path, coordinate, creative
+copy, provider credential, or arbitrary URL.
+
+Seed input is an exact canonical decimal string from `0` through `9223372036854775807` and
+is never converted through JavaScript `Number`. Polling exposes truthful coarse phases
+(`queued`, `evaluating`, `persisting`, `verifying`, and a terminal state). Cancellation is
+cooperative before publication; persistence and the final independent artifact load are
+not interrupted. Refreshing the page can resume the current server-owned job while the
+same process lives. A process restart loses that operational record, while completed-run
+discovery remains bounded, stable, and includes only artifacts that load through the full
+`CityRunStore` integrity boundary. `/runs/{run_id}` reuses the read-only saved-run
+inspector, and each run-scoped API request verifies current committed state rather than
+trusting an earlier cached load. For a response-capable transition, the GET-only
+`/api/runs/{run_id}/timeline` projection returns the frame plus bounded
+opportunity/attention/response/state pages from that single verified context. It is a
+read optimization, not a second scientific model; the individual endpoints remain
+available for earlier schema capabilities and compatibility.
+
+Successful workbench runs are schema-v7. They retain the schema-v6 opportunity, attention,
+response, state, and metric semantics and add canonical `inputs/workbench.json`. The final
+manifest binds `workbench_input_schema_version: 1` and `workbench_input_sha256`; the sidecar
+freezes the accepted city, settings, scenario, cohort assumptions, and exact fictional
+creative-template snapshot. Load and replay refuse any missing, noncanonical, changed, or
+inconsistent sidecar. Job IDs, phases, and timestamps are operational process-local state,
+not scientific inputs.
+
+The editor explicitly applies one displayed homogeneous response cohort to all generated
+synthetic agents. This is a controllable modeling assumption, not demographic or behavioral
+calibration. Its model clock, day/night styling, fixed schedules, movement, exposures,
+attention, and response state are illustrative synthetic evidence. Workbench studies are
+capped at seven model days; month navigation, observed traffic, and calendar-accurate local
+behavior are not claimed.
+
+This local deterministic browser slice does not provide provider or OAuth configuration,
+authentication or multi-user authorization, report download, comparison/paired-study
+operation, a rights-reviewed real-city/worldwide catalog, calibrated traffic/population
+behavior, or sales prediction.
+
 To use a **local street extract you are authorized to use**, import a complete local
 OpenStreetMap Overpass JSON document and run:
 
@@ -352,16 +404,17 @@ purchase probability, sales, or a transaction. The slice adds no cognition, pros
 output, memory, social propagation, budget mutation, purchase event, or movement change.
 
 The saved-run viewer can inspect persisted current-minute opportunity and
-current-minute attention evidence without changing it. Schema-v6 additionally exposes
-current-minute response/state-update records and complete final end-of-run campaign state.
+current-minute attention evidence without changing it. Schema-v6 and schema-v7 additionally
+expose current-minute response/state-update records and complete final end-of-run campaign
+state.
 Opportunity, attention, and response rails page immutable records in canonical order with a
 fixed 100-card bound and exact ranges. Minute changes return every rail to offset zero;
 same-minute agent selection keeps the displayed pages because selection is presentation-only.
 A delayed, failed, or inconsistent page cannot replace the last committed evidence, and map
 markers are explicitly scoped to the displayed opportunity or attention page.
-The original read-only `spatial-metrics-v1` projection remains attention-only for both
-schema-v5 and schema-v6. It never folds response scores or final state into metrics; every
-value records its exact numerator, denominator, and source paths under
+The original read-only `spatial-metrics-v1` projection remains attention-only for
+schema-v5, schema-v6, and schema-v7. It never folds response scores or final state into
+metrics; every value records its exact numerator, denominator, and source paths under
 `synthetic-metrics-not-observed-outcomes`.
 
 Schema-v6 also has a separate additive `spatial-response-metrics-v1` projection under
@@ -403,7 +456,7 @@ In this model one persisted notice mechanically creates one response; response c
 rule-processing counts, not engagement, persuasion, or observed acceptance. Purchase
 intention remains an uncalibrated internal proxy, never purchase probability or sales.
 
-Use `city-metrics --layer response` and `city-compare --layer response` for this V6-only
+Use `city-metrics --layer response` and `city-compare --layer response` for this V6/V7
 layer. The default `--layer attention` preserves the exact prior output. Response
 comparison reports `matched-opportunity-structure` or `opportunity-confounded` separately
 from `matched-response-assumptions` or `response-assumption-confounded`. The viewer exposes
@@ -417,8 +470,9 @@ the same verified response projection through GET-only `/api/spatial-response-me
 seed pair is the experimental unit; it never pools agents, notices, events, opportunities,
 or state rows across seeds. Exact assignment, trace, and optional place-assignment evidence
 must match within a pair—the declared seed alone does not prove common random numbers.
-Attention scope accepts homogeneous all-v5 or all-v6 inputs; attention-and-response scope
-requires schema-v6 throughout. Opportunity classification is independently
+Attention scope accepts homogeneous schema-v5 (`all-v5`), schema-v6 (`all-v6`), or
+schema-v7 (`all-v7`) inputs; attention-and-response scope accepts homogeneous schema-v6
+(`all-v6`) or schema-v7 (`all-v7`) inputs. Opportunity classification is independently
 `matched-opportunity-structure` or `opportunity-confounded`; response assumptions are
 independently `matched-response-assumptions` or `response-assumption-confounded`.
 
@@ -546,24 +600,24 @@ response/state-update counts, campaign count, and complete final-state count. Ea
 v1/v2/v3 runs and schema-v4 opportunity-only runs remain readable. `city-replay` refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
-API has no path or run-selection endpoint. For v4, v5, and v6, a bounded summary endpoint
+API has no path or run-selection endpoint. For v4, v5, v6, and v7, a bounded summary endpoint
 and canonical 100-record pages of current-minute opportunity records drive the read-only
-evidence rail and page-scoped map markers. V5 and v6 add bounded summary and page endpoints
+evidence rail and page-scoped map markers. V5, v6, and v7 add bounded summary and page endpoints
 for current-minute attention; noticed markers reflect only persisted model evidence. The
 browser can traverse every opportunity, attention, and response page with exact ranges while
 keeping only one bounded page per rail in the DOM. Selecting a record changes presentation
 only. The panels retain the literal synthetic claim scopes and create no downstream event.
-V6 adds `/api/response-summary`, paged `/api/response-events`, and paged
+V6 and V7 add `/api/response-summary`, paged `/api/response-events`, and paged
 `/api/response-state`. The state endpoint always labels its values
 `final-end-of-run-not-scrubbed-minute`: changing the timeline does not pretend that final
-state belongs to the scrubbed minute. Schema-v5 and schema-v6 runs also expose
+state belongs to the scrubbed minute. Schema-v5, schema-v6, and schema-v7 runs also expose
 `/api/spatial-metrics` and a metrics evidence ledger. The projection is derived only after
 full artifact validation and has exact
 numerator/denominator/source receipts; it remains attention-only and is not written back to
-the run. A fully prevalidated schema-v6 viewer additionally exposes the separate GET-only
-`/api/spatial-response-metrics` projection as a full-run response ledger; it is likewise
-derived in memory, never written back, and keeps channel receipts event-only rather than
-inventing channel attribution for nonlinear committed state.
+the run. A fully prevalidated schema-v6 or schema-v7 viewer additionally exposes the
+separate GET-only `/api/spatial-response-metrics` projection as a full-run response ledger;
+it is likewise derived in memory, never written back, and keeps channel receipts event-only
+rather than inventing channel attribution for nonlinear committed state.
 `city-compare` requires matched city, assignment, trace, seed, duration, and population
 provenance. Identical A/A inputs produce exact-zero deltas. A different normalized
 placement/channel structure is labeled `opportunity-confounded`, and every result carries
@@ -574,9 +628,12 @@ it silently. Integrity hashes
 detect accidental or adversarial edits to individual files but do not authenticate
 against an owner who rewrites the entire artifact consistently.
 
-This is an early product-track slice. Authentication, provider/OAuth settings, traffic data
-and population calibration are not implemented. Schema-v6 saved runs add bounded,
-uncalibrated rule response and campaign-state evidence to schema-v5 opportunity/attention
-evidence; they do not add cognition, memory, social or purchase events and are not validated
-geographic advertising-outcome studies. Adding MBTI labels without
+This is an early product-track slice. The packaged browser now operates the complete
+local deterministic single-run city workbench workflow, but authentication,
+provider/OAuth settings, browser comparison/report operation, rights-reviewed real-city
+data, traffic data, and population calibration are not implemented. Schema-v6 and
+schema-v7 saved runs add bounded, uncalibrated rule response and campaign-state evidence
+to schema-v5 opportunity/attention evidence; schema-v7 additionally freezes workbench
+inputs. Neither adds cognition, memory, social or purchase events, and neither is a
+validated geographic advertising-outcome study. Adding MBTI labels without
 evidence would not make behavior realistic and is deliberately deferred.

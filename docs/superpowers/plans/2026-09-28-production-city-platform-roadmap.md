@@ -243,8 +243,9 @@ unsupported routing semantics are disclosed, never marketed as navigation.
   label its confounding. Tests verify exact A/A zero, input-order invariance,
   replay equivalence, zero denominators and artifact-derived report values.
 
-  **C4a evidence (2026-10-03):** verified schema-v5 and schema-v6 artifacts now have a pure
-  read-only, attention-only spatial metrics projection with exact
+  **C4a evidence (2026-10-03; schema-v7 extension 2026-10-10):** verified schema-v5,
+  schema-v6, and schema-v7 artifacts now have a pure read-only, attention-only spatial
+  metrics projection with exact
   numerator/denominator/source receipts and literal
   `synthetic-metrics-not-observed-outcomes` scope. `city-metrics`, a bounded viewer API/UI
   ledger, and installed-wheel smoke expose the same deterministic model without adding a
@@ -284,37 +285,56 @@ also depend on E. Keep existing CLI/TUI/report paths working.
   envelopes, deterministic construction hashes, wheel resources and clean-room app
   construction are contract tested. Jobs, persistence and run discovery are explicitly
   false capabilities.
-- [ ] **D1b — Add bounded jobs and immutable workbench artifacts.** Add schema-v7
+- [x] **D1b — Add bounded jobs and immutable workbench artifacts.** Add schema-v7
   workbench-input persistence, prepare/publish application seams, one process-local worker,
-  cancellation boundaries, verified completed-run discovery, and run/report read APIs.
+  cancellation boundaries, verified completed-run discovery, and run-scoped read APIs.
   No path-taking endpoint or long synchronous simulation request is permitted.
-- [ ] **D2 — Build the full timeline and map inspector.** Show time zone/model clock,
-  day/night provenance, routes, activity, ad opportunity/impression/response, memory
-  and social causal links. Offer a catalog-backed world-map city picker; let the
-  analyst select agent, campaign, event and minute, including week/month navigation
-  when the run's measured performance budget permits it;
-  use a virtualized/bounded event list. Browser rendering consumes persisted/API
-  data and uses safe DOM text insertion. Play/pause/speed/scrub never alter results.
+
+  **Evidence (2026-10-10):** canonical `inputs/workbench.json` and its schema-v7 receipt
+  freeze every accepted city, creative, scenario, cohort and setting value; publication,
+  load and replay verify the complete binding. One process-local worker exposes truthful
+  evaluation/persistence/verification phases, cooperative pre-publication cancellation and
+  bounded terminal history. Discovery scans only bounded portable identifiers and includes
+  fully loaded artifacts; run-scoped read APIs reuse the legacy immutable projection and
+  verify current disk state on every request. The exact installed wheel submits, polls,
+  discovers and inspects a tiny offline run. D1b does not include report download.
+- [x] **D2 — Build the local deterministic timeline and map inspector.** The packaged
+  `CITY -> CAMPAIGN -> RUN -> INSPECT` browser operates a verified fictional catalog city,
+  bounded campaign editor, process-local job, verified library, and immutable scoped
+  inspector. The inspector shows the model clock, illustrative day/night state, routes,
+  activity, persisted opportunity/attention/response evidence, bounded pages, and exact
+  synthetic receipts. Selection, play/pause, timeline scrubbing, and map controls never
+  alter the artifact, and dynamic text uses safe DOM construction.
+
+  This checked D2 item is explicitly the local deterministic profile, capped at seven
+  model days. It is not a worldwide city picker, rights-reviewed real-city catalog,
+  observed day/night or traffic model, month navigator, spatial social/purchase model, or
+  production-scale digital twin; those remain in B, C, F, and G.
 - [ ] **D3 — Build scenario/provider selection and study views.** Expose only
   settings permitted by E; make rules/mock the credential-free default. Show run
   provenance, fallback counts, paired comparison, uncertainty and self-contained
   report download with synthetic disclosure. Labels distinguish assumptions from
   observations. Test malformed inputs and clean failures.
-- [ ] **D4 — Browser QA and accessibility.** Automated tests cover keyboard
+- [x] **D4 — Browser QA and accessibility (local deterministic profile).** Automated tests cover keyboard
   navigation, screen-reader labels, small screens, Persian/unicode text, resize,
   offline resources, XSS/CSP, large timeline and slow API responses. A live browser
   smoke uses a fresh sample artifact; no screenshots substitute for assertions.
 
-  **D3/D4 progress (2026-10-10):** the saved-run browser now presents the verified
-  schema-v6 full-run response ledger with direct-rule and campaign-state receipts,
-  keyboard provenance, safe text insertion, malformed-response refusal, narrow-screen
-  containment, and no external resources. A subsequent bounded D1/D2/D4 slice makes every
-  persisted current-minute opportunity, attention, and response record reachable through
-  strict 100-record canonical pages. It adds exact ranges, keyboard navigation, stale-request
-  refusal, last-page retention on failure, page-scoped map disclosure, and 390-pixel QA while
-  keeping the API read-only and artifacts immutable. D remains open: scenario/study operation,
-  jobs, report download, broader timeline mechanisms, authentication, provider settings,
-  and the complete shell-free workflow are not implemented here.
+  **D3 progress (2026-10-10):** scenario operation is now available for the local
+  deterministic profile. The browser edits bounded phone/billboard assumptions, validates
+  the homogeneous synthetic cohort, preserves an exact decimal seed, freezes schema-v7
+  provenance, and reopens verified results. D3 remains open: provider/OAuth configuration,
+  fallback/cognition views, paired study/comparison operation, uncertainty views, and
+  report download are not browser features.
+
+  **D4 evidence (2026-10-12):** required headless-browser certification covers the complete
+  four-stage workflow, exact maximum seed, keyboard and narrow-screen operation, concise
+  live announcements, reduced motion, forced colors, Persian/hostile text, CSP/offline
+  requests, stale and malformed responses, cancellation, artifact immutability, and safe
+  inspector URLs. The 30-agent/seven-day maximum fixture exercises 120-record evidence
+  pagination, multiple awaited playback transitions with one peak in-flight timeline read,
+  and a verified library page bounded to 20 cards. D4 is complete only for this local
+  deterministic profile; authenticated remote/multi-user deployment remains gated by E-G.
 
 **Exit gate:** A complete local geographic study can be operated through the UI
 without a shell, and every displayed outcome can be traced to a stored event.
@@ -448,7 +468,8 @@ the focused plan or milestone evidence document.
    the next dependency-unblocked package and whether the branch is pushed. No plan
    itself authorizes a push, remote change, deployment or publication.
 
-Current ledger (2026-10-05, after the bounded C4b slice): **A1–A4, B6, C1, and C2 are
+Current ledger (2026-10-10, after the local browser-operation slice): **A1–A4, B6, C1,
+C2, D1a, D1b, and the local deterministic D2 profile are
 checked.** Technical foundations also include city-pack v2/import/catalog work, C3a
 opportunity storage, C3b attention evidence, C3c response/state evidence, C4a read-only
 metrics/comparison, C4b repeated-seed analysis/static reporting, and bounded local viewer
@@ -458,5 +479,6 @@ scale, and basemap decisions; C3 still requires the broader cognition/memory/soc
 integration described above; C4 remains open for spatial social/purchase integration and
 the other declared geographic outcome metrics; D–G retain their unchecked production,
 identity, calibration, operational, and
-enterprise gates. No rights-reviewed real city, authentication boundary, or external-validity
-evidence is claimed by this ledger.
+enterprise gates. No rights-reviewed real city, authentication boundary, provider settings,
+browser paired-study/comparison/report operation, or external-validity evidence is claimed
+by this ledger.

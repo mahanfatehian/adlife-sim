@@ -92,6 +92,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
 | Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
 | Verified offline, content-addressed city catalog with one `fictional-fixture` entry | Foundation complete; no real city is qualified |
+| Browser-operated local city workbench, immutable schema-v7 inputs, verified run library, and run-scoped inspection | Local deterministic slice complete; one process-local worker and fictional catalog only |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
@@ -146,6 +147,7 @@ uv run adlife compare control treatment  # paired A/B across seeds (common rando
 uv run adlife run my-study --live        # the four-panel terminal dashboard
 uv run adlife doctor --offline           # installation readiness, zero network
 uv run adlife city                       # local street-mobility pilot at 127.0.0.1:8765
+uv run adlife city-workbench --workspace ./workbench  # browser-operated local city study
 uv run adlife city-catalog list          # packaged catalog; currently fictional only
 uv run adlife city --city-id fictional-grid-v2
 uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
@@ -180,6 +182,52 @@ tile server or geocoder, and a locally imported real-world pack is not automatic
 catalog-qualified. The
 [city-source qualification checklist](docs/data/city-source-qualification.md) defines
 the human rights review required before a real-world entry may ship.
+
+Start the local browser-operated workbench with:
+
+```bash
+uv run adlife city-workbench --workspace ./workbench
+```
+
+Then open `http://127.0.0.1:8765` yourself; the command never opens a browser or visible
+terminal. The packaged, no-network UI implements `CITY -> CAMPAIGN -> RUN -> INSPECT`:
+choose the verified fictional catalog city, compose bounded phone/billboard assumptions
+from a packaged fictional creative, validate without writing an artifact, start and poll a
+deterministic run, then reopen it from the verified library in the immutable scoped
+inspector. The browser keeps only one unsaved in-memory draft. The server remains
+authoritative for geometry, validation, run-ID collisions, artifact integrity, and all
+scientific results.
+
+Workbench input and control seed values cross the HTTP boundary as canonical exact decimal
+strings from `0` through `9223372036854775807`; the server converts the accepted string
+once to the Python integer used by the deterministic model. One process-local worker reports
+`queued -> evaluating -> persisting -> verifying -> completed`. Cancellation is
+cooperative before persistence. Late cancellation is refused once publication starts;
+publication and verification continue, may still fail safely, and reach `completed` only
+after the independently verified result matches the frozen receipt. A browser refresh can
+resume polling the same active process through `/api/workbench` and its frozen
+`accepted_settings`. A server restart discards transient job history, but the bounded
+library rediscovers fully verified run artifacts at
+`<workspace>/city-runs/<run-id>/`.
+
+Successful workbench runs are schema-v7 city artifacts. They retain schema-v6 scientific
+evidence and add canonical `inputs/workbench.json`, bound by
+`workbench_input_sha256`, so the accepted city, creative snapshot, campaign, homogeneous
+cohort assumptions, and settings are frozen for load and replay. The scoped inspector
+freshly verifies the artifact and exposes its read-only model-clock timeline and persisted
+evidence; playback, timeline scrubbing, filtering, and selection are presentation state
+only. A run-scoped response-capable timeline transition uses one GET-only
+`/api/runs/{run_id}/timeline` projection from one freshly verified run context. The legacy
+`/api/timeline` route exposes the same contract over the immutable context validated when
+that viewer starts, while older schema capabilities retain their compatible individual
+reads. This reduces repeated artifact verification without weakening tamper detection or
+changing any persisted result.
+
+This local deterministic slice does not configure providers or OAuth, authenticate users,
+qualify a real-city/worldwide catalog, download reports, operate comparisons or paired
+studies in the browser, calibrate traffic/population behavior, or predict sales. The model
+clock is illustrative and workbench runs remain capped at seven model days.
+
 An optional schema-v1 place-set JSON can bind fictional home, workplace and leisure
 points to exact road nodes and to the selected pack hash. Validate it before use, then
 pass the same file to either the ephemeral viewer or a saved run:
@@ -244,14 +292,15 @@ adds no cognition, memory, social propagation, budget mutation, purchase event, 
 change.
 
 `city-replay` recomputes and verifies every layer without changing the source. For verified
-schema-v5 and schema-v6 runs, `city-view` shows read-only current-minute opportunity and
-current-minute attention evidence on the map and in bounded evidence rails; schema-v6 also
-shows response records and complete end-of-run campaign state. It also renders the verified
-full-run response ledger, keeping planned rule deltas separate from committed state and
-retaining exact receipt provenance without changing the scrubbed timeline or source run. The
-existing
-`/api/spatial-metrics` ledger and default `city-metrics` output remain attention-only for both
-schema versions under `synthetic-metrics-not-observed-outcomes`. Schema-v6 adds the separate
+schema-v5, schema-v6, and schema-v7 runs, `city-view` shows read-only
+current-minute opportunity and current-minute attention evidence on the map and in bounded
+evidence rails; schema-v6 and schema-v7 also show response records and complete end-of-run
+campaign state. It also renders
+the verified full-run response ledger, keeping planned rule deltas separate from committed
+state and retaining exact receipt provenance without changing the scrubbed timeline or
+source run. The existing `/api/spatial-metrics` ledger and default `city-metrics` output
+remain attention-only for all three schema versions under
+`synthetic-metrics-not-observed-outcomes`. Schema-v6 and schema-v7 add the separate
 `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`, selected with `--layer response` or read
 from `/api/spatial-response-metrics`. It reports direct rule-response receipts and
@@ -265,8 +314,9 @@ configuration do not change numeric response values when the frozen response ass
 remain fixed.
 
 `city-metrics` and `city-compare` preserve the exact attention output by default. Their
-additive `--layer response` mode requires schema-v6 and independently classifies opportunity
-structure and numeric response assumptions. A same-run A/A comparison is exactly zero. When
+additive `--layer response` mode requires schema-v6 or schema-v7 and independently
+classifies opportunity structure and numeric response assumptions. A same-run A/A
+comparison is exactly zero. When
 the normalized placement/channel opportunity structure differs, the result is explicitly
 `opportunity-confounded`, not a channel effect. Every comparison carries a non-causal,
 unobserved claim scope: attention comparisons use
@@ -279,8 +329,9 @@ Bounded C4b evidence is also complete: `city-study` analyzes an explicit definit
 the experimental unit; the analysis never pools agents or events across seeds. Its
 `synthetic-study-not-observed-or-causal-effect` results describe deterministic simulator-seed
 variation, not population confidence. Older schema-v4 artifacts remain opportunity-only.
-Broader C3/C4 social and purchase integration, the analyst workbench, authentication,
-automatic job orchestration, calibration and external validity remain open. Nothing here
+Broader C3/C4 social and purchase integration, authentication, provider/OAuth
+configuration, browser comparison/report operation, calibrated real-city behavior and
+external validity remain open. Nothing here
 claims observed device use, viewability, attention, traffic, people, purchases, sales, or
 causal effects.
 Use `--largest-component` only if dropping disconnected road segments is acceptable.
@@ -289,9 +340,10 @@ provider key, or network connection is needed. The server does not open a browse
 terminal window for you.
 
 `city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
-schema-v5 spatial runs additionally persist opportunity and attention evidence, and
-schema-v6 runs add the bounded response/state layer above. `city-replay` verifies the
-selected contract without changing source artifacts, and `city-view` opens its verified
+schema-v5 spatial runs additionally persist opportunity and attention evidence, schema-v6
+runs add the bounded response/state layer above, and schema-v7 workbench runs add immutable
+accepted-input provenance without changing that scientific model. `city-replay` verifies
+the selected contract without changing source artifacts, and `city-view` opens its verified
 mobility projection plus persisted evidence in the same read-only local timeline.
 
 This remains an early geographic research slice, not a calibrated advertising outcome

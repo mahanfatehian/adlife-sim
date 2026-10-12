@@ -58,6 +58,24 @@ What this model cannot support. Read alongside the
 
 ## Engineering caveats
 
+- **The D1b workbench is local orchestration, not an enterprise service.** One
+  process-local worker executes at most one deterministic-rules job, and operational job
+  history disappears on restart; only fully verified run artifacts are rediscovered.
+  Schema-v7 adds canonical `inputs/workbench.json` provenance to schema-v6 evidence, not a
+  new or calibrated behavior model. The four-stage browser can validate and operate this
+  local deterministic workflow, cooperatively cancel before persistence, resume polling
+  after a page refresh in the same live process, and reopen the verified library. It does
+  not provide authentication or multi-user authorization, provider or OAuth settings,
+  report download, comparison/paired-study operation, process-restart recovery, or a
+  rights-reviewed real city/worldwide catalog. It remains loopback-only and makes no
+  observed or calibrated population, traffic, attention, sales, or external-validity
+  claim.
+- **The browser workflow does not make the city model more realistic.** It assigns one
+  homogeneous set of interests, response traits, and initial state to every generated
+  synthetic agent. The model clock and day/night presentation are illustrative; fixed
+  schedules are not calendar-, daylight-, traffic-, or demand-calibrated. Playback,
+  filters, map controls, and selection reveal persisted model evidence but cannot turn it
+  into observed residents or outcomes.
 - **Geographic mobility is a separate pilot.** `adlife city` can show up to 250
   fictional agents for up to 31 days on a local directed road graph; that ephemeral viewer
   does not create an advertising artifact. The bounded `city-run` path can persist a city
@@ -77,14 +95,14 @@ What this model cannot support. Read alongside the
   C3b schema-v5 runs add one synthetic impression per opportunity and a keyed
   noticed/ignored label using a fixed 0.5 probability under
   `synthetic-attention-not-observed-behavior`. The threshold is uncalibrated and is not
-  observed attention. For schema-v5 and schema-v6, the C4a spatial metrics remain
+  observed attention. For schema-v5, schema-v6, and schema-v7, the C4a spatial metrics remain
   attention-only: they summarize verified opportunity/attention files, not response state,
   with exact numerator, denominator, and source paths under
   `synthetic-metrics-not-observed-outcomes`. Schema-v6's separate response layer derives
   `spatial-response-metrics-v1` under
   `synthetic-response-metrics-not-observed-outcomes`; its state receipts are overall and
   campaign scoped, never allocated to a channel.
-- **Schema-v6 response state is an illustrative rules model, not observed behavior.** Only
+- **Schema-v6/schema-v7 response state is an illustrative rules model, not observed behavior.** Only
   a validated noticed record can produce a bounded response and campaign-scoped state
   update under `synthetic-response-not-observed-behavior`. Purchase intention is an
   uncalibrated internal proxy, not purchase probability, sales, or a transaction. Schema-v6

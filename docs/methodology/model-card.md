@@ -25,6 +25,21 @@ movement change. All spatial evidence is persisted and replayed from frozen inpu
 schema-v4 runs remain opportunity-only and ordinary schema-v5 runs remain
 opportunity/attention-only.
 
+The loopback D1b workbench publishes that same deterministic rules evidence as schema-v7.
+V7 does not add a new behavioral model: canonical `inputs/workbench.json` freezes the
+complete accepted draft and exact fictional creative-template snapshot, and the manifest's
+`workbench_input_sha256` binds it to the other run inputs. Verified discovery, replay and
+run-scoped inspection refuse a missing, changed, noncanonical or inconsistent sidecar.
+Process-local job progress is operational metadata and has no effect on synthetic outcomes.
+
+The packaged browser operates `CITY -> CAMPAIGN -> RUN -> INSPECT` for this local
+deterministic profile. Its editor assigns the same explicitly displayed interests, traits,
+and initial response-state assumptions to every generated synthetic agent: this is a
+homogeneous response cohort, not demographic calibration or evidence about a real
+population. The model clock, map animation, playback speed, filtering, and selection are
+presentation only and cannot change the frozen run. Provider-backed city cognition is not
+installed; city responses remain the transparent deterministic rules described here.
+
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
   society.
@@ -95,7 +110,8 @@ source provenance, but it contains no real-person trajectories. Its IANA time zo
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
 pilot can optionally assign synthetic home, workplace and leisure points supplied in a
 pack-hash-bound place set. Those points must be routable road nodes, carry explicit
-  authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6 replay; they are
+authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6/v7 replay;
+they are
 scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
 sunrise/sunset calculation, measured demand or calibrated traffic. Import validation
@@ -138,6 +154,11 @@ intention values are synthetic internal state: purchase intention is not purchas
 probability, sales, or evidence of effect, and the formulas are not calibrated to any real
 person, city, brand, or population.
 
+Schema-v7 workbench artifacts retain that entire schema-v6 scientific layer and add only
+the manifest-bound `inputs/workbench.json` provenance sidecar. The workbench accepts only
+packaged fictional creatives and deterministic rules; it neither invokes the zone engine's
+language-model providers nor upgrades any geographic validity claim.
+
 ## Metrics
 
 The metrics fold computes the documented set — reach, impressions, frequency, notice
@@ -146,12 +167,13 @@ intention delta, high-intention count, purchases, and cognition counters — eac
 numerator, denominator, and event/state sources recorded, so provenance is re-derivable
 from the artifact.
 
-For schema-v5 and schema-v6 city runs, the original spatial-metrics fold remains the
-attention default: it derives exact opportunity, impression, and noticed receipts from
-verified persisted evidence and carries `synthetic-metrics-not-observed-outcomes`. It does
-not consume v6 response or final-state evidence.
+For schema-v5, schema-v6, and schema-v7 city runs, the original spatial-metrics fold
+remains the attention default: it derives exact opportunity, impression, and noticed
+receipts from verified persisted evidence and carries
+`synthetic-metrics-not-observed-outcomes`. It does not consume v6 response or final-state
+evidence.
 
-Schema-v6 adds a separate `spatial-response-metrics-v1` fold under
+Schema-v6 and schema-v7 add a separate `spatial-response-metrics-v1` fold under
 `synthetic-response-metrics-not-observed-outcomes`. It derives direct rule-response receipts
 plus complete initial/final campaign-state receipts. Event evidence may be grouped by
 channel, but nonlinear committed state is only overall/campaign scoped. The response

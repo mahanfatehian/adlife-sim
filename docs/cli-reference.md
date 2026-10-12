@@ -104,7 +104,7 @@ traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.
 
 ## `adlife city-workbench --workspace PATH [--port N]`
 
-Start the D1a local city-workbench validation foundation at
+Start the browser-operated local deterministic workbench at
 `http://127.0.0.1:8765`. `--workspace` is required and names a dedicated local
 directory; each existing path component is checked without following symlinks or
 Windows reparse points, missing directories are created one at a time, and the resolved
@@ -112,7 +112,14 @@ directory identity is pinned and rechecked before the server starts. `--port` ac
 1–65535. The command is interactive, accepts human output mode only, uses one Uvicorn
 worker with reload disabled, and never opens a browser automatically.
 
-The bundled, no-network shell and schema-1 API can report honest capabilities, list the
+Open the URL yourself and use `CITY -> CAMPAIGN -> RUN -> INSPECT`. The browser selects a
+verified packaged fictional city, composes a bounded phone/billboard scenario from a
+packaged fictional creative, validates it without side effects, runs it through the one
+local worker, and reopens verified artifacts from the bounded library. The browser owns an
+unsaved draft and presentation state only; the server derives coordinates and remains
+authoritative for validation, collisions, storage, and scientific evidence.
+
+The bundled, no-network shell and schema-1 API report capabilities, list the
 verified fictional city catalog, list complete packaged fictional creative snapshots,
 and validate a bounded scenario through `POST /api/scenarios/validate`. Writes require
 an exact same-origin request, exact `application/json`, a per-process CSRF header, and a
@@ -121,10 +128,53 @@ constructs a complete synthetic cohort response grid, and returns only identifie
 counts, channels, and canonical hashes. It creates no run directory and reserves no run
 identifier.
 
-This milestone does **not** start simulation jobs, persist workbench runs, inspect new
-workbench artifacts, configure model providers or OAuth, supply a real-city digital twin,
-use calibrated population or traffic behavior, or predict sales. Those capabilities
-remain later roadmap gates; the enabled city response mode is deterministic rules.
+The process-local control API exposes these bounded job and discovery routes:
+
+- `GET /api/catalog/cities/{city_id}` re-verifies and returns one path-free packaged city;
+- `POST /api/scenarios/validate` validates the complete draft without reserving a run ID;
+- `POST /api/jobs` repeats validation and returns `202` with a server-generated job ID;
+- `GET /api/jobs/{job_id}` reports `queued`, `evaluating`, `persisting`, `verifying`, or a
+  terminal phase;
+- `POST /api/jobs/{job_id}/cancel` requests cooperative cancellation before persistence;
+- `GET /api/runs?offset=&limit=` lists only independently loaded, verified completed runs;
+- `GET /api/runs/{run_id}/workbench-input` freshly verifies schema-v7 and returns its
+  bounded assumptions/creative projection with the seed as an exact decimal string;
+- `GET /api/runs/{run_id}/timeline?minute=&agent_id=&...` combines the immutable frame and
+  bounded evidence/state pages from one freshly verified run context; `/api/timeline`
+  exposes the equivalent contract over the legacy viewer's startup-validated immutable
+  context, and the individual read endpoints remain supported;
+- `GET /runs/{run_id}` serves the immutable inspector, whose scientific reads are mirrored
+  under `/api/runs/{run_id}/...`.
+
+Only one job is active. No simulation request is held open: clients poll the status URL.
+Cancellation during queued/evaluating is observed at phase boundaries. Late cancellation
+is refused once persisting starts; publication and verification continue, may still fail
+safely, and reach `completed` only after independent verification. Operational job records
+and their timestamps are bounded, process-local metadata and disappear on restart. Verified
+run artifacts remain discoverable under `<workspace>/city-runs/<run-id>/`. Refreshing the
+browser while the process is alive retrieves the active job from `/api/workbench` and
+resumes polling its server-owned record; this is not restart recovery.
+Every job response retains a frozen `accepted_settings` receipt through every phase. It
+records the accepted city, scenario, campaign, exact decimal seed string, agent count,
+days, and rules mode; a completed job is emitted only when its verified result matches
+that receipt.
+
+A successful workbench run is schema-v7: it has the same deterministic spatial evidence as
+schema-v6 plus canonical `inputs/workbench.json`. The final manifest binds
+`workbench_input_schema_version` and `workbench_input_sha256`; load, replay, discovery, and
+inspection refuse a missing, changed, noncanonical, or execution-inconsistent sidecar.
+Ordinary CLI `city-run --spatial-response` output remains schema-v6.
+
+Workbench `settings.seed` must be a canonical decimal JSON string from `"0"` through
+`"9223372036854775807"`; JSON numbers, signs, whitespace, exponents, decimals, and leading
+zeroes are refused. The server converts the accepted string to the deterministic model's
+bounded Python integer. The UI never converts it through JavaScript `Number`.
+
+The completed local browser slice does not configure providers or OAuth, authenticate
+users, download reports, operate comparisons or paired studies, supply a rights-reviewed
+real-city/worldwide catalog, use calibrated population or traffic behavior, or predict
+sales. The enabled city response mode is deterministic rules, and the model clock is an
+illustrative seven-day-or-shorter simulation clock rather than observed local time.
 
 ## `adlife city-run [PACK | --city-id ID] [--places FILE] [--spatial-campaign FILE] [--spatial-response FILE] --output-root ROOT --run-id ID [--agents N] [--days N] [--seed N]`
 
@@ -188,8 +238,9 @@ counts. For schema-v4, also re-evaluate and compare the canonical opportunity st
 independent summary. For schema-v5, additionally recompute and compare the canonical
 attention stream and summary, including the fixed 0.5 model contract. Schema-v6 repeats all
 of those checks, then re-evaluates the frozen response input and verifies the canonical
-response stream, complete final-state document, summary, hashes, bytes, and counts. Success
-emits
+response stream, complete final-state document, summary, hashes, bytes, and counts.
+Schema-v7 additionally requires the canonical, hash-bound `inputs/workbench.json` and
+reuses that validated accepted input during replay. Success emits
 `"identical": true`; missing, damaged,
 partial, or incompatible artifacts exit 4 without modifying the source files. This
 proves replay against the saved artifact on a compatible implementation/runtime; it
@@ -201,11 +252,12 @@ real-person behavior, or externally valid geographic campaign effects.
 
 Validate a saved run and derive deterministic spatial metrics without changing or caching
 anything in the artifact. `city-metrics --layer attention` is the default and preserves
-the exact prior schema-v5/schema-v6 JSON shape: persisted opportunity and attention evidence only, under
+the exact prior schema-v5/schema-v6/schema-v7 JSON shape: persisted opportunity and
+attention evidence only, under
 `synthetic-metrics-not-observed-outcomes`, with exact numerator, denominator, and source
 paths. It does not fold response records or final campaign state.
 
-`city-metrics --layer response` requires schema-v6 and emits the separate
+`city-metrics --layer response` requires schema-v6 or schema-v7 and emits the separate
 `spatial-response-metrics-v1` document under
 `synthetic-response-metrics-not-observed-outcomes`. It reports response count, reach,
 frequency, planned mean rule sentiment/recall deltas, and complete-grid initial/final/change
@@ -218,12 +270,13 @@ not purchase probability or sales. Corrupt, partial, older, or incompatible arti
 
 Compare two fully verified runs only when city, place assignments, trace model, seed,
 duration, and population match. `--layer attention` is the default, retains the exact prior
-output, accepts schema-v5, schema-v6, or cross-version v5/v6 evidence, and never treats
+output, accepts schema-v5, schema-v6, schema-v7, or mixed compatible evidence, and never
+treats
 response state as an attention metric. Same-run A/A produces exact-zero deltas. A changed
 normalized placement/channel structure is `opportunity-confounded`, never a channel effect,
 and the result carries `synthetic-comparison-not-causal-or-observed-effect`.
 
-`city-compare --layer response` requires schema-v6 and emits
+`city-compare --layer response` requires schema-v6 or schema-v7 and emits
 `spatial-response-metrics-comparison-v1` under
 `synthetic-response-comparison-not-causal-or-observed-effect`. It independently classifies
 opportunity structure as `matched-opportunity-structure` or `opportunity-confounded` and
@@ -235,8 +288,9 @@ exit 4.
 ## `adlife city-study ROOT STUDY.json`
 
 Analyze the explicit study definition's 2–100 saved, seed-matched run pairs using the
-contiguous seeds `0..N-1`. Attention-only studies use homogeneous schema-v5 or schema-v6
-runs; attention-and-response studies require schema-v6. Every source is verified, and
+contiguous seeds `0..N-1`. Attention-only studies use homogeneous schema-v5, schema-v6,
+or schema-v7 runs; attention-and-response studies require homogeneous schema-v6 or
+schema-v7. Every source is verified, and
 the command does not rerun, discover, modify, cache, or publish artifacts. There is no
 output or discovery option. The strict path-free JSON definition is capped at 64 KiB.
 JSON emits the fully revalidated compact result; human
@@ -279,18 +333,19 @@ Open a **validated saved** city mobility run in the same read-only browser timel
 at `http://127.0.0.1:8765` (loopback only). The run is fully verified before the
 server binds; a corrupt or partial run exits 4. The HTTP API cannot select another
 run or open a filesystem path. The header displays the saved run ID and artifact
-schema version. For schema-v4, schema-v5, and schema-v6 runs, the viewer adds a read-only
-current-minute opportunity
+schema version. For schema-v4, schema-v5, schema-v6, and schema-v7 runs, the viewer adds a
+read-only current-minute opportunity
 panel with persisted totals, channel counts and canonical records for the timeline
 scrubber. Its bounded `/api/opportunities` endpoint accepts a required minute, optional
 saved agent ID, offset and a maximum page size of 100; `/api/opportunity-summary` exposes
 only validated scenario metadata and aggregate counts. Neither endpoint accepts a path or
 changes the run. Every record remains `synthetic-opportunity-not-impression`; the viewer
-does not invent a response or outcome. Schema-v5 and schema-v6 also add bounded
+does not invent a response or outcome. Schema-v5, schema-v6, and schema-v7 also add bounded
 `/api/attention-events` and `/api/attention-summary` endpoints and displays persisted
 current-minute attention evidence. Those records remain
 `synthetic-attention-not-observed-behavior`; noticed means only that the deterministic draw
-was below the uncalibrated 0.5 threshold. Schema-v6 additionally exposes the exact persisted
+was below the uncalibrated 0.5 threshold. Schema-v6 and schema-v7 additionally expose the
+exact persisted
 response artifact through `/api/response-summary`, bounded and filterable
 `/api/response-events`, and bounded `/api/response-state`. The state endpoint returns
 complete final end-of-run campaign state, not state at the scrubbed minute, and labels that
@@ -303,11 +358,11 @@ selection, and refuse stale or inconsistent page responses without replacing the
 committed evidence. Opportunity and attention map markers represent only the displayed
 page; full-minute totals remain unchanged. `--port` accepts 1–65535. Like
 `adlife city`, this interactive command accepts human output mode only and does not launch
-a browser automatically. Schema-v5 and schema-v6 runs also expose a read-only
+a browser automatically. Schema-v5, schema-v6, and schema-v7 runs also expose a read-only
 `/api/spatial-metrics` receipt ledger. It uses the same exact numerator, denominator, and
 source paths as `city-metrics`, remains attention-only, and does not write to the artifact.
-A fully prevalidated schema-v6 viewer additionally exposes the separate GET-only,
-path-free `/api/spatial-response-metrics` document; mutation methods return 405 and older
+A fully prevalidated schema-v6 or schema-v7 viewer additionally exposes the separate
+GET-only, path-free `/api/spatial-response-metrics` document; mutation methods return 405 and older
 or unconfigured runs return 404.
 
 ## `adlife city-import INPUT --output PACK --city-id ID --name NAME [--schema-version 1|2] [--largest-component]`
