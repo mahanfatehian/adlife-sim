@@ -214,14 +214,18 @@ Successful workbench runs are schema-v7 city artifacts. They retain schema-v6 sc
 evidence and add canonical `inputs/workbench.json`, bound by
 `workbench_input_sha256`, so the accepted city, creative snapshot, campaign, homogeneous
 cohort assumptions, and settings are frozen for load and replay. The scoped inspector
-freshly verifies the artifact and exposes its read-only model-clock timeline and persisted
-evidence; playback, timeline scrubbing, filtering, and selection are presentation state
-only. A run-scoped response-capable timeline transition uses one GET-only
-`/api/runs/{run_id}/timeline` projection from one freshly verified run context. The legacy
+freshly verifies the artifact when the page opens and exposes its read-only model-clock
+timeline and persisted evidence. That page's reads reuse one opaque-token-bound,
+process-local immutable snapshot; reload and direct tokenless API reads verify the files
+again. Playback, timeline scrubbing, filtering, and selection are presentation state only,
+and Play at the end restarts from minute zero. This visual replay does not replace the
+independent `adlife city-replay` recomputation. A run-scoped response-capable timeline
+transition uses one GET-only `/api/runs/{run_id}/timeline` projection from the page's
+verified context. The legacy
 `/api/timeline` route exposes the same contract over the immutable context validated when
 that viewer starts, while older schema capabilities retain their compatible individual
-reads. This reduces repeated artifact verification without weakening tamper detection or
-changing any persisted result.
+reads. This removes repeated reconstruction without changing any persisted result; a new
+page load re-verifies current files and refuses inconsistent changes.
 
 This local deterministic slice does not configure providers or OAuth, authenticate users,
 qualify a real-city/worldwide catalog, download reports, operate comparisons or paired

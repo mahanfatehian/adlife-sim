@@ -137,14 +137,23 @@ The process-local control API exposes these bounded job and discovery routes:
   terminal phase;
 - `POST /api/jobs/{job_id}/cancel` requests cooperative cancellation before persistence;
 - `GET /api/runs?offset=&limit=` lists only independently loaded, verified completed runs;
-- `GET /api/runs/{run_id}/workbench-input` freshly verifies schema-v7 and returns its
-  bounded assumptions/creative projection with the seed as an exact decimal string;
+- `GET /api/runs/{run_id}/workbench-input` returns the verified schema-v7 bounded
+  assumptions/creative projection with the seed as an exact decimal string;
 - `GET /api/runs/{run_id}/timeline?minute=&agent_id=&...` combines the immutable frame and
-  bounded evidence/state pages from one freshly verified run context; `/api/timeline`
+  bounded evidence/state pages from one verified run context; `/api/timeline`
   exposes the equivalent contract over the legacy viewer's startup-validated immutable
   context, and the individual read endpoints remain supported;
 - `GET /runs/{run_id}` serves the immutable inspector, whose scientific reads are mirrored
   under `/api/runs/{run_id}/...`.
+
+Opening an inspector performs one complete artifact verification and places an opaque,
+run-bound token in that page. Its same-origin API requests send the token in a header and
+reuse a bounded process-local immutable snapshot. The token is never a URL or persisted
+artifact value. Reloading the page, library discovery, and direct scoped API calls without
+a token perform fresh verification; malformed, unknown, or cross-run tokens are refused.
+The ▶ control replays the saved timeline and restarts from minute zero at the end. It is a
+presentation control, not the independent scientific replay performed by
+`adlife city-replay ROOT ID`.
 
 Only one job is active. No simulation request is held open: clients poll the status URL.
 Cancellation during queued/evaluating is observed at phase boundaries. Late cancellation

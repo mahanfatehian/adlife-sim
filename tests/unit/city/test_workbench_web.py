@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import json
 import logging
+import re
 import socket
 import threading
 import time
@@ -319,6 +320,195 @@ def test_scoped_timeline_projection_verifies_the_run_exactly_once(
     }
 
 
+def test_inspector_snapshot_reuses_one_verified_run_across_browser_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    run_id = "snapshot-view"
+    _saved_workbench_run(root, run_id=run_id, schema_version=7)
+    module = _module()
+    original = module.WorkbenchRunRepository.load
+    loaded: list[str] = []
+
+    def counted_load(repository: object, candidate: str):
+        loaded.append(candidate)
+        return original(repository, candidate)
+
+    monkeypatch.setattr(module.WorkbenchRunRepository, "load", counted_load)
+    app = module.create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        page = client.get(f"/runs/{run_id}")
+        token_match = re.search(
+            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
+            page.text,
+        )
+        assert token_match is not None
+        headers = {"X-AdLife-View-Token": token_match.group(1)}
+        responses = (
+            client.get(f"/api/runs/{run_id}/meta", headers=headers),
+            client.get(f"/api/runs/{run_id}/city", headers=headers),
+            client.get(f"/api/runs/{run_id}/agents", headers=headers),
+            client.get(f"/api/runs/{run_id}/workbench-input", headers=headers),
+            client.get(
+                f"/api/runs/{run_id}/timeline",
+                headers=headers,
+                params={"minute": 480, "agent_id": "person-001", "limit": 1},
+            ),
+        )
+
+    assert page.status_code == 200
+    assert all(response.status_code == 200 for response in responses)
+    assert loaded == [run_id]
+
+
+def test_inspector_snapshot_token_is_bound_to_one_run_and_invalid_tokens_are_refused(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    _saved_workbench_run(root, run_id="snapshot-a", schema_version=7)
+    _saved_workbench_run(root, run_id="snapshot-b", schema_version=7)
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        page = client.get("/runs/snapshot-a")
+        token_match = re.search(
+            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
+            page.text,
+        )
+        assert token_match is not None
+        token = token_match.group(1)
+        wrong_run = client.get(
+            "/api/runs/snapshot-b/meta",
+            headers={"X-AdLife-View-Token": token},
+        )
+        malformed = client.get(
+            "/api/runs/snapshot-a/meta",
+            headers={"X-AdLife-View-Token": "not-a-valid-token"},
+        )
+        unknown = client.get(
+            "/api/runs/snapshot-a/meta",
+            headers={"X-AdLife-View-Token": "A" * 43},
+        )
+
+    expected = {
+        "code": "run-unavailable",
+        "message": "The saved run could not be verified.",
+        "fields": {},
+    }
+    assert wrong_run.status_code == malformed.status_code == unknown.status_code == 409
+    assert wrong_run.json()["error"] == malformed.json()["error"] == unknown.json()["error"]
+    assert unknown.json()["error"] == expected
+    assert token not in wrong_run.text + malformed.text + unknown.text
+
+
+def test_repeated_inspector_pages_share_one_verified_snapshot_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    run_id = "shared-snapshot"
+    _saved_workbench_run(root, run_id=run_id, schema_version=7)
+    module = _module()
+    original_load = module.WorkbenchRunRepository.load
+    loaded: list[str] = []
+    resolved_snapshot_ids: list[int] = []
+
+    def counted_load(repository: object, candidate: str):
+        loaded.append(candidate)
+        return original_load(repository, candidate)
+
+    original_resolve = module._InspectorSnapshots.resolve
+
+    def observed_resolve(cache: object, token: str, *, run_id: str):
+        snapshot = original_resolve(cache, token, run_id=run_id)
+        if snapshot is not None:
+            resolved_snapshot_ids.append(id(snapshot))
+        return snapshot
+
+    monkeypatch.setattr(module.WorkbenchRunRepository, "load", counted_load)
+    monkeypatch.setattr(module._InspectorSnapshots, "resolve", observed_resolve)
+    app = module.create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        pages = (client.get(f"/runs/{run_id}"), client.get(f"/runs/{run_id}"))
+        tokens = []
+        for page in pages:
+            token_match = re.search(
+                r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
+                page.text,
+            )
+            assert token_match is not None
+            tokens.append(token_match.group(1))
+        responses = tuple(
+            client.get(
+                f"/api/runs/{run_id}/meta",
+                headers={"X-AdLife-View-Token": token},
+            )
+            for token in tokens
+        )
+
+    assert all(page.status_code == 200 for page in pages)
+    assert all(response.status_code == 200 for response in responses)
+    assert loaded == [run_id, run_id]
+    assert len(tokens) == len(set(tokens)) == 2
+    assert len(set(resolved_snapshot_ids)) == 1
+
+
+def test_open_inspector_snapshot_stays_atomic_and_reload_reverifies_artifacts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    run_id = "atomic-snapshot"
+    _saved_workbench_run(root, run_id=run_id, schema_version=7)
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        page = client.get(f"/runs/{run_id}")
+        token_match = re.search(
+            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
+            page.text,
+        )
+        assert token_match is not None
+        headers = {"X-AdLife-View-Token": token_match.group(1)}
+        before = client.get(f"/api/runs/{run_id}/meta", headers=headers)
+        manifest = root / "city-runs" / run_id / "run.json"
+        manifest.write_bytes(manifest.read_bytes() + b"\n")
+        same_page = client.get(f"/api/runs/{run_id}/meta", headers=headers)
+        direct = client.get(f"/api/runs/{run_id}/meta")
+        reload = client.get(f"/runs/{run_id}")
+
+    assert page.status_code == before.status_code == same_page.status_code == 200
+    assert same_page.json() == before.json()
+    assert direct.status_code == reload.status_code == 409
+    assert (
+        direct.json()["error"]
+        == reload.json()["error"]
+        == {
+            "code": "run-unavailable",
+            "message": "The saved run could not be verified.",
+            "fields": {},
+        }
+    )
+
+
 def test_completed_inspector_url_serves_the_existing_dashboard_with_a_scoped_api_base(
     tmp_path: Path,
 ) -> None:
@@ -339,6 +529,11 @@ def test_completed_inspector_url_serves_the_existing_dashboard_with_a_scoped_api
     assert page.status_code == script.status_code == style.status_code == 200
     assert page.text.count('name="adlife-api-base"') == 1
     assert 'name="adlife-api-base" content="/api/runs/inspectable-run"' in page.text
+    assert page.text.count('name="adlife-view-token"') == 1
+    assert re.search(
+        r'<meta name="adlife-view-token" content="[A-Za-z0-9_-]{43}">',
+        page.text,
+    )
     assert 'src="/static/app.js"' in page.text
     assert page.headers["content-security-policy"].startswith("default-src 'none'")
     assert page.headers["cache-control"] == "no-store"

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import html
 import re
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from importlib.resources import files
+from threading import RLock
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -86,6 +89,9 @@ _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _ASSET_LIMIT_BYTES = 262_144
 _CANONICAL_UNSIGNED_INTEGER = re.compile(r"^(?:0|[1-9][0-9]*)$")
 _JOB_ID = re.compile(r"^job-[0-9a-f]{32}$")
+_INSPECTOR_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_INSPECTOR_TOKEN_HEADER = b"x-adlife-view-token"
+_MAX_INSPECTOR_SNAPSHOTS = 8
 _WORKBENCH_FIELD_COMPONENTS = frozenset(
     {
         "active_windows",
@@ -161,6 +167,54 @@ class WorkbenchRunUnavailable(RuntimeError):
 
 class WorkbenchInputUnavailable(ValueError):
     """A verified legacy run has no frozen browser workbench input."""
+
+
+@dataclass(frozen=True, slots=True)
+class _InspectorSnapshot:
+    run_id: str
+    stored: StoredCityRun
+    view: CityViewContext
+
+
+class _InspectorSnapshots:
+    """Bounded process-local snapshots created by a fully verified inspector load."""
+
+    def __init__(self, *, limit: int = _MAX_INSPECTOR_SNAPSHOTS) -> None:
+        self._limit = limit
+        self._lock = RLock()
+        self._items: OrderedDict[str, _InspectorSnapshot] = OrderedDict()
+
+    def issue(self, snapshot: _InspectorSnapshot) -> str:
+        with self._lock:
+            shared_snapshot = next(
+                (
+                    existing
+                    for existing in reversed(self._items.values())
+                    if existing.run_id == snapshot.run_id
+                    and existing.stored.manifest == snapshot.stored.manifest
+                ),
+                snapshot,
+            )
+            token = new_csrf_token()
+            while token in self._items:
+                token = new_csrf_token()
+            self._items[token] = shared_snapshot
+            self._items.move_to_end(token)
+            while len(self._items) > self._limit:
+                self._items.popitem(last=False)
+            return token
+
+    def resolve(self, token: str, *, run_id: str) -> _InspectorSnapshot | None:
+        with self._lock:
+            snapshot = self._items.get(token)
+            if snapshot is None or snapshot.run_id != run_id:
+                return None
+            self._items.move_to_end(token)
+            return snapshot
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
 
 
 def _read_packaged_text(relative: str) -> str:
@@ -322,6 +376,7 @@ def create_city_workbench_app(
     token = new_csrf_token() if csrf_token is None else csrf_token
     repository = WorkbenchRunRepository(workspace)
     jobs = CityJobManager(repository)
+    inspector_snapshots = _InspectorSnapshots()
 
     def verified_stored_run(run_id: object) -> StoredCityRun:
         try:
@@ -338,8 +393,7 @@ def create_city_workbench_app(
             raise WorkbenchRunUnavailable from None
         return stored
 
-    def verified_city_view(run_id: object) -> CityViewContext:
-        stored = verified_stored_run(run_id)
+    def city_view_from_stored(stored: StoredCityRun) -> CityViewContext:
         schema_version = stored.manifest.schema_version
         try:
             spatial_metrics = metrics_for_stored_city_run(stored) if schema_version >= 5 else None
@@ -366,8 +420,42 @@ def create_city_workbench_app(
         except (StorageError, ValueError):
             raise WorkbenchRunUnavailable from None
 
+    def verified_city_view(run_id: object) -> CityViewContext:
+        return city_view_from_stored(verified_stored_run(run_id))
+
+    def inspector_snapshot(request: Request, run_id: object) -> _InspectorSnapshot | None:
+        try:
+            portable_run_id = validate_run_id(run_id)
+        except UnsafeRunLocation:
+            raise WorkbenchRunNotFound from None
+        raw_tokens = [
+            value
+            for name, value in request.scope.get("headers", ())
+            if name.lower() == _INSPECTOR_TOKEN_HEADER
+        ]
+        if not raw_tokens:
+            return None
+        if len(raw_tokens) != 1:
+            raise WorkbenchRunUnavailable
+        try:
+            snapshot_token = raw_tokens[0].decode("ascii", errors="strict")
+        except UnicodeDecodeError:
+            raise WorkbenchRunUnavailable from None
+        if _INSPECTOR_TOKEN.fullmatch(snapshot_token) is None:
+            raise WorkbenchRunUnavailable
+        snapshot = inspector_snapshots.resolve(snapshot_token, run_id=portable_run_id)
+        if snapshot is None:
+            raise WorkbenchRunUnavailable
+        return snapshot
+
     def resolve_city_view(request: Request) -> CityViewContext:
-        return verified_city_view(request.path_params.get("run_id"))
+        run_id = request.path_params.get("run_id")
+        snapshot = inspector_snapshot(request, run_id)
+        return snapshot.view if snapshot is not None else verified_city_view(run_id)
+
+    def resolve_stored_run(request: Request, run_id: object) -> StoredCityRun:
+        snapshot = inspector_snapshot(request, run_id)
+        return snapshot.stored if snapshot is not None else verified_stored_run(run_id)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -375,6 +463,7 @@ def create_city_workbench_app(
             yield
         finally:
             jobs.close()
+            inspector_snapshots.clear()
 
     app = FastAPI(
         title="AdLife local city workbench",
@@ -652,9 +741,16 @@ def create_city_workbench_app(
     @app.get("/runs/{run_id}", include_in_schema=False)
     def inspect_run(run_id: str, request: Request) -> HTMLResponse:
         _require_empty_query(request)
-        context = verified_city_view(run_id)
+        stored = verified_stored_run(run_id)
+        context = city_view_from_stored(stored)
         assert context.run_id is not None
-        return city_dashboard_response(api_base=f"/api/runs/{context.run_id}")
+        view_token = inspector_snapshots.issue(
+            _InspectorSnapshot(run_id=context.run_id, stored=stored, view=context)
+        )
+        return city_dashboard_response(
+            api_base=f"/api/runs/{context.run_id}",
+            view_token=view_token,
+        )
 
     @app.get("/api/workbench")
     def capabilities(request: Request) -> dict[str, object]:
@@ -767,7 +863,7 @@ def create_city_workbench_app(
     @app.get("/api/runs/{run_id}/workbench-input")
     def workbench_run_input(run_id: str, request: Request) -> JSONResponse:
         _require_empty_query(request)
-        stored = verified_stored_run(run_id)
+        stored = resolve_stored_run(request, run_id)
         if not isinstance(stored.manifest, CityRunManifestV7):
             raise WorkbenchInputUnavailable
         try:

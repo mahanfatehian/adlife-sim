@@ -142,8 +142,11 @@ a completed run starts from a fresh artifact verification and the persisted cano
 `inputs/workbench.json`, not browser storage or the current catalog.
 
 For the run-scoped workbench inspector, one GET-only `/api/runs/{run_id}/timeline` request
-projects the frame and four bounded evidence/state documents from one freshly verified run
-context. The legacy `/api/timeline` route returns the same projection contract from the
+projects the frame and four bounded evidence/state documents from the immutable run
+snapshot verified when that inspector page opened. Its opaque token is process-local,
+run-bound, and sent only in a request header. Reloading the page and direct scoped API
+requests without a token perform a fresh artifact verification. The legacy `/api/timeline`
+route returns the same projection contract from the
 immutable context validated when that viewer starts. The nested documents are contract-equal
 to the existing individual endpoint projections. Batching changes neither canonical bytes
 nor simulation ordering, and a failed or superseded request cannot replace the last

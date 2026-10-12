@@ -46,12 +46,20 @@ not interrupted. Refreshing the page can resume the current server-owned job whi
 same process lives. A process restart loses that operational record, while completed-run
 discovery remains bounded, stable, and includes only artifacts that load through the full
 `CityRunStore` integrity boundary. `/runs/{run_id}` reuses the read-only saved-run
-inspector, and each run-scoped API request verifies current committed state rather than
-trusting an earlier cached load. For a response-capable transition, the GET-only
+inspector. Opening it verifies the complete artifact once and binds the page to a bounded,
+process-local immutable snapshot through an opaque same-origin header token. Subsequent
+page reads reuse that exact state; reloading the inspector and direct API reads without the
+token verify current committed files again. Invalid, evicted, or cross-run tokens are
+refused. For a response-capable transition, the GET-only
 `/api/runs/{run_id}/timeline` projection returns the frame plus bounded
-opportunity/attention/response/state pages from that single verified context. It is a
-read optimization, not a second scientific model; the individual endpoints remain
+opportunity/attention/response/state pages from that one verified snapshot. It is a read
+optimization, not a second scientific model; the individual endpoints remain
 available for earlier schema capabilities and compatibility.
+
+The inspector's timeline button replays saved presentation frames; pressing it at the end
+restarts at minute zero. It does not re-execute the scientific model. Use
+`adlife city-replay ROOT RUN_ID` for full deterministic recomputation and digest
+verification against the immutable source artifact.
 
 Successful workbench runs are schema-v7. They retain the schema-v6 opportunity, attention,
 response, state, and metric semantics and add canonical `inputs/workbench.json`. The final

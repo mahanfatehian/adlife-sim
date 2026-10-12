@@ -90,17 +90,23 @@ result and stores nothing in browser persistence.
 
 The run repository scans a bounded number of portable run identifiers, reloads each
 candidate through `CityRunStore`, and lists only fully verified artifacts in stable order.
-Every run-scoped inspector request loads the selected artifact afresh, so corruption after
-an earlier successful request is not hidden by a cache. The legacy single-run viewer and
-the workbench routes share one immutable projection service; the latter mirrors the
-scientific reads under `/api/runs/{run_id}/...` and serves the same packaged inspector at
-`/runs/{run_id}`. For schema-v7, `/api/runs/{run_id}/workbench-input` projects the freshly
-verified frozen assumptions and exact creative snapshot; it never exposes a filesystem
-path or treats the presentation projection as canonical artifact bytes. A run-scoped
-response-capable interaction uses the additive GET-only
+Opening `/runs/{run_id}` loads and verifies the selected artifact once, then gives that
+page an opaque, run-bound token for a bounded process-local immutable snapshot. Its scoped
+reads reuse that exact verified state, so a large timeline remains responsive and one page
+cannot combine files from different points in time. Reloading the page, listing runs, and
+direct scoped API reads without that token still perform fresh verification; unknown,
+malformed, and cross-run tokens are refused. Thus a file changed after a page opens is
+detected on reload rather than silently changing the already-open observation. The legacy
+single-run viewer and workbench routes share one immutable projection service; the latter
+mirrors scientific reads under `/api/runs/{run_id}/...` and serves the same packaged
+inspector at `/runs/{run_id}`. For schema-v7,
+`/api/runs/{run_id}/workbench-input` projects verified frozen assumptions and the exact
+creative snapshot; it never exposes a filesystem path or treats the presentation
+projection as canonical artifact bytes. A run-scoped response-capable interaction uses the
+additive GET-only
 `/api/runs/{run_id}/timeline` projection: frame, bounded
-opportunity/attention/response pages, and selected-agent final state are built from one
-freshly verified context. The legacy `/api/timeline` contract uses its startup-validated
+opportunity/attention/response pages, and selected-agent final state are built from that
+one immutable context. The legacy `/api/timeline` contract uses its startup-validated
 immutable context, and legacy individual endpoints remain compatible. FastAPI, the worker,
 workspace pinning, CSRF and packaged-resource loading stay outside `adlife.core`; the only
 core addition remains the pure road-coordinate helper shared by construction and geographic

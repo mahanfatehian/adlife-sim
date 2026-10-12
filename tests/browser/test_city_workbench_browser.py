@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -517,6 +518,54 @@ def test_real_job_completes_without_auto_navigation_and_enters_verified_library(
             page.locator("#stage-inspect").click()
             expect(page.locator("#run-library")).to_contain_text("browser-complete")
             expect(page.locator("#run-library a[href='/runs/browser-complete']")).to_be_visible()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_inspector_sends_one_run_bound_snapshot_token_for_all_scoped_reads(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    run_id = "browser-snapshot"
+    scoped_requests: list[object] = []
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+            page.on(
+                "request",
+                lambda request: (
+                    scoped_requests.append(request)
+                    if request.url.startswith(f"{base_url}/api/runs/{run_id}/")
+                    else None
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill(run_id)
+            page.locator("#agent-count").fill("1")
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#start-run").click()
+            inspect_link = page.locator("#job-inspect-link")
+            expect(inspect_link).to_be_visible(timeout=30_000)
+            inspect_link.click()
+            page.wait_for_url(f"{base_url}/runs/{run_id}")
+            expect(page.locator("#assumptions-status")).to_have_text(
+                "VERIFIED IMMUTABLE INPUT", timeout=30_000
+            )
+            page.locator("#time-slider").fill("480")
+            expect(page.locator("#clock-label")).to_have_text("08:00", timeout=15_000)
+
+            assert scoped_requests
+            tokens = {request.headers.get("x-adlife-view-token") for request in scoped_requests}
+            assert len(tokens) == 1
+            token = tokens.pop()
+            assert token is not None
+            assert re.fullmatch(r"[A-Za-z0-9_-]{43}", token)
+            assert all(token not in request.url for request in scoped_requests)
         finally:
             browser.close()
             playwright.stop()

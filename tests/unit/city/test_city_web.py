@@ -333,13 +333,15 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
     assert 'fetchJson("/spatial-metrics")' in js.text
     assert 'endpoint: "/attention-events"' in js.text
     assert "function validatedApiBase()" in js.text
+    assert "function validatedViewToken()" in js.text
     assert "function apiPath(relative)" in js.text
     assert '"/workbench-input"' in js.text
     assert "function validateWorkbenchInput" in js.text
     assert "function renderWorkbenchAssumptions" in js.text
     assert 'fetchJson("/workbench-input")' in js.text
     assert "const url = apiPath(relative);" in js.text
-    assert 'fetch(url, { cache: "no-store" })' in js.text
+    assert '{ "X-AdLife-View-Token": viewToken }' in js.text
+    assert 'fetch(url, { cache: "no-store", headers' in js.text
     assert 'evidencePageUrl("attention", next, offsets.attention)' in js.text
     assert "abortController.signal" in js.text
     assert "function schedulePlaybackStep(generation)" in js.text

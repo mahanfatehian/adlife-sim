@@ -433,6 +433,37 @@ def test_viewer_default_document_uses_one_legacy_same_origin_api_base() -> None:
         browser.close()
 
 
+def test_viewer_uses_an_embedded_icon_without_a_missing_resource_error() -> None:
+    browser_path = _installed_browser()
+    console_errors: list[dict[str, object]] = []
+    with _place_viewer() as base_url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.on(
+            "console",
+            lambda message: (
+                console_errors.append({"text": message.text, "location": message.location})
+                if message.type == "error"
+                else None
+            ),
+        )
+        page.goto(base_url, wait_until="networkidle")
+        page.wait_for_timeout(500)
+
+        icon = page.locator('link[rel="icon"]')
+        assert icon.count() == 1
+        assert (icon.get_attribute("href") or "").startswith("data:image/svg+xml,")
+        assert not any(
+            str(error["location"].get("url", "")).endswith("/favicon.ico")
+            for error in console_errors
+        )
+        browser.close()
+
+
 def test_viewer_routes_every_scientific_request_through_the_run_api_base() -> None:
     browser_path = _installed_browser()
     nested_requests: list[str] = []
@@ -2529,6 +2560,86 @@ def test_model_clock_day_speed_and_zoom_controls_are_bounded_keyboard_operable()
         expect(zoom_out).to_be_disabled()
         expect(page.locator("#zoom-level")).to_have_text("50%")
         assert request_methods and set(request_methods) == {"GET"}
+        browser.close()
+
+
+def test_play_at_end_restarts_the_saved_timeline_from_the_beginning() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as viewer, sync_playwright() as playwright:
+        base_url = viewer[0]
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        final_minute = 1_439
+        page.locator("#time-slider").fill(str(final_minute))
+        page.wait_for_function("() => state.timelineLoading === false")
+        expect(page.locator("#play-button")).to_have_attribute(
+            "aria-label", "Replay timeline from start"
+        )
+        expect(page.locator("#playback-status")).to_contain_text("PRESS PLAY TO REPLAY")
+
+        page.locator("#time-slider").fill("12")
+        page.wait_for_function("() => state.timelineLoading === false")
+        expect(page.locator("#play-button")).to_have_attribute("aria-label", "Play timeline")
+        page.locator("#time-slider").fill(str(final_minute))
+        page.wait_for_function("() => state.timelineLoading === false")
+
+        page.locator("#playback-speed").select_option("4")
+        page.locator("#play-button").click()
+        page.wait_for_function(
+            "finalMinute => state.playing && state.minute < finalMinute",
+            arg=final_minute,
+            timeout=5_000,
+        )
+
+        assert int(page.locator("#time-slider").input_value()) < 10
+        expect(page.locator("#play-button")).to_have_attribute("aria-label", "Pause timeline")
+        page.locator("#play-button").click()
+        browser.close()
+
+
+def test_replay_restart_is_single_flight_while_the_first_frame_is_loading() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as viewer, sync_playwright() as playwright:
+        base_url = viewer[0]
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.locator("#time-slider").fill("1439")
+        page.wait_for_function("() => state.timelineLoading === false")
+        page.evaluate(
+            """() => {
+              const originalFetch = window.fetch.bind(window);
+              window.replayRestartProbe = { starts: 0 };
+              window.fetch = (...args) => {
+                const url = String(args[0]);
+                if (!url.includes('/api/timeline?minute=0&')) return originalFetch(...args);
+                window.replayRestartProbe.starts += 1;
+                return new Promise((resolve, reject) => setTimeout(() => {
+                  originalFetch(...args).then(resolve, reject);
+                }, 350));
+              };
+            }"""
+        )
+
+        page.locator("#play-button").evaluate("button => { button.click(); button.click(); }")
+        page.wait_for_function("() => window.replayRestartProbe.starts === 1")
+        expect(page.locator("#play-button")).to_be_disabled()
+        expect(page.locator("#playback-status")).to_contain_text("RESTARTING")
+        page.wait_for_function("() => state.playing === true", timeout=5_000)
+
+        assert page.evaluate("() => window.replayRestartProbe.starts") == 1
+        expect(page.locator("#play-button")).to_be_enabled()
+        expect(page.locator("#play-button")).to_have_attribute("aria-label", "Pause timeline")
+        page.locator("#play-button").click()
         browser.close()
 
 

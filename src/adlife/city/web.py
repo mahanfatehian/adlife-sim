@@ -65,6 +65,8 @@ _DASHBOARD_HEADERS = {
 }
 _API_BASE_PATTERN = re.compile(r"^/api(?:/runs/[a-z0-9][a-z0-9-]{0,39})?$")
 _API_BASE_META = '<meta name="adlife-api-base" content="/api">'
+_VIEW_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_VIEW_TOKEN_META = '<meta name="adlife-view-token" content="">'
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 CityRunSchemaVersion = Literal[1, 2, 3, 4, 5, 6, 7]
@@ -827,17 +829,29 @@ def frame(
     )
 
 
-def city_dashboard_response(*, api_base: str = "/api") -> HTMLResponse:
+def city_dashboard_response(
+    *,
+    api_base: str = "/api",
+    view_token: str | None = None,
+) -> HTMLResponse:
     """Return the packaged dashboard with a validated same-origin API base."""
 
     if _API_BASE_PATTERN.fullmatch(api_base) is None:
         raise ValueError("invalid city dashboard API base")
+    if view_token is not None and _VIEW_TOKEN_PATTERN.fullmatch(view_token) is None:
+        raise ValueError("invalid city dashboard view token")
     document = files("adlife.city").joinpath("static/index.html").read_text(encoding="utf-8")
     if document.count(_API_BASE_META) != 1:
         raise RuntimeError("city dashboard API-base metadata is missing or ambiguous")
+    if document.count(_VIEW_TOKEN_META) != 1:
+        raise RuntimeError("city dashboard view-token metadata is missing or ambiguous")
     document = document.replace(
         _API_BASE_META,
         f'<meta name="adlife-api-base" content="{api_base}">',
+    )
+    document = document.replace(
+        _VIEW_TOKEN_META,
+        f'<meta name="adlife-view-token" content="{view_token or ""}">',
     )
     return HTMLResponse(document, headers=_DASHBOARD_HEADERS)
 

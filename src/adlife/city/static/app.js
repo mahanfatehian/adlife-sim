@@ -2,6 +2,7 @@
 
 const byId = (id) => document.getElementById(id);
 const portableRunIdPattern = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const viewTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 const reservedRunIds = new Set([
   "con", "prn", "aux", "nul",
   ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
@@ -53,6 +54,17 @@ function validatedApiBase() {
   ) invalidApiBase();
   return value;
 }
+
+function validatedViewToken() {
+  const declarations = document.querySelectorAll('meta[name="adlife-view-token"]');
+  if (declarations.length !== 1) invalidApiBase();
+  const value = declarations[0].getAttribute("content");
+  if (value === "") return null;
+  if (typeof value !== "string" || !viewTokenPattern.test(value)) invalidApiBase();
+  return value;
+}
+
+const viewToken = validatedViewToken();
 
 function apiPath(relative) {
   if (typeof relative !== "string" || relative.includes("#") || relative.includes("\\")) {
@@ -189,6 +201,7 @@ const state = {
   playbackGeneration: 0,
   playbackDelay: null,
   playbackSpeed: 1,
+  playbackRestarting: false,
   zoom: 1,
   panX: 0,
   panY: 0,
@@ -207,7 +220,8 @@ const activities = { home: "At home", commute: "Travelling on streets", work: "A
 
 async function fetchJson(relative, signal = null) {
   const url = apiPath(relative);
-  const response = await fetch(url, { cache: "no-store", signal });
+  const headers = viewToken === null ? {} : { "X-AdLife-View-Token": viewToken };
+  const response = await fetch(url, { cache: "no-store", headers, signal });
   if (!response.ok) throw new Error(`Could not load ${url} (${response.status})`);
   return response.json();
 }
@@ -258,7 +272,8 @@ function topLevelIntegerToken(source, wantedKey) {
 
 async function fetchJsonWithIntegerToken(relative, key) {
   const url = apiPath(relative);
-  const response = await fetch(url, { cache: "no-store" });
+  const headers = viewToken === null ? {} : { "X-AdLife-View-Token": viewToken };
+  const response = await fetch(url, { cache: "no-store", headers });
   if (!response.ok) throw new Error(`Could not load ${url} (${response.status})`);
   const source = await response.text();
   const document = JSON.parse(source);
@@ -2409,6 +2424,13 @@ async function setMinute(
     }
     state.timelineAbortController = null;
     clearError("timeline");
+    if (!state.playing) {
+      updatePlaybackControl(
+        state.minute >= state.meta.days * 1440 - 1
+          ? "END OF RUN · PRESS PLAY TO REPLAY"
+          : "PAUSED",
+      );
+    }
     if (playbackGeneration === null && announceCommittedFrame) {
       announceTimeline(byId("map-text-summary").textContent);
     }
@@ -2852,12 +2874,22 @@ function announceTimeline(message) {
 function updatePlaybackControl(message) {
   const button = byId("play-button");
   const reduced = reducedMotionRequested();
-  button.disabled = reduced;
+  const atEnd = state.meta !== null && state.minute >= state.meta.days * 1440 - 1;
+  button.disabled = reduced || state.playbackRestarting;
   button.textContent = state.playing ? "Ⅱ" : "▶";
-  button.setAttribute("aria-label", state.playing ? "Pause timeline" : "Play timeline");
+  button.setAttribute(
+    "aria-label",
+    state.playing
+      ? "Pause timeline"
+      : (
+        state.playbackRestarting
+          ? "Restarting timeline from start"
+          : (atEnd ? "Replay timeline from start" : "Play timeline")
+      ),
+  );
   byId("playback-status").textContent = reduced
     ? "AUTOMATIC PLAYBACK OFF · reduced motion preference"
-    : message;
+    : (state.playbackRestarting ? "RESTARTING · LOADING FIRST FRAME" : message);
 }
 
 function stopPlayback(message = "PAUSED") {
@@ -2894,7 +2926,7 @@ async function playbackStep(generation) {
   if (!state.playing || generation !== state.playbackGeneration || !state.meta) return;
   const finalMinute = state.meta.days * 1440 - 1;
   if (state.minute >= finalMinute) {
-    stopPlayback("END OF RUN · PAUSED");
+    stopPlayback("END OF RUN · PRESS PLAY TO REPLAY");
     return;
   }
   const committed = await setMinute(state.minute + 1, state.selected, generation);
@@ -2902,7 +2934,8 @@ async function playbackStep(generation) {
   schedulePlaybackStep(generation);
 }
 
-function togglePlayback() {
+async function togglePlayback() {
+  if (state.playbackRestarting) return;
   if (state.playing) {
     stopPlayback();
     return;
@@ -2911,15 +2944,26 @@ function togglePlayback() {
     updatePlaybackControl("PAUSED");
     return;
   }
-  if (state.minute >= state.meta.days * 1440 - 1) {
-    updatePlaybackControl("END OF RUN · PAUSED");
-    return;
+  const replaying = state.minute >= state.meta.days * 1440 - 1;
+  if (replaying) {
+    state.playbackRestarting = true;
+    updatePlaybackControl("RESTARTING · LOADING FIRST FRAME");
+    const restarted = await setMinute(0);
+    state.playbackRestarting = false;
+    if (!restarted || reducedMotionRequested() || state.timelineLoading) {
+      updatePlaybackControl("PAUSED");
+      return;
+    }
   }
   state.playing = true;
   state.playbackGeneration += 1;
   const generation = state.playbackGeneration;
   updatePlaybackControl(`PLAYING · ${state.playbackSpeed}×`);
-  announceTimeline(`Playback started at ${state.playbackSpeed}× presentation speed.`);
+  announceTimeline(
+    replaying
+      ? `Timeline replay restarted at ${state.playbackSpeed}× presentation speed.`
+      : `Playback started at ${state.playbackSpeed}× presentation speed.`,
+  );
   playbackStep(generation);
 }
 
