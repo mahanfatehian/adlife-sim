@@ -12,9 +12,11 @@ from contextlib import contextmanager
 from hashlib import sha256
 from importlib import resources
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import uvicorn
+from playwright.sync_api import Request as PlaywrightRequest
 from playwright.sync_api import Route, expect, sync_playwright
 
 from adlife.city.runs import create_city_run
@@ -480,16 +482,19 @@ def test_viewer_routes_every_scientific_request_through_the_run_api_base() -> No
             "/city",
             "/agents",
             "/opportunity-summary",
-            "/opportunities",
             "/attention-summary",
-            "/attention-events",
             "/response-summary",
-            "/response-events",
-            "/response-state",
             "/spatial-metrics",
             "/spatial-response-metrics",
-            "/frame",
+            "/timeline",
         } <= requested_paths
+        assert {
+            "/opportunities",
+            "/attention-events",
+            "/response-events",
+            "/response-state",
+            "/frame",
+        }.isdisjoint(requested_paths)
         assert not legacy_requests
         assert not external_requests
         assert not page_errors
@@ -1026,7 +1031,7 @@ def test_attention_viewer_renders_causal_timeline_without_external_requests(
         assert page.locator(".attention-card.selected").count() == len(selected_zero)
         assert page.locator(".attention-key:visible").count() == 2
         assert page.locator("#attention-list").get_attribute("aria-live") is None
-        assert page.locator("#attention-current").get_attribute("aria-live") == "polite"
+        assert page.locator("#attention-current").get_attribute("aria-live") is None
         assert "IMPRESSION" in page.locator(".attention-card").first.inner_text()
         assert "CAUSE" in page.locator(".attention-card").first.inner_text()
 
@@ -1148,7 +1153,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
             "request",
             lambda request: (
                 response_state_requests.append(request.url)
-                if "/api/response-state" in request.url
+                if "/api/timeline" in request.url
                 else None
             ),
         )
@@ -1198,7 +1203,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
             f"{len(minute_zero)} RECORDS AT THIS MINUTE · {len(selected_zero)} FOR SELECTED AGENT"
         )
         assert page.locator("#response-list").get_attribute("aria-live") is None
-        assert page.locator("#response-current").get_attribute("aria-live") == "polite"
+        assert page.locator("#response-current").get_attribute("aria-live") is None
         assert page.locator(".response-card").count() == 100
         assert page.locator(".response-card.rule-response").count() > 0
         assert page.locator(".response-card.state-update").count() > 0
@@ -1346,7 +1351,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         ) != ("none")
         campaign_selector.focus()
         assert campaign_selector.evaluate("element => document.activeElement === element")
-        full_run_ledger = page.locator("#response-metrics-panel").inner_text()
+        full_run_event_ledger = page.locator("#response-metrics-event-table").inner_text()
         assert page.locator("#response-state-claim").inner_text() == (
             "UNCALIBRATED SYNTHETIC PROXIES · PURCHASE INTENTION IS NOT PURCHASE "
             "PROBABILITY OR SALES"
@@ -1366,6 +1371,8 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         page.keyboard.press("Enter")
         expect(page.locator("#selected-id")).to_have_text("PERSON-003")
         expect(page.locator(".response-state-card").first).to_contain_text("PERSON-003")
+        causal_full_run_ledger = page.locator("#response-metrics-panel").inner_text()
+        assert page.locator("#response-metrics-event-table").inner_text() == full_run_event_ledger
 
         page.locator("#time-slider").evaluate(
             "element => { element.value = '1'; "
@@ -1380,7 +1387,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert page.locator("#response-state-warning").inner_text() == (
             "NOT STATE AT THE SCRUBBED MINUTE"
         )
-        assert page.locator("#response-metrics-panel").inner_text() == full_run_ledger
+        assert page.locator("#response-metrics-panel").inner_text() == causal_full_run_ledger
 
         person_five = page.locator("#people-list .person").nth(4)
         person_five.focus()
@@ -1390,7 +1397,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert page.locator(".response-state-card").count() == 6
         assert page.locator(".response-state-card").filter(has_text="0 RESPONSES").count() == 6
         assert any("agent_id=person-005" in url for url in response_state_requests)
-        assert page.locator("#response-metrics-panel").inner_text() == full_run_ledger
+        assert page.locator("#response-metrics-panel").inner_text() == causal_full_run_ledger
 
         page.locator("#response-state-panel").focus()
         assert page.locator("#response-state-panel").evaluate(
@@ -2013,7 +2020,7 @@ def test_failed_coordinated_refresh_keeps_the_last_committed_selection_and_minut
                 return
             route.continue_()
 
-        page.route("**/api/frame?*", fail_candidate_frame)
+        page.route("**/api/timeline?*", fail_candidate_frame)
         page.goto(base_url, wait_until="networkidle")
 
         def committed_snapshot() -> dict[str, object]:
@@ -2050,7 +2057,11 @@ def test_failed_coordinated_refresh_keeps_the_last_committed_selection_and_minut
             expect(source).to_be_visible()
             source.click()
             page.wait_for_function("() => state.timelineLoading === false")
-            expect(page.locator("#error-banner")).to_contain_text("Could not load /api/frame")
+            expect(page.locator("#error-banner")).to_contain_text("Could not load /api/timeline")
+            error_box = page.locator("#error-banner").bounding_box()
+            timeline_box = page.locator(".timeline").bounding_box()
+            assert error_box is not None and timeline_box is not None
+            assert error_box["y"] + error_box["height"] <= timeline_box["y"] - 8
             assert committed_snapshot() == committed
 
         page.locator("#time-slider").evaluate(
@@ -2058,10 +2069,10 @@ def test_failed_coordinated_refresh_keeps_the_last_committed_selection_and_minut
             "element.dispatchEvent(new Event('input', { bubbles: true })); }"
         )
         page.wait_for_function("() => state.timelineLoading === false")
-        expect(page.locator("#error-banner")).to_contain_text("Could not load /api/frame")
+        expect(page.locator("#error-banner")).to_contain_text("Could not load /api/timeline")
         assert committed_snapshot() == committed
 
-        page.unroute("**/api/frame?*", fail_candidate_frame)
+        page.unroute("**/api/timeline?*", fail_candidate_frame)
         page.evaluate(
             """() => {
               window.savedTimelineRenderMap = renderMap;
@@ -2073,6 +2084,64 @@ def test_failed_coordinated_refresh_keeps_the_last_committed_selection_and_minut
         expect(page.locator("#error-banner")).to_contain_text("injected timeline render failure")
         assert committed_snapshot() == committed
         assert responses.model_dump(mode="json") == source_before
+        browser.close()
+
+
+def test_mobile_error_banner_stays_above_visible_timeline_after_scroll_and_resize() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page.goto(base_url, wait_until="networkidle")
+
+        page.route(
+            "**/api/timeline?*",
+            lambda route: route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"detail":"temporarily unavailable"}',
+            ),
+        )
+        page.locator(".timeline").evaluate("element => element.scrollIntoView({ block: 'end' })")
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = '1'; "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        page.wait_for_function("() => state.timelineLoading === false")
+        expect(page.locator("#error-banner")).to_contain_text("Could not load /api/timeline")
+
+        def assert_banner_clears_timeline() -> None:
+            geometry = page.evaluate(
+                """() => {
+                  const banner = document.getElementById('error-banner').getBoundingClientRect();
+                  const timeline = document.querySelector('.timeline').getBoundingClientRect();
+                  return {
+                    bannerBottom: banner.bottom,
+                    timelineTop: timeline.top,
+                    timelineBottom: timeline.bottom,
+                    viewportHeight: window.innerHeight,
+                  };
+                }"""
+            )
+            assert geometry["timelineTop"] < geometry["viewportHeight"], geometry
+            assert geometry["timelineBottom"] > 0, geometry
+            assert geometry["bannerBottom"] <= geometry["timelineTop"] - 8, geometry
+
+        assert_banner_clears_timeline()
+        page.set_viewport_size({"width": 390, "height": 720})
+        page.locator(".timeline").evaluate("element => element.scrollIntoView({ block: 'end' })")
+        page.wait_for_function(
+            """() => {
+              const banner = document.getElementById('error-banner').getBoundingClientRect();
+              const timeline = document.querySelector('.timeline').getBoundingClientRect();
+              return banner.bottom <= timeline.top - 8;
+            }"""
+        )
+        assert_banner_clears_timeline()
         browser.close()
 
 
@@ -2096,7 +2165,7 @@ def test_manual_scrub_stops_playback_and_ignores_its_superseded_failure() -> Non
                 const url = String(args[0]);
                 if (
                   document.documentElement.dataset.staleFailureStarted === 'false'
-                  && /\/api\/frame\?minute=(?!0(?:&|$))/.test(url)
+                  && /\/api\/timeline\?minute=(?!0(?:&|$))/.test(url)
                 ) {
                   document.documentElement.dataset.staleFailureStarted = 'true';
                   return new Promise((_, reject) => setTimeout(() => {
@@ -2105,7 +2174,7 @@ def test_manual_scrub_stops_playback_and_ignores_its_superseded_failure() -> Non
                   }, 500));
                 }
                 const result = originalFetch(...args);
-                if (url.includes('/api/frame?minute=2')) {
+                if (url.includes('/api/timeline?minute=2')) {
                   return result.then((response) => {
                     document.documentElement.dataset.newerFrameCompleted = 'true';
                     return response;
@@ -2146,6 +2215,245 @@ def test_manual_scrub_stops_playback_and_ignores_its_superseded_failure() -> Non
     assert snapshot["errorHidden"] is True
     assert "superseded request failed" not in snapshot["errorText"]
     assert snapshot["committedMinute"] == "2"
+
+
+def test_full_response_transitions_use_one_combined_timeline_read_with_page_offsets() -> None:
+    browser_path = _installed_browser()
+    timeline_reads: list[str] = []
+    legacy_timeline_reads: list[str] = []
+    legacy_paths = {
+        "/api/frame",
+        "/api/opportunities",
+        "/api/attention-events",
+        "/api/response-events",
+        "/api/response-state",
+    }
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def observe(request: PlaywrightRequest) -> None:
+            url = request.url
+            path = urlparse(url).path
+            if path == "/api/timeline":
+                timeline_reads.append(url)
+            elif path in legacy_paths:
+                legacy_timeline_reads.append(url)
+
+        page.on("request", observe)
+        page.goto(base_url, wait_until="networkidle")
+        expect(page.locator("#response-panel")).to_be_visible()
+
+        assert len(timeline_reads) == 1
+        assert not legacy_timeline_reads
+        assert parse_qs(urlparse(timeline_reads[0]).query) == {
+            "minute": ["0"],
+            "agent_id": ["person-001"],
+            "opportunity_offset": ["0"],
+            "attention_offset": ["0"],
+            "response_offset": ["0"],
+            "response_state_offset": ["0"],
+            "limit": ["100"],
+        }
+
+        page.locator("#opportunity-page-next").click()
+        expect(page.locator("#opportunity-page-note")).to_have_text("Records 101-150 of 150")
+        page.locator("#attention-page-next").click()
+        expect(page.locator("#attention-page-note")).to_have_text("Records 101-200 of 222")
+        page.locator("#attention-page-next").click()
+        expect(page.locator("#attention-page-note")).to_have_text("Records 201-222 of 222")
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+
+        timeline_reads.clear()
+        legacy_timeline_reads.clear()
+        page.locator("#people-list .person").nth(1).click()
+        expect(page.locator("#selected-id")).to_have_text("PERSON-002")
+
+        assert len(timeline_reads) == 1
+        assert not legacy_timeline_reads
+        assert parse_qs(urlparse(timeline_reads[0]).query) == {
+            "minute": ["0"],
+            "agent_id": ["person-002"],
+            "opportunity_offset": ["100"],
+            "attention_offset": ["200"],
+            "response_offset": ["100"],
+            "response_state_offset": ["0"],
+            "limit": ["100"],
+        }
+        expect(page.locator("#opportunity-page-note")).to_have_text("Records 101-150 of 150")
+        expect(page.locator("#attention-page-note")).to_have_text("Records 201-222 of 222")
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        expect(page.locator(".response-state-card").first).to_contain_text("PERSON-002")
+        browser.close()
+
+
+def test_partial_viewers_keep_the_exact_legacy_timeline_reads() -> None:
+    browser_path = _installed_browser()
+    cases = (
+        ("mobility", _place_viewer, {"/api/frame"}),
+        ("opportunity", _spatial_viewer, {"/api/frame", "/api/opportunities"}),
+        (
+            "attention",
+            _attention_viewer,
+            {"/api/frame", "/api/opportunities", "/api/attention-events"},
+        ),
+    )
+    with sync_playwright() as playwright:
+        for label, viewer_factory, expected_paths in cases:
+            with viewer_factory() as viewer:
+                base_url = viewer if isinstance(viewer, str) else viewer[0]
+                browser = playwright.chromium.launch(
+                    executable_path=str(browser_path),
+                    headless=True,
+                    args=["--no-first-run", "--disable-background-networking"],
+                )
+                page = browser.new_page()
+                observed: list[str] = []
+                page.on(
+                    "request",
+                    lambda request, observed=observed: (
+                        observed.append(request.url) if "/api/" in request.url else None
+                    ),
+                )
+                page.goto(base_url, wait_until="networkidle")
+                observed.clear()
+                page.locator("#time-slider").evaluate(
+                    "element => { element.value = '1'; "
+                    "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+                )
+                page.wait_for_function("() => state.timelineLoading === false")
+
+                paths = [urlparse(url).path for url in observed]
+                assert set(paths) == expected_paths, (label, observed)
+                assert len(paths) == len(expected_paths), (label, observed)
+                assert "/api/timeline" not in paths
+                frame_url = next(url for url in observed if urlparse(url).path == "/api/frame")
+                assert parse_qs(urlparse(frame_url).query) == {
+                    "minute": ["1"],
+                    "agent_id": ["person-001"],
+                }
+                for path, offset_name in (
+                    ("/api/opportunities", "offset"),
+                    ("/api/attention-events", "offset"),
+                ):
+                    if path not in expected_paths:
+                        continue
+                    evidence_url = next(url for url in observed if urlparse(url).path == path)
+                    assert parse_qs(urlparse(evidence_url).query) == {
+                        "minute": ["1"],
+                        offset_name: ["0"],
+                        "limit": ["100"],
+                    }
+                expect(page.locator("#error-banner"), message=label).to_be_hidden()
+                browser.close()
+
+
+def test_malformed_combined_timeline_documents_cannot_replace_committed_ui() -> None:
+    browser_path = _installed_browser()
+    current = {"corruption": "extra-top-level"}
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+
+        def corrupt_candidate(route: Route) -> None:
+            if "minute=1" not in route.request.url:
+                route.continue_()
+                return
+            response = route.fetch()
+            document = response.json()
+            corruption = current["corruption"]
+            if corruption == "extra-top-level":
+                document["unexpected"] = True
+            elif corruption == "wrong-binding":
+                document["agent_id"] = "person-002"
+            elif corruption == "malformed-frame":
+                document["frame"]["positions"][0]["longitude"] = "east"
+            elif corruption == "malformed-opportunity-page":
+                document["opportunity_page"]["unexpected"] = True
+            elif corruption == "state-extra-field":
+                document["response_state_page"]["unexpected"] = True
+            elif corruption == "state-hash-mismatch":
+                document["response_state_page"]["response_input_sha256"] = "0" * 64
+            elif corruption == "state-agent-mismatch":
+                document["response_state_page"]["items"][0]["agent_id"] = "person-002"
+            elif corruption == "duplicate-state":
+                first = document["response_state_page"]["items"][0]
+                document["response_state_page"]["items"][1]["campaign_id"] = first["campaign_id"]
+            else:  # pragma: no cover - closed table below
+                raise AssertionError(corruption)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(document, ensure_ascii=False),
+            )
+
+        page.route("**/api/timeline?*", corrupt_candidate)
+        page.goto(base_url, wait_until="networkidle")
+        committed = page.evaluate(
+            """() => ({
+              minute: state.minute,
+              selected: state.selected,
+              slider: document.getElementById('time-slider').value,
+              responseIds: Array.from(document.querySelectorAll('.response-card'))
+                .map((item) => item.dataset.evidenceId),
+              stateText: document.getElementById('response-state-list').textContent,
+            })"""
+        )
+
+        expected_errors = {
+            "extra-top-level": "Timeline batch is invalid",
+            "wrong-binding": "Timeline batch is invalid",
+            "malformed-frame": "Timeline frame is invalid",
+            "malformed-opportunity-page": "Opportunity evidence page is invalid",
+            "state-extra-field": "Spatial response state page is invalid",
+            "state-hash-mismatch": "Spatial response state page is invalid",
+            "state-agent-mismatch": "Spatial response state page is invalid",
+            "duplicate-state": "Spatial response state page is invalid",
+        }
+        for corruption, expected_error in expected_errors.items():
+            current["corruption"] = corruption
+            page.locator("#time-slider").evaluate(
+                "element => { element.value = '1'; "
+                "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+            )
+            page.wait_for_function("() => state.timelineLoading === false")
+            expect(page.locator("#error-banner"), message=corruption).to_contain_text(
+                expected_error
+            )
+            assert (
+                page.evaluate(
+                    """() => ({
+                      minute: state.minute,
+                      selected: state.selected,
+                      slider: document.getElementById('time-slider').value,
+                      responseIds: Array.from(document.querySelectorAll('.response-card'))
+                        .map((item) => item.dataset.evidenceId),
+                      stateText: document.getElementById('response-state-list').textContent,
+                    })"""
+                )
+                == committed
+            ), corruption
+
+        page.unroute("**/api/timeline?*", corrupt_candidate)
+        page.locator("#time-slider").evaluate(
+            "element => { element.value = '1'; "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }"
+        )
+        page.wait_for_function("() => state.timelineLoading === false")
+        assert page.evaluate("() => state.minute") == 1
+        expect(page.locator("#time-slider")).to_have_value("1")
+        expect(page.locator("#error-banner")).to_be_hidden()
+        assert page.evaluate("() => state.timelineAbortController === null")
+        browser.close()
 
 
 def test_model_clock_day_speed_and_zoom_controls_are_bounded_keyboard_operable() -> None:
@@ -2240,7 +2548,7 @@ def test_playback_awaits_each_slow_timeline_batch_without_timer_backlog() -> Non
               window.playbackProbe = { active: 0, maximum: 0, starts: 0 };
               window.fetch = (...args) => {
                 const url = String(args[0]);
-                if (!url.includes('/api/frame?minute=')) return originalFetch(...args);
+                if (!url.includes('/api/timeline?minute=')) return originalFetch(...args);
                 window.playbackProbe.active += 1;
                 window.playbackProbe.starts += 1;
                 window.playbackProbe.maximum = Math.max(
@@ -2286,9 +2594,143 @@ def test_playback_awaits_each_slow_timeline_batch_without_timer_backlog() -> Non
         browser.close()
 
 
-def test_text_map_alternative_tracks_causal_evidence_without_filtering_totals() -> None:
+def test_playback_uses_one_quiet_live_region_and_manual_navigation_announces_once() -> None:
     browser_path = _installed_browser()
     with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+
+        timeline_regions = page.evaluate(
+            """() => ({
+              announcement: (() => {
+                const element = document.getElementById('timeline-announcement');
+                return element && {
+                  role: element.getAttribute('role'),
+                  live: element.getAttribute('aria-live'),
+                  atomic: element.getAttribute('aria-atomic'),
+                };
+              })(),
+              changing: [
+                'map-text-summary', 'opportunity-current', 'attention-current',
+                'response-current', 'response-state-current', 'playback-status',
+              ].map((id) => ({
+                id,
+                role: document.getElementById(id).getAttribute('role'),
+                live: document.getElementById(id).getAttribute('aria-live'),
+              })),
+            })"""
+        )
+        assert timeline_regions["announcement"] == {
+            "role": "status",
+            "live": "polite",
+            "atomic": "true",
+        }
+        assert timeline_regions["changing"] == [
+            {"id": identifier, "role": None, "live": None}
+            for identifier in (
+                "map-text-summary",
+                "opportunity-current",
+                "attention-current",
+                "response-current",
+                "response-state-current",
+                "playback-status",
+            )
+        ]
+
+        page.evaluate(
+            """() => {
+              window.timelineAnnouncements = [];
+              const target = document.getElementById('timeline-announcement');
+              new MutationObserver(() => {
+                window.timelineAnnouncements.push(target.textContent);
+              }).observe(target, { childList: true, characterData: true, subtree: true });
+            }"""
+        )
+
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        page.wait_for_function("() => window.timelineAnnouncements.length === 1")
+        pagination_announcements = page.evaluate("() => [...window.timelineAnnouncements]")
+        assert len(pagination_announcements) == 1, pagination_announcements
+        assert "Response evidence page" in pagination_announcements[0]
+        assert "Records 101-144 of 144" in pagination_announcements[0]
+
+        page.evaluate("() => { window.timelineAnnouncements.length = 0; }")
+        page.locator("#response-page-previous").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 1-100 of 144")
+        page.wait_for_function("() => window.timelineAnnouncements.length === 1")
+        pagination_announcements = page.evaluate("() => [...window.timelineAnnouncements]")
+        assert len(pagination_announcements) == 1, pagination_announcements
+        assert "Records 1-100 of 144" in pagination_announcements[0]
+
+        page.evaluate("() => { window.timelineAnnouncements.length = 0; }")
+        page.locator("#playback-speed").select_option("4")
+        page.locator("#play-button").click()
+        page.wait_for_function("() => state.minute >= 3", timeout=6_000)
+        page.locator("#play-button").click()
+        page.wait_for_function("() => state.timelineLoading === false")
+        autoplay_announcements = page.evaluate("() => [...window.timelineAnnouncements]")
+        assert len(autoplay_announcements) == 2, autoplay_announcements
+        assert "Playback started" in autoplay_announcements[0]
+        assert "Playback paused" in autoplay_announcements[1]
+
+        page.evaluate("() => { window.timelineAnnouncements.length = 0; }")
+        manual_minute = int(page.locator("#time-slider").input_value()) + 2
+        page.locator("#time-slider").evaluate(
+            "(element, minute) => { element.value = String(minute); "
+            "element.dispatchEvent(new Event('input', { bubbles: true })); }",
+            manual_minute,
+        )
+        page.wait_for_function("() => state.timelineLoading === false")
+        manual_announcements = page.evaluate("() => [...window.timelineAnnouncements]")
+        assert len(manual_announcements) == 1, manual_announcements
+        assert "model time" in manual_announcements[0]
+        assert "PERSON-001" in manual_announcements[0]
+        browser.close()
+
+
+def test_text_map_alternative_tracks_causal_evidence_without_filtering_totals() -> None:
+    browser_path = _installed_browser()
+    with (
+        _response_viewer() as (
+            base_url,
+            _,
+            _,
+            _,
+            response_evaluation,
+            response_metrics,
+        ),
+        sync_playwright() as playwright,
+    ):
+        visible_records = [
+            record for record in response_evaluation.records if record.model_minute == 0
+        ][:100]
+        selected_record = next(
+            record for record in visible_records if record.event_type == "spatial.response"
+        )
+        related_update = next(
+            record
+            for record in visible_records
+            if record.event_type == "spatial.state-updated"
+            and selected_record.event_id in record.caused_by_event_ids
+        )
+        unrelated_record = next(
+            record
+            for record in visible_records
+            if record.event_type == "spatial.response"
+            and record.campaign_id == selected_record.campaign_id
+            and record.event_id != selected_record.event_id
+        )
+        campaign_receipt = next(
+            campaign
+            for campaign in response_metrics.campaigns
+            if campaign.campaign_id == selected_record.campaign_id
+        )
         browser = playwright.chromium.launch(
             executable_path=str(browser_path),
             headless=True,
@@ -2310,7 +2752,7 @@ def test_text_map_alternative_tracks_causal_evidence_without_filtering_totals() 
             })"""
         )
 
-        record = page.locator(".response-card.rule-response").first
+        record = page.locator(f'[data-evidence-id="{selected_record.event_id}"]')
         expect(record).to_be_visible()
         evidence_id = record.get_attribute("data-evidence-id")
         campaign_id = record.get_attribute("data-campaign-id")
@@ -2321,11 +2763,33 @@ def test_text_map_alternative_tracks_causal_evidence_without_filtering_totals() 
 
         selected = page.locator(f'[data-evidence-id="{evidence_id}"]')
         expect(selected).to_have_class(re.compile(r"\bcausal-selected\b"))
+        expect(selected).to_have_attribute("aria-pressed", "true")
+        expect(page.locator(f'[data-evidence-id="{related_update.event_id}"]')).to_have_class(
+            re.compile(r"\bcausal-related\b")
+        )
+        unrelated = page.locator(f'[data-evidence-id="{unrelated_record.event_id}"]')
+        expect(unrelated).not_to_have_class(re.compile(r"\bcausal-related\b"))
+        expect(unrelated).to_have_attribute("aria-pressed", "false")
         expect(page.locator("#response-causal")).to_have_attribute("data-campaign-id", campaign_id)
         expect(page.locator("#response-metrics-panel")).to_have_attribute(
             "data-campaign-id", campaign_id
         )
-        expect(page.locator("#response-metrics-campaign")).to_have_value("overall")
+        expect(page.locator("#response-metrics-campaign")).to_have_value(campaign_id)
+        expect(page.locator("#response-metrics-series-label")).to_have_text(
+            f"CAMPAIGN / {campaign_id.upper()}"
+        )
+        expect(page.locator("#response-metrics-event-scope")).to_have_text(
+            "UNFILTERED FULL-RUN EVENT TOTALS"
+        )
+        assert (
+            float(
+                page.locator(
+                    "#response-metrics-state-purchase-intention-proxy-final"
+                ).get_attribute("data-value")
+                or "nan"
+            )
+            == campaign_receipt.purchase_intention_proxy.final_mean
+        )
         expect(page.locator("#response-metrics-campaign")).to_have_attribute(
             "data-causal-campaign-id", campaign_id
         )
@@ -2344,6 +2808,218 @@ def test_text_map_alternative_tracks_causal_evidence_without_filtering_totals() 
             == totals_before
         )
         browser.close()
+
+
+def test_paging_away_from_selected_evidence_clears_every_causal_highlight() -> None:
+    browser_path = _installed_browser()
+    with (
+        _response_viewer() as (base_url, _, _, _, response_evaluation, _),
+        sync_playwright() as playwright,
+    ):
+        first_page = [record for record in response_evaluation.records if record.model_minute == 0][
+            :100
+        ]
+        selected_record = next(
+            record for record in first_page if record.event_type == "spatial.response"
+        )
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+
+        page.locator(f'[data-evidence-id="{selected_record.event_id}"]').click()
+        page.wait_for_function(
+            "evidenceId => state.selectedEvidence && state.selectedEvidence.id === evidenceId",
+            arg=selected_record.event_id,
+        )
+        related_before = page.locator(
+            "#opportunity-list .causal-related, #attention-list .causal-related"
+        ).count()
+        assert related_before > 0
+
+        page.locator("#response-page-next").click()
+        expect(page.locator("#response-page-note")).to_have_text("Records 101-144 of 144")
+        page.wait_for_function("() => state.selectedEvidence === null", timeout=5_000)
+
+        assert (
+            page.locator(
+                "#opportunity-list .causal-related, #attention-list .causal-related, "
+                "#response-list .causal-related, #response-list .causal-selected"
+            ).count()
+            == 0
+        )
+        expect(page.locator("#response-metrics-campaign")).to_have_value(
+            selected_record.campaign_id
+        )
+        expect(page.locator("#map-text-summary")).to_contain_text(
+            f"Selected campaign {selected_record.campaign_id.upper()}."
+        )
+        browser.close()
+
+
+def test_causal_selection_is_atomic_when_evidence_or_campaign_supersedes_it() -> None:
+    browser_path = _installed_browser()
+    with (
+        _response_viewer() as (base_url, scenario, _, _, response_evaluation, _),
+        sync_playwright() as playwright,
+    ):
+        visible_rules = [
+            record
+            for record in [item for item in response_evaluation.records if item.model_minute == 0][
+                :100
+            ]
+            if record.event_type == "spatial.response"
+        ]
+        first = visible_rules[0]
+        second = next(
+            record
+            for record in visible_rules
+            if record.agent_id != first.agent_id and record.campaign_id != first.campaign_id
+        )
+        campaign_choice = next(
+            campaign.campaign_id
+            for campaign in scenario.campaigns
+            if campaign.campaign_id not in {first.campaign_id, second.campaign_id}
+        )
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page()
+        page.goto(base_url, wait_until="networkidle")
+        page.evaluate(
+            """() => {
+              const originalFetch = window.fetch.bind(window);
+              window.causalDelay = { target: null, used: false, started: false, settled: false };
+              window.configureCausalDelay = (agentId) => {
+                window.causalDelay = {
+                  target: `agent_id=${encodeURIComponent(agentId)}`,
+                  used: false,
+                  started: false,
+                  settled: false,
+                };
+              };
+              window.fetch = (...args) => {
+                const url = String(args[0]);
+                const probe = window.causalDelay;
+                if (
+                  url.includes('/api/timeline?')
+                  && probe.target !== null
+                  && url.includes(probe.target)
+                  && !probe.used
+                ) {
+                  probe.used = true;
+                  probe.started = true;
+                  return new Promise((resolve, reject) => window.setTimeout(() => {
+                    originalFetch(...args).then(resolve, reject).finally(() => {
+                      probe.settled = true;
+                    });
+                  }, 450));
+                }
+                return originalFetch(...args);
+              };
+            }"""
+        )
+
+        page.evaluate("agentId => window.configureCausalDelay(agentId)", first.agent_id)
+        page.locator(f'[data-evidence-id="{first.event_id}"]').click()
+        page.wait_for_function("() => window.causalDelay.started === true")
+        page.locator(f'[data-evidence-id="{second.event_id}"]').click()
+        page.wait_for_function(
+            "evidenceId => state.selectedEvidence && state.selectedEvidence.id === evidenceId",
+            arg=second.event_id,
+        )
+        page.wait_for_function("() => window.causalDelay.settled === true")
+        assert page.evaluate(
+            """() => ({
+              agent: state.selected,
+              campaign: state.selectedCampaign,
+              evidence: state.selectedEvidence && state.selectedEvidence.id,
+            })"""
+        ) == {
+            "agent": second.agent_id,
+            "campaign": second.campaign_id,
+            "evidence": second.event_id,
+        }
+
+        page.evaluate("agentId => window.configureCausalDelay(agentId)", first.agent_id)
+        page.locator(f'[data-evidence-id="{first.event_id}"]').click()
+        page.wait_for_function("() => window.causalDelay.started === true")
+        page.locator("#response-metrics-campaign").select_option(campaign_choice)
+        page.wait_for_function("() => window.causalDelay.settled === true")
+        assert page.evaluate(
+            """() => ({
+              campaign: state.selectedCampaign,
+              evidence: state.selectedEvidence,
+              selector: document.getElementById('response-metrics-campaign').value,
+            })"""
+        ) == {"campaign": campaign_choice, "evidence": None, "selector": campaign_choice}
+        browser.close()
+
+
+def test_representative_core_ui_text_scales_at_200_percent_without_horizontal_overflow() -> None:
+    browser_path = _installed_browser()
+    with _response_viewer() as (base_url, _, _, _, _, _), sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page.goto(base_url, wait_until="networkidle")
+        representative_text = {
+            "mapTitle": "#map-text-title",
+            "mapSummary": "#map-text-summary",
+            "responseDetail": ".response-card small",
+            "metricsSeries": "#response-metrics-series-label",
+            "selectedActivity": "#selected-activity",
+            "zoomReset": "#zoom-reset-button",
+            "timelineTime": "#timeline-time",
+        }
+        for selector in representative_text.values():
+            assert page.locator(selector).count() > 0, selector
+
+        def computed_font_sizes() -> dict[str, float]:
+            return page.evaluate(
+                """selectors => Object.fromEntries(
+                  Object.entries(selectors).map(([name, selector]) => [
+                    name,
+                    Number.parseFloat(getComputedStyle(document.querySelector(selector)).fontSize),
+                  ])
+                )""",
+                representative_text,
+            )
+
+        font_sizes_before = computed_font_sizes()
+        page.evaluate("() => { document.documentElement.style.fontSize = '200%'; }")
+        font_sizes_after = computed_font_sizes()
+        overflow = page.evaluate(
+            """() => ({
+              documentWidth: document.documentElement.scrollWidth,
+              viewportWidth: window.innerWidth,
+              elements: Array.from(document.querySelectorAll('body *'))
+                .map((element) => {
+                  const rect = element.getBoundingClientRect();
+                  return { tag: element.tagName, id: element.id, className: element.className,
+                    left: rect.left, right: rect.right, width: rect.width };
+                })
+                .filter((item) => item.left < -0.5 || item.right > window.innerWidth + 0.5)
+                .slice(0, 12),
+            })"""
+        )
+        browser.close()
+
+    for name, initial_size in font_sizes_before.items():
+        assert font_sizes_after[name] >= initial_size * 1.9, {
+            "name": name,
+            "before": initial_size,
+            "after": font_sizes_after[name],
+        }
+    assert overflow["documentWidth"] <= overflow["viewportWidth"], overflow
 
 
 def test_inspector_controls_respect_accessibility_preferences_and_leave_artifacts_immutable(
@@ -2758,6 +3434,14 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
                   atomic: element.getAttribute('aria-atomic'),
                 };
               }),
+              timelineAnnouncement: (() => {
+                const element = document.getElementById('timeline-announcement');
+                return element && {
+                  role: element.getAttribute('role'),
+                  live: element.getAttribute('aria-live'),
+                  atomic: element.getAttribute('aria-atomic'),
+                };
+              })(),
               sliderValueText: document.getElementById('time-slider').getAttribute(
                 'aria-valuetext'
               ),
@@ -2787,9 +3471,12 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
         violations.append(f"person focus indicator is not high contrast: {person_focus!r}")
     if semantics["listLiveRegions"] != [None, None, None, None]:
         violations.append(f"large lists are live regions: {semantics!r}")
+    quiet_status = {"role": None, "live": None, "atomic": None}
+    if semantics["compactStatuses"] != [quiet_status] * 4:
+        violations.append(f"per-frame statuses are live regions: {semantics!r}")
     expected_status = {"role": "status", "live": "polite", "atomic": "true"}
-    if semantics["compactStatuses"] != [expected_status] * 4:
-        violations.append(f"compact statuses are not atomic live regions: {semantics!r}")
+    if semantics["timelineAnnouncement"] != expected_status:
+        violations.append(f"timeline announcement is not atomic and polite: {semantics!r}")
     if semantics["sliderValueText"] != "Day 1, 00:00 model time (not declared)":
         violations.append(f"timeline lacks human-readable value text: {semantics!r}")
     assert not violations, "\n".join(violations)
@@ -2867,8 +3554,6 @@ def test_response_viewer_busy_minute_is_legible_and_contained_at_narrow_width() 
     assert layout["documentWidth"] <= layout["viewportWidth"]
     assert layout["panelWidth"] <= layout["viewportWidth"]
     assert layout["paginationContained"] is True
-    assert (
-        layout["paginationStatuses"] == [{"role": "status", "live": "polite", "atomic": "true"}] * 3
-    )
+    assert layout["paginationStatuses"] == [{"role": None, "live": None, "atomic": None}] * 3
     assert layout["listLiveRegions"] == [None, None, None]
     assert layout["cardsContained"] is True

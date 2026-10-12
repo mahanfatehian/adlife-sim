@@ -360,6 +360,31 @@ async def _main() -> None:
         )
         first_states = await _json(client, "/api/response-state?limit=1")
         later_states = await _json(client, "/api/response-state?offset=1&limit=100")
+        selected_agent = stored.mobility.agents[0].agent_id
+        timeline = await _json(
+            client,
+            f"/api/timeline?minute={minute}&agent_id={selected_agent}&limit=1",
+        )
+        timeline_frame = await _json(
+            client,
+            f"/api/frame?minute={minute}&agent_id={selected_agent}",
+        )
+        timeline_opportunities = await _json(
+            client,
+            f"/api/opportunities?minute={minute}&offset=0&limit=1",
+        )
+        timeline_attention = await _json(
+            client,
+            f"/api/attention-events?minute={minute}&offset=0&limit=1",
+        )
+        timeline_responses = await _json(
+            client,
+            f"/api/response-events?minute={minute}&offset=0&limit=1",
+        )
+        timeline_states = await _json(
+            client,
+            f"/api/response-state?agent_id={selected_agent}&offset=0&limit=1",
+        )
         index = await client.get("/")
         javascript = await client.get("/static/app.js")
         stylesheet = await client.get("/static/app.css")
@@ -376,6 +401,16 @@ async def _main() -> None:
     assert later_events == expected_events(1, 100)
     assert first_states == expected_states(0, 1)
     assert later_states == expected_states(1, 100)
+    assert timeline == {
+        "schema_version": 1,
+        "minute": minute,
+        "agent_id": selected_agent,
+        "frame": timeline_frame,
+        "opportunity_page": timeline_opportunities,
+        "attention_page": timeline_attention,
+        "response_page": timeline_responses,
+        "response_state_page": timeline_states,
+    }
     assert index.status_code == javascript.status_code == stylesheet.status_code == 200
     assert '<meta name="adlife-api-base" content="/api">' in index.text
     assert 'id="response-panel"' in index.text
@@ -385,10 +420,12 @@ async def _main() -> None:
     assert "function apiPath(relative)" in javascript.text
     assert 'fetchJson("/response-summary")' in javascript.text
     assert 'endpoint: "/response-events"' in javascript.text
+    compact_javascript = "".join(javascript.text.split())
     assert (
-        'fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`)'
-        in javascript.text
+        'fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`,'
+        in compact_javascript
     )
+    assert "fetchJson(timelineBatchUrl(" in compact_javascript
     assert "/api/response-summary" not in javascript.text
     assert "/api/response-events" not in javascript.text
     assert "/api/response-state" not in javascript.text
@@ -527,12 +564,16 @@ async def _main() -> None:
             scoped_frame = await workbench_client.get(
                 "/api/runs/wheel-workbench/frame?minute=0"
             )
+            scoped_timeline = await workbench_client.get(
+                "/api/runs/wheel-workbench/timeline?minute=0&agent_id=person-001"
+            )
             inspector_script = await workbench_client.get("/static/app.js")
             assert (
                 inspector.status_code
                 == scoped_meta.status_code
                 == workbench_input.status_code
                 == scoped_frame.status_code
+                == scoped_timeline.status_code
                 == inspector_script.status_code
                 == 200
             )
@@ -541,6 +582,7 @@ async def _main() -> None:
             assert workbench_input.json()["settings"]["seed"] == "17"
             assert workbench_input.json()["run_id"] == "wheel-workbench"
             assert scoped_frame.json()["minute"] == 0
+            assert scoped_timeline.json()["agent_id"] == "person-001"
             assert "function validatedApiBase()" in inspector_script.text
 
     workbench_stored = CityRunStore(root).load("wheel-workbench")

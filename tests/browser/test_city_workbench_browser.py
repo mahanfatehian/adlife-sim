@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import uvicorn
@@ -28,6 +29,10 @@ _BROWSER_PATHS = (
     Path("/usr/bin/google-chrome"),
     Path("/usr/bin/chromium"),
     Path("/usr/bin/chromium-browser"),
+)
+_LONG_BROWSER_TEST = pytest.mark.skipif(
+    os.environ.get("ADLIFE_SKIP_LONG_TESTS") == "1",
+    reason="ADLIFE_SKIP_LONG_TESTS is set",
 )
 
 
@@ -516,6 +521,7 @@ def test_real_job_completes_without_auto_navigation_and_enters_verified_library(
             playwright.stop()
 
 
+@_LONG_BROWSER_TEST
 def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -549,6 +555,9 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
             page.locator("#city-continue").click()
             page.locator("#scenario-name").fill("Browser combined city study")
             page.locator("#campaign-name").fill("Browser phone and roadside campaign")
+            page.locator("input[name='phone-activity'][value='home']").check()
+            page.locator("input[name='phone-activity'][value='work']").check()
+            page.locator("#phone-probability").fill("1")
             page.locator("#roadside-enabled").check()
             page.locator("#road-id").select_option("middle-east")
             page.locator("#road-direction").select_option("backward")
@@ -612,6 +621,30 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
             expect(page.locator("#day-label")).to_have_text("DAY 01", timeout=15_000)
             expect(page.locator("#clock-label")).to_have_text("08:00")
             expect(page.locator("#people-list .person")).to_have_count(2)
+            campaign_selector = page.locator("#response-metrics-campaign")
+            campaign_selector.select_option("fictional-campaign")
+            expect(campaign_selector).to_have_value("fictional-campaign")
+            expect(campaign_selector).to_have_attribute(
+                "data-causal-campaign-id", "fictional-campaign"
+            )
+            expect(page.locator("#map-text-summary")).to_contain_text(
+                "Selected campaign FICTIONAL-CAMPAIGN."
+            )
+            selected_evidence = page.locator("#opportunity-list .opportunity-card").first
+            expect(selected_evidence).to_be_visible(timeout=15_000)
+            evidence_id = selected_evidence.get_attribute("data-evidence-id")
+            assert evidence_id is not None
+            selected_evidence.click()
+            selected_evidence = page.locator(
+                f"#opportunity-list [data-evidence-id='{evidence_id}']"
+            )
+            expect(selected_evidence).to_have_class(
+                "opportunity-card selected causal-selected causal-related"
+            )
+            expect(page.locator("#map-text-summary")).to_contain_text(
+                f"Selected opportunity evidence {evidence_id.upper()};"
+            )
+            expect(campaign_selector).to_have_value("fictional-campaign")
             second_person = page.locator("#people-list .person").nth(1)
             second_id = second_person.locator("strong").inner_text()
             second_person.click()
@@ -642,34 +675,160 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
             playwright.stop()
 
 
+@_LONG_BROWSER_TEST
 def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     browser_path = _installed_browser()
     external_requests: list[str] = []
     console_errors: list[str] = []
     page_errors: list[str] = []
     pending_requests: set[object] = set()
+    in_flight_timeline_requests: set[object] = set()
+    timeline_request_started_at: dict[object, float] = {}
+    timeline_request_durations: list[float] = []
+    peak_in_flight_timeline_requests = 0
+    timeline_request_count = 0
+    expanded_opportunities: list[dict[str, object]] = []
+    opportunity_page_template: dict[str, object] | None = None
     run_id = "browser-maximum-load"
     total_started = time.perf_counter()
+
+    library_runs = tuple(
+        _library_summary(f"library-run-{index:03d}", seed=str(index + 1)) for index in range(25)
+    )
+
+    def bounded_library_page(
+        _repository: object,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> WorkbenchRunPage:
+        selected = library_runs[offset : offset + limit]
+        return WorkbenchRunPage(
+            offset=offset,
+            limit=limit,
+            returned_count=len(selected),
+            verified_total=len(library_runs),
+            scanned_count=len(library_runs),
+            corrupt_count=0,
+            truncated=False,
+            runs=selected,
+        )
+
+    monkeypatch.setattr(
+        workbench_web.WorkbenchRunRepository,
+        "list_runs",
+        bounded_library_page,
+    )
 
     with _workbench(tmp_path) as (base_url, root):
         playwright, browser, page = _open_page(browser_path, base_url)
         try:
 
+            def expanded_opportunity_page(offset: int) -> dict[str, object]:
+                assert opportunity_page_template is not None
+                page_document = dict(opportunity_page_template)
+                page_items = expanded_opportunities[offset : offset + 100]
+                agent_counts: dict[str, int] = {}
+                for item in expanded_opportunities:
+                    agent_id = item["agent_id"]
+                    assert isinstance(agent_id, str)
+                    agent_counts[agent_id] = agent_counts.get(agent_id, 0) + 1
+                page_document.update(
+                    {
+                        "offset": offset,
+                        "total": len(expanded_opportunities),
+                        "channel_counts": {
+                            "roadside-billboard": 0,
+                            "mobile-feed": len(expanded_opportunities),
+                        },
+                        "agent_counts": agent_counts,
+                        "next_offset": (
+                            offset + len(page_items)
+                            if offset + len(page_items) < len(expanded_opportunities)
+                            else None
+                        ),
+                        "items": page_items,
+                    }
+                )
+                return page_document
+
+            def ensure_expanded_opportunities(page_document: dict[str, object]) -> None:
+                nonlocal opportunity_page_template
+                if expanded_opportunities:
+                    return
+                items = page_document["items"]
+                assert isinstance(items, list)
+                assert len(items) == 30
+                opportunity_page_template = dict(page_document)
+                for repetition in range(4):
+                    for item in items:
+                        assert isinstance(item, dict)
+                        clone = dict(item)
+                        source_id = clone["opportunity_id"]
+                        assert isinstance(source_id, str)
+                        clone["opportunity_id"] = sha256(
+                            f"browser-page:{repetition}:{source_id}".encode()
+                        ).hexdigest()
+                        clone["ordinal_for_agent_placement_day"] = repetition + 1
+                        expanded_opportunities.append(clone)
+                assert len(expanded_opportunities) == 120
+
             def keep_browser_offline(route: Route) -> None:
-                if route.request.url.startswith(base_url):
-                    route.continue_()
-                else:
-                    external_requests.append(route.request.url)
+                url = route.request.url
+                if not url.startswith(base_url):
+                    external_requests.append(url)
                     route.abort()
+                    return
+                parsed = urlparse(url)
+                query = parse_qs(parsed.query)
+                timeline_path = f"/api/runs/{run_id}/timeline"
+                opportunity_path = f"/api/runs/{run_id}/opportunities"
+                if parsed.path == timeline_path and query.get("minute") == ["0"]:
+                    response = route.fetch()
+                    document = response.json()
+                    assert isinstance(document, dict)
+                    page_document = document["opportunity_page"]
+                    assert isinstance(page_document, dict)
+                    ensure_expanded_opportunities(page_document)
+                    offset_values = query.get("opportunity_offset")
+                    assert offset_values is not None and len(offset_values) == 1
+                    document["opportunity_page"] = expanded_opportunity_page(int(offset_values[0]))
+                    route.fulfill(response=response, json=document)
+                    return
+                if parsed.path == opportunity_path and query.get("minute") == ["0"]:
+                    response = route.fetch()
+                    offset_values = query.get("offset")
+                    assert offset_values is not None and len(offset_values) == 1
+                    route.fulfill(
+                        response=response,
+                        json=expanded_opportunity_page(int(offset_values[0])),
+                    )
+                    return
+                route.continue_()
 
             def request_started(request: object) -> None:
+                nonlocal peak_in_flight_timeline_requests, timeline_request_count
                 if str(getattr(request, "url", "")).startswith(base_url):
                     pending_requests.add(request)
+                path = urlparse(str(getattr(request, "url", ""))).path
+                if path == f"/api/runs/{run_id}/timeline":
+                    timeline_request_count += 1
+                    in_flight_timeline_requests.add(request)
+                    timeline_request_started_at[request] = time.perf_counter()
+                    peak_in_flight_timeline_requests = max(
+                        peak_in_flight_timeline_requests,
+                        len(in_flight_timeline_requests),
+                    )
 
             def request_finished(request: object) -> None:
                 pending_requests.discard(request)
+                started_at = timeline_request_started_at.pop(request, None)
+                if started_at is not None:
+                    timeline_request_durations.append(time.perf_counter() - started_at)
+                in_flight_timeline_requests.discard(request)
 
             page.route("**/*", keep_browser_offline)
             page.on("request", request_started)
@@ -721,9 +880,22 @@ def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
                 "attention": page.locator("#attention-list > *").count(),
                 "response": page.locator("#response-list > *").count(),
             }
-            assert 0 < evidence_dom_counts["opportunity"] <= 100
+            assert evidence_dom_counts["opportunity"] == 100
             assert evidence_dom_counts["attention"] <= 100
             assert evidence_dom_counts["response"] <= 100
+            expect(page.locator("#opportunity-page-note")).to_have_text("Records 1-100 of 120")
+            pagination_started = time.perf_counter()
+            page.locator("#opportunity-page-next").click()
+            expect(page.locator("#opportunity-page-note")).to_have_text(
+                "Records 101-120 of 120", timeout=60_000
+            )
+            assert page.locator("#opportunity-list .opportunity-card").count() == 20
+            page.locator("#opportunity-page-previous").click()
+            expect(page.locator("#opportunity-page-note")).to_have_text(
+                "Records 1-100 of 120", timeout=60_000
+            )
+            assert page.locator("#opportunity-list .opportunity-card").count() == 100
+            evidence_pagination_elapsed = time.perf_counter() - pagination_started
 
             last_person = page.locator("#people-list .person").nth(29)
             last_id = last_person.locator("strong").inner_text()
@@ -741,19 +913,48 @@ def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
             expect(page.locator("#clock-label")).to_have_text("00:00", timeout=60_000)
             day_one_elapsed = time.perf_counter() - day_one_started
             playback_started = time.perf_counter()
+            page.locator("#playback-speed").select_option("4")
+            playback_initial_minute = int(page.locator("#time-slider").input_value())
             page.locator("#play-button").click()
             expect(page.locator("#play-button")).to_have_attribute("aria-label", "Pause timeline")
+            page.wait_for_function(
+                "minimum => Number(document.querySelector('#time-slider').value) >= minimum",
+                arg=playback_initial_minute + 3,
+                timeout=60_000,
+            )
+            playback_final_minute = int(page.locator("#time-slider").input_value())
             page.locator("#play-button").click()
             expect(page.locator("#play-button")).to_have_attribute("aria-label", "Play timeline")
-            playback_control_elapsed = time.perf_counter() - playback_started
+            page.wait_for_load_state("networkidle", timeout=60_000)
+            playback_transition_elapsed = time.perf_counter() - playback_started
+            playback_transitions = playback_final_minute - playback_initial_minute
+            assert playback_transitions >= 3
+            assert peak_in_flight_timeline_requests == 1
 
             library_started = time.perf_counter()
             page.locator("#workbench-back-link").click()
             page.wait_for_url(base_url + "/")
-            expect(page.locator("#run-library .run-card")).to_have_count(1, timeout=60_000)
+            expect(page.locator("#run-library .run-card")).to_have_count(20, timeout=60_000)
             page.locator("#stage-inspect").click()
-            expect(page.locator("#run-library .run-card")).to_be_visible()
-            assert page.locator("#run-library .run-card").count() <= 20
+            expect(page.locator("#run-library .run-card").first).to_be_visible()
+            expect(page.locator("#library-count")).to_have_text("25 verified runs")
+            expect(page.locator("#library-page")).to_have_text("Page 1")
+            first_library_count = page.locator("#run-library .run-card").count()
+            page.locator("#library-next").click()
+            expect(page.locator("#library-page")).to_have_text("Page 2", timeout=60_000)
+            expect(page.locator("#run-library .run-card")).to_have_count(5)
+            second_library_count = page.locator("#run-library .run-card").count()
+            page.locator("#library-previous").click()
+            expect(page.locator("#library-page")).to_have_text("Page 1", timeout=60_000)
+            expect(page.locator("#run-library .run-card")).to_have_count(20)
+            final_library_count = page.locator("#run-library .run-card").count()
+            library_dom_counts = [
+                first_library_count,
+                second_library_count,
+                final_library_count,
+            ]
+            assert library_dom_counts == [20, 5, 20]
+            assert max(library_dom_counts) == 20
             page.wait_for_load_state("networkidle", timeout=60_000)
             library_elapsed = time.perf_counter() - library_started
 
@@ -764,13 +965,21 @@ def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
                 f"{selection_elapsed:.2f}s agent selection, "
                 f"{day_seven_elapsed:.2f}s day-7 scrub, "
                 f"{day_one_elapsed:.2f}s day-1 scrub, "
-                f"{playback_control_elapsed:.2f}s play/pause controls, "
+                f"{evidence_pagination_elapsed:.2f}s evidence next/previous, "
+                f"{playback_transition_elapsed:.2f}s for {playback_transitions} "
+                "playback transitions, "
                 f"{library_elapsed:.2f}s verified-library return, "
                 f"{total_elapsed:.2f}s complete UI exercise; "
-                f"evidence DOM {evidence_dom_counts}; 30 agents x 7 days"
+                f"timeline requests {timeline_request_count}, peak in-flight "
+                f"{peak_in_flight_timeline_requests}, durations "
+                f"{[round(duration, 2) for duration in timeline_request_durations]}; "
+                f"evidence DOM {evidence_dom_counts}, library DOM {library_dom_counts}; "
+                "30 agents x 7 days"
             )
             assert _artifact_hashes(run_directory) == before_inspection
             assert pending_requests == set()
+            assert in_flight_timeline_requests == set()
+            assert timeline_request_started_at == {}
             assert external_requests == []
             assert console_errors == []
             assert page_errors == []

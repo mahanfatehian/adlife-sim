@@ -26,6 +26,7 @@ def test_city_workbench_is_registered_with_required_workspace_and_honest_help() 
     )
     root_output = strip_ansi(root_help.output)
     command_output = strip_ansi(command_help.output)
+    normalized_command_output = " ".join(command_output.split()).lower()
 
     assert root_help.exit_code == 0
     assert "city-workbench" in root_output
@@ -33,8 +34,16 @@ def test_city_workbench_is_registered_with_required_workspace_and_honest_help() 
     assert "--workspace" in command_output
     assert "[required]" in command_output
     assert "--port" in command_output
-    assert "validation" in command_output.lower()
-    assert "provider" not in command_output.lower()
+    assert "city -> campaign -> run -> inspect" in normalized_command_output
+    assert "process-local" in normalized_command_output
+    assert "bounded worker" in normalized_command_output
+    assert "verified artifacts" in normalized_command_output
+    assert "no authentication" in normalized_command_output
+    assert "provider configuration" in normalized_command_output
+    assert "oauth" in normalized_command_output
+    assert "real-world city" in normalized_command_output
+    assert "run jobs are not enabled" not in normalized_command_output
+    assert "future verified" not in normalized_command_output
 
 
 def test_city_workbench_requires_workspace_and_bounds_port_before_server_start(

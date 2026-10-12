@@ -59,6 +59,12 @@ jobs:
           # Browser regressions are a required CI gate, never an environment-dependent skip.
           ADLIFE_REQUIRE_BROWSER: "1"
         run: uv run pytest -q --cov=adlife --cov-branch
+      - name: Long workbench browser workloads
+        env:
+          # The two full artifact-driven browser flows are timing-sensitive under
+          # coverage tracing but remain a required, real-browser CI gate.
+          ADLIFE_REQUIRE_BROWSER: "1"
+        run: uv run pytest -q -s tests/browser/test_city_workbench_browser.py::test_browser_drives_combined_study_and_inspection_never_changes_artifacts tests/browser/test_city_workbench_browser.py::test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive
       - name: Maximum rules performance
         env:
           # GitHub's shared Windows runners are materially slower than Linux/macOS.

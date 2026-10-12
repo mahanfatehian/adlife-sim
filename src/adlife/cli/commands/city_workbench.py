@@ -1,4 +1,4 @@
-"""Start the local city workbench validation foundation on loopback."""
+"""Start the local deterministic city workbench on loopback."""
 
 from __future__ import annotations
 
@@ -24,12 +24,16 @@ def command(
         Path,
         typer.Option(
             "--workspace",
-            help="Dedicated local directory for future verified workbench artifacts.",
+            help="Dedicated local directory for verified workbench artifacts.",
         ),
     ],
     port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 8765,
 ) -> None:
-    """Serve the local scenario-validation foundation; run jobs are not enabled."""
+    """Operate CITY -> CAMPAIGN -> RUN -> INSPECT in the local deterministic workbench.
+
+    A process-local bounded worker creates verified artifacts. This profile includes no
+    authentication, provider configuration, OAuth, or real-world city data.
+    """
     if output_format() != "human":
         raise CommandError("city workbench is interactive; use human output format")
     try:

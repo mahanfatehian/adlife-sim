@@ -2,8 +2,8 @@
 
 The binding constraint is that ``src/adlife/core/**`` is the pure simulation: it may not
 import a CLI framework, a TUI framework, a database driver, a plotting library, an HTTP
-client, a model-provider SDK, or either of the outer layers (``adlife.cli``,
-``adlife.adapters``) that depend on it. Task 9 is the commit that first creates both sides
+client, a model-provider SDK, or any outer layer (``adlife.cli``, ``adlife.adapters``,
+``adlife.city``) that depends on it. Task 9 is the commit that first creates both sides
 of that boundary, so this is where the seam belongs.
 
 The check parses every core module with :mod:`ast` instead of grepping, so a boundary
@@ -29,6 +29,7 @@ FORBIDDEN_ROOTS: frozenset[str] = frozenset(
     {
         # The outer layers of this repository.
         "adlife.adapters",
+        "adlife.city",
         "adlife.cli",
         "adlife.tui",
         "adlife.reporting",
@@ -96,6 +97,7 @@ def _is_forbidden(module: str) -> bool:
         ("from adlife.reporting import html", "adlife.reporting"),
         ("from ...adapters.cognition import mock", "adlife.adapters.cognition"),
         ("from ... import cli", "adlife.cli"),
+        ("from adlife.city import web", "adlife.city"),
         ("from importlib import import_module as load", "importlib.import_module"),
         ("from fastapi import FastAPI", "fastapi"),
         ("import uvicorn", "uvicorn"),

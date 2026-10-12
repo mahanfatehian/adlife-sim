@@ -1653,6 +1653,10 @@ def test_smoke_viewer_probe_checks_guard_before_installed_imports_and_metrics() 
     assert 'assert "function validatedApiBase()" in javascript.text' in source
     assert 'assert "function apiPath(relative)" in javascript.text' in source
     assert "assert 'endpoint: \"/response-events\"' in javascript.text" in source
+    assert 'compact_javascript = "".join(javascript.text.split())' in source
+    assert "'fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`,'" in source
+    assert 'f"/api/timeline?minute={minute}&agent_id={selected_agent}&limit=1"' in source
+    assert 'assert "fetchJson(timelineBatchUrl(" in compact_javascript' in source
 
 
 def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> None:
@@ -1670,6 +1674,7 @@ def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> Non
         'await workbench_client.get("/api/runs/wheel-workbench/meta")',
         '"/api/runs/wheel-workbench/workbench-input"',
         '"/api/runs/wheel-workbench/frame?minute=0"',
+        '"/api/runs/wheel-workbench/timeline?minute=0&agent_id=person-001"',
         'await workbench_client.get("/static/app.js")',
         'assert workbench_input.json()["settings"]["seed"] == "17"',
         'root / "city-runs" / "wheel-workbench" / "inputs" / "workbench.json"',

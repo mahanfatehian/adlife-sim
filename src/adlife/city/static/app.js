@@ -29,6 +29,7 @@ const viewerApiEndpoints = new Set([
   "/response-events",
   "/response-state",
   "/frame",
+  "/timeline",
   "/workbench-input",
 ]);
 
@@ -142,6 +143,24 @@ const responseStateUpdateKeys = [
   "caused_by_event_ids", "response_input_sha256", "scenario_sha256", "city_sha256",
   "campaign_id", "agent_id", "day_index", "model_minute", "previous_state", "state",
 ];
+const responseStatePageKeys = [
+  "schema_version", "model_id", "claim_scope", "response_input_sha256",
+  "scenario_sha256", "city_sha256", "state_scope", "agent_id", "offset", "limit",
+  "total", "next_offset", "items",
+];
+const timelineBatchKeys = [
+  "schema_version", "minute", "agent_id", "frame", "opportunity_page",
+  "attention_page", "response_page", "response_state_page",
+];
+const timelineFrameKeys = ["minute", "positions", "route"];
+const timelinePositionKeys = [
+  "agent_id", "minute", "longitude", "latitude", "activity", "road_id",
+  "coordinate_label",
+];
+const timelineRouteKeys = [
+  "agent_id", "direction", "destination_activity", "node_ids", "road_ids",
+  "directions", "geometry", "duration_minutes", "distance_meters",
+];
 const state = {
   meta: null,
   metaSeedToken: null,
@@ -164,6 +183,7 @@ const state = {
   selected: null,
   selectedCampaign: null,
   selectedEvidence: null,
+  causalSelectionGeneration: 0,
   minute: 0,
   playing: false,
   playbackGeneration: 0,
@@ -245,11 +265,49 @@ async function fetchJsonWithIntegerToken(relative, key) {
   return { document, integerToken: topLevelIntegerToken(source, key) };
 }
 
+function updateErrorBannerInset() {
+  const banner = byId("error-banner");
+  if (banner.hidden) {
+    banner.style.removeProperty("bottom");
+    return;
+  }
+  const baseInset = window.matchMedia("(max-width: 900px)").matches ? 12 : 164;
+  const timeline = document.querySelector(".timeline");
+  let inset = baseInset;
+  if (timeline instanceof HTMLElement) {
+    const viewportHeight = window.innerHeight;
+    const timelineRect = timeline.getBoundingClientRect();
+    const visibleTimelineTop = Math.max(0, timelineRect.top);
+    const visibleTimelineBottom = Math.min(viewportHeight, timelineRect.bottom);
+    const bannerHeight = banner.getBoundingClientRect().height;
+    const naturalBottom = viewportHeight - baseInset;
+    const naturalTop = naturalBottom - bannerHeight;
+    const overlapsVisibleTimeline = visibleTimelineTop < visibleTimelineBottom
+      && naturalTop < visibleTimelineBottom
+      && naturalBottom > visibleTimelineTop;
+    if (overlapsVisibleTimeline) {
+      inset = Math.max(baseInset, viewportHeight - visibleTimelineTop + 12);
+    }
+  }
+  banner.style.bottom = `${Math.ceil(inset)}px`;
+}
+
+let errorBannerPositionFrame = null;
+
+function scheduleErrorBannerInset() {
+  if (errorBannerPositionFrame !== null) return;
+  errorBannerPositionFrame = window.requestAnimationFrame(() => {
+    errorBannerPositionFrame = null;
+    updateErrorBannerInset();
+  });
+}
+
 function showError(message, scope = "application") {
   const banner = byId("error-banner");
   banner.textContent = message;
   banner.dataset.errorScope = scope;
   banner.hidden = false;
+  updateErrorBannerInset();
 }
 
 function clearError(scope) {
@@ -258,6 +316,7 @@ function clearError(scope) {
   banner.textContent = "";
   delete banner.dataset.errorScope;
   banner.hidden = true;
+  banner.style.removeProperty("bottom");
 }
 
 function clockText(minute) {
@@ -337,12 +396,49 @@ function spatialCampaignById(campaignId) {
   return state.opportunitySummary.campaigns.find((item) => item.campaign_id === campaignId) || null;
 }
 
-function isCausalEvidence(item, evidenceId) {
-  if (state.selectedEvidence && state.selectedEvidence.id === evidenceId) return true;
-  if (state.selectedEvidence && item.placement_id === state.selectedEvidence.placementId) {
-    return true;
+function causalEvidenceIds() {
+  if (state.selectedEvidence === null) return new Set();
+  const records = [];
+  for (const item of state.opportunityPage ? state.opportunityPage.items : []) {
+    records.push({ id: item.opportunity_id, causes: [] });
   }
-  return state.selectedCampaign !== null && item.campaign_id === state.selectedCampaign;
+  for (const item of state.attentionPage ? state.attentionPage.items : []) {
+    records.push({ id: item.event_id, causes: [item.caused_by, item.opportunity_id] });
+  }
+  for (const item of state.responsePage ? state.responsePage.items : []) {
+    records.push({
+      id: item.event_id,
+      causes: item.event_type === "spatial.response"
+        ? [item.caused_by, item.opportunity_id]
+        : item.caused_by_event_ids,
+    });
+  }
+  const graph = new Map();
+  const connect = (left, right) => {
+    if (!graph.has(left)) graph.set(left, new Set());
+    if (!graph.has(right)) graph.set(right, new Set());
+    graph.get(left).add(right);
+    graph.get(right).add(left);
+  };
+  for (const record of records) {
+    if (!graph.has(record.id)) graph.set(record.id, new Set());
+    for (const cause of record.causes) connect(record.id, cause);
+  }
+  const related = new Set([state.selectedEvidence.id]);
+  const pending = [state.selectedEvidence.id];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const adjacent of graph.get(current) || []) {
+      if (related.has(adjacent)) continue;
+      related.add(adjacent);
+      pending.push(adjacent);
+    }
+  }
+  return related;
+}
+
+function isCausalEvidence(evidenceId) {
+  return causalEvidenceIds().has(evidenceId);
 }
 
 function drawPlaceMarker(place, x, y, selected) {
@@ -373,7 +469,7 @@ function drawOpportunityMarker(opportunity, project) {
     : position ? [position.longitude, position.latitude] : null;
   if (!coordinate) return;
   const [x, y] = project(coordinate[0], coordinate[1]);
-  const causal = isCausalEvidence(opportunity, opportunity.opportunity_id);
+  const causal = isCausalEvidence(opportunity.opportunity_id);
   const selected = opportunity.agent_id === state.selected || causal;
   ctx.save();
   ctx.translate(x, y);
@@ -403,7 +499,7 @@ function drawAttentionMarker(event, project) {
     : position ? [position.longitude, position.latitude] : null;
   if (!coordinate) return;
   const [x, y] = project(coordinate[0], coordinate[1]);
-  const causal = isCausalEvidence(event, event.event_id);
+  const causal = isCausalEvidence(event.event_id);
   const selected = event.agent_id === state.selected || causal;
   ctx.save();
   ctx.translate(x, y);
@@ -604,6 +700,7 @@ function renderCausalPresentation() {
   const campaignSelector = byId("response-metrics-campaign");
   if (campaignId === null) delete campaignSelector.dataset.causalCampaignId;
   else campaignSelector.dataset.causalCampaignId = campaignId;
+  showResponseMetricSeries(campaignId);
 }
 
 function renderMapTextAlternative() {
@@ -657,17 +754,20 @@ function showResponseMetricSeries(campaignId) {
 
 async function selectCausalEvidence(kind, item) {
   stopPlayback();
-  const previousCampaign = state.selectedCampaign;
-  const previousEvidence = state.selectedEvidence;
+  const generation = ++state.causalSelectionGeneration;
+  const evidence = selectedEvidenceIdentity(kind, item);
+  if (!await setMinute(state.minute, item.agent_id, null, false)) return;
+  if (generation !== state.causalSelectionGeneration) return;
   state.selectedCampaign = item.campaign_id;
-  state.selectedEvidence = selectedEvidenceIdentity(kind, item);
-  if (await setMinute(state.minute, item.agent_id)) return;
-  state.selectedCampaign = previousCampaign;
-  state.selectedEvidence = previousEvidence;
+  state.selectedEvidence = evidence;
   renderOpportunityEvidence();
   renderAttentionEvidence();
   renderResponseEvidence();
+  renderMap();
   renderMapTextAlternative();
+  announceTimeline(byId("map-text-summary").textContent);
+  const selectedCard = document.querySelector(`[data-evidence-id="${evidence.id}"]`);
+  if (selectedCard instanceof HTMLElement) selectedCard.focus();
 }
 
 function evidenceLabel(kind) {
@@ -851,12 +951,208 @@ function validateResponseStateValue(value, kind) {
       && (
         !Number.isInteger(responseState.last_response_minute)
         || responseState.last_response_minute < 0
-        || responseState.last_response_minute >= 10080
+        || responseState.last_response_minute >= state.meta.days * 1440
       )
     )
     || ((responseState.response_count === 0) !== (responseState.last_response_minute === null))
   ) throw evidenceValidationError(kind);
   return responseState;
+}
+
+function timelineFrameValidationError() {
+  return new Error("Timeline frame is invalid");
+}
+
+function validateTimelineCoordinate(value) {
+  const coordinate = requireRecord(value, "Timeline coordinate");
+  if (
+    !hasExactKeys(coordinate, ["longitude", "latitude"])
+    || !validEvidenceNumber(coordinate.longitude, -180, 180)
+    || !validEvidenceNumber(coordinate.latitude, -90, 90)
+  ) throw timelineFrameValidationError();
+  return coordinate;
+}
+
+function validateTimelineFrame(value, requestedMinute, selectedAgent) {
+  try {
+    const frame = requireRecord(value, "Timeline frame");
+    if (
+      !hasExactKeys(frame, timelineFrameKeys)
+      || frame.minute !== requestedMinute
+      || !Array.isArray(frame.positions)
+      || frame.positions.length !== state.agents.length
+    ) throw timelineFrameValidationError();
+    const knownAgents = knownEvidenceAgents();
+    const knownRoads = new Set(state.city.roads.map((road) => road.road_id));
+    const knownNodes = new Set(state.city.nodes.map((node) => node.node_id));
+    const positionedAgents = new Set();
+    for (const positionValue of frame.positions) {
+      const position = requireRecord(positionValue, "Timeline position");
+      if (
+        !hasExactKeys(position, timelinePositionKeys)
+        || !knownAgents.has(position.agent_id)
+        || positionedAgents.has(position.agent_id)
+        || position.minute !== requestedMinute
+        || !validEvidenceNumber(position.longitude, -180, 180)
+        || !validEvidenceNumber(position.latitude, -90, 90)
+        || !["home", "commute", "work", "leisure"].includes(position.activity)
+        || (
+          position.road_id !== null
+          && (!validEvidenceId(position.road_id) || !knownRoads.has(position.road_id))
+        )
+        || typeof position.coordinate_label !== "string"
+        || Array.from(position.coordinate_label).length < 1
+        || Array.from(position.coordinate_label).length > 160
+        || /[\u0000-\u001f\u007f-\u009f]/.test(position.coordinate_label)
+      ) throw timelineFrameValidationError();
+      positionedAgents.add(position.agent_id);
+    }
+    if (
+      positionedAgents.size !== knownAgents.size
+      || [...knownAgents].some((agentId) => !positionedAgents.has(agentId))
+    ) throw timelineFrameValidationError();
+
+    const route = requireRecord(frame.route, "Timeline route");
+    if (
+      !hasExactKeys(route, timelineRouteKeys)
+      || route.agent_id !== selectedAgent
+      || !knownAgents.has(route.agent_id)
+      || !["outbound", "return"].includes(route.direction)
+      || !["work", "leisure"].includes(route.destination_activity)
+      || !Array.isArray(route.node_ids)
+      || !Array.isArray(route.road_ids)
+      || !Array.isArray(route.directions)
+      || !Array.isArray(route.geometry)
+      || route.node_ids.length !== route.road_ids.length + 1
+      || route.directions.length !== route.road_ids.length
+      || route.geometry.length !== route.road_ids.length
+      || route.node_ids.length < 1
+      || route.node_ids.some((nodeId) => !validEvidenceId(nodeId) || !knownNodes.has(nodeId))
+      || route.road_ids.some((roadId) => !validEvidenceId(roadId) || !knownRoads.has(roadId))
+      || route.directions.some((direction) => !["forward", "backward"].includes(direction))
+      || !validEvidenceNumber(route.duration_minutes, 0, 1_000_000_000)
+      || !validEvidenceNumber(route.distance_meters, 0, 1_000_000_000)
+    ) throw timelineFrameValidationError();
+    for (const line of route.geometry) {
+      if (!Array.isArray(line) || line.length < 2 || line.length > 100_000) {
+        throw timelineFrameValidationError();
+      }
+      for (const coordinate of line) validateTimelineCoordinate(coordinate);
+    }
+    return frame;
+  } catch (error) {
+    if (error instanceof Error && error.message === "Timeline frame is invalid") throw error;
+    throw timelineFrameValidationError();
+  }
+}
+
+function responseStatePageValidationError() {
+  return new Error("Spatial response state page is invalid");
+}
+
+function validateResponseStatePage(value, selectedAgent, requestedOffset) {
+  try {
+    const page = requireRecord(value, "Spatial response state page");
+    const summary = state.responseSummary;
+    const campaigns = state.opportunitySummary && state.opportunitySummary.campaigns;
+    if (!summary || !Array.isArray(campaigns)) throw responseStatePageValidationError();
+    const campaignIds = campaigns.map((campaign) => campaign.campaign_id);
+    const total = requireBoundedInteger(page.total, 0, 600, "Response state total");
+    if (requestedOffset > total || (total > 0 && requestedOffset === total)) {
+      throw responseStatePageValidationError();
+    }
+    const expectedLength = total === 0 ? 0 : Math.min(EVIDENCE_PAGE_SIZE, total - requestedOffset);
+    const expectedNext = requestedOffset + expectedLength < total
+      ? requestedOffset + expectedLength
+      : null;
+    if (
+      !hasExactKeys(page, responseStatePageKeys)
+      || page.schema_version !== 1
+      || page.model_id !== "spatial-response-state-v1"
+      || page.claim_scope !== "synthetic-response-not-observed-behavior"
+      || !validEvidenceHash(page.response_input_sha256)
+      || page.response_input_sha256 !== summary.response_input_sha256
+      || !validEvidenceHash(page.scenario_sha256)
+      || page.scenario_sha256 !== summary.scenario_sha256
+      || page.scenario_sha256 !== state.opportunitySummary.scenario_sha256
+      || !validEvidenceHash(page.city_sha256)
+      || page.city_sha256 !== summary.city_sha256
+      || page.city_sha256 !== state.meta.city_sha256
+      || page.state_scope !== "final-end-of-run-not-scrubbed-minute"
+      || page.agent_id !== selectedAgent
+      || !knownEvidenceAgents().has(page.agent_id)
+      || page.offset !== requestedOffset
+      || page.limit !== EVIDENCE_PAGE_SIZE
+      || total !== summary.counts.campaign_count
+      || total !== state.meta.response_campaign_count
+      || summary.counts.final_state_count !== state.agents.length * total
+      || summary.counts.final_state_count !== state.meta.final_state_count
+      || !Array.isArray(page.items)
+      || page.items.length !== expectedLength
+      || page.next_offset !== expectedNext
+    ) throw responseStatePageValidationError();
+    const seenCampaigns = new Set();
+    for (const itemValue of page.items) {
+      const item = validateResponseStateValue(itemValue, "response");
+      if (
+        item.agent_id !== selectedAgent
+        || !campaignIds.includes(item.campaign_id)
+        || seenCampaigns.has(item.campaign_id)
+      ) throw responseStatePageValidationError();
+      seenCampaigns.add(item.campaign_id);
+    }
+    const expectedCampaigns = campaignIds.slice(requestedOffset, requestedOffset + expectedLength);
+    if (!sameStrings([...seenCampaigns], expectedCampaigns)) {
+      throw responseStatePageValidationError();
+    }
+    return page;
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === "Spatial response state page is invalid"
+    ) throw error;
+    throw responseStatePageValidationError();
+  }
+}
+
+function completeTimelineBatchAvailable() {
+  return state.meta.spatial_opportunities === true
+    && state.meta.spatial_attention === true
+    && state.meta.spatial_response === true;
+}
+
+function timelineBatchUrl(minute, selectedAgent, offsets) {
+  return `/timeline?minute=${minute}`
+    + `&agent_id=${encodeURIComponent(selectedAgent)}`
+    + `&opportunity_offset=${offsets.opportunity}`
+    + `&attention_offset=${offsets.attention}`
+    + `&response_offset=${offsets.response}`
+    + `&response_state_offset=0&limit=${EVIDENCE_PAGE_SIZE}`;
+}
+
+function validateTimelineBatch(value, requestedMinute, selectedAgent, offsets) {
+  const batch = requireRecord(value, "Timeline batch");
+  if (
+    !hasExactKeys(batch, timelineBatchKeys)
+    || batch.schema_version !== 1
+    || batch.minute !== requestedMinute
+    || batch.agent_id !== selectedAgent
+  ) throw new Error("Timeline batch is invalid");
+  return {
+    frame: validateTimelineFrame(batch.frame, requestedMinute, selectedAgent),
+    opportunityPage: validateEvidencePage(
+      "opportunity", batch.opportunity_page, requestedMinute, offsets.opportunity,
+    ),
+    attentionPage: validateEvidencePage(
+      "attention", batch.attention_page, requestedMinute, offsets.attention,
+    ),
+    responsePage: validateEvidencePage(
+      "response", batch.response_page, requestedMinute, offsets.response,
+    ),
+    responseStatePage: validateResponseStatePage(
+      batch.response_state_page, selectedAgent, 0,
+    ),
+  };
 }
 
 function validateResponseRecord(itemValue, requestedMinute) {
@@ -1097,7 +1393,10 @@ function renderOpportunityEvidence() {
       "causal-selected",
       state.selectedEvidence !== null && state.selectedEvidence.id === opportunity.opportunity_id,
     );
-    card.classList.toggle("causal-related", isCausalEvidence(opportunity, opportunity.opportunity_id));
+    const causalSelected = state.selectedEvidence !== null
+      && state.selectedEvidence.id === opportunity.opportunity_id;
+    card.classList.toggle("causal-related", isCausalEvidence(opportunity.opportunity_id));
+    card.setAttribute("aria-pressed", String(causalSelected));
     const channel = document.createElement("span");
     channel.className = `opportunity-channel ${opportunity.channel === "mobile-feed" ? "phone" : "roadside"}`;
     channel.textContent = opportunity.channel === "mobile-feed" ? "PHONE" : "ROADSIDE BILLBOARD";
@@ -1136,7 +1435,10 @@ function renderAttentionEvidence() {
       "causal-selected",
       state.selectedEvidence !== null && state.selectedEvidence.id === event.event_id,
     );
-    card.classList.toggle("causal-related", isCausalEvidence(event, event.event_id));
+    const causalSelected = state.selectedEvidence !== null
+      && state.selectedEvidence.id === event.event_id;
+    card.classList.toggle("causal-related", isCausalEvidence(event.event_id));
+    card.setAttribute("aria-pressed", String(causalSelected));
     const stageLabel = document.createElement("span");
     stageLabel.className = "attention-stage";
     stageLabel.textContent = event.event_type === "spatial.noticed" ? "NOTICE" : "IMPRESSION";
@@ -1187,10 +1489,10 @@ function renderResponseEvidence() {
       "causal-selected",
       state.selectedEvidence !== null && state.selectedEvidence.id === record.event_id,
     );
-    card.classList.toggle(
-      "causal-related",
-      state.selectedCampaign !== null && record.campaign_id === state.selectedCampaign,
-    );
+    const causalSelected = state.selectedEvidence !== null
+      && state.selectedEvidence.id === record.event_id;
+    card.classList.toggle("causal-related", isCausalEvidence(record.event_id));
+    card.setAttribute("aria-pressed", String(causalSelected));
     const stageLabel = document.createElement("span");
     stageLabel.className = "response-stage";
     const at = document.createElement("span");
@@ -1873,6 +2175,7 @@ function renderSpatialResponseMetrics() {
       ) throw new Error("Unknown response metric campaign");
       state.selectedCampaign = campaignId;
       state.selectedEvidence = null;
+      state.causalSelectionGeneration += 1;
       showResponseMetricSeries(campaignId);
       if (state.frame) renderTimeline();
     } catch (error) {
@@ -1911,22 +2214,41 @@ async function loadEvidencePage(kind, offset) {
       || pageRequest !== state.evidenceRequests[kind]
       || minute !== state.minute
     ) return;
+    const committedSelection = state.selectedEvidence;
+    const selectionLeftPage = committedSelection !== null
+      && committedSelection.kind === kind
+      && !page.items.some(
+        (item) => selectedEvidenceIdentity(kind, item).id === committedSelection.id,
+      );
     state[contract.pageKey] = page;
+    if (selectionLeftPage) state.selectedEvidence = null;
     try {
+      renderOpportunityEvidence();
+      renderAttentionEvidence();
+      renderResponseEvidence();
       renderMap();
-      renderEvidenceKind(kind);
       renderMapTextAlternative();
     } catch (error) {
       state[contract.pageKey] = committedPage;
+      state.selectedEvidence = committedSelection;
       try {
+        renderOpportunityEvidence();
+        renderAttentionEvidence();
+        renderResponseEvidence();
         renderMap();
+        renderMapTextAlternative();
       } catch (_) {
         // Preserve the original render error; the committed state and ledger DOM remain usable.
       }
-      renderEvidenceKind(kind);
       throw error;
     }
     clearError(errorScope);
+    const selectionUpdate = selectionLeftPage
+      ? " The previous evidence selection was cleared because it is not on this page."
+      : "";
+    announceTimeline(
+      `${evidenceLabel(kind)}. ${byId(`${kind}-page-note`).textContent}.${selectionUpdate}`,
+    );
   } catch (error) {
     if (
       timelineRequest !== state.request
@@ -1964,6 +2286,7 @@ async function setMinute(
   minute,
   selectedAgent = state.selected,
   playbackGeneration = null,
+  announceCommittedFrame = true,
 ) {
   if (!state.meta) return false;
   if (playbackGeneration === null) stopPlayback();
@@ -1987,42 +2310,67 @@ async function setMinute(
   }
   updateLabels();
   try {
-    const requests = [fetchJson(
-      `/frame?minute=${next}&agent_id=${encodeURIComponent(selectedAgent)}`,
-      abortController.signal,
-    )];
-    const opportunityIndex = state.opportunitySummary ? requests.length : null;
-    if (opportunityIndex !== null) requests.push(fetchJson(
-      evidencePageUrl("opportunity", next, offsets.opportunity),
-      abortController.signal,
-    ));
-    const attentionIndex = state.attentionSummary ? requests.length : null;
-    if (attentionIndex !== null) requests.push(fetchJson(
-      evidencePageUrl("attention", next, offsets.attention),
-      abortController.signal,
-    ));
-    const responseIndex = state.responseSummary ? requests.length : null;
-    if (responseIndex !== null) requests.push(fetchJson(
-      evidencePageUrl("response", next, offsets.response),
-      abortController.signal,
-    ));
-    const responseStateIndex = state.responseSummary ? requests.length : null;
-    if (responseStateIndex !== null) requests.push(fetchJson(
-      `/response-state?agent_id=${encodeURIComponent(selectedAgent)}`,
-      abortController.signal,
-    ));
-    const responses = await Promise.all(requests);
-    const frame = responses[0];
-    const opportunityPage = opportunityIndex === null
-      ? null
-      : validateEvidencePage("opportunity", responses[opportunityIndex], next, offsets.opportunity);
-    const attentionPage = attentionIndex === null
-      ? null
-      : validateEvidencePage("attention", responses[attentionIndex], next, offsets.attention);
-    const responsePage = responseIndex === null
-      ? null
-      : validateEvidencePage("response", responses[responseIndex], next, offsets.response);
-    const responseStatePage = responseStateIndex === null ? null : responses[responseStateIndex];
+    let frame;
+    let opportunityPage;
+    let attentionPage;
+    let responsePage;
+    let responseStatePage;
+    if (completeTimelineBatchAvailable()) {
+      ({ frame, opportunityPage, attentionPage, responsePage, responseStatePage } = (
+        validateTimelineBatch(
+          await fetchJson(
+            timelineBatchUrl(next, selectedAgent, offsets),
+            abortController.signal,
+          ),
+          next,
+          selectedAgent,
+          offsets,
+        )
+      ));
+    } else {
+      const requests = [fetchJson(
+        `/frame?minute=${next}&agent_id=${encodeURIComponent(selectedAgent)}`,
+        abortController.signal,
+      )];
+      const opportunityIndex = state.opportunitySummary ? requests.length : null;
+      if (opportunityIndex !== null) requests.push(fetchJson(
+        evidencePageUrl("opportunity", next, offsets.opportunity),
+        abortController.signal,
+      ));
+      const attentionIndex = state.attentionSummary ? requests.length : null;
+      if (attentionIndex !== null) requests.push(fetchJson(
+        evidencePageUrl("attention", next, offsets.attention),
+        abortController.signal,
+      ));
+      const responseIndex = state.responseSummary ? requests.length : null;
+      if (responseIndex !== null) requests.push(fetchJson(
+        evidencePageUrl("response", next, offsets.response),
+        abortController.signal,
+      ));
+      const responseStateIndex = state.responseSummary ? requests.length : null;
+      if (responseStateIndex !== null) requests.push(fetchJson(
+        `/response-state?agent_id=${encodeURIComponent(selectedAgent)}`,
+        abortController.signal,
+      ));
+      const responses = await Promise.all(requests);
+      frame = validateTimelineFrame(responses[0], next, selectedAgent);
+      opportunityPage = opportunityIndex === null
+        ? null
+        : validateEvidencePage(
+          "opportunity", responses[opportunityIndex], next, offsets.opportunity,
+        );
+      attentionPage = attentionIndex === null
+        ? null
+        : validateEvidencePage(
+          "attention", responses[attentionIndex], next, offsets.attention,
+        );
+      responsePage = responseIndex === null
+        ? null
+        : validateEvidencePage("response", responses[responseIndex], next, offsets.response);
+      responseStatePage = responseStateIndex === null
+        ? null
+        : validateResponseStatePage(responses[responseStateIndex], selectedAgent, 0);
+    }
     if (
       request !== state.request
       || state.timelineAbortController !== abortController
@@ -2060,6 +2408,10 @@ async function setMinute(
       throw error;
     }
     state.timelineAbortController = null;
+    clearError("timeline");
+    if (playbackGeneration === null && announceCommittedFrame) {
+      announceTimeline(byId("map-text-summary").textContent);
+    }
     return true;
   } catch (error) {
     const current = request === state.request
@@ -2076,7 +2428,7 @@ async function setMinute(
     state.timelineLoading = false;
     for (const kind of evidencePageKinds) setEvidencePaginationBusy(kind, false);
     updateLabels();
-    showError(String(error));
+    showError(String(error), "timeline");
     stopPlayback("STOPPED · LAST COMMITTED FRAME RETAINED");
     return false;
   }
@@ -2493,6 +2845,10 @@ function reducedMotionRequested() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+function announceTimeline(message) {
+  byId("timeline-announcement").textContent = message;
+}
+
 function updatePlaybackControl(message) {
   const button = byId("play-button");
   const reduced = reducedMotionRequested();
@@ -2505,6 +2861,7 @@ function updatePlaybackControl(message) {
 }
 
 function stopPlayback(message = "PAUSED") {
+  const wasPlaying = state.playing;
   state.playing = false;
   state.playbackGeneration += 1;
   if (state.playbackDelay !== null) window.clearTimeout(state.playbackDelay);
@@ -2517,6 +2874,11 @@ function stopPlayback(message = "PAUSED") {
     updateLabels();
   }
   updatePlaybackControl(message);
+  if (wasPlaying) {
+    if (message.startsWith("END OF RUN")) announceTimeline("Playback reached the end of the run and paused.");
+    else if (message.startsWith("STOPPED")) announceTimeline("Playback stopped. The last committed frame was retained.");
+    else announceTimeline("Playback paused.");
+  }
 }
 
 function schedulePlaybackStep(generation) {
@@ -2537,7 +2899,6 @@ async function playbackStep(generation) {
   }
   const committed = await setMinute(state.minute + 1, state.selected, generation);
   if (!committed || !state.playing || generation !== state.playbackGeneration) return;
-  byId("playback-status").textContent = `PLAYING · ${dayText(state.minute)} ${clockText(state.minute)} · ${state.playbackSpeed}×`;
   schedulePlaybackStep(generation);
 }
 
@@ -2558,6 +2919,7 @@ function togglePlayback() {
   state.playbackGeneration += 1;
   const generation = state.playbackGeneration;
   updatePlaybackControl(`PLAYING · ${state.playbackSpeed}×`);
+  announceTimeline(`Playback started at ${state.playbackSpeed}× presentation speed.`);
   playbackStep(generation);
 }
 
@@ -2733,6 +3095,8 @@ reducedMotionQuery.addEventListener("change", () => {
   else updatePlaybackControl("PAUSED");
 });
 window.addEventListener("pagehide", () => stopPlayback("PAUSED"));
+window.addEventListener("resize", scheduleErrorBannerInset);
+window.addEventListener("scroll", scheduleErrorBannerInset, { passive: true });
 for (const kind of evidencePageKinds) {
   byId(`${kind}-page-previous`).addEventListener(
     "click",

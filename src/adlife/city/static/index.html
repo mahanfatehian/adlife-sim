@@ -39,7 +39,7 @@
         </div>
         <section class="map-text-alternative" aria-labelledby="map-text-title">
           <div><span class="eyebrow">TEXT MAP / PRESENTATION STATE</span><h3 id="map-text-title">Current frame in words</h3></div>
-          <p id="map-text-summary" role="status" aria-live="polite" aria-atomic="true">Loading the committed frame&hellip;</p>
+          <p id="map-text-summary">Loading the committed frame&hellip;</p>
           <p id="map-evidence-scope">Evidence markers are page-scoped.</p>
         </section>
         <div class="map-footer"><div class="map-copyright"><span id="attribution">Loading data attribution…</span><span aria-hidden="true"> · </span><span id="license-label"></span></div><a id="source-link" target="_blank" rel="noopener noreferrer">Data source ↗</a></div>
@@ -137,12 +137,12 @@
           <div class="opportunity-heading"><div><span class="eyebrow">PERSISTED EVIDENCE / CURRENT MINUTE</span><h2 id="opportunity-scenario">Spatial study</h2></div><span class="evidence-seal" aria-hidden="true">E</span></div>
           <div class="opportunity-totals" aria-label="Spatial opportunity totals"><div><span>ALL</span><strong id="opportunity-total">0</strong></div><div><span>ROADSIDE</span><strong id="opportunity-roadside">0</strong></div><div><span>PHONE</span><strong id="opportunity-phone">0</strong></div></div>
           <p class="opportunity-claim" id="opportunity-claim">SYNTHETIC OPPORTUNITY · NOT AN IMPRESSION</p>
-          <div class="opportunity-now"><span>AT THE SCRUBBER</span><strong id="opportunity-current" role="status" aria-live="polite" aria-atomic="true">0 AT THIS MINUTE · 0 FOR SELECTED AGENT</strong></div>
+          <div class="opportunity-now"><span>AT THE SCRUBBER</span><strong id="opportunity-current">0 AT THIS MINUTE · 0 FOR SELECTED AGENT</strong></div>
           <div class="opportunity-list" id="opportunity-list"></div>
           <p class="opportunity-empty" id="opportunity-empty">No opportunity evidence at this minute.</p>
           <nav class="evidence-pagination" id="opportunity-pagination" aria-label="Opportunity evidence pages" hidden>
             <button id="opportunity-page-previous" type="button" aria-label="Previous opportunity evidence page">PREVIOUS</button>
-            <p class="opportunity-page-note" id="opportunity-page-note" role="status" aria-live="polite" aria-atomic="true"></p>
+            <p class="opportunity-page-note" id="opportunity-page-note"></p>
             <button id="opportunity-page-next" type="button" aria-label="Next opportunity evidence page">NEXT</button>
           </nav>
           <p class="evidence-map-scope">Map markers show the currently displayed opportunity page.</p>
@@ -152,12 +152,12 @@
           <div class="attention-causal" aria-label="Opportunity causes impression; impression may cause notice"><span>OPPORTUNITY</span><i aria-hidden="true">&rarr;</i><span>IMPRESSION</span><i aria-hidden="true">&rarr;</i><span>NOTICE</span></div>
           <div class="attention-totals" aria-label="Synthetic attention totals"><div><span>IMPRESSIONS</span><strong id="attention-impressions">0</strong></div><div><span>NOTICES</span><strong id="attention-notices">0</strong></div><div><span>FIXED P</span><strong id="attention-probability">0%</strong></div></div>
           <p class="attention-claim" id="attention-claim">SYNTHETIC ATTENTION &middot; NOT OBSERVED BEHAVIOR</p>
-          <div class="attention-now"><span>AT THE SCRUBBER</span><strong id="attention-current" role="status" aria-live="polite" aria-atomic="true">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
+          <div class="attention-now"><span>AT THE SCRUBBER</span><strong id="attention-current">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
           <div class="attention-list" id="attention-list"></div>
           <p class="attention-empty" id="attention-empty">No attention evidence at this minute.</p>
           <nav class="evidence-pagination" id="attention-pagination" aria-label="Attention evidence pages" hidden>
             <button id="attention-page-previous" type="button" aria-label="Previous attention evidence page">PREVIOUS</button>
-            <p class="attention-page-note" id="attention-page-note" role="status" aria-live="polite" aria-atomic="true"></p>
+            <p class="attention-page-note" id="attention-page-note"></p>
             <button id="attention-page-next" type="button" aria-label="Next attention evidence page">NEXT</button>
           </nav>
           <p class="evidence-map-scope">Map markers show the currently displayed attention page.</p>
@@ -167,19 +167,19 @@
           <div class="response-causal" id="response-causal" aria-label="Notice causes a rule response; responses are atomically committed as a state update"><span>NOTICE</span><i aria-hidden="true">&rarr;</i><span>RULE RESPONSE</span><i aria-hidden="true">&rarr;</i><span>STATE UPDATE</span></div>
           <div class="response-totals" aria-label="Synthetic response totals"><div><span>RESPONSES</span><strong id="response-responses">0</strong></div><div><span>UPDATES</span><strong id="response-updates">0</strong></div><div><span>CAMPAIGNS</span><strong id="response-campaigns">0</strong></div></div>
           <p class="response-claim" id="response-claim">SYNTHETIC RESPONSE &middot; NOT OBSERVED BEHAVIOR</p>
-          <div class="response-now"><span>AT THE SCRUBBER</span><strong id="response-current" role="status" aria-live="polite" aria-atomic="true">0 RECORDS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
+          <div class="response-now"><span>AT THE SCRUBBER</span><strong id="response-current">0 RECORDS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
           <div class="response-list" id="response-list"></div>
           <p class="response-empty" id="response-empty">No response evidence at this minute.</p>
           <nav class="evidence-pagination" id="response-pagination" aria-label="Response evidence pages" hidden>
             <button id="response-page-previous" type="button" aria-label="Previous response evidence page">PREVIOUS</button>
-            <p class="response-page-note" id="response-page-note" role="status" aria-live="polite" aria-atomic="true"></p>
+            <p class="response-page-note" id="response-page-note"></p>
             <button id="response-page-next" type="button" aria-label="Next response evidence page">NEXT</button>
           </nav>
           <section class="response-state-panel" id="response-state-panel" aria-labelledby="response-state-time" aria-describedby="response-state-warning response-state-claim" tabindex="0" hidden>
             <div class="response-state-heading"><div><span class="eyebrow" id="response-state-time">FINAL STATE / END OF RUN</span><h3>Campaign state ledger</h3></div><span class="state-seal" aria-hidden="true">S</span></div>
             <p class="response-state-warning" id="response-state-warning">NOT STATE AT THE SCRUBBED MINUTE</p>
             <p class="response-state-claim" id="response-state-claim">UNCALIBRATED SYNTHETIC PROXIES &middot; PURCHASE INTENTION IS NOT PURCHASE PROBABILITY OR SALES</p>
-            <p class="response-state-current" id="response-state-current" role="status" aria-live="polite" aria-atomic="true">0 FINAL CAMPAIGN STATES FOR SELECTED AGENT</p>
+            <p class="response-state-current" id="response-state-current">0 FINAL CAMPAIGN STATES FOR SELECTED AGENT</p>
             <div class="response-state-list" id="response-state-list"></div>
             <p class="response-state-empty" id="response-state-empty">No final campaign state for the selected agent.</p>
             <p class="response-state-page-note" id="response-state-page-note" hidden></p>
@@ -189,6 +189,7 @@
           <div class="response-metrics-heading"><div><span class="eyebrow">VERIFIED RECEIPTS / FULL RUN</span><h2 id="response-metrics-title">Response evidence summary</h2></div><span class="response-metrics-seal" aria-hidden="true">R&Sigma;</span></div>
           <p class="response-metrics-claim" id="response-metrics-claim">SYNTHETIC RESPONSE METRICS &middot; NOT OBSERVED OUTCOMES</p>
           <p class="response-metrics-disclosure" id="response-metrics-disclosure">Response counts are deterministic rule-processing records, not observed engagement. Planned rule deltas are distinct from bounded committed state changes. Purchase intention is an uncalibrated synthetic proxy, not purchase probability, transactions, sales, or a sales forecast.</p>
+          <p class="response-metrics-event-scope" id="response-metrics-event-scope">UNFILTERED FULL-RUN EVENT TOTALS</p>
           <div class="response-metrics-table-wrap" tabindex="0" aria-label="Scrollable direct rule-response receipt table">
             <table class="response-metrics-table" id="response-metrics-event-table">
               <caption>Direct rule-response values and numerator-denominator receipts for all channels, roadside, and phone</caption>
@@ -225,11 +226,12 @@
           <button id="play-button" type="button" aria-label="Play timeline">▶</button>
           <button id="next-day-button" type="button" aria-label="Next model day">+1D</button>
         </div>
-        <div class="timeline-clock"><span class="eyebrow">SIMULATED TIME</span><strong id="timeline-time">DAY 01 · 00:00</strong><span id="playback-status" role="status" aria-live="polite" aria-atomic="true">PAUSED</span></div>
+        <div class="timeline-clock"><span class="eyebrow">SIMULATED TIME</span><strong id="timeline-time">DAY 01 · 00:00</strong><span id="playback-status">PAUSED</span></div>
       </div>
       <div class="timeline-track"><input id="time-slider" type="range" min="0" max="1439" value="0" aria-label="Simulation minute" aria-valuetext="Day 1, 00:00"><div class="time-marks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div></div>
-      <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-MINUTE MOBILITY FRAMES</span><label for="playback-speed">PRESENTATION SPEED <select id="playback-speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><output id="playback-speed-label" aria-live="polite" aria-atomic="true">1×</output></div>
+      <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-MINUTE MOBILITY FRAMES</span><label for="playback-speed">PRESENTATION SPEED <select id="playback-speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><output id="playback-speed-label">1×</output></div>
       <p class="model-clock-note" id="model-clock-note">MODEL TIME ZONE LOADING · ILLUSTRATIVE LIGHT RULE: DAY FROM 06:00 UNTIL 19:00; not local sunrise, calendar time, traffic or DST behavior.</p>
+      <span class="screen-reader-only" id="timeline-announcement" role="status" aria-live="polite" aria-atomic="true"></span>
     </footer>
   </div>
   <div class="error-banner" id="error-banner" role="alert" hidden></div>

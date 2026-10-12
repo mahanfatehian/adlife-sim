@@ -68,6 +68,7 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
         html = wheel.read("adlife/city/static/index.html").decode("utf-8")
         style = wheel.read("adlife/city/static/app.css").decode("utf-8")
         script = wheel.read("adlife/city/static/app.js").decode("utf-8")
+    compact_script = "".join(script.split())
     for resource in (
         "adlife/city/demo_city.json",
         "adlife/city/static/index.html",
@@ -91,9 +92,13 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     assert 'fetchJson("/spatial-metrics")' in script
     assert 'fetchJson("/response-summary")' in script
     assert 'endpoint: "/response-events"' in script
-    assert 'fetchJson(evidencePageUrl("response", next, offsets.response))' in script
+    assert 'fetchJson(evidencePageUrl("response",next,offsets.response),' in compact_script
     assert "`${endpoint}?minute=${minute}&offset=${offset}&limit=${EVIDENCE_PAGE_SIZE}`" in script
-    assert "fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`)" in script
+    assert (
+        "fetchJson(`/response-state?agent_id=${encodeURIComponent(selectedAgent)}`,"
+        in compact_script
+    )
+    assert "fetchJson(timelineBatchUrl(" in compact_script
     assert "/api/spatial-metrics" not in script
     assert "/api/response-summary" not in script
     assert "/api/response-events" not in script

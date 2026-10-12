@@ -46,3 +46,12 @@ button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible,[t
 @media(max-width:520px){.map-panel{min-height:620px}.map-text-alternative{grid-template-columns:1fr;padding:11px 16px}.map-text-alternative>div{grid-column:auto}.timeline-controls{align-items:flex-start;flex-direction:column}.timeline-controls .timeline-button-group{flex-direction:row}.timeline-button-group button{width:44px;height:44px}.timeline-track{width:100%}.map-zoom-controls{grid-template-columns:44px 54px 50px 44px}.map-legend{left:16px;bottom:16px;max-width:calc(100% - 32px)}.model-clock-note{font-size:7px}.metric-grid{grid-template-columns:minmax(0,1fr)}.metric{min-width:0;border-right:0!important;border-bottom:1px solid var(--line)}.metric:last-child{border-bottom:0}.metric strong{overflow-wrap:anywhere}}
 @media(prefers-reduced-motion:reduce){.map-stage:before,.night .map-stage:after{animation:none!important}.timeline-button-group #play-button:disabled{opacity:.7}}
 @media(forced-colors:active){button,select,input,[tabindex="0"]{forced-color-adjust:auto}.map-zoom-controls,.map-text-alternative,.timeline{border-color:CanvasText}.opportunity-card.causal-selected,.attention-card.causal-selected,.response-card.causal-selected{outline:3px solid Highlight}.legend-agent,.legend-selected,.status-dot{background:CanvasText}}
+.screen-reader-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+.response-metrics-event-scope{margin:12px 0 7px;color:var(--response);font:700 10px Consolas,monospace;letter-spacing:.08em}
+.error-banner{bottom:164px}
+@media(max-width:900px){.error-banner{bottom:12px}}
+#map-text-title,#selected-activity{font-size:.9375rem}
+#map-text-summary,.response-card small{font-size:.625rem}
+#response-metrics-series-label,#zoom-reset-button{font-size:.6875rem}
+#timeline-time{font-size:.875rem}
+@media(max-width:520px){.map-zoom-controls{grid-template-columns:44px minmax(80px,auto) minmax(64px,auto) 44px}}
