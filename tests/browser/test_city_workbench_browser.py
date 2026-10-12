@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -31,8 +32,8 @@ _BROWSER_PATHS = (
     Path("/usr/bin/chromium-browser"),
 )
 _LONG_BROWSER_TEST = pytest.mark.skipif(
-    os.environ.get("ADLIFE_SKIP_LONG_TESTS") == "1",
-    reason="ADLIFE_SKIP_LONG_TESTS is set",
+    os.environ.get("ADLIFE_SKIP_LONG_TESTS") == "1" or sys.gettrace() is not None,
+    reason="long browser workloads require an uninstrumented timing gate",
 )
 
 
