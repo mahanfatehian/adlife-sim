@@ -292,9 +292,13 @@ async def test_dashboard_is_offline_and_discloses_model_limitations() -> None:
         js = await web.get("/static/app.js")
         css = await web.get("/static/app.css")
     assert html.status_code == js.status_code == css.status_code == 200
-    assert "Synthetic mobility pilot" in html.text
-    assert "not a prediction" in html.text
-    assert "1-MINUTE MOBILITY FRAMES" in html.text
+    assert "Synthetic model" in html.text
+    assert "not a prediction or forecast of real people, traffic, behavior, or sales" in html.text
+    assert "Run inspector" in html.text
+    assert "Current model minute" in html.text
+    assert "Mobility observatory" not in html.text
+    assert "A city in motion" not in html.text
+    assert "1-MINUTE MOBILITY FRAMES" not in html.text
     assert "15-MIN ENGINE" not in html.text
     assert 'id="license-label"' in html.text
     assert 'byId("license-label").textContent = meta.license' in js.text

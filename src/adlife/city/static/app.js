@@ -2841,8 +2841,8 @@ function renderWorkbenchAssumptions(input) {
     );
   }
   byId("assumptions-content").hidden = false;
-  byId("assumptions-status").textContent = "VERIFIED IMMUTABLE INPUT";
-  byId("assumptions-drawer").open = true;
+  byId("assumptions-status").textContent = "Verified";
+  byId("assumptions-drawer").open = false;
   byId("workbench-back-link").hidden = false;
 }
 
@@ -3025,7 +3025,7 @@ async function boot() {
     validateSpatialResponseSeed(meta.seed, metaResponse.integerToken);
     state.meta = meta; state.metaSeedToken = metaResponse.integerToken;
     state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
-    byId("model-clock-note").textContent = `MODEL TIME ZONE ${modelTimeZone()} · ILLUSTRATIVE LIGHT RULE: DAY FROM 06:00 UNTIL 19:00; not local sunrise, calendar time, traffic or DST behavior.`;
+    byId("model-clock-note").textContent = `Clock: ${modelTimeZone()}. Daylight is illustrative from 06:00–19:00; it does not model local sunrise, traffic, calendars, or DST.`;
     if (meta.workbench_input_available === true) {
       try {
         if (
@@ -3109,7 +3109,7 @@ async function boot() {
     byId("road-count").textContent = String(city.roads.length).padStart(2, "0");
     byId("seed-value").textContent = state.metaSeedToken;
     byId("model-label").textContent = meta.model.replace("illustrative-road-", "").replaceAll("-", " ").toUpperCase();
-    byId("people-total").textContent = `${agents.length} ACTIVE`;
+    byId("people-total").textContent = `${agents.length} total`;
     byId("attribution").textContent = meta.attribution;
     byId("license-label").textContent = meta.license;
     byId("source-link").href = meta.source_url;
@@ -3138,6 +3138,16 @@ reducedMotionQuery.addEventListener("change", () => {
   if (reducedMotionRequested()) stopPlayback();
   else updatePlaybackControl("PAUSED");
 });
+const compactReceiptQuery = window.matchMedia("(max-width: 520px)");
+function syncAdvancedReceiptVisibility(query) {
+  for (const id of ["metrics-panel", "response-metrics-panel"]) {
+    byId(id).open = !query.matches;
+  }
+}
+compactReceiptQuery.addEventListener("change", (event) => {
+  syncAdvancedReceiptVisibility(event);
+});
+syncAdvancedReceiptVisibility(compactReceiptQuery);
 window.addEventListener("pagehide", () => stopPlayback("PAUSED"));
 window.addEventListener("resize", scheduleErrorBannerInset);
 window.addEventListener("scroll", scheduleErrorBannerInset, { passive: true });

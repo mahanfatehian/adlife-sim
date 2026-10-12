@@ -1805,6 +1805,9 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     assert "onclick=" not in shell.text.lower()
     assert 'class="skip-link"' in shell.text
     assert 'id="synthetic-disclosure"' in shell.text
+    assert '<h1 id="city-title">Choose a city</h1>' in shell.text
+    assert ">Synthetic model</strong>" in shell.text
+    assert "Fictional people and modeled responses" in shell.text
     assert 'aria-label="City study stages"' in shell.text
     assert [
         shell.text.count(f'class="stage-name">{stage}</b>')
@@ -1817,10 +1820,13 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     ] == [1, 1, 1, 1]
     assert 'id="city-map"' in shell.text
     assert 'id="city-map-alternative"' in shell.text
+    assert ">Map details</summary>" in shell.text
+    assert "<summary>Data &amp; integrity</summary>" in shell.text
     assert 'id="completed-runs"' in shell.text
-    assert "SYNTHETIC" in shell.text
-    assert "not real residents" in shell.text
-    assert "Provider and OAuth settings are not installed" in shell.text
+    assert "not observed behavior, real sales" in shell.text
+    assert "This city workflow does not call an AI provider" in shell.text
+    assert "CAUSAL THREAD" not in shell.text
+    assert "Compose bounded campaign assumptions" not in shell.text
     for control in ("<input", "<select", "<button"):
         assert control in shell.text.lower()
     assert "http://" not in shell.text

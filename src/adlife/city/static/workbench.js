@@ -482,6 +482,9 @@
         stageButton.removeAttribute("aria-current");
       }
     }
+    const mapHidden = stage === "run" || stage === "inspect";
+    document.querySelector(".map-column").hidden = mapHidden;
+    document.querySelector(".workbench-shell").classList.toggle("single-column", mapHidden);
     if (stage === "inspect") {
       loadRunPage(state.libraryOffset);
     }
@@ -620,15 +623,6 @@
     byId("roadside-fields").hidden = !roadside;
     byId("phone-card").classList.toggle("enabled", phone);
     byId("roadside-card").classList.toggle("enabled", roadside);
-    let label = "No placement selected";
-    if (phone && roadside) {
-      label = "Phone + roadside opportunities";
-    } else if (roadside) {
-      label = "Roadside opportunity";
-    } else if (phone) {
-      label = "Phone opportunity";
-    }
-    setText("thread-placement", label);
     renderMap();
   }
 
@@ -849,7 +843,7 @@
     setText("city-hash", detail.city_sha256);
     setText("city-license", detail.source.license);
     setText("city-attribution", detail.source.attribution);
-    setText("city-qualification", "VERIFIED FICTIONAL FIXTURE");
+    setText("city-qualification", "Verified");
     const omissions = detail.known_omissions.map((item) => makeElement("li", item));
     byId("city-omissions").replaceChildren(...omissions);
     byId("stage-campaign").disabled = false;
@@ -892,7 +886,7 @@
     const canvas = byId("city-map");
     const context = canvas.getContext("2d");
     context.clearRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = "#071820";
+    context.fillStyle = "#0b141d";
     context.fillRect(0, 0, canvas.width, canvas.height);
     if (!state.cityDetail) {
       setText("map-status", "WAITING FOR CITY");
@@ -950,7 +944,7 @@
       context.fillStyle = "#071218";
       context.fill();
       context.lineWidth = 3;
-      context.strokeStyle = "#84dfc2";
+      context.strokeStyle = "#6ecdb7";
       context.stroke();
     }
 
@@ -961,10 +955,10 @@
         const marker = project(pointAlong(roadPoints(selected, nodes), fraction));
         context.beginPath();
         context.arc(marker.x, marker.y, 14, 0, Math.PI * 2);
-        context.fillStyle = "rgba(217, 187, 115, .2)";
+        context.fillStyle = "rgba(225, 183, 95, .2)";
         context.fill();
         context.lineWidth = 4;
-        context.strokeStyle = "#d9bb73";
+        context.strokeStyle = "#e1b75f";
         context.stroke();
         context.beginPath();
         context.moveTo(marker.x, marker.y - 20);
@@ -972,18 +966,7 @@
         context.stroke();
       }
     }
-    if (byId("phone-enabled").checked) {
-      context.beginPath();
-      context.arc(canvas.width - 44, 44, 12, 0, Math.PI * 2);
-      context.fillStyle = "#84dfc2";
-      context.fill();
-      context.fillStyle = "#071218";
-      context.font = "bold 14px sans-serif";
-      context.textAlign = "center";
-      context.textBaseline = "middle";
-      context.fillText("P", canvas.width - 44, 44);
-    }
-    setText("map-status", "PACK HASH VERIFIED");
+    setText("map-status", "Verified pack");
     setText("map-summary", `${state.cityDetail.display_name} contains ${pack.roads.length} roads and ${pack.nodes.length} nodes. Geometry is fictional and model-only.`);
     const items = pack.roads.map((road) => makeElement("li", `${road.road_id}: ${road.kind}, ${road.directions.join(" / ")}`));
     byId("map-road-list").replaceChildren(...items);
@@ -1239,7 +1222,7 @@
     inspect.hidden = true;
     inspect.href = "/";
     if (job.phase === "completed") {
-      setText("job-message", "The artifact was persisted and independently verified. Inspection is ready; this page will not navigate automatically.");
+      setText("job-message", "The run is saved and ready to view.");
       inspect.href = job.result.inspector_url;
       inspect.hidden = false;
       inspect.focus();
@@ -1438,15 +1421,16 @@
       const cards = page.runs.map((run) => {
         const article = makeElement("article", null, "run-card");
         const header = makeElement("header");
-        header.append(makeElement("h2", run.run_id), makeElement("span", `SCHEMA ${run.run_schema_version}`));
+        header.append(makeElement("h2", run.run_id), makeElement("span", "Verified"));
         const facts = makeElement("dl");
         appendFact(facts, "City", run.city_id);
         appendFact(facts, "Seed", run.seed);
-        appendFact(facts, "Scale", `${run.agent_count} × ${run.days} days`);
-        appendFact(facts, "Frames", String(run.frame_count));
+        appendFact(facts, "People", String(run.agent_count));
+        appendFact(facts, "Days", String(run.days));
         appendFact(facts, "Opportunities", String(run.opportunity_count));
+        appendFact(facts, "Notices", String(run.noticed_count));
         appendFact(facts, "Responses", String(run.response_count));
-        const link = makeElement("a", "Inspect verified run", "button primary");
+        const link = makeElement("a", "View timeline and results", "button primary");
         link.href = run.inspector_url;
         article.append(header, facts, link);
         return article;

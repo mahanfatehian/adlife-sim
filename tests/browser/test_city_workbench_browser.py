@@ -176,9 +176,8 @@ def test_city_stage_boots_from_verified_local_catalog_without_external_requests(
             page.on("pageerror", lambda error: page_errors.append(str(error)))
             page.goto(base_url, wait_until="networkidle")
 
-            expect(
-                page.get_by_role("heading", name="Choose a verified fictional city")
-            ).to_be_visible()
+            expect(page.get_by_role("heading", name="Choose a city", exact=True)).to_be_visible()
+            expect(page.locator("#city-details")).not_to_have_attribute("open", "")
             expect(page.locator("#stage-city")).to_have_attribute("aria-current", "step")
             expect(page.locator("#city-select")).to_have_value("fictional-grid-v2")
             expect(page.locator("#city-name")).to_have_text("Fictional Grid City V2")
@@ -188,8 +187,16 @@ def test_city_stage_boots_from_verified_local_catalog_without_external_requests(
             expect(page.locator("#city-map-alternative")).to_contain_text("12 roads")
             expect(page.locator("#city-map-alternative")).to_contain_text("9 nodes")
             expect(page.locator("#provider-boundary")).to_contain_text(
-                "Provider and OAuth settings are not installed"
+                "This city workflow does not call an AI provider"
             )
+            expect(page.locator(".map-column")).to_be_visible()
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            expect(page.locator(".map-column")).to_be_hidden()
+            page.locator("#stage-inspect").click()
+            expect(page.locator(".map-column")).to_be_hidden()
+            page.locator("#stage-city").click()
+            expect(page.locator(".map-column")).to_be_visible()
             assert page.locator("#city-map").evaluate(
                 """canvas => canvas.getContext('2d')
                   .getImageData(0, 0, canvas.width, canvas.height)
@@ -371,7 +378,7 @@ def test_stale_city_failure_cannot_replace_a_newer_verified_city(
 
                 expect(page.locator("#error-banner")).to_be_hidden()
                 expect(page.locator("#city-continue")).to_be_enabled()
-                expect(page.locator("#map-status")).to_have_text("PACK HASH VERIFIED")
+                expect(page.locator("#map-status")).to_have_text("Verified pack")
             finally:
                 release.set()
                 browser.close()
@@ -553,9 +560,7 @@ def test_inspector_sends_one_run_bound_snapshot_token_for_all_scoped_reads(
             expect(inspect_link).to_be_visible(timeout=30_000)
             inspect_link.click()
             page.wait_for_url(f"{base_url}/runs/{run_id}")
-            expect(page.locator("#assumptions-status")).to_have_text(
-                "VERIFIED IMMUTABLE INPUT", timeout=30_000
-            )
+            expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=30_000)
             page.locator("#time-slider").fill("480")
             expect(page.locator("#clock-label")).to_have_text("08:00", timeout=15_000)
 
@@ -622,6 +627,7 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
             expect(page.locator("#review-placements")).to_have_text(
                 "mobile-feed + roadside-billboard"
             )
+            page.locator("#validation-review .technical-details summary").click()
             review_hashes = {
                 "workbench-input": page.locator("#review-input-hash").inner_text(),
                 "city": page.locator("#review-city-hash").inner_text(),
@@ -642,9 +648,8 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
 
             inspect_link.click()
             page.wait_for_url(f"{base_url}/runs/{run_id}")
-            expect(page.locator("#assumptions-status")).to_have_text(
-                "VERIFIED IMMUTABLE INPUT", timeout=30_000
-            )
+            expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=30_000)
+            page.locator("#assumptions-drawer summary").click()
             expect(page.locator("#assumptions-scenario")).to_have_text(
                 "Browser combined city study"
             )
@@ -703,17 +708,15 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
 
             page.locator("#workbench-back-link").click()
             page.wait_for_url(base_url + "/")
-            expect(
-                page.get_by_role("heading", name="Choose a verified fictional city")
-            ).to_be_visible(timeout=15_000)
+            expect(page.get_by_role("heading", name="Choose a city", exact=True)).to_be_visible(
+                timeout=15_000
+            )
             page.locator("#stage-inspect").click()
             library_link = page.locator(f"#run-library a[href='/runs/{run_id}']")
             expect(library_link).to_be_visible(timeout=15_000)
             library_link.click()
             page.wait_for_url(f"{base_url}/runs/{run_id}")
-            expect(page.locator("#assumptions-status")).to_have_text(
-                "VERIFIED IMMUTABLE INPUT", timeout=30_000
-            )
+            expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=30_000)
             expect(page.locator("#assumptions-seed")).to_have_text("9223372036854775807")
 
             assert _artifact_hashes(run_directory) == before_inspection
@@ -919,9 +922,7 @@ def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
             inspector_started = time.perf_counter()
             inspect_link.click()
             page.wait_for_url(f"{base_url}/runs/{run_id}")
-            expect(page.locator("#assumptions-status")).to_have_text(
-                "VERIFIED IMMUTABLE INPUT", timeout=60_000
-            )
+            expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=60_000)
             expect(page.locator("#people-list .person")).to_have_count(30, timeout=60_000)
             expect(page.locator("#opportunity-list")).to_be_visible(timeout=60_000)
             inspector_ready_elapsed = time.perf_counter() - inspector_started

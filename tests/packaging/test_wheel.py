@@ -82,8 +82,8 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     assert 'id="metrics-overall-notice-rate-receipt"' in html
     assert 'id="response-panel"' in html
     assert 'id="response-state-panel"' in html
-    assert "NOT STATE AT THE SCRUBBED MINUTE" in html
-    assert "PURCHASE INTENTION IS NOT PURCHASE PROBABILITY OR SALES" in html
+    assert "Final state &middot; not the selected minute" in html
+    assert "purchase intention is not purchase probability or sales" in html
     assert ".response-panel" in style
     assert ".response-state-panel" in style
     assert 'byId("saved-run-label").textContent =' in script

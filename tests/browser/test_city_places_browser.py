@@ -651,10 +651,12 @@ def test_schema_v7_inspector_renders_verified_frozen_assumptions_as_inert_text(
         page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
 
         expect(page.locator("#assumptions-panel")).to_be_visible()
-        expect(page.locator("#assumptions-drawer")).to_have_attribute("open", "")
-        expect(page.locator("#assumptions-status")).to_have_text("VERIFIED IMMUTABLE INPUT")
+        expect(page.locator("#assumptions-drawer")).not_to_have_attribute("open", "")
+        expect(page.locator("#assumptions-status")).to_have_text("Verified")
         expect(page.locator("#workbench-back-link")).to_be_visible()
         assert page.locator("#workbench-back-link").get_attribute("href") == "/"
+        page.locator("#assumptions-drawer summary").click()
+        expect(page.locator("#assumptions-drawer")).to_have_attribute("open", "")
         assert page.locator("#assumptions-run").inner_text() == _MAXIMUM_RUN_ID
         assert page.locator("#assumptions-seed").inner_text() == "9223372036854775807"
         assert page.locator("#assumptions-scenario").inner_text() == expected["hostile_name"]
@@ -934,7 +936,7 @@ def test_spatial_viewer_renders_minute_evidence_without_calling_it_an_impression
         assert page.locator("#opportunity-phone").inner_text() == "4"
         assert (
             page.locator("#opportunity-claim").inner_text()
-            == "SYNTHETIC OPPORTUNITY · NOT AN IMPRESSION"
+            == "Modeled opportunity · not an impression"
         )
         assert page.locator("#opportunity-current").inner_text() == (
             "2 AT THIS MINUTE · 1 FOR SELECTED AGENT"
@@ -1024,7 +1026,7 @@ def test_attention_viewer_renders_causal_timeline_without_external_requests(
         assert not page.locator("#response-metrics-panel").is_visible()
         assert page.locator("#metrics-panel").get_attribute("tabindex") == "0"
         assert page.locator("#metrics-claim").inner_text() == (
-            "SYNTHETIC METRICS \u00b7 NOT OBSERVED OUTCOMES"
+            "Modeled metrics \u00b7 not observed outcomes"
         )
         assert page.locator("#metrics-overall-opportunity-reach-value").inner_text() == "100%"
         assert page.locator("#metrics-overall-opportunity-reach-receipt").inner_text() == "2 / 2"
@@ -1052,7 +1054,7 @@ def test_attention_viewer_renders_causal_timeline_without_external_requests(
         assert page.locator("#attention-probability").inner_text() == "50%"
         assert (
             page.locator("#attention-claim").inner_text()
-            == "SYNTHETIC ATTENTION \u00b7 NOT OBSERVED BEHAVIOR"
+            == "Modeled attention \u00b7 not observed behavior"
         )
         assert page.locator("#attention-current").inner_text() == (
             f"{len(minute_zero)} EVENTS AT THIS MINUTE \u00b7 "
@@ -1211,7 +1213,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert page.locator("#response-scenario").inner_text() == scenario.name
         assert page.locator("#response-panel img").count() == 0
         assert page.locator("#response-claim").inner_text() == (
-            "SYNTHETIC RESPONSE · NOT OBSERVED BEHAVIOR"
+            "Modeled response · not observed behavior"
         )
         assert page.locator("#response-causal span").all_inner_texts() == [
             "NOTICE",
@@ -1248,15 +1250,15 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
 
         assert page.locator("#response-state-panel").is_visible()
         assert page.locator("#response-state-panel").get_attribute("tabindex") == "0"
-        assert page.locator("#response-state-time").inner_text() == "FINAL STATE / END OF RUN"
+        assert page.locator("#response-state-time").inner_text() == "End of run"
         assert page.locator("#response-state-warning").inner_text() == (
-            "NOT STATE AT THE SCRUBBED MINUTE"
+            "Final state · not the selected minute"
         )
 
         assert page.locator("#response-metrics-panel").is_visible()
         assert page.locator("#response-metrics-panel").get_attribute("tabindex") == "0"
         assert page.locator("#response-metrics-claim").inner_text() == (
-            "SYNTHETIC RESPONSE METRICS · NOT OBSERVED OUTCOMES"
+            "Modeled response metrics · not observed outcomes"
         )
         assert (
             "deterministic rule-processing records"
@@ -1384,8 +1386,8 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert campaign_selector.evaluate("element => document.activeElement === element")
         full_run_event_ledger = page.locator("#response-metrics-event-table").inner_text()
         assert page.locator("#response-state-claim").inner_text() == (
-            "UNCALIBRATED SYNTHETIC PROXIES · PURCHASE INTENTION IS NOT PURCHASE "
-            "PROBABILITY OR SALES"
+            "Uncalibrated synthetic scores · purchase intention is not purchase "
+            "probability or sales"
         )
         assert page.locator("#response-state-list").get_attribute("aria-live") is None
         assert page.locator(".response-state-card").count() == len(selected_states)
@@ -1416,7 +1418,7 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert page.locator("#response-empty").is_visible()
         assert page.locator(".response-state-card").count() == 6
         assert page.locator("#response-state-warning").inner_text() == (
-            "NOT STATE AT THE SCRUBBED MINUTE"
+            "Final state · not the selected minute"
         )
         assert page.locator("#response-metrics-panel").inner_text() == causal_full_run_ledger
 
@@ -1444,6 +1446,13 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
         assert page.locator("#response-panel").is_visible()
         assert page.locator("#response-state-panel").is_visible()
         assert page.locator("#response-metrics-panel").is_visible()
+        assert page.locator("#metrics-panel").evaluate("element => element.tagName") == "DETAILS"
+        assert (
+            page.locator("#response-metrics-panel").evaluate("element => element.tagName")
+            == "DETAILS"
+        )
+        assert page.locator("#metrics-panel").get_attribute("open") is None
+        assert page.locator("#response-metrics-panel").get_attribute("open") is None
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         response_box = page.locator("#response-panel").bounding_box()
         assert response_box is not None and response_box["width"] <= 390
@@ -2508,8 +2517,8 @@ def test_model_clock_day_speed_and_zoom_controls_are_bounded_keyboard_operable()
         expect(page.locator("#model-clock-note")).to_contain_text("Etc/UTC")
         expect(page.locator("#model-clock-note")).to_contain_text("06:00")
         expect(page.locator("#model-clock-note")).to_contain_text("19:00")
-        expect(page.locator("#model-clock-note")).to_contain_text("not local sunrise")
-        expect(page.locator("#model-clock-note")).to_contain_text("traffic or DST")
+        expect(page.locator("#model-clock-note")).to_contain_text("does not model local sunrise")
+        expect(page.locator("#model-clock-note")).to_contain_text("traffic, calendars, or DST")
         expect(page.locator("#playback-speed-label")).to_have_text("1\N{MULTIPLICATION SIGN}")
 
         next_day = page.locator("#next-day-button")
@@ -2889,9 +2898,7 @@ def test_text_map_alternative_tracks_causal_evidence_without_filtering_totals() 
         expect(page.locator("#response-metrics-series-label")).to_have_text(
             f"CAMPAIGN / {campaign_id.upper()}"
         )
-        expect(page.locator("#response-metrics-event-scope")).to_have_text(
-            "UNFILTERED FULL-RUN EVENT TOTALS"
-        )
+        expect(page.locator("#response-metrics-event-scope")).to_have_text("Full-run event totals")
         assert (
             float(
                 page.locator(
@@ -3517,12 +3524,33 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
         person = page.locator("#people-list .person").first
         person.focus()
         person_focus = person.evaluate(
-            """element => ({
-              active: document.activeElement === element,
-              style: getComputedStyle(element).outlineStyle,
-              width: getComputedStyle(element).outlineWidth,
-              color: getComputedStyle(element).outlineColor,
-            })"""
+            """element => {
+              const style = getComputedStyle(element);
+              const channels = (value) => value
+                .slice(value.indexOf('(') + 1, value.indexOf(')'))
+                .split(',')
+                .slice(0, 3)
+                .map(Number);
+              const luminance = (value) => channels(value)
+                .map((channel) => {
+                  const normalized = channel / 255;
+                  return normalized <= 0.04045
+                    ? normalized / 12.92
+                    : ((normalized + 0.055) / 1.055) ** 2.4;
+                })
+                .reduce((total, channel, index) => (
+                  total + channel * [0.2126, 0.7152, 0.0722][index]
+                ), 0);
+              const foreground = luminance(style.outlineColor);
+              const background = luminance(style.backgroundColor);
+              return {
+                active: document.activeElement === element,
+                style: style.outlineStyle,
+                width: style.outlineWidth,
+                contrastRatio: (Math.max(foreground, background) + 0.05)
+                  / (Math.min(foreground, background) + 0.05),
+              };
+            }"""
         )
         semantics = page.evaluate(
             """() => ({
@@ -3577,7 +3605,7 @@ def test_response_viewer_exposes_compact_accessible_status_and_keyboard_provenan
         person_focus["active"] is not True
         or person_focus["style"] == "none"
         or float(person_focus["width"].removesuffix("px")) < 2
-        or person_focus["color"] != "rgb(223, 182, 107)"
+        or person_focus["contrastRatio"] < 3
     ):
         violations.append(f"person focus indicator is not high contrast: {person_focus!r}")
     if semantics["listLiveRegions"] != [None, None, None, None]:

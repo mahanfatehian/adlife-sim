@@ -16,21 +16,21 @@
     <header class="masthead">
       <div class="identity">
         <span class="mark" aria-hidden="true"><span></span></span>
-        <div><span class="eyebrow">ADLIFE LAB / CITY SYSTEMS</span><h1>Mobility observatory</h1><span class="eyebrow" id="saved-run-label" hidden></span><a class="workbench-back" id="workbench-back-link" href="/" hidden>&larr; Back to city workbench</a></div>
+        <div><span class="eyebrow">AdLife City</span><h1>Run inspector</h1><span class="eyebrow" id="saved-run-label" hidden></span><a class="workbench-back" id="workbench-back-link" href="/" hidden>&larr; Back to workbench</a></div>
       </div>
-      <div class="masthead-right"><span class="status-dot" aria-hidden="true"></span><span>LOCAL SIMULATION</span><span class="division">/</span><span id="city-name">Loading city…</span></div>
+      <div class="masthead-right"><span class="status-dot" aria-hidden="true"></span><span>Deterministic rules · no AI provider</span><span class="division">/</span><span id="city-name">Loading city…</span></div>
     </header>
 
     <main class="workspace">
       <section class="map-panel" aria-label="Simulated city road map">
         <div class="map-topline">
-          <div><span class="eyebrow">STREET NETWORK / LIVE FRAME</span><h2 id="map-title">City trace</h2></div>
+          <div><span class="eyebrow">Current model minute</span><h2 id="map-title">City timeline</h2></div>
           <div class="map-meta"><span id="day-label">DAY 01</span><span id="clock-label">00:00</span><span id="light-label">NIGHT</span></div>
         </div>
         <div class="map-stage" id="map-stage">
           <canvas id="city-map" aria-label="Road map and simulated agent positions"></canvas>
           <div class="map-compass" aria-hidden="true"><span>N</span><span class="compass-needle"></span></div>
-          <div class="map-help">Drag to pan <span>·</span> Scroll or use controls to zoom</div>
+          <div class="map-help">Drag to pan <span>·</span> Use the controls to zoom</div>
           <div class="map-zoom-controls" role="group" aria-label="Map zoom controls">
             <button id="zoom-out-button" type="button" aria-label="Zoom map out">&minus;</button>
             <button id="zoom-reset-button" type="button" aria-label="Reset map view">RESET</button>
@@ -40,7 +40,7 @@
           <div class="map-legend" aria-label="Map legend"><span><i class="legend-road"></i>Road network</span><span><i class="legend-agent"></i>Agent</span><span><i class="legend-selected"></i>Selected</span><span class="place-key" hidden><i class="legend-home"></i>Home</span><span class="place-key" hidden><i class="legend-work"></i>Work</span><span class="place-key" hidden><i class="legend-leisure"></i>Leisure</span><span class="opportunity-key" hidden><i class="legend-billboard"></i>Roadside opportunity</span><span class="opportunity-key" hidden><i class="legend-phone"></i>Phone opportunity</span><span class="attention-key" hidden><i class="legend-impression"></i>Model impression</span><span class="attention-key" hidden><i class="legend-notice"></i>Model notice</span></div>
         </div>
         <section class="map-text-alternative" aria-labelledby="map-text-title">
-          <div><span class="eyebrow">TEXT MAP / PRESENTATION STATE</span><h3 id="map-text-title">Current frame in words</h3></div>
+          <div><span class="eyebrow">Current selection</span><h3 id="map-text-title">Current frame</h3></div>
           <p id="map-text-summary">Loading the committed frame&hellip;</p>
           <p id="map-evidence-scope">Evidence markers are page-scoped.</p>
         </section>
@@ -48,10 +48,17 @@
       </section>
 
       <aside class="sidebar" aria-label="Simulation details">
-        <div class="sidebar-intro"><span class="eyebrow">SCENARIO / OVERVIEW</span><h2>A city in motion.</h2><p>Follow synthetic agents through a deterministic daily routine on a directed street graph.</p></div>
+        <div class="sidebar-intro"><span class="eyebrow">Run overview</span><h2>Timeline and results</h2><p>Choose a synthetic person or model minute to inspect movement and campaign events.</p></div>
+        <div class="section-title"><span>Selected synthetic person</span><span id="selected-id">—</span></div>
+        <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose a person</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
+        <div class="detail-rows"><div><span>HOME</span><strong id="home-place">Generated node</strong><small id="home-node">—</small></div><div><span>WORKPLACE</span><strong id="work-place">Generated node</strong><small id="work-node">—</small></div><div><span>LEISURE</span><strong id="leisure-place">Generated node</strong><small id="leisure-node">—</small></div><div><span>ROAD SEGMENT</span><strong id="road-segment">—</strong></div></div>
+        <div class="route-block"><span>Route</span><p id="route-summary">Select a person to inspect their route.</p></div>
+        <div class="place-evidence" id="place-evidence" hidden><span>Place source</span><p id="place-evidence-text">No analyst-supplied place set.</p></div>
+        <div class="section-title people-title"><span>People in this model</span><span id="people-total">—</span></div>
+        <div class="people-list" id="people-list" role="list"></div>
         <section class="assumptions-panel" id="assumptions-panel" aria-labelledby="assumptions-title">
           <details id="assumptions-drawer">
-            <summary><span><span class="eyebrow">VERIFIED PROVENANCE</span><strong id="assumptions-title">Frozen run assumptions</strong></span><span id="assumptions-status" role="status" aria-live="polite" aria-atomic="true">CHECKING AVAILABILITY</span></summary>
+            <summary><span><span class="eyebrow">Saved inputs</span><strong id="assumptions-title">Run setup &amp; integrity</strong></span><span id="assumptions-status" role="status" aria-live="polite" aria-atomic="true">Checking</span></summary>
             <div class="assumptions-content" id="assumptions-content" hidden>
               <p class="assumptions-disclosure" id="assumptions-disclosure">One homogeneous synthetic cohort shares these explicit response traits and initial state. It is not a sample of real residents.</p>
               <section aria-labelledby="assumptions-study-title">
@@ -117,9 +124,9 @@
           <div class="metric"><span>SEED</span><strong id="seed-value">—</strong></div>
           <div class="metric"><span>MODEL</span><strong class="metric-small" id="model-label">ROAD MOBILITY</strong></div>
         </div>
-        <section class="metrics-panel" id="metrics-panel" aria-labelledby="metrics-title" aria-describedby="metrics-claim metrics-source" tabindex="0" hidden>
-          <div class="metrics-heading"><div><span class="eyebrow">ARTIFACT-DERIVED / FULL RUN</span><h2 id="metrics-title">Evidence ledger</h2></div><span class="metrics-seal" aria-hidden="true">M</span></div>
-          <p class="metrics-claim" id="metrics-claim">SYNTHETIC METRICS &middot; NOT OBSERVED OUTCOMES</p>
+        <details class="metrics-panel" id="metrics-panel" aria-labelledby="metrics-title" aria-describedby="metrics-claim metrics-source" tabindex="0" open hidden>
+          <summary class="metrics-heading"><h2 id="metrics-title"><span class="eyebrow">Full-run results</span>Exposure metrics</h2></summary>
+          <p class="metrics-claim" id="metrics-claim">Modeled metrics &middot; not observed outcomes</p>
           <div class="metrics-table-wrap">
             <table class="metrics-table">
               <caption>Values with numerator and denominator receipts by channel</caption>
@@ -133,13 +140,13 @@
               </tbody>
             </table>
           </div>
-          <p class="metrics-source" id="metrics-source">Hover or focus a value for its fixed source artifacts. Receipts read numerator / denominator.</p>
-        </section>
+          <p class="metrics-source" id="metrics-source">Focus a value to see its source receipts (numerator / denominator).</p>
+        </details>
         <section class="opportunity-panel" id="opportunity-panel" aria-label="Spatial opportunity evidence" hidden>
-          <div class="opportunity-heading"><div><span class="eyebrow">PERSISTED EVIDENCE / CURRENT MINUTE</span><h2 id="opportunity-scenario">Spatial study</h2></div><span class="evidence-seal" aria-hidden="true">E</span></div>
+          <div class="opportunity-heading"><div><span class="eyebrow">Current minute</span><h2 id="opportunity-scenario">Spatial study</h2></div><span class="evidence-seal" aria-hidden="true">E</span></div>
           <div class="opportunity-totals" aria-label="Spatial opportunity totals"><div><span>ALL</span><strong id="opportunity-total">0</strong></div><div><span>ROADSIDE</span><strong id="opportunity-roadside">0</strong></div><div><span>PHONE</span><strong id="opportunity-phone">0</strong></div></div>
-          <p class="opportunity-claim" id="opportunity-claim">SYNTHETIC OPPORTUNITY · NOT AN IMPRESSION</p>
-          <div class="opportunity-now"><span>AT THE SCRUBBER</span><strong id="opportunity-current">0 AT THIS MINUTE · 0 FOR SELECTED AGENT</strong></div>
+          <p class="opportunity-claim" id="opportunity-claim">Modeled opportunity · not an impression</p>
+          <div class="opportunity-now"><span>Selected minute</span><strong id="opportunity-current">0 AT THIS MINUTE · 0 FOR SELECTED AGENT</strong></div>
           <div class="opportunity-list" id="opportunity-list"></div>
           <p class="opportunity-empty" id="opportunity-empty">No opportunity evidence at this minute.</p>
           <nav class="evidence-pagination" id="opportunity-pagination" aria-label="Opportunity evidence pages" hidden>
@@ -147,14 +154,14 @@
             <p class="opportunity-page-note" id="opportunity-page-note"></p>
             <button id="opportunity-page-next" type="button" aria-label="Next opportunity evidence page">NEXT</button>
           </nav>
-          <p class="evidence-map-scope">Map markers show the currently displayed opportunity page.</p>
+          <p class="evidence-map-scope">Map markers show this opportunity page.</p>
         </section>
         <section class="attention-panel" id="attention-panel" aria-label="Synthetic attention evidence" hidden>
-          <div class="attention-heading"><div><span class="eyebrow">CAUSAL EVIDENCE / CURRENT MINUTE</span><h2>Modeled attention</h2></div><span class="attention-seal" aria-hidden="true">A</span></div>
+          <div class="attention-heading"><div><span class="eyebrow">Current minute</span><h2>Modeled attention</h2></div><span class="attention-seal" aria-hidden="true">A</span></div>
           <div class="attention-causal" aria-label="Opportunity causes impression; impression may cause notice"><span>OPPORTUNITY</span><i aria-hidden="true">&rarr;</i><span>IMPRESSION</span><i aria-hidden="true">&rarr;</i><span>NOTICE</span></div>
           <div class="attention-totals" aria-label="Synthetic attention totals"><div><span>IMPRESSIONS</span><strong id="attention-impressions">0</strong></div><div><span>NOTICES</span><strong id="attention-notices">0</strong></div><div><span>FIXED P</span><strong id="attention-probability">0%</strong></div></div>
-          <p class="attention-claim" id="attention-claim">SYNTHETIC ATTENTION &middot; NOT OBSERVED BEHAVIOR</p>
-          <div class="attention-now"><span>AT THE SCRUBBER</span><strong id="attention-current">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
+          <p class="attention-claim" id="attention-claim">Modeled attention &middot; not observed behavior</p>
+          <div class="attention-now"><span>Selected minute</span><strong id="attention-current">0 EVENTS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
           <div class="attention-list" id="attention-list"></div>
           <p class="attention-empty" id="attention-empty">No attention evidence at this minute.</p>
           <nav class="evidence-pagination" id="attention-pagination" aria-label="Attention evidence pages" hidden>
@@ -162,14 +169,14 @@
             <p class="attention-page-note" id="attention-page-note"></p>
             <button id="attention-page-next" type="button" aria-label="Next attention evidence page">NEXT</button>
           </nav>
-          <p class="evidence-map-scope">Map markers show the currently displayed attention page.</p>
+          <p class="evidence-map-scope">Map markers show this attention page.</p>
         </section>
         <section class="response-panel" id="response-panel" aria-labelledby="response-title" aria-describedby="response-claim" hidden>
-          <div class="response-heading"><div><span class="eyebrow">RULE EVIDENCE / CURRENT MINUTE</span><h2 id="response-title">Campaign response ledger</h2><p id="response-scenario"></p></div><span class="response-seal" aria-hidden="true">R</span></div>
+          <div class="response-heading"><div><span class="eyebrow">Current minute</span><h2 id="response-title">Campaign responses</h2><p id="response-scenario"></p></div><span class="response-seal" aria-hidden="true">R</span></div>
           <div class="response-causal" id="response-causal" aria-label="Notice causes a rule response; responses are atomically committed as a state update"><span>NOTICE</span><i aria-hidden="true">&rarr;</i><span>RULE RESPONSE</span><i aria-hidden="true">&rarr;</i><span>STATE UPDATE</span></div>
           <div class="response-totals" aria-label="Synthetic response totals"><div><span>RESPONSES</span><strong id="response-responses">0</strong></div><div><span>UPDATES</span><strong id="response-updates">0</strong></div><div><span>CAMPAIGNS</span><strong id="response-campaigns">0</strong></div></div>
-          <p class="response-claim" id="response-claim">SYNTHETIC RESPONSE &middot; NOT OBSERVED BEHAVIOR</p>
-          <div class="response-now"><span>AT THE SCRUBBER</span><strong id="response-current">0 RECORDS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
+          <p class="response-claim" id="response-claim">Modeled response &middot; not observed behavior</p>
+          <div class="response-now"><span>Selected minute</span><strong id="response-current">0 RECORDS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
           <div class="response-list" id="response-list"></div>
           <p class="response-empty" id="response-empty">No response evidence at this minute.</p>
           <nav class="evidence-pagination" id="response-pagination" aria-label="Response evidence pages" hidden>
@@ -178,20 +185,20 @@
             <button id="response-page-next" type="button" aria-label="Next response evidence page">NEXT</button>
           </nav>
           <section class="response-state-panel" id="response-state-panel" aria-labelledby="response-state-time" aria-describedby="response-state-warning response-state-claim" tabindex="0" hidden>
-            <div class="response-state-heading"><div><span class="eyebrow" id="response-state-time">FINAL STATE / END OF RUN</span><h3>Campaign state ledger</h3></div><span class="state-seal" aria-hidden="true">S</span></div>
-            <p class="response-state-warning" id="response-state-warning">NOT STATE AT THE SCRUBBED MINUTE</p>
-            <p class="response-state-claim" id="response-state-claim">UNCALIBRATED SYNTHETIC PROXIES &middot; PURCHASE INTENTION IS NOT PURCHASE PROBABILITY OR SALES</p>
+            <div class="response-state-heading"><div><span class="eyebrow" id="response-state-time">End of run</span><h3>Final campaign state</h3></div><span class="state-seal" aria-hidden="true">S</span></div>
+            <p class="response-state-warning" id="response-state-warning">Final state &middot; not the selected minute</p>
+            <p class="response-state-claim" id="response-state-claim">Uncalibrated synthetic scores &middot; purchase intention is not purchase probability or sales</p>
             <p class="response-state-current" id="response-state-current">0 FINAL CAMPAIGN STATES FOR SELECTED AGENT</p>
             <div class="response-state-list" id="response-state-list"></div>
             <p class="response-state-empty" id="response-state-empty">No final campaign state for the selected agent.</p>
             <p class="response-state-page-note" id="response-state-page-note" hidden></p>
           </section>
         </section>
-        <section class="response-metrics-panel" id="response-metrics-panel" aria-labelledby="response-metrics-title" aria-describedby="response-metrics-claim response-metrics-disclosure" tabindex="0" hidden>
-          <div class="response-metrics-heading"><div><span class="eyebrow">VERIFIED RECEIPTS / FULL RUN</span><h2 id="response-metrics-title">Response evidence summary</h2></div><span class="response-metrics-seal" aria-hidden="true">R&Sigma;</span></div>
-          <p class="response-metrics-claim" id="response-metrics-claim">SYNTHETIC RESPONSE METRICS &middot; NOT OBSERVED OUTCOMES</p>
+        <details class="response-metrics-panel" id="response-metrics-panel" aria-labelledby="response-metrics-title" aria-describedby="response-metrics-claim response-metrics-disclosure" tabindex="0" open hidden>
+          <summary class="response-metrics-heading"><h2 id="response-metrics-title"><span class="eyebrow">Full-run results</span>Response metrics</h2></summary>
+          <p class="response-metrics-claim" id="response-metrics-claim">Modeled response metrics &middot; not observed outcomes</p>
           <p class="response-metrics-disclosure" id="response-metrics-disclosure">Response counts are deterministic rule-processing records, not observed engagement. Planned rule deltas are distinct from bounded committed state changes. Purchase intention is an uncalibrated synthetic proxy, not purchase probability, transactions, sales, or a sales forecast.</p>
-          <p class="response-metrics-event-scope" id="response-metrics-event-scope">UNFILTERED FULL-RUN EVENT TOTALS</p>
+          <p class="response-metrics-event-scope" id="response-metrics-event-scope">Full-run event totals</p>
           <div class="response-metrics-table-wrap" tabindex="0" aria-label="Scrollable direct rule-response receipt table">
             <table class="response-metrics-table" id="response-metrics-event-table">
               <caption>Direct rule-response values and numerator-denominator receipts for all channels, roadside, and phone</caption>
@@ -199,8 +206,8 @@
               <tbody id="response-metrics-event-body"></tbody>
             </table>
           </div>
-          <p class="response-metrics-source">Focus a value for its exact source artifact and event type. Receipts read numerator / denominator.</p>
-          <div class="response-metrics-state-heading"><div><span class="eyebrow">COMMITTED STATE / END OF RUN</span><strong id="response-metrics-series-label">ALL CAMPAIGNS</strong></div><label for="response-metrics-campaign">STATE SERIES<select id="response-metrics-campaign"><option value="overall">All campaigns</option></select></label></div>
+          <p class="response-metrics-source">Focus a value to see its source artifact and event type.</p>
+          <div class="response-metrics-state-heading"><div><span class="eyebrow">End-of-run state</span><strong id="response-metrics-series-label">ALL CAMPAIGNS</strong></div><label for="response-metrics-campaign">Campaign<select id="response-metrics-campaign"><option value="overall">All campaigns</option></select></label></div>
           <p class="response-metrics-state-note" id="response-metrics-state-note">Committed state is not allocated by channel: simultaneous road and phone notices can share one nonlinear state update.</p>
           <div class="response-metrics-table-wrap" tabindex="0" aria-label="Scrollable committed response-state receipt table">
             <table class="response-metrics-table response-metrics-state-table" id="response-metrics-state-table">
@@ -209,15 +216,8 @@
               <tbody id="response-metrics-state-body"></tbody>
             </table>
           </div>
-        </section>
-        <div class="section-title"><span>SELECTED AGENT</span><span id="selected-id">—</span></div>
-        <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose an agent</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
-        <div class="detail-rows"><div><span>HOME</span><strong id="home-place">Generated node</strong><small id="home-node">—</small></div><div><span>WORKPLACE</span><strong id="work-place">Generated node</strong><small id="work-node">—</small></div><div><span>LEISURE</span><strong id="leisure-place">Generated node</strong><small id="leisure-node">—</small></div><div><span>ROAD SEGMENT</span><strong id="road-segment">—</strong></div></div>
-        <div class="route-block"><span>PLANNED DIRECTED ROUTE</span><p id="route-summary">Select a person to inspect their route.</p></div>
-        <div class="place-evidence" id="place-evidence" hidden><span>PLACE PROVENANCE</span><p id="place-evidence-text">No analyst-supplied place set.</p></div>
-        <div class="section-title people-title"><span>SIMULATED PEOPLE</span><span id="people-total">—</span></div>
-        <div class="people-list" id="people-list" role="list"></div>
-        <div class="disclosure"><span>RESEARCH NOTE</span><p>Synthetic mobility pilot — not a prediction of real residents, traffic, or advertising results. Street geometry can come from a licensed local city pack; speeds and routines are illustrative.</p></div>
+        </details>
+        <div class="disclosure"><span>Synthetic model</span><p>This is not a prediction or forecast of real people, traffic, behavior, or sales.</p></div>
       </aside>
     </main>
 
@@ -228,11 +228,11 @@
           <button id="play-button" type="button" aria-label="Play timeline">▶</button>
           <button id="next-day-button" type="button" aria-label="Next model day">+1D</button>
         </div>
-        <div class="timeline-clock"><span class="eyebrow">SIMULATED TIME</span><strong id="timeline-time">DAY 01 · 00:00</strong><span id="playback-status">PAUSED</span></div>
+        <div class="timeline-clock"><span class="eyebrow">Model time</span><strong id="timeline-time">DAY 01 · 00:00</strong><span id="playback-status">PAUSED</span></div>
       </div>
       <div class="timeline-track"><input id="time-slider" type="range" min="0" max="1439" value="0" aria-label="Simulation minute" aria-valuetext="Day 1, 00:00"><div class="time-marks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div></div>
-      <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-MINUTE MOBILITY FRAMES</span><label for="playback-speed">PRESENTATION SPEED <select id="playback-speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><output id="playback-speed-label">1×</output></div>
-      <p class="model-clock-note" id="model-clock-note">MODEL TIME ZONE LOADING · ILLUSTRATIVE LIGHT RULE: DAY FROM 06:00 UNTIL 19:00; not local sunrise, calendar time, traffic or DST behavior.</p>
+      <div class="timeline-end"><span id="timeline-duration">01 DAY</span><span>1-minute steps</span><label for="playback-speed">Playback speed <select id="playback-speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><output id="playback-speed-label">1×</output></div>
+      <p class="model-clock-note" id="model-clock-note">Clock loading. Daylight is illustrative from 06:00–19:00; it does not model sunrise, traffic, calendars, or DST.</p>
       <span class="screen-reader-only" id="timeline-announcement" role="status" aria-live="polite" aria-atomic="true"></span>
     </footer>
   </div>

@@ -415,7 +415,7 @@ async def _main() -> None:
     assert '<meta name="adlife-api-base" content="/api">' in index.text
     assert 'id="response-panel"' in index.text
     assert 'id="response-state-panel"' in index.text
-    assert "PURCHASE INTENTION IS NOT PURCHASE PROBABILITY OR SALES" in index.text
+    assert "purchase intention is not purchase probability or sales" in index.text
     assert "function validatedApiBase()" in javascript.text
     assert "function apiPath(relative)" in javascript.text
     assert 'fetchJson("/response-summary")' in javascript.text

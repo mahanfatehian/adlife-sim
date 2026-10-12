@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#071218">
+  <meta name="theme-color" content="#0b141d">
   <meta name="adlife-csrf-token" content="__ADLIFE_CSRF_TOKEN__">
   <title>AdLife City Workbench</title>
   <link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">
@@ -18,23 +18,23 @@
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
       <span><b>ADLIFE</b><small>CITY WORKBENCH</small></span>
     </a>
-    <div class="runtime"><span class="runtime-pulse" aria-hidden="true"></span>LOCAL / OFFLINE-FIRST</div>
+    <div class="runtime"><span class="runtime-pulse" aria-hidden="true"></span>Local workspace · rules engine</div>
   </header>
 
   <div id="synthetic-disclosure" class="disclosure" role="note" aria-label="Synthetic data disclosure">
-    <span class="disclosure-mark" aria-hidden="true">S</span>
+    <span class="disclosure-mark" aria-hidden="true">i</span>
     <div>
-      <strong>SYNTHETIC RESEARCH INSTRUMENT</strong>
-      <p>Every person, place, creative, movement, and response shown here is fictional model evidence—not real residents, observed behavior, sales, probabilities, or forecasts.</p>
+      <strong>Synthetic model</strong>
+      <p>Fictional people and modeled responses—not observed behavior, real sales, probabilities, or forecasts.</p>
     </div>
   </div>
 
   <nav class="stage-rail" aria-label="City study stages">
     <ol>
-      <li><button id="stage-city" class="stage-button" type="button" data-stage="city" aria-current="step"><span>01</span><b class="stage-name">CITY</b><small>verified geography</small></button></li>
-      <li><button id="stage-campaign" class="stage-button" type="button" data-stage="campaign" disabled><span>02</span><b class="stage-name">CAMPAIGN</b><small>bounded assumptions</small></button></li>
-      <li><button id="stage-run" class="stage-button" type="button" data-stage="run" disabled><span>03</span><b class="stage-name">RUN</b><small>validate + execute</small></button></li>
-      <li><button id="stage-inspect" class="stage-button" type="button" data-stage="inspect"><span>04</span><b class="stage-name">INSPECT</b><small>verified artifacts</small></button></li>
+      <li><button id="stage-city" class="stage-button" type="button" data-stage="city" aria-current="step"><span>01</span><b class="stage-name">CITY</b><small>Map</small></button></li>
+      <li><button id="stage-campaign" class="stage-button" type="button" data-stage="campaign" disabled><span>02</span><b class="stage-name">CAMPAIGN</b><small>Creative &amp; delivery</small></button></li>
+      <li><button id="stage-run" class="stage-button" type="button" data-stage="run" disabled><span>03</span><b class="stage-name">RUN</b><small>Check &amp; start</small></button></li>
+      <li><button id="stage-inspect" class="stage-button" type="button" data-stage="inspect"><span>04</span><b class="stage-name">INSPECT</b><small>Timeline &amp; results</small></button></li>
     </ol>
   </nav>
 
@@ -47,33 +47,40 @@
     <div class="workbench-shell">
       <section class="setup-column" aria-label="Study setup">
         <section id="panel-city" class="stage-panel" data-stage-panel="city" aria-labelledby="city-title">
-          <p class="eyebrow">01 / CITY</p>
-          <h1 id="city-title">Choose a verified fictional city</h1>
-          <p class="stage-intro">The catalog is packaged with AdLife and checked again by the server. No live map, traffic feed, or resident data is used.</p>
+          <p class="eyebrow">Step 1</p>
+          <h1 id="city-title">Choose a city</h1>
+          <p class="stage-intro">Select the street network used for routes and ad placements. This build uses installed map packs, not live maps or traffic.</p>
 
           <div class="field" data-field-path="city_id">
-            <label for="city-select">City pack</label>
+            <label for="city-select">Installed city</label>
             <select id="city-select" aria-describedby="city-help city-select-error" disabled>
               <option>Loading verified catalog…</option>
             </select>
-            <small id="city-help" class="field-help">Only locally packaged and integrity-checked cities appear.</small>
+            <small id="city-help" class="field-help">Only local, integrity-checked city packs appear.</small>
             <p id="city-select-error" class="field-error" role="status"></p>
           </div>
 
           <article class="city-receipt" aria-labelledby="city-receipt-title">
-            <div class="receipt-heading"><p class="eyebrow">VERIFICATION RECEIPT</p><span id="city-qualification">CHECKING</span></div>
+            <div class="receipt-heading"><p class="eyebrow">Selected city</p><span id="city-qualification">Checking</span></div>
             <h2 id="city-receipt-title"><bdi id="city-name">Loading city…</bdi></h2>
             <dl class="compact-facts">
               <div><dt>Model clock</dt><dd id="city-time-zone">—</dd></div>
-              <div><dt>Pack schema</dt><dd id="city-schema">—</dd></div>
-              <div><dt>City hash</dt><dd><code id="city-hash">—</code></dd></div>
-              <div><dt>License</dt><dd id="city-license">—</dd></div>
             </dl>
-            <p id="city-attribution" class="attribution">Verification pending.</p>
-            <div class="omissions">
-              <h3>Known omissions</h3>
-              <ul id="city-omissions"><li>Loading disclosed limitations…</li></ul>
-            </div>
+            <details id="city-details" class="technical-details">
+              <summary>Data &amp; integrity</summary>
+              <div class="technical-details-content">
+                <dl class="compact-facts">
+                  <div><dt>Pack schema</dt><dd id="city-schema">—</dd></div>
+                  <div><dt>City hash</dt><dd><code id="city-hash">—</code></dd></div>
+                  <div><dt>License</dt><dd id="city-license">—</dd></div>
+                </dl>
+                <p id="city-attribution" class="attribution">Verification pending.</p>
+                <div class="omissions">
+                  <h3>Known omissions</h3>
+                  <ul id="city-omissions"><li>Loading disclosed limitations…</li></ul>
+                </div>
+              </div>
+            </details>
           </article>
 
           <div class="stage-actions">
@@ -82,12 +89,12 @@
         </section>
 
         <section id="panel-campaign" class="stage-panel" data-stage-panel="campaign" aria-labelledby="campaign-title" hidden>
-          <p class="eyebrow">02 / CAMPAIGN</p>
-          <h1 id="campaign-title">Compose bounded campaign assumptions</h1>
-          <p class="stage-intro">Choose a complete fictional creative and the deterministic opportunity rules. Copy, coordinates, and provider credentials cannot be supplied here.</p>
+          <p class="eyebrow">Step 2</p>
+          <h1 id="campaign-title">Configure campaign</h1>
+          <p class="stage-intro">Choose the creative, placements, and synthetic audience assumptions for this run.</p>
 
           <section class="form-section" aria-labelledby="identity-title">
-            <div class="section-heading"><h2 id="identity-title">Study identity</h2><span>PUBLIC LABELS</span></div>
+            <div class="section-heading"><h2 id="identity-title">Names and IDs</h2></div>
             <div class="field-grid two">
               <div class="field" data-field-path="scenario.scenario_id">
                 <label for="scenario-id">Scenario ID</label>
@@ -113,14 +120,14 @@
           </section>
 
           <section class="form-section" aria-labelledby="creative-title">
-            <div class="section-heading"><h2 id="creative-title">Frozen creative</h2><span>CATALOG SNAPSHOT</span></div>
+            <div class="section-heading"><h2 id="creative-title">Creative</h2></div>
             <div class="field" data-field-path="scenario.campaign.creative_template_id">
               <label for="creative-template">Creative template</label>
               <select id="creative-template" disabled><option>Loading templates…</option></select>
               <p id="creative-template-error" class="field-error" role="status"></p>
             </div>
             <article id="creative-receipt" class="creative-receipt" aria-live="polite">
-              <p class="eyebrow">FICTIONAL CREATIVE</p>
+              <p class="eyebrow">Selected creative</p>
               <h3 id="creative-product">Loading…</h3>
               <p id="creative-message"></p>
               <dl><div><dt>Category</dt><dd id="creative-category">—</dd></div><div><dt>Action</dt><dd id="creative-action">—</dd></div></dl>
@@ -143,11 +150,11 @@
           </section>
 
           <section class="form-section placement-section" aria-labelledby="placements-title">
-            <div class="section-heading"><h2 id="placements-title">Opportunity placements</h2><span>AT LEAST ONE</span></div>
+            <div class="section-heading"><h2 id="placements-title">Ad delivery</h2><span>Choose at least one</span></div>
             <article class="placement-card enabled" id="phone-card">
               <div class="placement-toggle">
-                <label><input id="phone-enabled" type="checkbox" checked> <b>Phone opportunity</b></label>
-                <span>MOBILE-FEED</span>
+                <label><input id="phone-enabled" type="checkbox" checked> <b>Phone feed</b></label>
+                <span>Digital placement</span>
               </div>
               <div id="phone-fields">
                 <fieldset class="choice-field" data-field-path="scenario.phone.eligible_activities">
@@ -161,7 +168,7 @@
                   <p id="phone-activities-error" class="field-error" role="status"></p>
                 </fieldset>
                 <div class="field-grid two">
-                  <div class="field" data-field-path="scenario.phone.opportunity_probability_per_minute"><label for="phone-probability">Opportunity probability / minute <span>0–1</span></label><input id="phone-probability" type="number" min="0" max="1" step="0.01" value="0.05"><p id="phone-probability-error" class="field-error" role="status"></p></div>
+                  <div class="field" data-field-path="scenario.phone.opportunity_probability_per_minute"><label for="phone-probability">Chance per eligible minute <span>0–1</span></label><input id="phone-probability" type="number" min="0" max="1" step="0.01" value="0.05"><small class="field-help">0.05 means a 5% modeled chance.</small><p id="phone-probability-error" class="field-error" role="status"></p></div>
                   <div class="field" data-field-path="scenario.phone.frequency_cap_per_agent_per_day"><label for="phone-cap">Daily frequency cap <span>1–100</span></label><input id="phone-cap" type="number" min="1" max="100" step="1" value="3"><p id="phone-cap-error" class="field-error" role="status"></p></div>
                 </div>
                 <div class="schedule-editor" data-field-path="scenario.phone.active_windows">
@@ -174,8 +181,8 @@
 
             <article class="placement-card" id="roadside-card">
               <div class="placement-toggle">
-                <label><input id="roadside-enabled" type="checkbox"> <b>Roadside opportunity</b></label>
-                <span>ROAD-SIDE BILLBOARD</span>
+                <label><input id="roadside-enabled" type="checkbox"> <b>Roadside billboard</b></label>
+                <span>Street placement</span>
               </div>
               <div id="roadside-fields" hidden>
                 <div class="field-grid two">
@@ -198,8 +205,8 @@
           </section>
 
           <section class="form-section" aria-labelledby="cohort-title">
-            <div class="section-heading"><h2 id="cohort-title">Homogeneous synthetic cohort</h2><span>ONE PROFILE GRID</span></div>
-            <p class="section-note">All generated people use these same response assumptions. They are fictional model parameters, not personality diagnoses or measured demographics.</p>
+            <div class="section-heading"><h2 id="cohort-title">Synthetic audience profile</h2></div>
+            <p class="section-note">This version applies one shared response profile to every synthetic person. These values are model assumptions, not measured demographics.</p>
             <fieldset class="choice-field" data-field-path="cohort.interests">
               <legend>Cohort interests</legend>
               <div class="choice-grid">
@@ -214,8 +221,8 @@
               <div class="field"><label for="trait-price">Price sensitivity <span>0–1</span></label><input id="trait-price" type="number" min="0" max="1" step="0.1" value="0.5"></div>
               <div class="field"><label for="trait-novelty">Novelty seeking <span>0–1</span></label><input id="trait-novelty" type="number" min="0" max="1" step="0.1" value="0.6"></div>
               <div class="field"><label for="trait-skepticism">Ad skepticism <span>0–1</span></label><input id="trait-skepticism" type="number" min="0" max="1" step="0.1" value="0.4"></div>
-              <div class="field"><label for="trait-mobile-recall">Mobile recall encoding <span>0–1</span></label><input id="trait-mobile-recall" type="number" min="0" max="1" step="0.1" value="0.7"></div>
-              <div class="field"><label for="trait-road-recall">Roadside recall encoding <span>0–1</span></label><input id="trait-road-recall" type="number" min="0" max="1" step="0.1" value="0.6"></div>
+              <div class="field"><label for="trait-mobile-recall">Phone recall strength <span>0–1</span></label><input id="trait-mobile-recall" type="number" min="0" max="1" step="0.1" value="0.7"></div>
+              <div class="field"><label for="trait-road-recall">Billboard recall strength <span>0–1</span></label><input id="trait-road-recall" type="number" min="0" max="1" step="0.1" value="0.6"></div>
               <div class="field"><label for="trait-impulsivity">Impulsivity <span>0–1</span></label><input id="trait-impulsivity" type="number" min="0" max="1" step="0.1" value="0.3"></div>
             </div>
             <p id="traits-error" class="field-error" role="status"></p>
@@ -228,8 +235,8 @@
           </section>
 
           <aside id="provider-boundary" class="boundary-note" role="note">
-            <strong>Deterministic rules only</strong>
-            <p>Provider and OAuth settings are not installed in this local workbench. No model can decide purchases, movement, or artifact state.</p>
+            <strong>Engine: deterministic rules</strong>
+            <p>This city workflow does not call an AI provider. ChatGPT/Codex subscriptions and custom API credentials are not used.</p>
           </aside>
 
           <div class="stage-actions split">
@@ -239,17 +246,17 @@
         </section>
 
         <section id="panel-run" class="stage-panel" data-stage-panel="run" aria-labelledby="run-title" hidden>
-          <p class="eyebrow">03 / RUN</p>
-          <h1 id="run-title">Validate, then start one local run</h1>
-          <p class="stage-intro">Validation is side-effect free. Starting re-reads the complete draft and the server remains authoritative about collisions, limits, and scientific bindings.</p>
+          <p class="eyebrow">Step 3</p>
+          <h1 id="run-title">Review and run</h1>
+          <p class="stage-intro">Check the run ID, duration, population, and seed. Validation does not create a run.</p>
 
           <section class="form-section" aria-labelledby="settings-title">
-            <div class="section-heading"><h2 id="settings-title">Run settings</h2><span>BOUNDED EXECUTION</span></div>
+            <div class="section-heading"><h2 id="settings-title">Run settings</h2></div>
             <div class="field-grid two">
               <div class="field" data-field-path="settings.run_id">
                 <label for="run-id">Run ID</label>
                 <input id="run-id" type="text" value="city-study-001" maxlength="40" autocomplete="off" aria-describedby="run-id-help run-id-error">
-                <small id="run-id-help" class="field-help">Suggested from the loaded verified library; the server checks collisions again.</small>
+                <small id="run-id-help" class="field-help">Use lowercase letters, numbers, and hyphens; choose a new ID for each run.</small>
                 <p id="run-id-error" class="field-error" role="status"></p>
               </div>
               <div class="field" data-field-path="settings.agent_count">
@@ -264,42 +271,48 @@
                 <p id="days-error" class="field-error" role="status"></p>
               </div>
               <div class="field" data-field-path="settings.seed">
-                <label for="seed">Deterministic seed <span>0–9223372036854775807</span></label>
-                <input id="seed" type="text" value="42" inputmode="numeric" maxlength="19" autocomplete="off">
+                <label for="seed">Seed <span>0–9223372036854775807</span></label>
+                <input id="seed" type="text" value="42" inputmode="numeric" maxlength="19" autocomplete="off" aria-describedby="seed-help seed-error">
+                <small id="seed-help" class="field-help">The same inputs and seed produce the same result.</small>
                 <p id="seed-error" class="field-error" role="status"></p>
               </div>
               <div class="field">
                 <label for="response-mode">Response mode</label>
-                <input id="response-mode" type="text" value="Deterministic rules" readonly>
+                <input id="response-mode" type="text" value="Rules engine (offline)" readonly>
               </div>
             </div>
           </section>
 
-          <div id="validation-state" class="validation-state" role="status">Validate the draft to review its immutable bindings.</div>
+          <div id="validation-state" class="validation-state" role="status">Validate the study before starting.</div>
           <div class="stage-actions split">
             <button id="reset-draft" class="button quiet" type="button">Reset draft</button>
             <button id="validate-run" class="button primary" type="button">Validate study</button>
           </div>
 
           <section id="validation-review" class="validation-review" aria-labelledby="review-title" hidden>
-            <div class="section-heading"><h2 id="review-title">Validated binding receipt</h2><span>NO ARTIFACT WRITTEN</span></div>
+            <div class="section-heading"><h2 id="review-title">Validated inputs</h2><span>Ready to run</span></div>
             <dl class="review-facts">
               <div><dt>Run</dt><dd id="review-run">—</dd></div>
               <div><dt>Seed</dt><dd id="review-seed">—</dd></div>
               <div><dt>Population</dt><dd id="review-population">—</dd></div>
               <div><dt>Placements</dt><dd id="review-placements">—</dd></div>
-              <div><dt>Input hash</dt><dd><code id="review-input-hash">—</code></dd></div>
-              <div><dt>City hash</dt><dd><code id="review-city-hash">—</code></dd></div>
-              <div><dt>Scenario hash</dt><dd><code id="review-scenario-hash">—</code></dd></div>
-              <div><dt>Creative hash</dt><dd><code id="review-creative-hash">—</code></dd></div>
-              <div><dt>Response hash</dt><dd><code id="review-response-hash">—</code></dd></div>
             </dl>
-            <p class="section-note">The cohort is homogeneous synthetic state. Purchase intention is an uncalibrated model proxy, not purchase probability or sales.</p>
+            <details class="technical-details">
+              <summary>Technical provenance</summary>
+              <dl class="review-facts">
+                <div><dt>Input hash</dt><dd><code id="review-input-hash">—</code></dd></div>
+                <div><dt>City hash</dt><dd><code id="review-city-hash">—</code></dd></div>
+                <div><dt>Scenario hash</dt><dd><code id="review-scenario-hash">—</code></dd></div>
+                <div><dt>Creative hash</dt><dd><code id="review-creative-hash">—</code></dd></div>
+                <div><dt>Response hash</dt><dd><code id="review-response-hash">—</code></dd></div>
+              </dl>
+            </details>
+            <p class="section-note">Purchase intention is a model score, not a purchase probability or sales forecast.</p>
             <button id="start-run" class="button primary wide" type="button" disabled>Start deterministic run</button>
           </section>
 
           <section id="job-panel" class="job-panel" aria-labelledby="job-title" hidden>
-            <div class="section-heading"><h2 id="job-title">Run worker</h2><span id="job-phase">QUEUED</span></div>
+            <div class="section-heading"><h2 id="job-title">Simulation status</h2><span id="job-phase">Queued</span></div>
             <p id="job-message">The worker accepted this study.</p>
             <dl id="job-settings" class="compact-facts"></dl>
             <div class="job-actions">
@@ -312,9 +325,9 @@
         </section>
 
         <section id="panel-inspect" class="stage-panel" data-stage-panel="inspect" aria-labelledby="inspect-title" hidden>
-          <p class="eyebrow">04 / INSPECT</p>
-          <h1 id="inspect-title">Open a freshly verified run</h1>
-          <p class="stage-intro">The library is rebuilt from bounded artifact verification. Corrupt entries are counted but never presented as valid runs.</p>
+          <p class="eyebrow">Step 4</p>
+          <h1 id="inspect-title">Saved runs</h1>
+          <p class="stage-intro">Open a completed run to view its timeline, synthetic people, ad contacts, and results.</p>
           <div id="completed-runs">
             <div class="library-summary" role="status">
               <span id="library-count">Loading verified runs…</span>
@@ -328,43 +341,34 @@
             </div>
           </div>
           <aside class="boundary-note" role="note">
-            <strong>Inspection does not mutate a run</strong>
-            <p>Playback, filters, selection, zoom, and time controls are presentation state only. Saved evidence remains immutable.</p>
+            <strong>Read-only results</strong>
+            <p>Viewing a run does not change its saved results.</p>
           </aside>
         </section>
       </section>
 
       <section class="map-column" aria-labelledby="map-title">
         <div class="map-heading">
-          <div><p class="eyebrow">VERIFIED MODEL SPACE</p><h2 id="map-title">City geometry</h2></div>
-          <span id="map-status">WAITING FOR CITY</span>
+          <div><p class="eyebrow">Street network</p><h2 id="map-title">Map preview</h2></div>
+          <span id="map-status">Waiting for city</span>
         </div>
         <canvas id="city-map" width="960" height="680" role="img" aria-label="Verified fictional city road map"></canvas>
         <div class="map-legend" aria-label="Map legend">
           <span><i class="legend-road"></i> road</span>
           <span><i class="legend-route"></i> selected roadside placement</span>
-          <span><i class="legend-phone"></i> phone opportunity enabled</span>
         </div>
-        <section id="city-map-alternative" class="map-alternative" aria-labelledby="map-alternative-title">
-          <h3 id="map-alternative-title">Text map</h3>
-          <p id="map-summary">City geometry is loading.</p>
-          <ul id="map-road-list"><li>Road details are not available yet.</li></ul>
-        </section>
-        <article class="causal-thread" aria-labelledby="causal-title">
-          <p class="eyebrow">CAUSAL THREAD</p>
-          <h3 id="causal-title">From placement to evidence</h3>
-          <ol>
-            <li><span>1</span><p><strong id="thread-placement">Phone opportunity</strong><small>chosen assumption</small></p></li>
-            <li><span>2</span><p><strong>Model minute</strong><small>deterministic eligibility</small></p></li>
-            <li><span>3</span><p><strong>Response evidence</strong><small>rule-owned state delta</small></p></li>
-            <li><span>4</span><p><strong>Metric receipt</strong><small>persisted provenance</small></p></li>
-          </ol>
-        </article>
+        <details id="city-map-alternative" class="map-alternative">
+          <summary id="map-alternative-title">Map details</summary>
+          <div class="map-alternative-content">
+            <p id="map-summary">City geometry is loading.</p>
+            <ul id="map-road-list"><li>Road details are not available yet.</li></ul>
+          </div>
+        </details>
       </section>
     </div>
   </main>
 
   <div id="workbench-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
-  <footer><span>ADLIFE LAB / LOCAL CITY SYSTEMS</span><span>Deterministic · Synthetic only · No external network</span></footer>
+  <footer><span>AdLife City</span><span>Local · deterministic · synthetic</span></footer>
 </body>
 </html>
