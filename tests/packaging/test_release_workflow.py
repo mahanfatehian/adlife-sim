@@ -31,29 +31,76 @@ def test_ci_type_checks_windows_and_posix_platform_apis() -> None:
     assert ["uv", "run", "mypy", "--platform", "win32", "src"] in commands
 
 
-def test_ci_runs_maximum_performance_outside_coverage() -> None:
+def test_ci_runs_performance_gates_on_an_isolated_fresh_runner_matrix() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-    steps = workflow["jobs"]["test"]["steps"]
+    test_job = workflow["jobs"]["test"]
+    performance_job = workflow["jobs"]["performance"]
+    test_steps = test_job["steps"]
+    performance_steps = performance_job["steps"]
     coverage = next(
-        step for step in steps if step.get("name") == "Test suite with branch coverage (85% floor)"
+        step
+        for step in test_steps
+        if step.get("name") == "Test suite with branch coverage (85% floor)"
     )
-    performance = next(step for step in steps if step.get("name") == "Maximum rules performance")
+    by_name = {step.get("name"): step for step in performance_steps}
+
+    assert performance_job["name"] == (
+        "performance (${{ matrix.os }}, py${{ matrix.python-version }})"
+    )
+    assert performance_job["runs-on"] == "${{ matrix.os }}"
+    assert (
+        performance_job["strategy"]
+        == test_job["strategy"]
+        == {
+            "fail-fast": False,
+            "matrix": {
+                "os": ["ubuntu-latest"],
+                "python-version": ["3.11", "3.12", "3.13"],
+                "include": [
+                    {"os": "windows-latest", "python-version": "3.12"},
+                    {"os": "macos-latest", "python-version": "3.12"},
+                ],
+            },
+        }
+    )
+    assert [step.get("name") for step in performance_steps] == [
+        None,
+        None,
+        "Install locked dependencies",
+        "Maximum rules performance",
+        "Maximum spatial opportunity performance",
+    ]
+    assert performance_steps[0] == test_steps[0]
+    assert performance_steps[1] == test_steps[1]
+    assert by_name["Install locked dependencies"]["run"] == "uv sync --locked --all-groups"
+    assert all(
+        step.get("name")
+        not in {"Maximum rules performance", "Maximum spatial opportunity performance"}
+        for step in test_steps
+    )
+    assert all("continue-on-error" not in step for step in performance_steps)
 
     assert coverage["env"]["ADLIFE_SKIP_LONG_TESTS"] == "1"
-    assert performance["run"] == "uv run pytest -q -s tests/integration/test_maximum_run.py"
-    ceiling = performance["env"]["ADLIFE_PERF_CEILING_SECONDS"]
+    rules = by_name["Maximum rules performance"]
+    assert rules["run"] == "uv run pytest -q -s tests/integration/test_maximum_run.py"
+    ceiling = rules["env"]["ADLIFE_PERF_CEILING_SECONDS"]
     assert "runner.os == 'Windows'" in ceiling
     assert "'60'" in ceiling
 
 
-def test_ci_runs_maximum_spatial_opportunity_performance_outside_coverage() -> None:
+def test_ci_runs_spatial_performance_with_its_existing_platform_thresholds() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-    steps = workflow["jobs"]["test"]["steps"]
+    test_steps = workflow["jobs"]["test"]["steps"]
+    performance_steps = workflow["jobs"]["performance"]["steps"]
     coverage = next(
-        step for step in steps if step.get("name") == "Test suite with branch coverage (85% floor)"
+        step
+        for step in test_steps
+        if step.get("name") == "Test suite with branch coverage (85% floor)"
     )
     performance = next(
-        step for step in steps if step.get("name") == "Maximum spatial opportunity performance"
+        step
+        for step in performance_steps
+        if step.get("name") == "Maximum spatial opportunity performance"
     )
 
     assert coverage["env"]["ADLIFE_SKIP_LONG_TESTS"] == "1"

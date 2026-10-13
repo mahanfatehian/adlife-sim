@@ -65,6 +65,37 @@ jobs:
           # coverage tracing but remain a required, real-browser CI gate.
           ADLIFE_REQUIRE_BROWSER: "1"
         run: uv run pytest -q -s tests/browser/test_city_workbench_browser.py::test_browser_drives_combined_study_and_inspection_never_changes_artifacts tests/browser/test_city_workbench_browser.py::test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive
+      - name: Offline deterministic integration runs
+        run: |
+          uv run pytest -q tests/integration/test_rule_run.py tests/integration/test_demo.py
+      - name: Textual application smoke (pilot-driven run_test)
+        run: uv run pytest -q tests/tui
+
+  performance:
+    name: performance (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
       - name: Maximum rules performance
         env:
           # GitHub's shared Windows runners are materially slower than Linux/macOS.
@@ -75,11 +106,6 @@ jobs:
           # Keep the spatial ceiling meaningful while allowing shared Windows host noise.
           ADLIFE_SPATIAL_PERF_CEILING_SECONDS: ${{ runner.os == 'Windows' && '60' || '' }}
         run: uv run pytest -q -s tests/integration/test_spatial_opportunity_performance.py
-      - name: Offline deterministic integration runs
-        run: |
-          uv run pytest -q tests/integration/test_rule_run.py tests/integration/test_demo.py
-      - name: Textual application smoke (pilot-driven run_test)
-        run: uv run pytest -q tests/tui
 
   shell-quality:
     name: shell script quality
