@@ -21,7 +21,7 @@ from playwright.sync_api import Route, expect, sync_playwright
 
 from adlife.city.runs import create_city_run
 from adlife.city.web import create_city_app
-from adlife.city.workbench_input import WorkbenchRunDraft
+from adlife.city.workbench_input import WorkbenchRunDraft, WorkbenchRunDraftV2
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
@@ -51,7 +51,7 @@ from tests.unit.city.test_spatial_opportunity import (
     _scenario,
 )
 from tests.unit.city.test_spatial_response import _response_input
-from tests.unit.city.test_workbench_input import draft_data
+from tests.unit.city.test_workbench_input import draft_data, persona_data
 
 _BROWSER_PATHS = (
     Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
@@ -337,6 +337,9 @@ def _response_viewer(
 @contextmanager
 def _workbench_assumptions_viewer(
     tmp_path: Path,
+    *,
+    schema_version: int = 7,
+    distinct_names: bool = False,
 ) -> Iterator[tuple[str, Path, dict[str, object]]]:
     root = tmp_path / "workbench"
     workspace = prepare_workbench_workspace(root)
@@ -370,7 +373,23 @@ def _workbench_assumptions_viewer(
             "seed": 2**63 - 1,
         }
     )
-    draft = WorkbenchRunDraft.model_validate_json(json.dumps(document, ensure_ascii=False))
+    if schema_version == 8:
+        document.pop("cohort")
+        document["schema_version"] = 2
+        document["settings"]["agent_count"] = 3
+        first = persona_data(persona_id="persona-002", count=1)
+        second = persona_data(persona_id="persona-001", count=2)
+        for persona in (first, second):
+            persona["display_name"] = "مینا <img src=x onerror=alert(1)>"
+            persona["background"] = "زندگی خیالی <script>alert(1)</script>"
+        first["occupation"] = "Fictional artist"
+        second["occupation"] = "Fictional designer"
+        if distinct_names:
+            first["display_name"] = "کیان خیالی"
+        document["population"] = {"personas": [first, second]}
+        draft = WorkbenchRunDraftV2.model_validate_json(json.dumps(document, ensure_ascii=False))
+    else:
+        draft = WorkbenchRunDraft.model_validate_json(json.dumps(document, ensure_ascii=False))
     validated = construct_workbench_run(draft)
     settings = validated.workbench_input.draft.settings
     stored = create_city_run(
@@ -825,6 +844,307 @@ def test_schema_v7_inspector_cross_checks_assumption_identity_with_run_summary(
                 "Frozen workbench input is invalid"
             )
             page.close()
+        browser.close()
+
+
+def test_schema_v8_inspector_maps_verified_saved_identities_and_collapsed_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adlife.city import workbench_personas
+    from adlife.city import workbench_web as inspector_web
+
+    with (
+        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (base_url, root, expected),
+        sync_playwright() as playwright,
+    ):
+        # A saved identity must never be reconstructed from a changed/absent catalog.
+        def unavailable_catalog(**_kwargs: object) -> object:
+            raise AssertionError("Saved inspection must not load persona templates")
+
+        monkeypatch.setattr(
+            workbench_personas, "load_persona_template_catalog", unavailable_catalog
+        )
+        monkeypatch.setattr(inspector_web, "load_persona_template_catalog", unavailable_catalog)
+        before = _artifact_hashes(root)
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        page = browser.new_page()
+        requests: list[tuple[str, str]] = []
+        page.on("request", lambda request: requests.append((request.method, request.url)))
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+        expect(page.locator("#assumptions-status")).to_have_text("Verified")
+        name = "مینا <img src=x onerror=alert(1)>"
+        expect(page.locator("#selected-name")).to_have_text(name)
+        expect(page.locator("#identity-context")).not_to_have_attribute("open", "")
+        expect(page.locator("#identity-context summary")).to_have_text(
+            "Fictional context — does not affect simulation"
+        )
+        assert page.locator("#selected-name").get_attribute("dir") == "auto"
+        assert page.locator("#selected-name").evaluate("el => el.closest('[aria-live]')") is None
+        rows = page.locator("#people-list .person")
+        assert rows.count() == 3
+        for index, occupation in enumerate(
+            ["Fictional designer", "Fictional designer", "Fictional artist"]
+        ):
+            agent_id = f"PERSON-{index + 1:03d}"
+            expect(rows.nth(index).locator("strong")).to_have_text(agent_id)
+            expect(rows.nth(index).locator("bdi")).to_have_text(name)
+            rows.nth(index).click()
+            expect(page.locator("#selected-id")).to_have_text(agent_id)
+            expect(page.locator("#map-text-summary")).to_contain_text(agent_id)
+            page.locator("#identity-context summary").focus()
+            page.keyboard.press("Enter")
+            expect(page.locator("#identity-context")).to_have_attribute("open", "")
+            expect(page.locator("#identity-occupation")).to_have_text(occupation)
+            expect(page.locator("#identity-background")).to_have_text(
+                "زندگی خیالی <script>alert(1)</script>"
+            )
+            expect(page.locator("#identity-age")).to_have_text("28")
+            expect(page.locator("#identity-mbti")).to_have_text("INTJ")
+            assert (
+                page.locator("#identity-context summary").evaluate(
+                    "el => getComputedStyle(el).outlineStyle"
+                )
+                != "none"
+            )
+            page.keyboard.press("Space")
+        page.locator("#assumptions-drawer summary").click()
+        assert "homogeneous" not in page.locator("#assumptions-disclosure").inner_text()
+        expect(page.locator("#assumptions-cohort-title").locator("..")).to_be_hidden()
+        assert (
+            page.locator(
+                "#identity-context img, #identity-context script, #people-list img"
+            ).count()
+            == 0
+        )
+        assert all(method == "GET" and url.startswith(base_url) for method, url in requests)
+        assert not any("persona-templates" in url or "workbench.json" in url for _, url in requests)
+        assert _artifact_hashes(root) == before
+        browser.close()
+
+
+def test_schema_v8_inspector_refuses_incomplete_or_misbound_identity_before_rendering(
+    tmp_path: Path,
+) -> None:
+    with (
+        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (base_url, _root, expected),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        mutations = [
+            "missing-population",
+            "missing-assignment",
+            "duplicate-assignment",
+            "extra-assignment",
+            "swapped-assignment",
+            "unknown-persona",
+            "duplicate-persona",
+            "wrong-count",
+            "wrong-total",
+            "crossed-input",
+            "crossed-run",
+            "wrong-agent-set",
+            "duplicate-agent",
+            "unknown-member",
+            "false-fictional",
+            "invalid-mbti",
+            "wrong-age",
+            "unsafe-control",
+            "wrong-trait",
+            "wrong-state",
+            "missing-name",
+            "oversize-persona",
+        ]
+        for mutation in mutations:
+            page = browser.new_page()
+
+            def corrupt(route: Route, *, case: str = mutation) -> None:
+                document = route.fetch().json()
+                population = document["population"]
+                personas = population["personas"]
+                assignments = population["assignments"]
+                if case == "missing-population":
+                    document.pop("population")
+                elif case == "missing-assignment":
+                    assignments.pop()
+                elif case == "duplicate-assignment":
+                    assignments[1] = assignments[0]
+                elif case == "extra-assignment":
+                    assignments.append({"agent_id": "person-004", "persona_id": "persona-001"})
+                elif case == "swapped-assignment":
+                    assignments[0]["persona_id"], assignments[2]["persona_id"] = (
+                        assignments[2]["persona_id"],
+                        assignments[0]["persona_id"],
+                    )
+                elif case == "unknown-persona":
+                    assignments[0]["persona_id"] = "persona-999"
+                elif case == "duplicate-persona":
+                    personas[1]["persona_id"] = personas[0]["persona_id"]
+                elif case == "wrong-count":
+                    personas[0]["count"] = 1
+                elif case == "wrong-total":
+                    document["settings"]["agent_count"] = 2
+                elif case == "crossed-input":
+                    document["workbench_input_schema_version"] = 1
+                elif case == "crossed-run":
+                    document["run_schema_version"] = 7
+                elif case == "unknown-member":
+                    personas[0]["secret_sentinel"] = "must-not-reflect"
+                elif case == "false-fictional":
+                    personas[0]["fictional"] = 1
+                elif case == "invalid-mbti":
+                    personas[0]["mbti"] = "INVALID"
+                elif case == "wrong-age":
+                    personas[0]["age"] = True
+                elif case == "unsafe-control":
+                    personas[0]["display_name"] = "must-not-reflect\u202e"
+                elif case == "wrong-trait":
+                    personas[0]["traits"]["impulsivity"] = 2
+                elif case == "wrong-state":
+                    personas[0]["initial_state"]["brand_sentiment"] = -2
+                elif case == "missing-name":
+                    personas[0].pop("display_name")
+                elif case == "oversize-persona":
+                    personas[0]["background"] = "😀" * 800
+                route.fulfill(json=document)
+
+            if mutation in ("wrong-agent-set", "duplicate-agent"):
+
+                def corrupt_agents(route: Route, *, case: str = mutation) -> None:
+                    document = route.fetch().json()
+                    document[2]["agent_id"] = (
+                        "person-004" if case == "wrong-agent-set" else "person-001"
+                    )
+                    route.fulfill(json=document)
+
+                page.route("**/agents", corrupt_agents)
+            else:
+                page.route("**/workbench-input", corrupt)
+            page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+            expect(page.locator("#assumptions-status"), message=mutation).to_have_text(
+                "VERIFICATION FAILED"
+            )
+            expect(page.locator("#error-banner"), message=mutation).to_contain_text(
+                "Frozen workbench input is invalid"
+            )
+            expect(page.locator("#selected-name"), message=mutation).to_be_hidden()
+            assert page.locator("#people-list").inner_text() == "", mutation
+            assert "must-not-reflect" not in page.locator("body").inner_text(), mutation
+            page.close()
+        browser.close()
+
+
+def test_schema_v8_identity_changes_only_with_the_committed_timeline_selection(
+    tmp_path: Path,
+) -> None:
+    with (
+        _workbench_assumptions_viewer(tmp_path, schema_version=8, distinct_names=True) as (
+            base_url,
+            _root,
+            expected,
+        ),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        page = browser.new_page()
+        page.add_init_script("""(() => {
+          const original = window.fetch;
+          window.identityPending = false;
+          window.fetch = async (...args) => {
+            if (String(args[0]).includes('/timeline?') && String(args[0]).includes('person-003')) {
+              window.identityPending = true;
+              const fail = await new Promise(resolve => { window.releaseIdentity = resolve; });
+              if (fail) return new Response('{}', {status: 500});
+            }
+            return original(...args);
+          };
+        })();""")
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+        expect(page.locator("#selected-id")).to_have_text("PERSON-001")
+        page.locator("#identity-context summary").click()
+
+        def snapshot() -> object:
+            return page.evaluate("""() => ({
+              id: document.querySelector('#selected-id').textContent,
+              name: document.querySelector('#selected-name').textContent,
+              context: document.querySelector('#identity-context').textContent,
+              activity: document.querySelector('#selected-activity').textContent,
+              response: document.querySelector('#response-state-panel').textContent,
+              map: document.querySelector('#city-map').toDataURL(),
+              alternative: document.querySelector('#map-text-summary').textContent,
+              selected: document.querySelector('.person.selected').textContent,
+            })""")
+
+        before = snapshot()
+        page.locator(".person").nth(2).click()
+        page.wait_for_function("window.identityPending")
+        assert snapshot() == before
+        page.evaluate("window.releaseIdentity(true)")
+        expect(page.locator("#error-banner")).to_be_visible()
+        assert snapshot() == before
+        page.evaluate("window.identityPending = false")
+        page.locator(".person").nth(2).click()
+        page.wait_for_function("window.identityPending")
+        assert snapshot() == before
+        page.evaluate("window.releaseIdentity(false)")
+        expect(page.locator("#selected-id")).to_have_text("PERSON-003")
+        expect(page.locator("#selected-name")).to_have_text("کیان خیالی")
+        expect(page.locator("#identity-occupation")).to_have_text("Fictional artist")
+        expect(page.locator("#map-text-summary")).to_contain_text("PERSON-003")
+        page.evaluate("window.identityPending = false")
+        page.locator(".person").nth(2).click()
+        page.wait_for_function("window.identityPending")
+        page.locator(".person").nth(1).click()
+        expect(page.locator("#selected-id")).to_have_text("PERSON-002")
+        newest = snapshot()
+        page.evaluate("window.releaseIdentity(false)")
+        page.wait_for_timeout(100)
+        assert snapshot() == newest
+        browser.close()
+
+
+def test_schema_v8_context_is_keyboard_accessible_and_contained_at_390px_200_percent(
+    tmp_path: Path,
+) -> None:
+    with (
+        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (base_url, _root, expected),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844}, reduced_motion="reduce")
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+        expect(page.locator("#selected-name")).to_be_visible()
+        original_font = page.locator("#selected-name").evaluate(
+            "el => parseFloat(getComputedStyle(el).fontSize)"
+        )
+        page.evaluate("document.documentElement.style.fontSize = '200%'")
+        assert (
+            page.locator("#selected-name").evaluate(
+                "el => parseFloat(getComputedStyle(el).fontSize)"
+            )
+            >= original_font * 2
+        )
+        summary = page.locator("#identity-context summary")
+        summary.focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#identity-background")).to_be_visible()
+        expect(page.locator("#play-button")).to_be_disabled()
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        for selector in ("#identity-context", "#selected-name", "#people-list"):
+            assert page.locator(selector).evaluate("el => el.scrollWidth <= el.clientWidth"), (
+                selector
+            )
+        assert (
+            page.locator("#identity-context").evaluate("el => getComputedStyle(el).animationName")
+            == "none"
+        )
         browser.close()
 
 

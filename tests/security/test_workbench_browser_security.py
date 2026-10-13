@@ -11,9 +11,13 @@ import pytest
 from playwright.sync_api import expect
 
 import adlife.city.workbench_web as workbench_web
+from adlife.city.runs import create_city_run
+from adlife.city.workbench_input import WorkbenchRunDraftV2
 from adlife.city.workbench_security import MAX_WORKBENCH_BODY_BYTES
+from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
+from tests.browser.test_city_places_browser import _workbench_assumptions_viewer
 from tests.browser.test_city_workbench_browser import (
     _installed_browser,
     _open_page,
@@ -22,6 +26,7 @@ from tests.browser.test_city_workbench_browser import (
     _workbench,
 )
 from tests.unit.city import test_workbench_web as web_helpers
+from tests.unit.city.test_workbench_input import draft_v2_data
 
 
 @pytest.mark.parametrize(
@@ -620,17 +625,78 @@ def test_external_inspector_url_from_a_tampered_library_is_inert(
             playwright.stop()
 
 
+def test_v8_saved_persona_markup_stays_inert_and_read_only_under_csp(tmp_path: Path) -> None:
+    with _workbench_assumptions_viewer(tmp_path, schema_version=8) as (base_url, root, expected):
+        before = web_helpers._snapshot(root)
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        requests: list[tuple[str, str]] = []
+        errors: list[str] = []
+        dialogs: list[str] = []
+        try:
+            page.on("request", lambda request: requests.append((request.method, request.url)))
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+            response = page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+            assert response is not None
+            assert "script-src 'self'" in response.headers["content-security-policy"]
+            expect(page.locator("#selected-name")).to_have_text("مینا <img src=x onerror=alert(1)>")
+            page.locator("#identity-context summary").click()
+            expect(page.locator("#identity-background")).to_have_text(
+                "زندگی خیالی <script>alert(1)</script>"
+            )
+            assert (
+                page.locator(
+                    "#identity-context img, #identity-context script, #people-list img"
+                ).count()
+                == 0
+            )
+            assert page.locator("#identity-context bdi[dir=auto]").count() == 4
+            assert errors == dialogs == []
+            assert all(method == "GET" and url.startswith(base_url) for method, url in requests)
+            assert not any(
+                "persona-templates" in url or "workbench.json" in url for _, url in requests
+            )
+            assert web_helpers._snapshot(root) == before
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+@pytest.mark.parametrize("schema_version", [7, 8])
 def test_read_only_browser_and_api_inspection_preserve_every_source_artifact_byte(
     tmp_path: Path,
+    schema_version: int,
 ) -> None:
     browser_path = _installed_browser()
     root = tmp_path / "workspace"
     workspace = prepare_workbench_workspace(root)
-    stored = web_helpers._saved_workbench_run(
-        root,
-        run_id="security-read-only",
-        schema_version=7,
-    )
+    if schema_version == 8:
+        payload = draft_v2_data(agent_count=1)
+        payload["settings"].update(run_id="security-read-only", days=1)
+        payload["scenario"]["phone"]["active_windows"] = [
+            {"day": 1, "start_minute": 480, "end_minute": 481}
+        ]
+        payload["scenario"]["roadside"] = None
+        validated = construct_workbench_run(
+            WorkbenchRunDraftV2.model_validate_json(json.dumps(payload))
+        )
+        settings = validated.workbench_input.draft.settings
+        stored = create_city_run(
+            validated.pack,
+            root=root,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+        )
+        assert stored.manifest.schema_version == 8
+    else:
+        stored = web_helpers._saved_workbench_run(
+            root, run_id="security-read-only", schema_version=7
+        )
     application = create_city_workbench_app(
         workspace,
         csrf_token="read-only-security-token",
@@ -669,6 +735,9 @@ def test_read_only_browser_and_api_inspection_preserve_every_source_artifact_byt
                 ),
             )
             page.goto(f"{base_url}/runs/{stored.manifest.run_id}", wait_until="networkidle")
+            expect(page.locator("#assumptions-status")).to_have_text("Verified")
+            if schema_version == 8:
+                expect(page.locator("#selected-name")).to_be_visible()
             statuses = page.evaluate(
                 """async (paths) => Promise.all(paths.map(async (path) => {
                   const response = await fetch(path, {

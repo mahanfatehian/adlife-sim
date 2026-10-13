@@ -95,3 +95,23 @@ body{background:var(--bg)}
 .metrics-panel>summary h2,.response-metrics-panel>summary h2{display:flex;flex-direction:column;gap:5px;margin:0}
 .metrics-panel>summary:after,.response-metrics-panel>summary:after{content:"Hide details";margin-left:auto;color:var(--muted);font:600 10px "Segoe UI",Tahoma,Arial,sans-serif}
 .metrics-panel:not([open])>summary:after,.response-metrics-panel:not([open])>summary:after{content:"Show details"}
+
+/* Fictional context accompanies the immutable operational ID, quietly and without motion. */
+.agent-detail>div:last-child{min-width:0;flex:1}
+.agent-avatar{flex-shrink:0}
+#selected-name{display:block;margin:0 0 7px;font-size:1rem;font-weight:650;line-height:1.4;overflow-wrap:anywhere;unicode-bidi:isolate}
+#selected-name[hidden],.identity-context[hidden]{display:none}
+.identity-context{min-width:0;margin:0 20px 14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.identity-context summary{padding:12px 0;color:var(--muted);cursor:pointer;font-size:.75rem;line-height:1.5;overflow-wrap:anywhere}
+.identity-context summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.identity-context dl{display:grid;gap:12px;margin:0;padding:0 0 14px}
+.identity-context dl>div{min-width:0}
+.identity-context dt{margin:0 0 4px;color:var(--muted);font-size:.6875rem;font-weight:600}
+.identity-context dd{margin:0;font-size:.75rem;line-height:1.55;overflow-wrap:anywhere}
+.identity-context bdi{unicode-bidi:isolate}
+.person.with-identity{display:grid;grid-template-columns:7px minmax(0,1fr) auto;gap:4px 10px}
+.person.with-identity .person-pip{grid-column:1;grid-row:1/3}
+.person.with-identity bdi{grid-column:2;grid-row:1;font-size:.875rem;line-height:1.4;overflow-wrap:anywhere;unicode-bidi:isolate}
+.person.with-identity strong{grid-column:2;grid-row:2;font-size:.6875rem;overflow-wrap:anywhere}
+.person.with-identity small{grid-column:3;grid-row:1/3;font-size:.625rem;overflow-wrap:anywhere}
+@media(max-width:520px){.identity-context{margin-left:16px;margin-right:16px}.person.with-identity{grid-template-columns:7px minmax(0,1fr)}.person.with-identity small{grid-column:2;grid-row:3;margin-left:0}}

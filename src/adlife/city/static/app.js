@@ -177,6 +177,7 @@ const state = {
   meta: null,
   metaSeedToken: null,
   workbenchInput: null,
+  personaByAgent: new Map(),
   city: null,
   agents: [],
   places: null,
@@ -645,6 +646,14 @@ function renderPeople() {
       const label = document.createElement("strong"); label.textContent = agent.agent_id.toUpperCase();
       const activity = document.createElement("small");
       row.append(pip, label, activity);
+      const persona = state.personaByAgent.get(agent.agent_id);
+      if (persona) {
+        const name = document.createElement("bdi");
+        name.dir = "auto";
+        name.textContent = persona.display_name;
+        row.classList.add("with-identity");
+        row.append(name);
+      }
       row.addEventListener("click", () => setMinute(state.minute, agent.agent_id));
       list.append(row);
     }
@@ -662,6 +671,15 @@ function renderSelected() {
   const position = state.frame.positions.find((item) => item.agent_id === state.selected);
   if (!agent || !position) return;
   byId("selected-id").textContent = agent.agent_id.toUpperCase();
+  const persona = state.personaByAgent.get(agent.agent_id);
+  byId("selected-name").hidden = !persona;
+  byId("identity-context").hidden = !persona;
+  byId("selected-name").textContent = persona ? persona.display_name : "";
+  for (const field of ["age", "occupation", "background", "mbti"]) {
+    byId(`identity-${field}`).textContent = persona
+      ? (persona[field] === null ? "Not provided" : String(persona[field]))
+      : "";
+  }
   byId("selected-activity").textContent = activities[position.activity] || position.activity;
   byId("selected-place").textContent = position.coordinate_label;
   byId("home-node").textContent = agent.home_node;
@@ -2612,6 +2630,7 @@ function validateWorkbenchRoadside(value, days) {
 
 function validateWorkbenchInput(value) {
   const documentValue = requireRecord(value, "Frozen workbench input");
+  const isPersonaRun = documentValue.run_schema_version === 8;
   if (!hasExactKeys(documentValue, [
     "run_id",
     "run_schema_version",
@@ -2622,7 +2641,7 @@ function validateWorkbenchInput(value) {
     "scenario_sha256",
     "creative_sha256",
     "scenario",
-    "cohort",
+    isPersonaRun ? "population" : "cohort",
     "settings",
     "creative_template",
   ])) invalidWorkbenchInput();
@@ -2632,8 +2651,9 @@ function validateWorkbenchInput(value) {
   ])) invalidWorkbenchInput();
   const runId = requireWorkbenchId(documentValue.run_id, 40);
   if (
-    documentValue.run_schema_version !== 7
-    || documentValue.workbench_input_schema_version !== 1
+    ![7, 8].includes(documentValue.run_schema_version)
+    || documentValue.run_schema_version !== state.meta.run_schema_version
+    || documentValue.workbench_input_schema_version !== (isPersonaRun ? 2 : 1)
     || runId !== settings.run_id
     || runId !== state.meta.run_id
     || settings.response_mode !== "deterministic-rules"
@@ -2687,31 +2707,8 @@ function validateWorkbenchInput(value) {
   const roadside = validateWorkbenchRoadside(scenario.roadside, days);
   if (phone === null && roadside === null) invalidWorkbenchInput();
 
-  const cohort = requireRecord(documentValue.cohort, "Frozen workbench input");
-  if (!hasExactKeys(cohort, ["interests", "traits", "initial_state"])) {
-    invalidWorkbenchInput();
-  }
-  validateWorkbenchStringList(cohort.interests, 1, 12);
-  const traits = requireRecord(cohort.traits, "Frozen workbench input");
-  const traitKeys = [
-    "price_sensitivity",
-    "novelty_seeking",
-    "advertising_skepticism",
-    "mobile_recall_encoding",
-    "roadside_recall_encoding",
-    "impulsivity",
-  ];
-  if (!hasExactKeys(traits, traitKeys)) invalidWorkbenchInput();
-  for (const key of traitKeys) {
-    requireBoundedNumber(traits[key], 0, 1, "Frozen workbench input");
-  }
-  const initialState = requireRecord(cohort.initial_state, "Frozen workbench input");
-  if (!hasExactKeys(initialState, [
-    "brand_sentiment", "recall_strength", "purchase_intention",
-  ])) invalidWorkbenchInput();
-  requireBoundedNumber(initialState.brand_sentiment, -1, 1, "Frozen workbench input");
-  requireBoundedNumber(initialState.recall_strength, 0, 1, "Frozen workbench input");
-  requireBoundedNumber(initialState.purchase_intention, 0, 1, "Frozen workbench input");
+  if (isPersonaRun) validateWorkbenchPopulation(documentValue.population, settings.agent_count);
+  else validateWorkbenchCohort(documentValue.cohort);
 
   const creative = requireRecord(documentValue.creative_template, "Frozen workbench input");
   if (!hasExactKeys(creative, [
@@ -2735,6 +2732,111 @@ function validateWorkbenchInput(value) {
   requireWorkbenchText(creative.call_to_action, 1, 120);
   requireWorkbenchText(creative.disclosure, 1, 80);
   return documentValue;
+}
+
+function validateWorkbenchCohort(value) {
+  const cohort = requireRecord(value, "Frozen workbench input");
+  if (!hasExactKeys(cohort, ["interests", "traits", "initial_state"])) invalidWorkbenchInput();
+  validateWorkbenchStringList(cohort.interests, 1, 12);
+  const traits = requireRecord(cohort.traits, "Frozen workbench input");
+  const traitKeys = [
+    "price_sensitivity",
+    "novelty_seeking",
+    "advertising_skepticism",
+    "mobile_recall_encoding",
+    "roadside_recall_encoding",
+    "impulsivity",
+  ];
+  if (!hasExactKeys(traits, traitKeys)) invalidWorkbenchInput();
+  for (const key of traitKeys) {
+    requireBoundedNumber(traits[key], 0, 1, "Frozen workbench input");
+  }
+  const initialState = requireRecord(cohort.initial_state, "Frozen workbench input");
+  if (!hasExactKeys(initialState, [
+    "brand_sentiment", "recall_strength", "purchase_intention",
+  ])) invalidWorkbenchInput();
+  requireBoundedNumber(initialState.brand_sentiment, -1, 1, "Frozen workbench input");
+  requireBoundedNumber(initialState.recall_strength, 0, 1, "Frozen workbench input");
+  requireBoundedNumber(initialState.purchase_intention, 0, 1, "Frozen workbench input");
+}
+
+function requirePersonaText(value, maximum) {
+  requireWorkbenchText(value, 1, maximum);
+  if (
+    value.trim().length === 0
+    || /[\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]/u.test(value)
+  ) invalidWorkbenchInput();
+}
+
+function validateWorkbenchPopulation(value, agentCount) {
+  const population = requireRecord(value, "Frozen workbench input");
+  if (
+    !hasExactKeys(population, ["personas", "assignments"])
+    || !Array.isArray(population.personas)
+    || population.personas.length < 1 || population.personas.length > 30
+    || !Array.isArray(population.assignments)
+    || population.assignments.length !== agentCount
+    || state.agents.length !== agentCount
+  ) invalidWorkbenchInput();
+  const personas = new Map();
+  const mbtiLabels = new Set([
+    "INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "INFP", "ENFJ", "ENFP",
+    "ISTJ", "ISFJ", "ESTJ", "ESFJ", "ISTP", "ISFP", "ESTP", "ESFP",
+  ]);
+  for (const item of population.personas) {
+    const persona = requireRecord(item, "Frozen workbench input");
+    if (
+      !hasExactKeys(persona, [
+        "persona_id", "count", "fictional", "display_name", "age", "occupation",
+        "background", "mbti", "interests", "traits", "initial_state",
+      ])
+      || typeof persona.persona_id !== "string"
+      || !/^persona-(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})$/.test(persona.persona_id)
+      || personas.has(persona.persona_id)
+      || persona.fictional !== true
+    ) invalidWorkbenchInput();
+    requireBoundedInteger(persona.count, 1, 30, "Frozen workbench input");
+    requirePersonaText(persona.display_name, 80);
+    if (persona.age !== null) requireBoundedInteger(persona.age, 18, 65, "Frozen workbench input");
+    if (persona.occupation !== null) requirePersonaText(persona.occupation, 80);
+    if (persona.background !== null) requirePersonaText(persona.background, 800);
+    if (persona.mbti !== null && !mbtiLabels.has(persona.mbti)) invalidWorkbenchInput();
+    validateWorkbenchCohort({
+      interests: persona.interests, traits: persona.traits, initial_state: persona.initial_state,
+    });
+    for (const interest of persona.interests) requirePersonaText(interest, 80);
+    // The server verifies canonical bytes; also refuse an oversized browser projection.
+    if (new TextEncoder().encode(JSON.stringify(persona)).length > 3072) invalidWorkbenchInput();
+    personas.set(persona.persona_id, persona);
+  }
+  const expectedIds = Array.from({ length: agentCount }, (_, index) => (
+    `person-${String(index + 1).padStart(3, "0")}`
+  ));
+  const agentIds = state.agents.map((agent) => agent.agent_id);
+  if (!sameStrings([...agentIds].sort(), expectedIds)) invalidWorkbenchInput();
+  const assignments = new Map();
+  for (const item of population.assignments) {
+    const assignment = requireRecord(item, "Frozen workbench input");
+    if (
+      !hasExactKeys(assignment, ["agent_id", "persona_id"])
+      || !expectedIds.includes(assignment.agent_id)
+      || assignments.has(assignment.agent_id)
+      || !personas.has(assignment.persona_id)
+    ) invalidWorkbenchInput();
+    assignments.set(assignment.agent_id, assignment.persona_id);
+  }
+  const identities = new Map();
+  let index = 0;
+  for (const personaId of [...personas.keys()].sort()) {
+    const persona = personas.get(personaId);
+    for (let count = 0; count < persona.count; count += 1) {
+      const agentId = expectedIds[index++];
+      if (agentId === undefined || assignments.get(agentId) !== personaId) invalidWorkbenchInput();
+      identities.set(agentId, persona);
+    }
+  }
+  if (index !== agentCount) invalidWorkbenchInput();
+  return identities;
 }
 
 function validateWorkbenchSummaryBinding(summaryValue, input) {
@@ -2797,20 +2899,25 @@ function renderWorkbenchAssumptions(input) {
   byId("assumptions-creative-message").textContent = creative.message;
   byId("assumptions-creative-action").textContent = creative.call_to_action;
   byId("assumptions-creative-disclosure").textContent = creative.disclosure;
-  byId("assumptions-cohort-interests").textContent = cohort.interests.join(" · ");
-  byId("assumptions-traits").textContent = [
-    ["PRICE SENSITIVITY", cohort.traits.price_sensitivity],
-    ["NOVELTY SEEKING", cohort.traits.novelty_seeking],
-    ["AD SKEPTICISM", cohort.traits.advertising_skepticism],
-    ["MOBILE RECALL", cohort.traits.mobile_recall_encoding],
-    ["ROADSIDE RECALL", cohort.traits.roadside_recall_encoding],
-    ["IMPULSIVITY", cohort.traits.impulsivity],
-  ].map(([label, value]) => `${label} ${value}`).join(" · ");
-  byId("assumptions-initial-state").textContent = [
-    `SENTIMENT ${cohort.initial_state.brand_sentiment}`,
-    `RECALL ${cohort.initial_state.recall_strength}`,
-    `PURCHASE INTENTION ${cohort.initial_state.purchase_intention}`,
-  ].join(" · ");
+  byId("assumptions-cohort-section").hidden = !cohort;
+  if (cohort) {
+    byId("assumptions-cohort-interests").textContent = cohort.interests.join(" · ");
+    byId("assumptions-traits").textContent = [
+      ["PRICE SENSITIVITY", cohort.traits.price_sensitivity],
+      ["NOVELTY SEEKING", cohort.traits.novelty_seeking],
+      ["AD SKEPTICISM", cohort.traits.advertising_skepticism],
+      ["MOBILE RECALL", cohort.traits.mobile_recall_encoding],
+      ["ROADSIDE RECALL", cohort.traits.roadside_recall_encoding],
+      ["IMPULSIVITY", cohort.traits.impulsivity],
+    ].map(([label, value]) => `${label} ${value}`).join(" · ");
+    byId("assumptions-initial-state").textContent = [
+      `SENTIMENT ${cohort.initial_state.brand_sentiment}`,
+      `RECALL ${cohort.initial_state.recall_strength}`,
+      `PURCHASE INTENTION ${cohort.initial_state.purchase_intention}`,
+    ].join(" · ");
+  } else {
+    byId("assumptions-disclosure").textContent = "Fictional personas have explicit response assumptions. Names and descriptive context do not affect simulation. This audience is not a sample of real residents.";
+  }
   byId("assumptions-seed").textContent = settings.seed;
   byId("assumptions-population").textContent = `${settings.agent_count} SYNTHETIC ${settings.agent_count === 1 ? "AGENT" : "AGENTS"}`;
   byId("assumptions-days").textContent = `${settings.days} MODEL ${settings.days === 1 ? "DAY" : "DAYS"}`;
@@ -3029,7 +3136,7 @@ async function boot() {
     if (meta.workbench_input_available === true) {
       try {
         if (
-          meta.run_schema_version !== 7
+          ![7, 8].includes(meta.run_schema_version)
           || !validEvidenceHash(meta.workbench_input_sha256)
           || !validatedApiBase().startsWith("/api/runs/")
         ) invalidWorkbenchInput();
@@ -3115,7 +3222,14 @@ async function boot() {
     byId("source-link").href = meta.source_url;
     byId("timeline-duration").textContent = `${meta.days} ${meta.days === 1 ? "DAY" : "DAYS"}`;
     byId("time-slider").max = String(meta.days * 1440 - 1);
-    if (state.workbenchInput) renderWorkbenchAssumptions(state.workbenchInput);
+    if (state.workbenchInput) {
+      if (state.workbenchInput.run_schema_version === 8) {
+        state.personaByAgent = validateWorkbenchPopulation(
+          state.workbenchInput.population, state.workbenchInput.settings.agent_count,
+        );
+      }
+      renderWorkbenchAssumptions(state.workbenchInput);
+    }
     await setMinute(0);
   } catch (error) { showError(String(error)); }
 }

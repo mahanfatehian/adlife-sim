@@ -50,7 +50,16 @@
       <aside class="sidebar" aria-label="Simulation details">
         <div class="sidebar-intro"><span class="eyebrow">Run overview</span><h2>Timeline and results</h2><p>Choose a synthetic person or model minute to inspect movement and campaign events.</p></div>
         <div class="section-title"><span>Selected synthetic person</span><span id="selected-id">—</span></div>
-        <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><h3 id="selected-activity">Choose a person</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
+        <div class="agent-detail"><div class="agent-avatar" aria-hidden="true">●</div><div><bdi id="selected-name" dir="auto" hidden></bdi><h3 id="selected-activity">Choose a person</h3><p id="selected-place">Inspect their current activity and position.</p></div></div>
+        <details class="identity-context" id="identity-context" hidden>
+          <summary>Fictional context — does not affect simulation</summary>
+          <dl>
+            <div><dt>Age</dt><dd><bdi id="identity-age" dir="auto"></bdi></dd></div>
+            <div><dt>Occupation</dt><dd><bdi id="identity-occupation" dir="auto"></bdi></dd></div>
+            <div><dt>Background</dt><dd><bdi id="identity-background" dir="auto"></bdi></dd></div>
+            <div><dt>MBTI</dt><dd><bdi id="identity-mbti" dir="auto"></bdi></dd></div>
+          </dl>
+        </details>
         <div class="detail-rows"><div><span>HOME</span><strong id="home-place">Generated node</strong><small id="home-node">—</small></div><div><span>WORKPLACE</span><strong id="work-place">Generated node</strong><small id="work-node">—</small></div><div><span>LEISURE</span><strong id="leisure-place">Generated node</strong><small id="leisure-node">—</small></div><div><span>ROAD SEGMENT</span><strong id="road-segment">—</strong></div></div>
         <div class="route-block"><span>Route</span><p id="route-summary">Select a person to inspect their route.</p></div>
         <div class="place-evidence" id="place-evidence" hidden><span>Place source</span><p id="place-evidence-text">No analyst-supplied place set.</p></div>
@@ -88,7 +97,7 @@
                 <h3 id="assumptions-placement-title">Placement schedule</h3>
                 <div class="assumptions-placements" id="assumptions-placements"></div>
               </section>
-              <section aria-labelledby="assumptions-cohort-title">
+              <section id="assumptions-cohort-section" aria-labelledby="assumptions-cohort-title">
                 <h3 id="assumptions-cohort-title">Synthetic cohort</h3>
                 <dl class="assumptions-grid">
                   <div class="assumptions-wide"><dt>Interests</dt><dd><bdi id="assumptions-cohort-interests">&mdash;</bdi></dd></div>
