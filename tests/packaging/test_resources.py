@@ -36,6 +36,23 @@ def test_demo_resources_include_campaigns() -> None:
     assert "demo-billboard.yaml" in names
 
 
+def test_fictional_persona_templates_load_through_importlib() -> None:
+    from importlib import resources
+
+    resource = resources.files("adlife.city").joinpath("persona_templates.json")
+    assert resource.is_file(), "packaged persona templates are missing"
+    from adlife.city.workbench_personas import load_persona_template_catalog
+
+    catalog = load_persona_template_catalog()
+    assert [item.persona_id for item in catalog.templates] == [
+        "persona-001",
+        "persona-002",
+        "persona-003",
+        "persona-004",
+    ]
+    assert all(item.fictional is True for item in catalog.templates)
+
+
 def test_wheel_contains_report_resources() -> None:
     dist = Path(__file__).resolve().parents[2] / "dist"
     wheels = sorted(dist.glob("*.whl"))

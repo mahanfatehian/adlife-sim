@@ -125,6 +125,56 @@ def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> Non
     assert entry.pack_sha256 == pack.fingerprint
 
 
+def test_exact_installed_wheel_loads_fictional_personas_offline_outside_checkout(
+    built_wheel: Path, tmp_path: Path
+) -> None:
+    import json
+
+    from scripts import smoke_release
+
+    with zipfile.ZipFile(built_wheel) as wheel:
+        assert "adlife/city/persona_templates.json" in wheel.namelist()
+        payload = json.loads(wheel.read("adlife/city/persona_templates.json"))
+    assert [item["persona_id"] for item in payload["templates"]] == [
+        "persona-001",
+        "persona-002",
+        "persona-003",
+        "persona-004",
+    ]
+    scratch = tmp_path / "persona-clean-room"
+    scratch.mkdir()
+    python, uv = smoke_release._create_interpreter(tmp_path)
+    smoke_release._expose_locked_dependencies(python)
+    smoke_release._install_wheel(python, uv, built_wheel, no_deps=True)
+    guard = smoke_release._install_network_guard(python, cwd=scratch)
+    probe = smoke_release._run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import json, pathlib, sysconfig, adlife; "
+            "from importlib.resources import files; "
+            "from adlife.city.workbench_personas import load_persona_template_catalog; "
+            "from adlife.city.workbench_input import WorkbenchPersonaDraftV2; "
+            "assert pathlib.Path(adlife.__file__).resolve().is_relative_to("
+            "pathlib.Path(sysconfig.get_path('purelib')).resolve()); "
+            "assert files('adlife.city').joinpath('persona_templates.json').is_file(); "
+            "catalog=load_persona_template_catalog(); "
+            "assert all(isinstance(p, WorkbenchPersonaDraftV2) and p.fictional is True "
+            "for p in catalog.templates); "
+            "print(json.dumps([p.persona_id for p in catalog.templates]))",
+        ],
+        cwd=scratch,
+    )
+    assert json.loads(probe.stdout) == [
+        "persona-001",
+        "persona-002",
+        "persona-003",
+        "persona-004",
+    ]
+    assert guard.with_name(smoke_release._NETWORK_GUARD_LOG).is_file()
+
+
 def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     built_wheel: Path, tmp_path: Path
 ) -> None:

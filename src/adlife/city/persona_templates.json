@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {
+      "persona_id": "persona-001",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Lumo",
+      "age": 22,
+      "occupation": "Invented puzzle maker",
+      "background": "A wholly invented character who collects puzzle ideas and enjoys trying small craft projects. This story and MBTI label are descriptive scenario context only; numeric assumptions are supplied explicitly below.",
+      "mbti": "ENFP",
+      "interests": ["crafts", "technology"],
+      "traits": {
+        "price_sensitivity": 0.65,
+        "novelty_seeking": 0.8,
+        "advertising_skepticism": 0.35,
+        "mobile_recall_encoding": 0.7,
+        "roadside_recall_encoding": 0.4,
+        "impulsivity": 0.55
+      },
+      "initial_state": {
+        "brand_sentiment": 0.0,
+        "recall_strength": 0.0,
+        "purchase_intention": 0.15
+      }
+    },
+    {
+      "persona_id": "persona-002",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Veyra",
+      "age": 39,
+      "occupation": "Invented story archivist",
+      "background": "A wholly invented character who keeps imagined folktales and likes patient revision. Neither this biography nor the optional personality label determines response values or a mobility schedule.",
+      "mbti": "ISTJ",
+      "interests": ["books", "cooking"],
+      "traits": {
+        "price_sensitivity": 0.8,
+        "novelty_seeking": 0.25,
+        "advertising_skepticism": 0.75,
+        "mobile_recall_encoding": 0.35,
+        "roadside_recall_encoding": 0.6,
+        "impulsivity": 0.15
+      },
+      "initial_state": {
+        "brand_sentiment": -0.2,
+        "recall_strength": 0.1,
+        "purchase_intention": 0.05
+      }
+    },
+    {
+      "persona_id": "persona-003",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Orilo",
+      "age": 57,
+      "occupation": "Invented miniature builder",
+      "background": "A wholly invented character who assembles miniature objects and shares imagined workshop tales. The explicit response assumptions below are editable scenario choices, independent of age and occupation.",
+      "mbti": null,
+      "interests": ["crafts", "gardening"],
+      "traits": {
+        "price_sensitivity": 0.4,
+        "novelty_seeking": 0.5,
+        "advertising_skepticism": 0.55,
+        "mobile_recall_encoding": 0.45,
+        "roadside_recall_encoding": 0.75,
+        "impulsivity": 0.3
+      },
+      "initial_state": {
+        "brand_sentiment": 0.1,
+        "recall_strength": 0.0,
+        "purchase_intention": 0.2
+      }
+    },
+    {
+      "persona_id": "persona-004",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Nuvin",
+      "age": null,
+      "occupation": null,
+      "background": "A wholly invented character who enjoys composing playful rhythms and sketching imagined gadgets. Descriptive details are optional and do not generate the explicit causal assumptions.",
+      "mbti": "INFP",
+      "interests": ["music", "technology"],
+      "traits": {
+        "price_sensitivity": 0.3,
+        "novelty_seeking": 0.65,
+        "advertising_skepticism": 0.45,
+        "mobile_recall_encoding": 0.8,
+        "roadside_recall_encoding": 0.25,
+        "impulsivity": 0.4
+      },
+      "initial_state": {
+        "brand_sentiment": 0.0,
+        "recall_strength": 0.2,
+        "purchase_intention": 0.1
+      }
+    }
+  ]
+}
