@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import lru_cache
 from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -10,7 +12,11 @@ from pydantic import ValidationError
 
 from adlife.city.loader import MAX_CITY_PACK_BYTES
 from adlife.core.domain.city import CityPackV2, parse_city_pack_json
-from adlife.core.domain.city_catalog import CityCatalog, parse_city_catalog_json
+from adlife.core.domain.city_catalog import (
+    CityCatalog,
+    CityCatalogEntry,
+    parse_city_catalog_json,
+)
 
 MAX_CITY_CATALOG_BYTES = 262_144
 
@@ -23,6 +29,20 @@ class UnknownCatalogCity(ValueError):
     """A requested catalog identifier does not exist."""
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedCatalogCity:
+    """One catalog entry bound to the exact immutable pack it describes."""
+
+    entry: CityCatalogEntry
+    pack: CityPackV2
+
+
+@dataclass(frozen=True, slots=True)
+class _VerifiedCatalogSnapshot:
+    catalog: CityCatalog
+    cities: tuple[VerifiedCatalogCity, ...]
+
+
 def _read_bounded(resource: Traversable | Path, *, limit: int, label: str) -> bytes:
     try:
         with resource.open("rb") as source:
@@ -32,6 +52,23 @@ def _read_bounded(resource: Traversable | Path, *, limit: int, label: str) -> by
     if len(data) > limit:
         raise CityCatalogError(f"city catalog {label} exceeds its size limit")
     return data
+
+
+def _strict_utf8(document: bytes) -> str:
+    if document.startswith(
+        (
+            b"\xef\xbb\xbf",
+            b"\xff\xfe",
+            b"\xfe\xff",
+            b"\xff\xfe\x00\x00",
+            b"\x00\x00\xfe\xff",
+        )
+    ):
+        raise ValueError("city catalog resource must be strict UTF-8 without a BOM")
+    try:
+        return document.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise ValueError("city catalog resource must be strict UTF-8") from None
 
 
 def _contained_file(root: Path, relative: Path, *, label: str) -> Path:
@@ -53,9 +90,7 @@ def _contained_file(root: Path, relative: Path, *, label: str) -> Path:
     return candidate
 
 
-def _load_verified_catalog(
-    *, root: Path | None = None
-) -> tuple[CityCatalog, dict[str, CityPackV2]]:
+def _load_verified_catalog(*, root: Path | None = None) -> _VerifiedCatalogSnapshot:
     if root is None:
         package_root = files("adlife.city")
         catalog_resource: Traversable | Path = (
@@ -67,11 +102,11 @@ def _load_verified_catalog(
         catalog_resource = _contained_file(root, Path("catalog.json"), label="index")
     catalog_bytes = _read_bounded(catalog_resource, limit=MAX_CITY_CATALOG_BYTES, label="index")
     try:
-        catalog = parse_city_catalog_json(catalog_bytes)
+        catalog = parse_city_catalog_json(_strict_utf8(catalog_bytes))
     except (ValidationError, ValueError, TypeError):
         raise CityCatalogError("city catalog index failed schema validation") from None
 
-    packs: dict[str, CityPackV2] = {}
+    verified: list[VerifiedCatalogCity] = []
     for entry in catalog.entries:
         if root is None:
             pack_resource: Traversable | Path = (
@@ -95,7 +130,7 @@ def _load_verified_catalog(
             label="pack resource",
         )
         try:
-            parsed = parse_city_pack_json(pack_bytes)
+            parsed = parse_city_pack_json(_strict_utf8(pack_bytes))
         except (ValidationError, ValueError, TypeError):
             raise CityCatalogError("city catalog pack failed schema validation") from None
         if not isinstance(parsed, CityPackV2):
@@ -112,29 +147,55 @@ def _load_verified_catalog(
             or parsed.known_omissions != entry.known_omissions
         ):
             raise CityCatalogError("city catalog pack metadata does not match its index")
-        packs[entry.city_id] = parsed
-    return catalog, packs
+        verified.append(VerifiedCatalogCity(entry=entry, pack=parsed))
+    return _VerifiedCatalogSnapshot(catalog=catalog, cities=tuple(verified))
+
+
+@lru_cache(maxsize=1)
+def _default_catalog_snapshot() -> _VerifiedCatalogSnapshot:
+    return _load_verified_catalog()
+
+
+def _catalog_snapshot(*, root: Path | None) -> _VerifiedCatalogSnapshot:
+    if root is None:
+        return _default_catalog_snapshot()
+    return _load_verified_catalog(root=root)
+
+
+def load_verified_catalog_cities(
+    *,
+    root: Path | None = None,
+) -> tuple[VerifiedCatalogCity, ...]:
+    """Load a stable entry/pack snapshot, caching only packaged resources."""
+    return _catalog_snapshot(root=root).cities
 
 
 def load_city_catalog(*, root: Path | None = None) -> CityCatalog:
     """Load and fully verify the local catalog and every referenced pack."""
-    catalog, _ = _load_verified_catalog(root=root)
-    return catalog
+    return _catalog_snapshot(root=root).catalog
 
 
 def select_catalog_city(city_id: str, *, root: Path | None = None) -> CityPackV2:
     """Select one verified local pack; unknown IDs never fall back to another city."""
-    _, packs = _load_verified_catalog(root=root)
-    try:
-        return packs[city_id]
-    except KeyError:
-        raise UnknownCatalogCity("catalog city identifier is unknown") from None
+    selected = next(
+        (
+            verified.pack
+            for verified in _catalog_snapshot(root=root).cities
+            if verified.entry.city_id == city_id
+        ),
+        None,
+    )
+    if selected is None:
+        raise UnknownCatalogCity("catalog city identifier is unknown")
+    return selected
 
 
 __all__ = [
     "MAX_CITY_CATALOG_BYTES",
     "CityCatalogError",
     "UnknownCatalogCity",
+    "VerifiedCatalogCity",
     "load_city_catalog",
+    "load_verified_catalog_cities",
     "select_catalog_city",
 ]

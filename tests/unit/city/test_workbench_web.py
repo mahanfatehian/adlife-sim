@@ -24,6 +24,7 @@ from adlife.city.catalog import CityCatalogError, load_city_catalog, select_cata
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run
 from adlife.city.web import create_city_app
+from adlife.city.workbench_catalog import PackagedCityCatalogUnavailable
 from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import prepare_workbench_workspace
@@ -1531,13 +1532,30 @@ def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(
 
     assert cities_response.status_code == 200
     cities = cities_response.json()
+    assert set(cities) == {"schema_version", "cities"}
     assert cities["schema_version"] == 1
     assert [item["city_id"] for item in cities["cities"]] == sorted(
         item["city_id"] for item in cities["cities"]
     )
     assert len(cities["cities"]) == 1
     city = cities["cities"][0]
+    assert set(city) == {
+        "city_id",
+        "display_name",
+        "pack_schema_version",
+        "storage_origin",
+        "data_origin",
+        "qualification",
+        "reviewer_role",
+        "reviewed_on",
+        "coverage",
+        "time_zone",
+        "source",
+        "known_omissions",
+        "pack_sha256",
+    }
     assert city["city_id"] == "fictional-grid-v2"
+    assert city["storage_origin"] == "package"
     assert city["data_origin"] == "fictional"
     assert city["qualification"] == "fictional-fixture"
     assert city["pack_schema_version"] == 2
@@ -1574,6 +1592,7 @@ def test_city_detail_returns_the_exact_verified_pack_without_resource_paths(
     document = response.json()
     assert document["schema_version"] == 1
     assert document["city_id"] == entry.city_id
+    assert document["storage_origin"] == "package"
     assert document["city_sha256"] == entry.pack_sha256 == pack.fingerprint
     assert document["pack"] == pack.model_dump(mode="json")
     assert document["coverage"] == entry.coverage.model_dump(mode="json")
@@ -1581,6 +1600,65 @@ def test_city_detail_returns_the_exact_verified_pack_without_resource_paths(
     assert document["known_omissions"] == list(entry.known_omissions)
     assert "resource_name" not in response.text
     assert entry.resource_name not in response.text
+
+
+def test_catalog_routes_are_lazy_and_load_one_verified_snapshot_per_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    original = module.load_packaged_workbench_cities
+    calls = 0
+
+    def counted_snapshot():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(module, "load_packaged_workbench_cities", counted_snapshot)
+    root = tmp_path / "lazy-workspace"
+    workspace = prepare_workbench_workspace(root)
+    app = module.create_city_workbench_app(workspace, csrf_token=TOKEN)
+    assert calls == 0
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        listed = client.get("/api/catalog/cities")
+        assert calls == 1
+        detailed = client.get("/api/catalog/cities/fictional-grid-v2")
+        assert calls == 2
+
+    assert listed.status_code == 200
+    assert detailed.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/catalog/cities", "/api/catalog/cities/fictional-grid-v2"],
+)
+def test_catalog_routes_screen_packaged_snapshot_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+) -> None:
+    module = _module()
+    secret = "sk-packaged-city-catalog-secret-1234567890"
+
+    def unavailable() -> None:
+        raise PackagedCityCatalogUnavailable(secret)
+
+    monkeypatch.setattr(module, "load_packaged_workbench_cities", unavailable)
+    client, _ = _client(tmp_path, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR), client:
+        response = client.get(path)
+
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "catalog-unavailable",
+        "message": "The verified city catalog is unavailable.",
+        "fields": {},
+    }
+    assert secret not in response.text + caplog.text
 
 
 @pytest.mark.parametrize("city_id", ["unknown-city", "INVALID", "..%2Fprivate"])

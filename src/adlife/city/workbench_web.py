@@ -26,7 +26,6 @@ from adlife.city.analysis import (
 from adlife.city.catalog import (
     CityCatalogError,
     UnknownCatalogCity,
-    load_city_catalog,
 )
 from adlife.city.run_store import StoredCityRun
 from adlife.city.web import (
@@ -36,6 +35,12 @@ from adlife.city.web import (
     city_validation_error_response,
     create_city_view_context,
     install_city_view_routes,
+)
+from adlife.city.workbench_catalog import (
+    PackagedCityCatalogUnavailable,
+    UnknownWorkbenchCity,
+    WorkbenchCityRegistryUnavailable,
+    load_packaged_workbench_cities,
 )
 from adlife.city.workbench_creatives import load_creative_template_catalog
 from adlife.city.workbench_jobs import (
@@ -67,6 +72,7 @@ from adlife.city.workbench_security import (
 )
 from adlife.city.workbench_transport import (
     WorkbenchDraftTransportError,
+    build_workbench_city_catalog_row,
     build_workbench_city_detail,
     build_workbench_run_input_view,
     parse_workbench_http_draft,
@@ -586,21 +592,34 @@ def create_city_workbench_app(
         )
 
     @app.exception_handler(UnknownCatalogCity)
+    @app.exception_handler(UnknownWorkbenchCity)
     async def unknown_catalog_city_handler(
         _request: Request,
-        _error: UnknownCatalogCity,
+        _error: UnknownCatalogCity | UnknownWorkbenchCity,
     ) -> JSONResponse:
         return workbench_error(404, "not-found", "The requested resource was not found.")
 
     @app.exception_handler(CityCatalogError)
+    @app.exception_handler(PackagedCityCatalogUnavailable)
     async def city_catalog_error_handler(
         _request: Request,
-        _error: CityCatalogError,
+        _error: CityCatalogError | PackagedCityCatalogUnavailable,
     ) -> JSONResponse:
         return workbench_error(
             500,
             "catalog-unavailable",
             "The verified city catalog is unavailable.",
+        )
+
+    @app.exception_handler(WorkbenchCityRegistryUnavailable)
+    async def city_registry_error_handler(
+        _request: Request,
+        _error: WorkbenchCityRegistryUnavailable,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "city-registry-unavailable",
+            "The workspace city registry is unavailable.",
         )
 
     @app.exception_handler(PersonaTemplateCatalogError)
@@ -852,18 +871,24 @@ def create_city_workbench_app(
     @app.get("/api/catalog/cities")
     def cities(request: Request) -> dict[str, object]:
         _require_empty_query(request)
-        catalog = load_city_catalog()
-        entries: list[dict[str, object]] = []
-        for entry in catalog.entries:
-            document = entry.model_dump(mode="json")
-            document.pop("resource_name", None)
-            entries.append(document)
-        return {"schema_version": 1, "cities": entries}
+        resolved = load_packaged_workbench_cities()
+        return {
+            "schema_version": 1,
+            "cities": [
+                build_workbench_city_catalog_row(city).model_dump(mode="json") for city in resolved
+            ],
+        }
 
     @app.get("/api/catalog/cities/{city_id}")
     def city_detail(city_id: str, request: Request) -> dict[str, object]:
         _require_empty_query(request)
-        return build_workbench_city_detail(city_id).model_dump(mode="json")
+        resolved = next(
+            (city for city in load_packaged_workbench_cities() if city.pack.city_id == city_id),
+            None,
+        )
+        if resolved is None:
+            raise UnknownWorkbenchCity("workbench city identifier is unknown")
+        return build_workbench_city_detail(resolved).model_dump(mode="json")
 
     @app.get("/api/creative-templates")
     def creative_templates(request: Request) -> dict[str, object]:

@@ -10,11 +10,14 @@ import pytest
 from pydantic import ValidationError
 
 import adlife.city.workbench_transport as transport
-from adlife.city.catalog import CityCatalogError, load_city_catalog, select_catalog_city
+from adlife.city.catalog import CityCatalogError
 from adlife.city.runs import create_city_run
+from adlife.city.workbench_catalog import load_packaged_workbench_cities
 from adlife.city.workbench_transport import (
+    WorkbenchCityCatalogRow,
     WorkbenchCityDetail,
     WorkbenchDraftTransportError,
+    build_workbench_city_catalog_row,
     build_workbench_city_detail,
     parse_workbench_http_draft,
 )
@@ -110,40 +113,65 @@ def test_http_draft_leaves_all_other_fields_to_strict_domain_validation() -> Non
     assert caught.value.errors()[0]["type"] == "extra_forbidden"
 
 
-def test_city_detail_contains_verified_path_free_catalog_data() -> None:
-    catalog = load_city_catalog()
-    entry = catalog.entries[0]
-    pack = select_catalog_city(entry.city_id)
+def test_city_row_and_detail_preserve_exact_path_free_hash_contracts() -> None:
+    resolved = load_packaged_workbench_cities()[0]
+    pack = resolved.pack
 
-    detail = build_workbench_city_detail(entry.city_id)
+    row = build_workbench_city_catalog_row(resolved)
+    detail = build_workbench_city_detail(resolved)
+    row_document = row.model_dump(mode="json")
     document = detail.model_dump(mode="json")
 
+    assert isinstance(row, WorkbenchCityCatalogRow)
     assert isinstance(detail, WorkbenchCityDetail)
+    assert row_document == {
+        "city_id": pack.city_id,
+        "display_name": pack.name,
+        "pack_schema_version": 2,
+        "storage_origin": "package",
+        "data_origin": "fictional",
+        "qualification": "fictional-fixture",
+        "reviewer_role": None,
+        "reviewed_on": None,
+        "coverage": pack.bounds.model_dump(mode="json"),
+        "time_zone": pack.time_zone,
+        "source": pack.source.model_dump(mode="json"),
+        "known_omissions": list(pack.known_omissions),
+        "pack_sha256": pack.fingerprint,
+    }
     assert document == {
         "schema_version": 1,
-        "city_id": entry.city_id,
-        "display_name": entry.display_name,
-        "pack_schema_version": entry.pack_schema_version,
-        "data_origin": entry.data_origin,
-        "qualification": entry.qualification,
-        "reviewer_role": entry.reviewer_role,
-        "reviewed_on": entry.reviewed_on,
-        "coverage": entry.coverage.model_dump(mode="json"),
-        "time_zone": entry.time_zone,
-        "source": entry.source.model_dump(mode="json"),
-        "known_omissions": list(entry.known_omissions),
+        "city_id": pack.city_id,
+        "display_name": pack.name,
+        "pack_schema_version": 2,
+        "storage_origin": "package",
+        "data_origin": "fictional",
+        "qualification": "fictional-fixture",
+        "reviewer_role": None,
+        "reviewed_on": None,
+        "coverage": pack.bounds.model_dump(mode="json"),
+        "time_zone": pack.time_zone,
+        "source": pack.source.model_dump(mode="json"),
+        "known_omissions": list(pack.known_omissions),
         "city_sha256": pack.fingerprint,
         "pack": pack.model_dump(mode="json"),
     }
-    assert "resource_name" not in document
+    assert "resource_name" not in row_document | document
+    assert "city_sha256" not in row_document
     assert "pack_sha256" not in document
 
 
 def test_city_detail_is_strict_frozen_and_forbids_unknown_fields() -> None:
-    detail = build_workbench_city_detail("fictional-grid-v2")
+    resolved = load_packaged_workbench_cities()[0]
+    row = build_workbench_city_catalog_row(resolved)
+    detail = build_workbench_city_detail(resolved)
+    row_document: dict[str, Any] = row.model_dump(mode="python", round_trip=True)
+    row_document["resource_name"] = "private-resource.json"
     document: dict[str, Any] = detail.model_dump(mode="python", round_trip=True)
     document["resource_name"] = "private-resource.json"
 
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        WorkbenchCityCatalogRow.model_validate(row_document)
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         WorkbenchCityDetail.model_validate(document)
     frozen_field = "city_id"
@@ -151,19 +179,40 @@ def test_city_detail_is_strict_frozen_and_forbids_unknown_fields() -> None:
         setattr(detail, frozen_field, "changed")
 
 
-def test_city_detail_cross_checks_catalog_hash(
+@pytest.mark.parametrize("token", [True, 2.0, "2"])
+@pytest.mark.parametrize("model_name", ["row", "detail"])
+def test_city_transport_requires_exact_integer_pack_schema_version(
+    token: object,
+    model_name: str,
+) -> None:
+    resolved = load_packaged_workbench_cities()[0]
+    if model_name == "row":
+        model = WorkbenchCityCatalogRow
+        document = build_workbench_city_catalog_row(resolved).model_dump(
+            mode="python", round_trip=True
+        )
+    else:
+        model = WorkbenchCityDetail
+        document = build_workbench_city_detail(resolved).model_dump(mode="python", round_trip=True)
+    document["pack_schema_version"] = token
+
+    with pytest.raises(ValidationError, match="pack_schema_version"):
+        model.model_validate(document)
+
+
+def test_city_transport_builders_are_pure_over_one_resolved_city(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import adlife.city.workbench_transport as transport
+    resolved = load_packaged_workbench_cities()[0]
 
-    catalog = load_city_catalog()
-    entry = catalog.entries[0]
-    mismatched = entry.model_copy(update={"pack_sha256": "0" * 64})
-    mismatched_catalog = catalog.model_copy(update={"entries": (mismatched,)})
-    monkeypatch.setattr(transport, "load_city_catalog", lambda: mismatched_catalog)
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        raise CityCatalogError("transport must not reload catalog state")
 
-    with pytest.raises(CityCatalogError, match="integrity"):
-        build_workbench_city_detail(entry.city_id)
+    monkeypatch.setattr("adlife.city.catalog.load_city_catalog", unavailable)
+    monkeypatch.setattr("adlife.city.catalog.select_catalog_city", unavailable)
+
+    assert build_workbench_city_catalog_row(resolved).pack_sha256 == resolved.pack.fingerprint
+    assert build_workbench_city_detail(resolved).pack is resolved.pack
 
 
 def _stored_workbench_run(root: Path, *, seed: int = 42):

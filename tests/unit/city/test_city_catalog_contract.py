@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import json
 import socket
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+import adlife.city.catalog as catalog_module
 from adlife.city.catalog import (
     CityCatalogError,
     UnknownCatalogCity,
+    VerifiedCatalogCity,
     load_city_catalog,
+    load_verified_catalog_cities,
     select_catalog_city,
 )
 from adlife.core.domain.city import CityPackV2, parse_city_pack_json
@@ -222,6 +226,76 @@ def test_packaged_catalog_contains_only_an_explicit_fictional_v2_fixture() -> No
     assert "fictional" in pack.name.lower()
     with pytest.raises(UnknownCatalogCity):
         select_catalog_city("unknown-city")
+
+
+def test_default_catalog_apis_share_one_lazy_verified_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_module._default_catalog_snapshot.cache_clear()
+    labels: list[str] = []
+    original = catalog_module._read_bounded
+
+    def counted_read(*args: object, **kwargs: object) -> bytes:
+        label = kwargs.get("label")
+        assert isinstance(label, str)
+        labels.append(label)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(catalog_module, "_read_bounded", counted_read)
+    try:
+        verified = load_verified_catalog_cities()
+        catalog = load_city_catalog()
+        selected = select_catalog_city(verified[0].entry.city_id)
+    finally:
+        catalog_module._default_catalog_snapshot.cache_clear()
+
+    assert labels == ["index", "pack resource"]
+    assert isinstance(verified[0], VerifiedCatalogCity)
+    assert catalog.entries == tuple(city.entry for city in verified)
+    assert selected is verified[0].pack
+
+
+def test_verified_catalog_cities_are_stably_ordered_frozen_and_slotted() -> None:
+    verified = load_verified_catalog_cities()
+
+    assert [city.entry.city_id for city in verified] == sorted(
+        city.entry.city_id for city in verified
+    )
+    assert not hasattr(verified[0], "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        verified[0].pack = verified[0].pack
+
+
+def test_explicit_catalog_root_is_fresh_and_never_uses_the_default_cache(
+    tmp_path: Path,
+) -> None:
+    _pack, entry = write_catalog_root(tmp_path)
+    first = load_verified_catalog_cities(root=tmp_path)
+    assert first[0].entry.city_id == entry["city_id"]
+
+    (tmp_path / "catalog.json").write_bytes(b"not-json")
+
+    with pytest.raises(CityCatalogError, match="schema validation"):
+        load_verified_catalog_cities(root=tmp_path)
+
+
+@pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "utf-32"])
+@pytest.mark.parametrize("resource", ["index", "pack"])
+def test_catalog_refuses_bom_or_non_utf8_resource_encodings(
+    tmp_path: Path,
+    encoding: str,
+    resource: str,
+) -> None:
+    pack, entry = write_catalog_root(tmp_path)
+    if resource == "index":
+        text = canonical_json(catalog_data(entry)) + "\n"
+        (tmp_path / "catalog.json").write_bytes(text.encode(encoding))
+    else:
+        text = canonical_json(pack) + "\n"
+        (tmp_path / "catalog" / str(entry["resource_name"])).write_bytes(text.encode(encoding))
+
+    with pytest.raises(CityCatalogError, match="schema validation"):
+        load_verified_catalog_cities(root=tmp_path)
 
 
 def test_catalog_selection_is_offline(monkeypatch: pytest.MonkeyPatch) -> None:

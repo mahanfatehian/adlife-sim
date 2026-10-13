@@ -10,13 +10,15 @@ from typing import ClassVar, Literal, Self, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
-from adlife.city.catalog import (
-    CityCatalogError,
-    load_city_catalog,
-    select_catalog_city,
-)
 from adlife.city.run_store import StoredCityRun
 from adlife.city.workbench_binding import validate_workbench_execution_binding
+from adlife.city.workbench_catalog import (
+    ResolvedWorkbenchCity,
+    StorageOrigin,
+    WorkbenchDataOrigin,
+    WorkbenchQualification,
+    validate_workbench_city_classification,
+)
 from adlife.city.workbench_input import (
     CreativeTemplate,
     NormalizedWorkbenchPopulationV2,
@@ -29,11 +31,6 @@ from adlife.city.workbench_input import (
     WorkbenchRunInputV2,
 )
 from adlife.core.domain.city import CityBounds, CityPackV2, CitySource
-from adlife.core.domain.city_catalog import (
-    CityCatalogEntry,
-    DataOrigin,
-    Qualification,
-)
 from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8
 from adlife.core.domain.identifiers import validate_portable_run_identifier
 from adlife.core.domain.person import DomainModel
@@ -42,6 +39,12 @@ from adlife.core.domain.serialization import canonical_json
 _CANONICAL_SEED = re.compile(r"^(?:0|[1-9][0-9]{0,18})$")
 _MAX_SEED = 2**63 - 1
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
+
+
+def _exact_pack_schema_version(value: object) -> object:
+    if type(value) is not int or value != 2:
+        raise ValueError("pack_schema_version must be integer 2")
+    return value
 
 
 class WorkbenchDraftTransportError(ValueError):
@@ -84,15 +87,54 @@ def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDra
     return WorkbenchRunDraft.model_validate_json(encoded)
 
 
+class WorkbenchCityCatalogRow(DomainModel):
+    """Path-free metadata for one exact city available to the workbench."""
+
+    city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
+    display_name: str = Field(min_length=1, max_length=120)
+    pack_schema_version: Literal[2] = 2
+    storage_origin: StorageOrigin
+    data_origin: WorkbenchDataOrigin
+    qualification: WorkbenchQualification
+    reviewer_role: str | None = Field(default=None, min_length=1, max_length=120)
+    reviewed_on: str | None = Field(
+        default=None,
+        pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+    )
+    coverage: CityBounds
+    time_zone: str = Field(min_length=1, max_length=64)
+    source: CitySource
+    known_omissions: tuple[str, ...] = Field(min_length=1, max_length=16)
+    pack_sha256: str = Field(pattern=_HASH_PATTERN)
+
+    @field_validator("pack_schema_version", mode="before")
+    @classmethod
+    def exact_pack_schema_version(cls, value: object) -> object:
+        return _exact_pack_schema_version(value)
+
+    @model_validator(mode="after")
+    def valid_classification(self) -> Self:
+        validate_workbench_city_classification(
+            storage_origin=self.storage_origin,
+            data_origin=self.data_origin,
+            qualification=self.qualification,
+            reviewer_role=self.reviewer_role,
+            reviewed_on=self.reviewed_on,
+            source_published_on=self.source.published_on,
+        )
+        return self
+
+
 class WorkbenchCityDetail(DomainModel):
-    """Verified path-free catalog metadata and the selected immutable city pack."""
+    """Verified path-free metadata and the selected immutable city pack."""
 
     schema_version: Literal[1] = 1
     city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     display_name: str = Field(min_length=1, max_length=120)
     pack_schema_version: Literal[2] = 2
-    data_origin: DataOrigin
-    qualification: Qualification
+    storage_origin: StorageOrigin
+    data_origin: WorkbenchDataOrigin
+    qualification: WorkbenchQualification
     reviewer_role: str | None = Field(default=None, min_length=1, max_length=120)
     reviewed_on: str | None = Field(
         default=None,
@@ -105,24 +147,20 @@ class WorkbenchCityDetail(DomainModel):
     city_sha256: str = Field(pattern=_HASH_PATTERN)
     pack: CityPackV2
 
+    @field_validator("pack_schema_version", mode="before")
+    @classmethod
+    def exact_pack_schema_version(cls, value: object) -> object:
+        return _exact_pack_schema_version(value)
+
     @model_validator(mode="after")
     def catalog_metadata_matches_pack(self) -> Self:
-        # Reuse the catalog entry's complete safety and qualification policy instead
-        # of maintaining a second public-text/date validator at this boundary.
-        CityCatalogEntry(
-            city_id=self.city_id,
-            display_name=self.display_name,
-            resource_name="verified-city.json",
-            pack_sha256=self.city_sha256,
-            pack_schema_version=self.pack_schema_version,
+        validate_workbench_city_classification(
+            storage_origin=self.storage_origin,
             data_origin=self.data_origin,
             qualification=self.qualification,
             reviewer_role=self.reviewer_role,
             reviewed_on=self.reviewed_on,
-            coverage=self.coverage,
-            time_zone=self.time_zone,
-            source=self.source,
-            known_omissions=self.known_omissions,
+            source_published_on=self.source.published_on,
         )
         if (
             self.city_sha256 != self.pack.fingerprint
@@ -138,35 +176,47 @@ class WorkbenchCityDetail(DomainModel):
         return self
 
 
-def build_workbench_city_detail(city_id: str) -> WorkbenchCityDetail:
-    """Build one path-free detail after independently cross-checking catalog selection."""
-    catalog = load_city_catalog()
-    pack = select_catalog_city(city_id)
-    entry = next((item for item in catalog.entries if item.city_id == city_id), None)
-    if entry is None or (
-        entry.pack_sha256 != pack.fingerprint
-        or entry.pack_schema_version != pack.schema_version
-        or entry.city_id != pack.city_id
-        or entry.display_name != pack.name
-        or entry.coverage != pack.bounds
-        or entry.time_zone != pack.time_zone
-        or entry.source != pack.source
-        or entry.known_omissions != pack.known_omissions
-    ):
-        raise CityCatalogError("city catalog detail failed integrity validation")
+def build_workbench_city_catalog_row(city: ResolvedWorkbenchCity) -> WorkbenchCityCatalogRow:
+    """Project one already-resolved city into the path-free list contract."""
+    if not isinstance(city, ResolvedWorkbenchCity):
+        raise TypeError("city must be a ResolvedWorkbenchCity")
+    pack = city.pack
+    return WorkbenchCityCatalogRow(
+        city_id=pack.city_id,
+        display_name=pack.name,
+        pack_schema_version=pack.schema_version,
+        storage_origin=city.storage_origin,
+        data_origin=city.data_origin,
+        qualification=city.qualification,
+        reviewer_role=city.reviewer_role,
+        reviewed_on=city.reviewed_on,
+        coverage=pack.bounds,
+        time_zone=pack.time_zone,
+        source=pack.source,
+        known_omissions=pack.known_omissions,
+        pack_sha256=pack.fingerprint,
+    )
+
+
+def build_workbench_city_detail(city: ResolvedWorkbenchCity) -> WorkbenchCityDetail:
+    """Project one already-resolved city into the path-free detail contract."""
+    if not isinstance(city, ResolvedWorkbenchCity):
+        raise TypeError("city must be a ResolvedWorkbenchCity")
+    pack = city.pack
     return WorkbenchCityDetail(
-        city_id=entry.city_id,
-        display_name=entry.display_name,
-        pack_schema_version=entry.pack_schema_version,
-        data_origin=entry.data_origin,
-        qualification=entry.qualification,
-        reviewer_role=entry.reviewer_role,
-        reviewed_on=entry.reviewed_on,
-        coverage=entry.coverage,
-        time_zone=entry.time_zone,
-        source=entry.source,
-        known_omissions=entry.known_omissions,
-        city_sha256=entry.pack_sha256,
+        city_id=pack.city_id,
+        display_name=pack.name,
+        pack_schema_version=pack.schema_version,
+        storage_origin=city.storage_origin,
+        data_origin=city.data_origin,
+        qualification=city.qualification,
+        reviewer_role=city.reviewer_role,
+        reviewed_on=city.reviewed_on,
+        coverage=pack.bounds,
+        time_zone=pack.time_zone,
+        source=pack.source,
+        known_omissions=pack.known_omissions,
+        city_sha256=pack.fingerprint,
         pack=pack,
     )
 
@@ -351,12 +401,14 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
 
 
 __all__ = [
+    "WorkbenchCityCatalogRow",
     "WorkbenchCityDetail",
     "WorkbenchDraftTransportError",
     "WorkbenchRunInputView",
     "WorkbenchRunInputViewDocument",
     "WorkbenchRunInputViewV2",
     "WorkbenchRunSettingsView",
+    "build_workbench_city_catalog_row",
     "build_workbench_city_detail",
     "build_workbench_run_input_view",
     "parse_workbench_http_draft",
