@@ -42,6 +42,7 @@
     validationGeneration: 0,
     validatedDraft: null,
     activeJob: null,
+    jobBinding: null,
     jobGeneration: 0,
     pollTimer: null,
     libraryGeneration: 0,
@@ -189,8 +190,9 @@
         continue;
       }
       if (path.startsWith("population.personas.")) {
-        if (!firstControl && state.personaEditor?.focusError(path)) {
-          firstControl = document.activeElement;
+        if (!firstControl) {
+          if (state.personaEditor?.focusError(path)) firstControl = document.activeElement;
+          else hasRootError = true;
         }
         continue;
       }
@@ -1244,6 +1246,7 @@
 
   function stopPolling() {
     state.jobGeneration += 1;
+    state.jobBinding = null;
     if (state.pollTimer !== null) {
       clearTimeout(state.pollTimer);
       state.pollTimer = null;
@@ -1256,6 +1259,18 @@
     }
     const delay = POLL_DELAYS[Math.min(attempt, POLL_DELAYS.length - 1)];
     state.pollTimer = window.setTimeout(() => pollJob(statusUrl, generation, attempt), delay);
+  }
+
+  function assertJobBinding(job, generation) {
+    const binding = state.jobBinding;
+    if (generation !== state.jobGeneration || !binding || binding.generation !== generation) {
+      return false;
+    }
+    if (job.job_id !== binding.jobId || job.run_id !== binding.runId ||
+        JSON.stringify(job.accepted_settings) !== binding.acceptedSettings) {
+      throw new RequestError("The worker response is incompatible with its original accepted settings.");
+    }
+    return true;
   }
 
   async function pollJob(statusUrl, generation, attempt) {
@@ -1271,10 +1286,7 @@
       if (statusUrl !== `/api/jobs/${job.job_id}`) {
         throw new RequestError("The worker status address changed unexpectedly.");
       }
-      if (!state.activeJob || job.run_id !== state.activeJob.run_id ||
-          JSON.stringify(job.accepted_settings) !== JSON.stringify(state.activeJob.accepted_settings)) {
-        throw new RequestError("The worker status is incompatible with its accepted settings.");
-      }
+      if (!assertJobBinding(job, generation)) return;
       renderJob(job);
       if (TERMINAL_PHASES.has(job.phase)) {
         if (job.phase === "completed") {
@@ -1298,6 +1310,12 @@
     }
     stopPolling();
     const generation = state.jobGeneration;
+    state.jobBinding = Object.freeze({
+      generation,
+      jobId: job.job_id,
+      runId: job.run_id,
+      acceptedSettings: JSON.stringify(job.accepted_settings),
+    });
     renderJob(job);
     if (!TERMINAL_PHASES.has(job.phase)) {
       schedulePoll(statusUrl, generation, 0);
@@ -1365,18 +1383,24 @@
 
   async function cancelActiveJob() {
     const job = state.activeJob;
-    if (!job || !job.can_cancel || !JOB_ID_PATTERN.test(job.job_id)) {
+    const generation = state.jobGeneration;
+    const binding = state.jobBinding;
+    if (!job || !binding || binding.generation !== generation || binding.jobId !== job.job_id ||
+        !job.can_cancel || !JOB_ID_PATTERN.test(job.job_id)) {
       return;
     }
     byId("cancel-job").disabled = true;
     try {
       const cancelled = assertJob(await fetchJson(`/api/jobs/${job.job_id}/cancel`, { method: "POST", body: {} }));
+      if (generation !== state.jobGeneration || state.jobBinding !== binding) return;
       if (cancelled.job_id !== job.job_id) {
         throw new RequestError("The cancellation response identified a different job.");
       }
+      if (!assertJobBinding(cancelled, generation)) return;
       renderJob(cancelled);
       announce("Cooperative cancellation requested.");
     } catch (error) {
+      if (generation !== state.jobGeneration || state.jobBinding !== binding) return;
       showBanner(error instanceof Error ? error.message : "Cancellation could not be requested.");
       byId("cancel-job").disabled = false;
     }

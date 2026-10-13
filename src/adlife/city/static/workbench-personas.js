@@ -132,23 +132,29 @@
       for (const node of this.root.querySelectorAll('[aria-invalid="true"]')) node.removeAttribute("aria-invalid");
     }
 
-    focusError(path, message = "The server refused this field. Review its value.") {
-      const match = /^population\.personas\.(\d+)\.(.+)$/.exec(path);
+    focusError(path, message = null) {
+      const match = /^population\.personas\.(\d+)(?:\.(.+))?$/.exec(path);
       if (!match) return false;
       const p = this.personas[Number(match[1])];
       if (!p) return false;
       const allowed = ["count", "display_name", "age", "occupation", "background", "mbti", "interests",
         ...traits.map(([key]) => `traits.${key}`), ...initial.map(([key]) => `initial_state.${key}`)];
-      if (!allowed.includes(match[2])) return false;
+      const field = /^interests\.\d+$/.test(match[2] || "") ? "interests" : match[2];
+      const aggregate = !allowed.includes(field);
       this.onReveal();
       if (this.selected !== p.persona_id) {
         this.selected = p.persona_id;
         this.render();
       }
-      const control = this.root.querySelector(`#${fieldId(match[2])}`);
+      const control = aggregate ? this.root.querySelector("#persona-detail") :
+        this.root.querySelector(`#${fieldId(field)}`);
       const details = control.closest("details");
       if (details) details.open = true;
-      this.root.querySelector(`#${control.id}-error`).textContent = message;
+      if (aggregate) this.root.querySelector("#persona-description").open = true;
+      const error = this.root.querySelector(aggregate ? "#persona-error" : `#${control.id}-error`);
+      error.textContent = message || (aggregate ?
+        "The server refused this persona. Review its fields and size." :
+        "The server refused this field. Review its value.");
       control.setAttribute("aria-invalid", "true");
       control.focus();
       return true;
@@ -226,6 +232,15 @@
     renderDetail() {
       const detail = this.root.querySelector("#persona-detail");
       detail.replaceChildren();
+      detail.tabIndex = -1;
+      detail.setAttribute("role", "group");
+      detail.setAttribute("aria-label", "Selected fictional persona");
+      detail.setAttribute("aria-describedby", "persona-error");
+      detail.removeAttribute("aria-invalid");
+      const error = element("p", "", "field-error");
+      error.id = "persona-error";
+      error.setAttribute("role", "status");
+      detail.append(error);
       const p = this.personas.find(item => item.persona_id === this.selected);
       const identity = element("p", "Immutable persona ID: ", "section-note");
       const id = element("code", p.persona_id);

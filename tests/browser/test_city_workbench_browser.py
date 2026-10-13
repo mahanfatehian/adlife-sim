@@ -419,6 +419,142 @@ def test_audience_keyboard_small_screen_and_large_text_containment(tmp_path: Pat
             playwright.stop()
 
 
+@pytest.mark.parametrize("failure", ["nested-interest", "aggregate-persona"])
+def test_real_persona_validation_paths_recover_adjacent_focus(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            if failure == "nested-interest":
+                value = "invalid-interest-" + "x" * 81
+                page.locator("#persona-interests").fill(value)
+                path = "population.personas.0.interests.0"
+                control = "#persona-interests"
+                adjacent = "#persona-interests-error"
+            else:
+                value = "😀" * 700
+                page.locator("#persona-description summary").click()
+                page.locator("#persona-background").fill(value)
+                page.locator("#persona-description summary").click()
+                path = "population.personas.0"
+                control = "#persona-detail"
+                adjacent = "#persona-error"
+            page.locator("#persona-add").click()
+            expect(page.locator("#persona-id")).to_have_text("persona-002")
+            page.locator("#campaign-continue").click()
+            page.locator("#persona-use-total").click()
+            with page.expect_response("**/api/scenarios/validate") as refused:
+                page.locator("#validate-run").click()
+            assert refused.value.status == 422
+            assert path in refused.value.json()["error"]["fields"]
+            expect(page.locator("#panel-campaign")).to_be_visible()
+            expect(page.locator("#persona-id")).to_have_text("persona-001")
+            expect(page.locator(control)).to_be_focused()
+            expect(page.locator(adjacent)).not_to_be_empty()
+            assert value not in page.locator(adjacent).inner_text()
+            assert value not in page.locator("body").inner_text()
+            if failure == "aggregate-persona":
+                expect(page.locator("#persona-description")).to_have_attribute("open", "")
+                page.locator("#persona-background").fill("")
+            else:
+                page.locator("#persona-interests").fill("custom-interest")
+            page.locator("#campaign-continue").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            assert not (root / "city-runs").exists()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_cancellation_settings_drift_cannot_rebind_later_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    original = workbench_web.WorkbenchRunRepository.prepare
+
+    def blocked_prepare(repository, validated):
+        entered.set()
+        if not release.wait(30):
+            raise RuntimeError("cancellation binding gate timed out")
+        return original(repository, validated)
+
+    monkeypatch.setattr(workbench_web.WorkbenchRunRepository, "prepare", blocked_prepare)
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#persona-count").fill("1")
+            page.locator("#campaign-continue").click()
+            page.locator("#persona-use-total").click()
+            page.locator("#run-id").fill("cancel-binding")
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            with page.expect_response("**/api/jobs") as accepted:
+                page.locator("#start-run").click()
+            queued = accepted.value.json()["job"]
+            assert queued["accepted_settings"]["seed"] == "42"
+            assert entered.wait(5)
+            job_id = queued["job_id"]
+            drifted = {**queued["accepted_settings"], "seed": "43"}
+            summary = _library_summary("cancel-binding", seed="43").model_dump(mode="json")
+            summary.update(run_schema_version=8, days=2, frame_count=2880)
+            cancelled = False
+
+            def drift_cancellation(route: Route) -> None:
+                nonlocal cancelled
+                response = route.fetch()
+                document = response.json()
+                assert document["accepted_settings"]["seed"] == "42"
+                document["accepted_settings"] = drifted
+                cancelled = True
+                route.fulfill(response=response, json=document)
+
+            def drift_completion(route: Route) -> None:
+                if not cancelled:
+                    route.continue_()
+                    return
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    headers={"X-AdLife-Test-Completed": "1"},
+                    body=json.dumps(
+                        {
+                            **queued,
+                            "accepted_settings": drifted,
+                            "phase": "completed",
+                            "can_cancel": False,
+                            "result": summary,
+                        }
+                    ),
+                )
+
+            page.route(f"**/api/jobs/{job_id}/cancel", drift_cancellation)
+            page.route(f"**/api/jobs/{job_id}", drift_completion)
+            with page.expect_response(
+                lambda response: response.headers.get("x-adlife-test-completed") == "1"
+            ):
+                page.locator("#cancel-job").click()
+            page.wait_for_function("""() => !document.querySelector('#error-banner').hidden ||
+                !document.querySelector('#job-inspect-link').hidden""")
+            expect(page.locator("#error-banner")).to_contain_text("incompatible")
+            expect(page.locator("#job-inspect-link")).to_be_hidden()
+            expect(page.locator("#job-settings")).to_contain_text("42")
+            assert "43" not in page.locator("#job-settings").inner_text()
+            assert not (root / "city-runs/cancel-binding/run.json").exists()
+        finally:
+            release.set()
+            browser.close()
+            playwright.stop()
+
+
 @pytest.mark.parametrize("input_version,run_version", [(1, 7), (2, 8)])
 def test_exact_completed_schema_pairs_resume_from_server_authority(
     tmp_path: Path, input_version: int, run_version: int
