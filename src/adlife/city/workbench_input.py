@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from hashlib import sha256
 from itertools import pairwise
 from typing import Annotated, Final, Literal, Self, TypeAlias
@@ -11,6 +12,7 @@ from pydantic import Field, ValidationInfo, field_serializer, field_validator, m
 
 from adlife.core.domain.city import TravelDirection, _validate_public_metadata
 from adlife.core.domain.identifiers import validate_portable_run_identifier
+from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.person import (
     DomainModel,
     contains_labelled_secret_member,
@@ -261,6 +263,21 @@ def _safe_persona_text(value: str) -> str:
 
 
 def _reject_structural_secrets(value: object) -> object:
+    # Bound malformed Python/decoded JSON containers iteratively before invoking
+    # the shared recursive screen or serializers. Valid inputs are much shallower.
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        children: Iterable[object]
+        if isinstance(current, Mapping):
+            children = current.values()
+        elif isinstance(current, (list, tuple)):
+            children = current
+        else:
+            continue
+        if depth >= MAX_JSON_DEPTH:
+            raise ValueError("workbench input exceeds its nesting limit")
+        pending.extend((child, depth + 1) for child in children)
     if contains_labelled_secret_member(value):
         raise ValueError("workbench input contains a labelled secret member")
     return value
@@ -654,6 +671,8 @@ def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInputDo
     version = payload.get("schema_version")
     if type(version) is not int or version not in (1, 2):
         raise ValueError("unsupported workbench input schema version")
+    if version == 2:
+        _reject_structural_secrets(payload)
     normalized = json.dumps(
         payload,
         ensure_ascii=False,
@@ -662,7 +681,6 @@ def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInputDo
     )
     if version == 1:
         return WorkbenchRunInput.model_validate_json(normalized)
-    _reject_structural_secrets(payload)
     return WorkbenchRunInputV2.model_validate_json(normalized)
 
 

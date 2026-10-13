@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialActiveWindow
 from adlife.core.domain.spatial_response import SpatialResponseTraits
@@ -885,6 +886,32 @@ def test_persisted_v2_parser_refuses_structural_secret_before_model_validation(
     with pytest.raises(ValueError, match="labelled secret") as captured:
         _models().parse_workbench_run_input_json(json.dumps(data))
     assert "opaque-private-marker" not in str(captured.value)
+
+
+def test_structural_screen_accepts_exact_shared_depth_and_refuses_one_more() -> None:
+    nested: object = "Fictional context"
+    for _ in range(MAX_JSON_DEPTH):
+        nested = [nested]
+    before = json.dumps(nested)
+    assert _models()._reject_structural_secrets(nested) == nested
+    assert json.dumps(nested) == before
+    with pytest.raises(ValueError) as captured:
+        _models()._reject_structural_secrets([nested])
+    assert type(captured.value) is ValueError
+    assert str(captured.value) == "workbench input exceeds its nesting limit"
+
+
+@pytest.mark.parametrize("depth", [MAX_JSON_DEPTH + 1, MAX_JSON_DEPTH * 16])
+def test_persisted_v2_parser_bounds_nesting_before_structural_secret_recursion(depth) -> None:
+    data = normalized_v2_input().model_dump(mode="json")
+    data["api_key"] = "depth-placeholder"
+    document = json.dumps(data).replace(
+        '"depth-placeholder"', "[" * depth + '"opaque-private-depth-marker"' + "]" * depth
+    )
+    with pytest.raises(ValueError) as captured:
+        _models().parse_workbench_run_input_json(document)
+    assert type(captured.value) is ValueError
+    assert str(captured.value) == "workbench input exceeds its nesting limit"
 
 
 @pytest.mark.parametrize("field", ["agent_count", "days", "seed"])

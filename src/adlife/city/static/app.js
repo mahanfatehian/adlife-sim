@@ -674,11 +674,31 @@ function renderSelected() {
   const persona = state.personaByAgent.get(agent.agent_id);
   byId("selected-name").hidden = !persona;
   byId("identity-context").hidden = !persona;
+  byId("identity-response-inputs").hidden = !persona;
   byId("selected-name").textContent = persona ? persona.display_name : "";
   for (const field of ["age", "occupation", "background", "mbti"]) {
     byId(`identity-${field}`).textContent = persona
       ? (persona[field] === null ? "Not provided" : String(persona[field]))
       : "";
+  }
+  const responseInputs = {
+    "identity-interests": persona ? persona.interests.join(" · ") : "",
+    "identity-trait-price-sensitivity": persona ? persona.traits.price_sensitivity : "",
+    "identity-trait-novelty-seeking": persona ? persona.traits.novelty_seeking : "",
+    "identity-trait-advertising-skepticism": persona
+      ? persona.traits.advertising_skepticism : "",
+    "identity-trait-mobile-recall-encoding": persona
+      ? persona.traits.mobile_recall_encoding : "",
+    "identity-trait-roadside-recall-encoding": persona
+      ? persona.traits.roadside_recall_encoding : "",
+    "identity-trait-impulsivity": persona ? persona.traits.impulsivity : "",
+    "identity-initial-brand-sentiment": persona ? persona.initial_state.brand_sentiment : "",
+    "identity-initial-recall-strength": persona ? persona.initial_state.recall_strength : "",
+    "identity-initial-purchase-intention": persona
+      ? persona.initial_state.purchase_intention : "",
+  };
+  for (const [id, value] of Object.entries(responseInputs)) {
+    byId(id).textContent = String(value);
   }
   byId("selected-activity").textContent = activities[position.activity] || position.activity;
   byId("selected-place").textContent = position.coordinate_label;

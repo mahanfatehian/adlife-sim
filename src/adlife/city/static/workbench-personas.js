@@ -160,6 +160,29 @@
       return true;
     }
 
+    assignmentPreviews() {
+      const total = this.total();
+      const previews = new Map();
+      if (total === null || total > 30) {
+        for (const persona of this.personas) {
+          previews.set(persona.persona_id, "Valid counts are required for an assignment preview");
+        }
+        return previews;
+      }
+      let nextAgent = 1;
+      const personaIds = this.personas.map(persona => persona.persona_id).sort();
+      for (const personaId of personaIds) {
+        const persona = this.personas.find(item => item.persona_id === personaId);
+        const firstAgent = nextAgent;
+        const lastAgent = nextAgent + persona.count - 1;
+        const firstId = `person-${String(firstAgent).padStart(3, "0")}`;
+        const lastId = `person-${String(lastAgent).padStart(3, "0")}`;
+        previews.set(personaId, firstId === lastId ? firstId : `${firstId} to ${lastId}`);
+        nextAgent = lastAgent + 1;
+      }
+      return previews;
+    }
+
     renderRoster() {
       const roster = this.root.querySelector("#persona-roster");
       // Keep existing roster controls mounted during typing, including keyboard focus.
@@ -177,9 +200,23 @@
           return button;
         }));
       }
+      const previews = this.assignmentPreviews();
       [...roster.children].forEach((button, index) => {
         const p = this.personas[index];
-        button.textContent = `${p.display_name} · ${p.persona_id} · ${p.count ?? "?"} people`;
+        const heading = element("span", undefined, "persona-row-heading");
+        heading.append(element("strong", p.display_name));
+        if (p.mbti !== null) heading.append(element("span", p.mbti, "persona-row-mbti"));
+        const definition = element(
+          "span",
+          `${p.persona_id} · ${p.count ?? "?"} people`,
+          "persona-row-definition",
+        );
+        const preview = element(
+          "span",
+          previews.get(p.persona_id),
+          "persona-row-agents",
+        );
+        button.replaceChildren(heading, definition, preview);
         button.setAttribute("aria-pressed", String(p.persona_id === this.selected));
       });
       const full = this.personas.length >= 30 || this.total() === null || this.total() >= 30;

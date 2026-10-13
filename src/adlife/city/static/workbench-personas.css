@@ -4,6 +4,12 @@
 .persona-roster { max-height: 13rem; overflow-y: auto; border: 1px solid var(--line); }
 .persona-row { display: block; width: 100%; min-height: 44px; padding: 10px; border: 0; border-bottom: 1px solid var(--line); background: var(--ink-soft); color: var(--paper); text-align: start; font-size: .75rem; overflow-wrap: anywhere; cursor: pointer; }
 .persona-row[aria-pressed="true"] { box-shadow: inset 3px 0 var(--mint); background: var(--surface-raised); }
+.persona-row-heading,.persona-row-definition,.persona-row-agents { display: flex; min-width: 0; align-items: center; }
+.persona-row-heading { gap: 8px; justify-content: space-between; }
+.persona-row-heading strong { overflow-wrap: anywhere; }
+.persona-row-mbti { flex: 0 0 auto; padding: 2px 5px; border: 1px solid var(--line-strong); color: var(--mint); font: 600 .625rem/1.2 monospace; letter-spacing: .04em; }
+.persona-row-definition { margin-top: 4px; color: var(--muted); font: .6875rem/1.4 monospace; }
+.persona-row-agents { margin-top: 3px; color: var(--paper); font: .6875rem/1.4 monospace; }
 #persona-detail, #persona-editor { min-width: 0; }
 #persona-detail .technical-details > .field { margin-inline: 12px; }
 #persona-detail textarea { width: 100%; min-height: 88px; padding: 10px; border: 1px solid var(--line-strong); background: #091920; color: var(--paper); font: inherit; resize: vertical; }

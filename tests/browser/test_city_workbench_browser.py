@@ -308,6 +308,59 @@ def test_audience_ids_bounds_deep_copy_and_stable_serialization(tmp_path: Path) 
             playwright.stop()
 
 
+def test_audience_roster_previews_canonical_agent_assignments_without_renumbering(
+    tmp_path: Path,
+) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+
+            first = page.locator("[data-persona-id='persona-001']")
+            expect(first.locator(".persona-row-mbti")).to_have_text("ENFP")
+            expect(first.locator(".persona-row-agents")).to_have_text("person-001 to person-020")
+
+            page.locator("#persona-count").fill("2")
+            expect(first.locator(".persona-row-agents")).to_have_text("person-001 to person-002")
+            page.locator("#persona-template").select_option("persona-002")
+            page.locator("#persona-add").click()
+            second = page.locator("[data-persona-id='persona-002']")
+            expect(second.locator(".persona-row-mbti")).to_have_text("ISTJ")
+            expect(second.locator(".persona-row-agents")).to_have_text("person-003")
+
+            page.locator("#persona-duplicate").click()
+            third = page.locator("[data-persona-id='persona-003']")
+            expect(third.locator(".persona-row-agents")).to_have_text("person-004")
+            second.click()
+            page.locator("#persona-remove").click()
+            expect(third.locator(".persona-row-agents")).to_have_text("person-003")
+
+            page.locator("#persona-add").click()
+            assert [p["persona_id"] for p in _persona_population(page)["personas"]] == [
+                "persona-001",
+                "persona-003",
+                "persona-002",
+            ]
+            expect(
+                page.locator("[data-persona-id='persona-002'] .persona-row-agents")
+            ).to_have_text("person-003")
+            expect(third.locator(".persona-row-agents")).to_have_text("person-004")
+            page.locator("#persona-description summary").click()
+            page.locator("#persona-mbti").select_option("")
+            expect(page.locator("[data-persona-id='persona-002'] .persona-row-mbti")).to_have_count(
+                0
+            )
+            assert [p["persona_id"] for p in _persona_population(page)["personas"]] == [
+                "persona-001",
+                "persona-003",
+                "persona-002",
+            ]
+        finally:
+            browser.close()
+            playwright.stop()
+
+
 def test_count_mismatch_never_rewrites_audience_and_blank_count_stays_invalid(
     tmp_path: Path,
 ) -> None:
@@ -1122,6 +1175,135 @@ def test_v8_inspector_accepts_authoritative_persona_at_inclusive_byte_limit(tmp_
             playwright.stop()
 
 
+def test_v8_inspector_switches_verified_persona_response_inputs_offline(tmp_path: Path):
+    from adlife.city.runs import create_city_run
+    from adlife.city.workbench_input import WorkbenchRunDraftV2
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_input import draft_v2_data, persona_data
+
+    payload = draft_v2_data(agent_count=2)
+    first = payload["population"]["personas"][0]
+    first.update(
+        {
+            "count": 1,
+            "display_name": "Fictional Alpha",
+            "background": "Alpha's noncausal fictional biography.",
+            "mbti": "ENFP",
+            "interests": [
+                '<img src="https://outside.invalid/input" onerror="window.inputExecuted=true">',
+                "alpha-interest",
+            ],
+            "traits": {
+                "price_sensitivity": 0.11,
+                "novelty_seeking": 0.22,
+                "advertising_skepticism": 0.33,
+                "mobile_recall_encoding": 0.44,
+                "roadside_recall_encoding": 0.55,
+                "impulsivity": 0.66,
+            },
+            "initial_state": {
+                "brand_sentiment": -0.25,
+                "recall_strength": 0.15,
+                "purchase_intention": 0.35,
+            },
+        }
+    )
+    second = persona_data(persona_id="persona-002", count=1)
+    second.update(
+        {
+            "display_name": "Fictional Beta",
+            "background": "Beta's noncausal fictional biography.",
+            "mbti": "ISTJ",
+            "interests": ["beta-interest", "food"],
+            "traits": {
+                "price_sensitivity": 0.71,
+                "novelty_seeking": 0.72,
+                "advertising_skepticism": 0.73,
+                "mobile_recall_encoding": 0.74,
+                "roadside_recall_encoding": 0.75,
+                "impulsivity": 0.76,
+            },
+            "initial_state": {
+                "brand_sentiment": 0.45,
+                "recall_strength": 0.65,
+                "purchase_intention": 0.85,
+            },
+        }
+    )
+    payload["population"]["personas"] = [second, first]
+    validated = construct_workbench_run(
+        WorkbenchRunDraftV2.model_validate_json(json.dumps(payload))
+    )
+    settings = validated.workbench_input.draft.settings
+
+    with _workbench(tmp_path) as (base_url, root):
+        stored = create_city_run(
+            validated.pack,
+            root=root,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+        )
+        before = _artifact_hashes(stored.directory)
+        external_requests: list[str] = []
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+
+            def keep_browser_offline(route: Route) -> None:
+                if route.request.url.startswith(base_url):
+                    route.continue_()
+                else:
+                    external_requests.append(route.request.url)
+                    route.abort()
+
+            page.route("**/*", keep_browser_offline)
+            page.goto(f"{base_url}/runs/{settings.run_id}")
+            expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=15_000)
+            expect(page.locator("#identity-response-inputs")).to_have_count(1)
+            expect(page.locator("#identity-response-inputs")).to_be_visible()
+            expect(page.locator("#identity-response-label")).to_have_text("Verified causal inputs")
+            expect(page.locator("#selected-name")).to_have_text("Fictional Alpha")
+            expect(page.locator("#identity-background")).to_have_text(
+                "Alpha's noncausal fictional biography."
+            )
+            expect(page.locator("#identity-context")).not_to_have_attribute("open", "")
+            expect(page.locator("#identity-interests")).to_contain_text("alpha-interest")
+            for field, value in first["traits"].items():
+                expect(page.locator(f"#identity-trait-{field.replace('_', '-')}")).to_have_text(
+                    str(value)
+                )
+            for field, value in first["initial_state"].items():
+                expect(page.locator(f"#identity-initial-{field.replace('_', '-')}")).to_have_text(
+                    str(value)
+                )
+            assert page.locator("#identity-response-inputs img").count() == 0
+            assert page.evaluate("window.inputExecuted === undefined")
+
+            page.locator("#people-list .person").nth(1).click()
+            expect(page.locator("#selected-name")).to_have_text("Fictional Beta")
+            expect(page.locator("#identity-background")).to_have_text(
+                "Beta's noncausal fictional biography."
+            )
+            expect(page.locator("#identity-interests")).to_have_text("beta-interest · food")
+            for field, value in second["traits"].items():
+                expect(page.locator(f"#identity-trait-{field.replace('_', '-')}")).to_have_text(
+                    str(value)
+                )
+            for field, value in second["initial_state"].items():
+                expect(page.locator(f"#identity-initial-{field.replace('_', '-')}")).to_have_text(
+                    str(value)
+                )
+            assert external_requests == []
+            assert _artifact_hashes(stored.directory) == before
+        finally:
+            browser.close()
+            playwright.stop()
+
+
 @pytest.mark.parametrize("first_persona", [False, True])
 def test_later_persona_field_errors_are_not_silent_or_unsafe(tmp_path: Path, first_persona):
     with _workbench(tmp_path) as (base_url, _root):
@@ -1195,6 +1377,10 @@ def test_v7_inspector_sends_one_run_bound_snapshot_token_for_all_scoped_reads(
             page.goto(f"{base_url}/runs/{run_id}")
             page.wait_for_url(f"{base_url}/runs/{run_id}")
             expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=30_000)
+            expect(page.locator("#identity-response-inputs")).to_have_count(1)
+            expect(page.locator("#identity-response-inputs")).to_be_hidden()
+            page.locator("#assumptions-drawer > summary").click()
+            expect(page.locator("#assumptions-cohort-section")).to_be_visible()
             page.locator("#time-slider").fill("480")
             expect(page.locator("#clock-label")).to_have_text("08:00", timeout=15_000)
 

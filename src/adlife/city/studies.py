@@ -144,14 +144,28 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
             # additionally include legitimate campaign/placement treatment contrasts.
             population = {
                 "profiles": [
-                    profile.model_dump(mode="json")
+                    {
+                        "agent_id": profile.agent_id,
+                        "interests": sorted(profile.interests),
+                        "traits": profile.traits.model_dump(mode="json"),
+                    }
                     for profile in sorted(stored.response_input.profiles, key=lambda p: p.agent_id)
                 ],
                 "initial_states": [
-                    state.model_dump(mode="json")
+                    {
+                        "agent_id": state.agent_id,
+                        "brand_sentiment": state.brand_sentiment,
+                        "recall_strength": state.recall_strength,
+                        "purchase_intention": state.purchase_intention,
+                    }
                     for state in sorted(
                         stored.response_input.initial_states,
-                        key=lambda s: (s.agent_id, s.campaign_id),
+                        key=lambda s: (
+                            s.agent_id,
+                            s.brand_sentiment,
+                            s.recall_strength,
+                            s.purchase_intention,
+                        ),
                     )
                 ],
             }

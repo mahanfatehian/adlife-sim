@@ -41,6 +41,67 @@ def descriptive_edit(data):
 
 
 @pytest.mark.parametrize("response", [False, True])
+def test_v8_population_receipt_is_campaign_neutral_but_response_scope_is_not(tmp_path, response):
+    from adlife.core.experiments.spatial_study import SpatialStudyCompatibilityError
+
+    def population(data):
+        for persona in data["population"]["personas"]:
+            persona["interests"] = ["crafts", "books"]
+            persona["traits"] = dict.fromkeys(persona["traits"], 0.25)
+            persona["initial_state"] = {
+                "brand_sentiment": 0.1,
+                "recall_strength": 0.2,
+                "purchase_intention": 0.3,
+            }
+
+    def treatment(data):
+        data["scenario"]["campaign"]["campaign_id"] = "another-fictional-campaign"
+
+    persona_runs(tmp_path, change=population, treatment_change=treatment)
+    before = _artifact_bytes(tmp_path)
+    study = definition(response=response, contrast=True, same=False)
+    if response:
+        with pytest.raises(
+            SpatialStudyCompatibilityError, match=r"^study arms have different observation keys$"
+        ):
+            analyze(tmp_path, study)
+    else:
+        result = analyze(tmp_path, study)
+        causal = {
+            "profiles": [
+                {
+                    "agent_id": f"person-{index:03d}",
+                    "interests": ["books", "crafts"],
+                    "traits": {
+                        "price_sensitivity": 0.25,
+                        "novelty_seeking": 0.25,
+                        "advertising_skepticism": 0.25,
+                        "mobile_recall_encoding": 0.25,
+                        "roadside_recall_encoding": 0.25,
+                        "impulsivity": 0.25,
+                    },
+                }
+                for index in range(1, 4)
+            ],
+            "initial_states": [
+                {
+                    "agent_id": f"person-{index:03d}",
+                    "brand_sentiment": 0.1,
+                    "recall_strength": 0.2,
+                    "purchase_intention": 0.3,
+                }
+                for index in range(1, 4)
+            ],
+        }
+        expected = sha256(canonical_json(causal).encode("utf-8")).hexdigest()
+        for pair in result.pairs:
+            assert pair.control.response.response_population_sha256 == expected
+            assert pair.treatment.response.response_population_sha256 == expected
+            assert pair.control.response.campaign_ids != pair.treatment.response.campaign_ids
+    assert _artifact_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize("response", [False, True])
 def test_v8_aa_ignores_descriptive_identity_and_authenticates_receipts(tmp_path, response):
     from adlife.core.experiments._spatial_study_validation import reconstruct_manifest
     from adlife.core.experiments.spatial_study import SpatialStudyResult

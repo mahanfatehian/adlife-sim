@@ -15,6 +15,7 @@ from adlife.city.runs import create_city_run, replay_city_run
 from adlife.city.workbench_binding import validate_workbench_execution_binding
 from adlife.city.workbench_input import WorkbenchRunInputV2, parse_workbench_run_input_json
 from adlife.core.domain.city_run import CityRunManifestV6, CityRunManifestV7
+from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import (
     CorruptRunArtifact,
@@ -47,6 +48,26 @@ def _hashes(directory: Path) -> dict[str, str]:
         for path in sorted(directory.rglob("*"))
         if path.is_file()
     }
+
+
+@pytest.mark.parametrize("depth", [MAX_JSON_DEPTH + 1, MAX_JSON_DEPTH * 16])
+def test_v8_loader_screens_excessive_nesting_as_corruption_without_mutation(tmp_path, depth):
+    from tests.unit.city.test_city_analysis import _persona_run
+
+    stored = _persona_run(tmp_path)
+    data = stored.workbench_input.model_dump(mode="json")
+    data["api_key"] = "depth-placeholder"
+    document = json.dumps(data).replace(
+        '"depth-placeholder"', "[" * depth + '"opaque-private-depth-marker"' + "]" * depth
+    )
+    (stored.directory / "inputs" / "workbench.json").write_text(
+        document + "\n", encoding="utf-8", newline="\n"
+    )
+    before = _hashes(stored.directory)
+    with pytest.raises(CorruptRunArtifact) as captured:
+        CityRunStore(tmp_path).load("persona-study")
+    assert "opaque-private-depth-marker" not in str(captured.value)
+    assert _hashes(stored.directory) == before
 
 
 def _save_copy(store: CityRunStore, stored, *, workbench_input) -> Path:
