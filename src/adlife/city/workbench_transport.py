@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Mapping
 from hashlib import sha256
-from typing import ClassVar, Literal, Self
+from typing import ClassVar, Literal, Self, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
@@ -19,10 +19,14 @@ from adlife.city.run_store import StoredCityRun
 from adlife.city.workbench_binding import validate_workbench_execution_binding
 from adlife.city.workbench_input import (
     CreativeTemplate,
+    NormalizedWorkbenchPopulationV2,
     NormalizedWorkbenchScenarioDraft,
     WorkbenchCohortDraft,
     WorkbenchRunDraft,
+    WorkbenchRunDraftDocument,
+    WorkbenchRunDraftV2,
     WorkbenchRunInput,
+    WorkbenchRunInputV2,
 )
 from adlife.core.domain.city import CityBounds, CityPackV2, CitySource
 from adlife.core.domain.city_catalog import (
@@ -30,7 +34,7 @@ from adlife.core.domain.city_catalog import (
     DataOrigin,
     Qualification,
 )
-from adlife.core.domain.city_run import CityRunManifestV7
+from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8
 from adlife.core.domain.identifiers import validate_portable_run_identifier
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
@@ -50,7 +54,7 @@ class WorkbenchDraftTransportError(ValueError):
         super().__init__(self.message)
 
 
-def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDraft:
+def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDraftDocument:
     """Translate the browser's exact decimal seed into the strict internal draft."""
     settings = payload.get("settings")
     if not isinstance(settings, Mapping) or "seed" not in settings:
@@ -72,6 +76,11 @@ def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDra
         allow_nan=False,
         separators=(",", ":"),
     )
+    version = payload.get("schema_version", 1)
+    if type(version) is int and version == 2:
+        return WorkbenchRunDraftV2.model_validate_json(encoded)
+    # The schema-1 validator also gives value-free adjacent version diagnostics
+    # for noninteger and unsupported versions, without trying a permissive union.
     return WorkbenchRunDraft.model_validate_json(encoded)
 
 
@@ -225,14 +234,60 @@ class WorkbenchRunInputView(DomainModel):
         return self
 
 
-def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputView:
-    """Project one already verified v7 record after rechecking every input binding."""
+class WorkbenchRunInputViewV2(DomainModel):
+    """Path-free browser projection of one fully verified schema-v8 input."""
+
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    run_schema_version: Literal[8] = 8
+    workbench_input_schema_version: Literal[2] = 2
+    manifest_sha256: str = Field(pattern=_HASH_PATTERN)
+    workbench_input_sha256: str = Field(pattern=_HASH_PATTERN)
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario_sha256: str = Field(pattern=_HASH_PATTERN)
+    creative_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario: NormalizedWorkbenchScenarioDraft
+    population: NormalizedWorkbenchPopulationV2
+    settings: WorkbenchRunSettingsView
+    creative_template: CreativeTemplate
+
+    @field_validator("run_schema_version", mode="before")
+    @classmethod
+    def exact_run_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 8:
+            raise ValueError("run_schema_version must be integer 8")
+        return value
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_input_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("workbench_input_schema_version must be integer 2")
+        return value
+
+    @model_validator(mode="after")
+    def internally_consistent(self) -> Self:
+        if self.run_id != self.settings.run_id:
+            raise ValueError("workbench input view run identifier is inconsistent")
+        if self.creative_sha256 != self.creative_template.fingerprint:
+            raise ValueError("workbench input view creative hash is inconsistent")
+        if self.scenario.campaign.creative_template_id != self.creative_template.template_id:
+            raise ValueError("workbench input view creative template is inconsistent")
+        if sum(persona.count for persona in self.population.personas) != self.settings.agent_count:
+            raise ValueError("workbench input view population count is inconsistent")
+        return self
+
+
+WorkbenchRunInputViewDocument: TypeAlias = WorkbenchRunInputView | WorkbenchRunInputViewV2
+
+
+def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputViewDocument:
+    """Project one verified v7/v8 record after independently rechecking its binding."""
     if not isinstance(stored, StoredCityRun):
         raise TypeError("stored must be a StoredCityRun")
     manifest = stored.manifest
     workbench_input = stored.workbench_input
-    if not isinstance(manifest, CityRunManifestV7):
-        raise ValueError("workbench input view requires a schema-v7 run")
+    if not isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)):
+        raise ValueError("workbench input view requires a schema-v7 or schema-v8 run")
     if workbench_input is None:
         raise ValueError("workbench input view requires its frozen workbench input")
     try:
@@ -249,8 +304,10 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
         )
     except ValueError:
         raise ValueError("workbench input view binding is invalid") from None
-    if not isinstance(bound_input, WorkbenchRunInput):
+    if isinstance(manifest, CityRunManifestV7) and not isinstance(bound_input, WorkbenchRunInput):
         raise ValueError("workbench input view requires workbench input schema 1")
+    if isinstance(manifest, CityRunManifestV8) and not isinstance(bound_input, WorkbenchRunInputV2):
+        raise ValueError("workbench input view requires workbench input schema 2")
     workbench_input = bound_input
     scenario = stored.spatial_scenario
     if scenario is None:
@@ -261,13 +318,15 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
         or manifest.workbench_input_sha256 != workbench_input.fingerprint
         or manifest.city_sha256 != stored.pack.fingerprint
         or manifest.scenario_sha256 != scenario.fingerprint
+        or stored.response_input is None
+        or manifest.response_input_sha256 != stored.response_input.fingerprint
         or len(scenario.campaigns) != 1
         or scenario.campaigns[0].creative_sha256 != creative.fingerprint
     ):
         raise ValueError("workbench input view hashes are inconsistent")
     draft = workbench_input.draft
     settings = draft.settings
-    return WorkbenchRunInputView(
+    common = dict(
         run_id=manifest.run_id,
         manifest_sha256=sha256((canonical_json(manifest) + "\n").encode("utf-8")).hexdigest(),
         workbench_input_sha256=workbench_input.fingerprint,
@@ -275,7 +334,6 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
         scenario_sha256=scenario.fingerprint,
         creative_sha256=creative.fingerprint,
         scenario=draft.scenario,
-        cohort=draft.cohort,
         settings=WorkbenchRunSettingsView(
             run_id=settings.run_id,
             agent_count=settings.agent_count,
@@ -285,12 +343,19 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
         ),
         creative_template=creative,
     )
+    if isinstance(workbench_input, WorkbenchRunInputV2):
+        return WorkbenchRunInputViewV2.model_validate(
+            {**common, "population": workbench_input.draft.population}
+        )
+    return WorkbenchRunInputView.model_validate({**common, "cohort": workbench_input.draft.cohort})
 
 
 __all__ = [
     "WorkbenchCityDetail",
     "WorkbenchDraftTransportError",
     "WorkbenchRunInputView",
+    "WorkbenchRunInputViewDocument",
+    "WorkbenchRunInputViewV2",
     "WorkbenchRunSettingsView",
     "build_workbench_city_detail",
     "build_workbench_run_input_view",

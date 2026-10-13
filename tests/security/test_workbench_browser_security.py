@@ -23,6 +23,106 @@ from tests.browser.test_city_workbench_browser import (
 from tests.unit.city import test_workbench_web as web_helpers
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "persona_id",
+        "display_name",
+        "occupation",
+        "background",
+        "mbti",
+        "interests",
+    ],
+)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sk-" + "x" * 32,
+        "Authorization: Bearer fictional-secret-1234567890",
+        "fictional@example.invalid",
+        "+98 912 123 4567",
+        "national id: 1234567890",
+        "فارسی\u202eپنهان",  # noqa: RUF001
+        "فارسی\x00پنهان",  # noqa: RUF001
+        "فارسی\u2066پنهان",  # noqa: RUF001
+    ],
+)
+def test_every_persona_string_security_refusal_is_value_free_and_creates_nothing(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    field: str,
+    text: str,
+) -> None:
+    client, root = web_helpers._client(tmp_path)
+    payload = web_helpers._persona_draft()
+    payload["population"]["personas"][0][field] = [text] if field == "interests" else text
+    before = web_helpers._snapshot(root)
+    with caplog.at_level(logging.DEBUG), client:
+        for path in ("/api/scenarios/validate", "/api/jobs"):
+            response = web_helpers._secure_post(client, path, payload)
+            assert response.status_code == 422
+            assert text not in response.text + caplog.text
+            assert "fictional-secret" not in response.text + caplog.text
+            assert "example.invalid" not in response.text + caplog.text
+        assert client.get("/api/workbench").json()["active_job"] is None
+    assert web_helpers._snapshot(root) == before
+    assert not (root / "city-runs").exists()
+
+
+@pytest.mark.parametrize("member", ["api_key", "Authorization", "access_token", "password"])
+def test_nested_persona_secret_member_names_are_never_reflected_or_reserved(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    member: str,
+) -> None:
+    client, root = web_helpers._client(tmp_path)
+    payload = web_helpers._persona_draft()
+    secret = "fake-private-nested-value-1728394056"
+    payload["population"]["personas"][0]["traits"][member] = {"nested": secret}
+    before = web_helpers._snapshot(root)
+    with caplog.at_level(logging.DEBUG), client:
+        for path in ("/api/scenarios/validate", "/api/jobs"):
+            response = web_helpers._secure_post(client, path, payload)
+            assert response.status_code == 422
+            assert member not in response.text
+            assert secret not in response.text + caplog.text
+        assert client.get("/api/workbench").json()["active_job"] is None
+    assert web_helpers._snapshot(root) == before
+
+
+def test_schema2_ordinary_persian_is_valid_and_overflow_precedes_json_parsing(
+    tmp_path: Path,
+) -> None:
+    client, root = web_helpers._client(tmp_path)
+    payload = web_helpers._persona_draft()
+    persona = payload["population"]["personas"][0]
+    persona.update(
+        {
+            "display_name": "مینای خیالی",
+            "occupation": "طراح خیالی",
+            "background": "این شخصیت کاملاً خیالی است.",
+        }
+    )
+    persona["interests"] = ["هنر", "فناوری"]
+    before = web_helpers._snapshot(root)
+    with client:
+        assert web_helpers._post(client, payload).status_code == 200
+        for path in ("/api/scenarios/validate", "/api/jobs"):
+            for content, status in [(b'{"schema_version":2,', 400), (b"x" * 131073, 413)]:
+                response = client.post(
+                    path,
+                    content=content,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Origin": web_helpers.ORIGIN,
+                        "X-AdLife-CSRF": web_helpers.TOKEN,
+                    },
+                )
+                assert response.status_code == status
+        assert client.get("/api/workbench").json()["active_job"] is None
+    assert web_helpers._snapshot(root) == before
+
+
 class _AssetReferenceParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

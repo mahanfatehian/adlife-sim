@@ -28,7 +28,7 @@ from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.ports.run_store import UnsafeRunLocation
-from tests.unit.city.test_workbench_input import draft_data
+from tests.unit.city.test_workbench_input import draft_data, draft_v2_data, persona_data
 
 TOKEN = "fixed-workbench-web-token"
 ORIGIN = "http://127.0.0.1:8765"
@@ -98,6 +98,168 @@ def _tiny_draft(*, run_id: str = "browser-run") -> dict[str, Any]:
         {"day": 1, "start_minute": 480, "end_minute": 540}
     ]
     return payload
+
+
+def _persona_draft(*, run_id: str = "persona-browser-run") -> dict[str, Any]:
+    payload = draft_v2_data(agent_count=2)
+    payload["settings"].update({"seed": "9223372036854775807", "days": 1, "run_id": run_id})
+    payload["population"]["personas"] = [
+        persona_data(persona_id="persona-002"),
+        persona_data(persona_id="persona-001"),
+    ]
+    payload["population"]["personas"][0]["traits"]["impulsivity"] = 0.8
+    payload["scenario"]["phone"]["active_windows"] = [
+        {"day": 1, "start_minute": 480, "end_minute": 540}
+    ]
+    return payload
+
+
+def test_persona_templates_endpoint_is_exact_stable_validated_and_query_free(
+    tmp_path: Path,
+) -> None:
+    from adlife.city.workbench_personas import load_persona_template_catalog
+
+    client, root = _client(tmp_path)
+    before = _snapshot(root)
+    with client:
+        response = client.get("/api/persona-templates")
+        repeated = client.get("/api/persona-templates")
+        refused = client.get("/api/persona-templates?secret=never-reflect-query")
+    assert response.status_code == 200
+    assert response.json() == load_persona_template_catalog().model_dump(mode="json")
+    assert [item["persona_id"] for item in response.json()["templates"]] == [
+        "persona-001",
+        "persona-002",
+        "persona-003",
+        "persona-004",
+    ]
+    assert response.content == repeated.content
+    assert refused.status_code == 422
+    assert "never-reflect-query" not in refused.text
+    assert _snapshot(root) == before
+
+
+def test_persona_catalog_failure_is_a_constant_value_free_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from adlife.city.workbench_personas import PersonaTemplateCatalogError
+
+    secret = "sk-private-catalog-secret-1234567890123456"
+
+    def broken():
+        raise PersonaTemplateCatalogError(f"C:/private/persona_templates.json {secret}")
+
+    monkeypatch.setattr(_module(), "load_persona_template_catalog", broken, raising=False)
+    client, _ = _client(tmp_path, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR), client:
+        response = client.get("/api/persona-templates")
+    assert response.status_code == 500
+    assert response.json() == {
+        "schema_version": 1,
+        "error": {
+            "code": "persona-catalog-unavailable",
+            "message": "The fictional persona catalog is unavailable.",
+            "fields": {},
+        },
+    }
+    assert secret not in response.text + caplog.text
+    assert "C:/private" not in response.text + caplog.text
+
+
+def test_schema2_validation_receipts_and_jobs_project_one_verified_v8_snapshot(
+    tmp_path: Path,
+) -> None:
+    client, root = _client(tmp_path)
+    payload = _persona_draft()
+    with client:
+        first = _post(client, payload)
+        payload["population"]["personas"].reverse()
+        repeated = _post(client, payload)
+        assert first.status_code == repeated.status_code == 200
+        assert first.content == repeated.content
+        submitted = _secure_post(client, "/api/jobs", payload)
+        assert submitted.status_code == 202
+        accepted = submitted.json()["job"]
+        assert accepted["accepted_settings"]["run_schema_version"] == 8
+        assert accepted["accepted_settings"]["workbench_input_schema_version"] == 2
+        terminal = _await_job(client, submitted.json()["status_url"])
+        assert terminal["phase"] == "completed"
+        assert terminal["result"]["run_schema_version"] == 8
+        listing = client.get("/api/runs")
+        detail = client.get("/api/runs/persona-browser-run/meta")
+        frozen = client.get("/api/runs/persona-browser-run/workbench-input")
+        shell = client.get("/runs/persona-browser-run")
+        assert (
+            listing.status_code
+            == detail.status_code
+            == frozen.status_code
+            == shell.status_code
+            == 200
+        )
+        assert listing.json()["runs"][0] == terminal["result"]
+        assert detail.json()["workbench_input_available"] is True
+        assert detail.json()["workbench_input_sha256"] == first.json()["hashes"]["input_sha256"]
+        document = frozen.json()
+        assert document["workbench_input_sha256"] == first.json()["hashes"]["input_sha256"]
+        assert document["settings"]["seed"] == "9223372036854775807"
+        assert document["population"]["assignments"] == [
+            {"agent_id": "person-001", "persona_id": "persona-001"},
+            {"agent_id": "person-002", "persona_id": "persona-002"},
+        ]
+        view_token = re.search(
+            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">', shell.text
+        )
+        assert view_token is not None
+        sidecar = root / "city-runs" / "persona-browser-run" / "inputs" / "workbench.json"
+        sidecar.write_bytes(sidecar.read_bytes() + b" ")
+        pinned = client.get(
+            "/api/runs/persona-browser-run/workbench-input",
+            headers={"X-AdLife-View-Token": view_token.group(1)},
+        )
+        assert pinned.status_code == 200
+        assert pinned.content == frozen.content
+        assert client.get("/runs/persona-browser-run").status_code == 409
+        assert client.get("/api/runs/persona-browser-run/workbench-input").status_code == 409
+
+
+@pytest.mark.parametrize("path", ["/api/scenarios/validate", "/api/jobs"])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("fictional", False),
+        ("fictional", "true"),
+        ("fictional", 1),
+        ("persona_id", "persona-000"),
+        ("count", True),
+        ("count", 0),
+        ("display_name", ""),
+        ("age", True),
+        ("occupation", 123),
+        ("mbti", "WRONG"),
+        ("background", "😀" * 700),
+    ],
+)
+def test_persona_diagnostics_are_adjacent_value_free_and_pre_reservation(
+    tmp_path: Path,
+    path: str,
+    field: str,
+    value: object,
+) -> None:
+    client, root = _client(tmp_path)
+    payload = _persona_draft()
+    payload["population"]["personas"][0][field] = value
+    before = _snapshot(root)
+    with client:
+        response = _secure_post(client, path, payload)
+        assert response.status_code == 422
+        expected_path = (
+            "population.personas.0" if field == "background" else f"population.personas.0.{field}"
+        )
+        assert response.json()["error"]["fields"] == {expected_path: "This field is invalid."}
+        assert client.get("/api/workbench").json()["active_job"] is None
+    assert _snapshot(root) == before
 
 
 def _await_job(client: TestClient, status_url: str, *, timeout: float = 15.0) -> dict[str, Any]:

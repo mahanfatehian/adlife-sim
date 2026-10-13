@@ -46,6 +46,10 @@ from adlife.city.workbench_jobs import (
     WorkbenchJobNotFound,
     WorkbenchJobSubmissionError,
 )
+from adlife.city.workbench_personas import (
+    PersonaTemplateCatalogError,
+    load_persona_template_catalog,
+)
 from adlife.city.workbench_runs import (
     DEFAULT_RUN_PAGE_LIMIT,
     MAX_RUN_PAGE_LIMIT,
@@ -77,7 +81,7 @@ from adlife.city.workbench_workspace import (
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
-from adlife.core.domain.city_run import CityRunManifestV7
+from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8
 from adlife.core.ports.run_store import (
     DuplicateRun,
     RunNotFound,
@@ -98,27 +102,37 @@ _WORKBENCH_FIELD_COMPONENTS = frozenset(
         "active_windows",
         "advertising_skepticism",
         "agent_count",
+        "age",
+        "background",
         "brand_sentiment",
         "campaign",
         "campaign_id",
         "city_id",
         "cohort",
+        "count",
         "creative_template_id",
         "day",
         "days",
+        "display_name",
         "eligible_activities",
         "end_minute",
         "frequency_cap_per_agent_per_day",
+        "fictional",
         "impulsivity",
         "initial_state",
         "interests",
         "max_view_distance_meters",
+        "mbti",
         "mobile_recall_encoding",
         "name",
         "novelty_seeking",
+        "occupation",
         "opportunity_probability_per_minute",
         "orientation_degrees",
         "phone",
+        "persona_id",
+        "personas",
+        "population",
         "price_sensitivity",
         "purchase_intention",
         "recall_strength",
@@ -414,7 +428,7 @@ def create_city_workbench_app(
                 spatial_response_metrics=response_metrics,
                 workbench_input_sha256=(
                     stored.manifest.workbench_input_sha256
-                    if isinstance(stored.manifest, CityRunManifestV7)
+                    if isinstance(stored.manifest, (CityRunManifestV7, CityRunManifestV8))
                     else None
                 ),
             )
@@ -587,6 +601,17 @@ def create_city_workbench_app(
             500,
             "catalog-unavailable",
             "The verified city catalog is unavailable.",
+        )
+
+    @app.exception_handler(PersonaTemplateCatalogError)
+    async def persona_catalog_error_handler(
+        _request: Request,
+        _error: PersonaTemplateCatalogError,
+    ) -> JSONResponse:
+        return workbench_error(
+            500,
+            "persona-catalog-unavailable",
+            "The fictional persona catalog is unavailable.",
         )
 
     @app.exception_handler(WorkbenchQueryError)
@@ -844,6 +869,11 @@ def create_city_workbench_app(
         result = _construct_validated_run(payload)
         return _validation_summary(result)
 
+    @app.get("/api/persona-templates")
+    def persona_templates(request: Request) -> dict[str, object]:
+        _require_empty_query(request)
+        return load_persona_template_catalog().model_dump(mode="json")
+
     @app.get("/api/runs")
     def list_runs(request: Request) -> dict[str, object]:
         offset, limit = _pagination(request)
@@ -886,7 +916,7 @@ def create_city_workbench_app(
     def workbench_run_input(run_id: str, request: Request) -> JSONResponse:
         _require_empty_query(request)
         stored = resolve_stored_run(request, run_id)
-        if not isinstance(stored.manifest, CityRunManifestV7):
+        if not isinstance(stored.manifest, (CityRunManifestV7, CityRunManifestV8)):
             raise WorkbenchInputUnavailable
         try:
             view = build_workbench_run_input_view(stored)

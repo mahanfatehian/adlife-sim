@@ -27,6 +27,29 @@ def _modules():
     )
 
 
+def test_browser_schema2_job_keeps_frozen_personas_after_caller_edits(tmp_path: Path) -> None:
+    from adlife.city.workbench_transport import parse_workbench_http_draft
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_web import _persona_draft
+
+    jobs, runs = _modules()
+    repository = runs.WorkbenchRunRepository(prepare_workbench_workspace(tmp_path / "state"))
+    payload = _persona_draft()
+    validated = construct_workbench_run(parse_workbench_http_draft(payload))
+    manager = jobs.CityJobManager(repository)
+    try:
+        submitted = manager.submit(validated)
+        payload["population"]["personas"][0]["display_name"] = "Changed after submission"
+        terminal = _await_terminal(manager, submitted.job_id)
+        assert terminal.phase == "completed"
+        stored = repository.load(submitted.run_id)
+        assert stored.workbench_input.fingerprint == validated.workbench_input.fingerprint
+        assert stored.workbench_input.draft.population.personas[1].display_name == "Fictional Mina"
+        assert terminal.accepted_settings.seed == "9223372036854775807"
+    finally:
+        manager.close()
+
+
 def _await_terminal(manager: Any, job_id: str, *, timeout: float = 10.0):
     deadline = time.monotonic() + timeout
     pause = threading.Event()

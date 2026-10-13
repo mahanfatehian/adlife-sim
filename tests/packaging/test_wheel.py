@@ -230,6 +230,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     python, uv = smoke_release._create_interpreter(tmp_path)
     smoke_release._expose_locked_dependencies(python)
     smoke_release._install_wheel(python, uv, built_wheel, no_deps=True)
+    guard = smoke_release._install_network_guard(python, cwd=scratch)
     probe = smoke_release._run(
         [
             str(python),
@@ -237,13 +238,22 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
             "-c",
             "import json, pathlib, sys, sysconfig; "
             "import adlife; "
+            "from fastapi.testclient import TestClient; "
+            "from adlife.city.workbench_personas import PersonaTemplateCatalog; "
             "from adlife.city.workbench_workspace import prepare_workbench_workspace; "
             "from adlife.city.workbench_web import create_city_workbench_app; "
             "package=pathlib.Path(adlife.__file__).resolve(); "
             "assert package.is_relative_to(pathlib.Path(sysconfig.get_path('purelib')).resolve()); "
             "workspace=prepare_workbench_workspace(pathlib.Path(sys.argv[1])); "
             "app=create_city_workbench_app(workspace, csrf_token='installed-wheel-token'); "
-            "paths=sorted({route.path for route in app.routes if hasattr(route, 'path')}); "
+            "paths=sorted({route.path for route in app.routes if hasattr(route, 'path')});\n"
+            "with TestClient(app, base_url='http://127.0.0.1:8765') as client:\n"
+            "    response=client.get('/api/persona-templates')\n"
+            "    assert response.status_code == 200\n"
+            "    catalog=PersonaTemplateCatalog.model_validate_json(response.content)\n"
+            "    assert [p.persona_id for p in catalog.templates] == "
+            "['persona-001', 'persona-002', 'persona-003', 'persona-004']\n"
+            "    assert all(p.fictional is True for p in catalog.templates)\n"
             "print(json.dumps(paths))",
             str(scratch / "workspace"),
         ],
@@ -257,6 +267,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/jobs",
         "/api/jobs/{job_id}",
         "/api/jobs/{job_id}/cancel",
+        "/api/persona-templates",
         "/api/runs",
         "/api/runs/{run_id}/workbench-input",
         "/api/scenarios/validate",
@@ -267,6 +278,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/runs/{run_id}",
         "/static/{asset_name}",
     }
+    assert guard.with_name(smoke_release._NETWORK_GUARD_LOG).is_file()
 
 
 def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ from adlife.city.workbench_transport import (
 from adlife.core.domain.serialization import canonical_json
 from tests.integration.test_city_workbench_artifacts import _schema2_copy
 from tests.unit.city.test_city_run_preparation import _validated
-from tests.unit.city.test_workbench_input import draft_data
+from tests.unit.city.test_workbench_input import draft_data, draft_v2_data
 
 
 @pytest.mark.parametrize(
@@ -304,5 +304,145 @@ def test_run_input_view_refuses_incomplete_or_mismatched_bindings(
         other = _validated(run_id="other-run", agents=1, days=2).workbench_input
         candidate = replace(stored, workbench_input=other)
 
+    with pytest.raises(ValueError, match="workbench"):
+        _build_run_input_view(candidate)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_http_dispatch_preserves_exact_version_and_maximum_seed(version: int) -> None:
+    payload = draft_data() if version == 1 else draft_v2_data()
+    payload["settings"]["seed"] = "9223372036854775807"
+    original = deepcopy(payload)
+    result = parse_workbench_http_draft(payload)
+    assert result.schema_version == version
+    assert result.settings.seed == 9223372036854775807
+    assert payload == original
+
+
+@pytest.mark.parametrize("version", [True, False, 1.0, 2.0, "2", None, 0, 3])
+def test_http_dispatch_refuses_noninteger_and_future_versions(version: object) -> None:
+    payload = draft_v2_data()
+    payload["schema_version"] = version
+    payload["settings"]["seed"] = "42"
+    with pytest.raises(ValidationError):
+        parse_workbench_http_draft(payload)
+
+
+def _stored_persona_run(root: Path):
+    from adlife.city.workbench_input import WorkbenchRunDraftV2
+    from adlife.city.workbench_validation import construct_workbench_run
+
+    payload = draft_v2_data(agent_count=1)
+    payload["settings"]["seed"] = 9223372036854775807
+    validated = construct_workbench_run(
+        WorkbenchRunDraftV2.model_validate_json(canonical_json(payload))
+    )
+    settings = validated.workbench_input.draft.settings
+    return create_city_run(
+        validated.pack,
+        root=root,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+
+
+def test_v8_input_view_projects_verified_population_and_exact_receipts(tmp_path: Path) -> None:
+    from adlife.city.workbench_input import NormalizedWorkbenchPopulationV2
+
+    stored = _stored_persona_run(tmp_path)
+    view = _build_run_input_view(stored)
+    model = getattr(transport, "WorkbenchRunInputViewV2", None)
+    assert model is not None
+    assert isinstance(view, model)
+    assert isinstance(view.population, NormalizedWorkbenchPopulationV2)
+    document = view.model_dump(mode="json")
+    assert set(document) == {
+        "run_id",
+        "run_schema_version",
+        "workbench_input_schema_version",
+        "manifest_sha256",
+        "workbench_input_sha256",
+        "city_sha256",
+        "scenario_sha256",
+        "creative_sha256",
+        "scenario",
+        "population",
+        "settings",
+        "creative_template",
+    }
+    assert document["run_schema_version"] == 8
+    assert document["workbench_input_schema_version"] == 2
+    assert document["settings"]["seed"] == "9223372036854775807"
+    assert document["population"] == stored.workbench_input.draft.population.model_dump(mode="json")
+    assert (
+        document["manifest_sha256"]
+        == sha256((stored.directory / "run.json").read_bytes()).hexdigest()
+    )
+    assert document["workbench_input_sha256"] == stored.workbench_input.fingerprint
+    assert document["city_sha256"] == stored.pack.fingerprint
+    assert document["scenario_sha256"] == stored.spatial_scenario.fingerprint
+    assert document["creative_sha256"] == stored.workbench_input.creative_template.fingerprint
+    assert model.model_validate_json(view.model_dump_json()) == view
+    with pytest.raises(ValidationError, match="frozen"):
+        view.run_id = "changed"
+    for field, value in [
+        ("run_schema_version", True),
+        ("run_schema_version", 8.0),
+        ("run_schema_version", 9),
+        ("workbench_input_schema_version", 1),
+        ("workbench_input_schema_version", 2.0),
+        ("private_path", "private"),
+        ("creative_sha256", "0" * 64),
+    ]:
+        with pytest.raises(ValidationError):
+            model.model_validate_json(canonical_json({**document, field: value}))
+
+
+@pytest.mark.parametrize(
+    "mutation", ["crossed", "missing", "workbench", "city", "scenario", "response", "causal"]
+)
+def test_v8_input_view_independently_refuses_missing_hashes_and_rehashed_misbinding(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    stored = _stored_persona_run(tmp_path)
+    if mutation == "missing":
+        candidate = replace(stored, workbench_input=None)
+    elif mutation == "crossed":
+        candidate = replace(stored, workbench_input=_validated(agents=1).workbench_input)
+    elif mutation == "causal":
+        source = stored.workbench_input
+        population = source.draft.population
+        first = population.personas[0]
+        changed = first.model_copy(
+            update={"traits": first.traits.model_copy(update={"impulsivity": 0.97})}
+        )
+        source = source.model_copy(
+            update={
+                "draft": source.draft.model_copy(
+                    update={"population": population.model_copy(update={"personas": (changed,)})}
+                )
+            }
+        )
+        candidate = replace(
+            stored,
+            workbench_input=source,
+            manifest=stored.manifest.model_copy(
+                update={"workbench_input_sha256": source.fingerprint}
+            ),
+        )
+    else:
+        field = {
+            "workbench": "workbench_input_sha256",
+            "city": "city_sha256",
+            "scenario": "scenario_sha256",
+            "response": "response_input_sha256",
+        }[mutation]
+        candidate = replace(stored, manifest=stored.manifest.model_copy(update={field: "0" * 64}))
     with pytest.raises(ValueError, match="workbench"):
         _build_run_input_view(candidate)
