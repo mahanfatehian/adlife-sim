@@ -300,6 +300,8 @@ class WorkbenchPersonaDraftV2(WorkbenchCohortDraft):
     def safe_persona_interests(cls, value: frozenset[str]) -> frozenset[str]:
         for interest in value:
             _safe_persona_text(interest)
+            # Sets have no adjacency: check each possible label with every companion.
+            _reject_structural_secrets({interest: tuple(value - {interest})})
         return value
 
     @model_validator(mode="after")

@@ -917,3 +917,52 @@ def test_persisted_v2_parser_refuses_non_utf8_json_bytes(encoding: str) -> None:
     document = canonical_json(normalized_v2_input()).encode(encoding)
     with pytest.raises(ValueError, match="UTF-8"):
         _models().parse_workbench_run_input_json(document)
+
+
+@pytest.mark.parametrize("label", ["api_key", "x-api-key"])
+@pytest.mark.parametrize("label_first", [True, False])
+def test_persona_interest_secret_labels_are_refused_on_either_side_of_companion(
+    label: str,
+    label_first: bool,
+) -> None:
+    data = persona_data()
+    companion = "opaque-private-marker"
+    data["interests"] = [label, companion] if label_first else [companion, label]
+    with pytest.raises(ValidationError, match="labelled secret"):
+        _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("label", ["api_key", "x-api-key"])
+def test_persona_python_interest_set_refuses_labels_regardless_of_lexical_position(
+    label: str,
+) -> None:
+    data = persona_data()
+    data["interests"] = frozenset({label, "opaque-private-marker"})
+    data["traits"] = SpatialResponseTraits(**data["traits"])
+    data["initial_state"] = _models().WorkbenchInitialState(**data["initial_state"])
+    with pytest.raises(ValidationError, match="labelled secret"):
+        _models().WorkbenchPersonaDraftV2.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "interests",
+    [
+        ["technology", "commuting", "cookie baking", "api_key_usage_notes"],
+        ["api_key"],
+        ["x-api-key"],
+    ],
+)
+def test_persona_ordinary_interests_and_unaccompanied_labels_remain_supported(
+    interests: list[str],
+) -> None:
+    data = persona_data()
+    data["interests"] = interests
+    persona = _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+    assert persona.interests == frozenset(interests)
+
+
+def test_schema1_cohort_interest_screening_keeps_its_existing_contract() -> None:
+    data = draft_data()
+    data["cohort"]["interests"] = ["opaque-private-marker", "x-api-key"]
+    draft = _parse_draft(data)
+    assert draft.cohort.interests == frozenset({"opaque-private-marker", "x-api-key"})
