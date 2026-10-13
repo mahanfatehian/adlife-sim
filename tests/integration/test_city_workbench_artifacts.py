@@ -521,7 +521,8 @@ def test_v8_manifest_last_failure_is_not_reusable_or_clobbering(
 
     def failing_write(path, contents):
         if path.name == failed_name:
-            assert not (path.parent.parent / "run.json").exists()
+            run_directory = path.parent if path.name == ".run.json.tmp" else path.parent.parent
+            assert not (run_directory / "run.json").exists()
             raise OSError("injected failure")
         original(path, contents)
 
