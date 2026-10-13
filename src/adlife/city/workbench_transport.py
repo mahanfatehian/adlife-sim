@@ -22,6 +22,7 @@ from adlife.city.workbench_input import (
     NormalizedWorkbenchScenarioDraft,
     WorkbenchCohortDraft,
     WorkbenchRunDraft,
+    WorkbenchRunInput,
 )
 from adlife.core.domain.city import CityBounds, CityPackV2, CitySource
 from adlife.core.domain.city_catalog import (
@@ -235,7 +236,7 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
     if workbench_input is None:
         raise ValueError("workbench input view requires its frozen workbench input")
     try:
-        workbench_input = validate_workbench_execution_binding(
+        bound_input = validate_workbench_execution_binding(
             workbench_input,
             pack=stored.pack,
             run_id=manifest.run_id,
@@ -248,6 +249,9 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
         )
     except ValueError:
         raise ValueError("workbench input view binding is invalid") from None
+    if not isinstance(bound_input, WorkbenchRunInput):
+        raise ValueError("workbench input view requires workbench input schema 1")
+    workbench_input = bound_input
     scenario = stored.spatial_scenario
     if scenario is None:
         raise ValueError("workbench input view requires its bound scenario")

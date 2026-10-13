@@ -126,7 +126,7 @@ def _validated_workbench_input(
 ) -> WorkbenchRunInput | None:
     if workbench_input is None:
         return None
-    return validate_workbench_execution_binding(
+    bound_input = validate_workbench_execution_binding(
         workbench_input,
         pack=pack,
         run_id=run_id,
@@ -137,6 +137,9 @@ def _validated_workbench_input(
         spatial_scenario=spatial_scenario,
         spatial_response=spatial_response,
     )
+    if not isinstance(bound_input, WorkbenchRunInput):
+        raise ValueError("city run preparation requires workbench input schema 1")
+    return bound_input
 
 
 def prepare_city_run(

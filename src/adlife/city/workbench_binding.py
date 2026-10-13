@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from adlife.city.workbench_input import WorkbenchRunInput, parse_workbench_run_input_json
+from adlife.city.workbench_input import (
+    WorkbenchCohortDraft,
+    WorkbenchRunInputDocument,
+    WorkbenchRunInputV2,
+    parse_workbench_run_input_json,
+)
 from adlife.core.domain.city import CityPackDocument, CityPackV2
 from adlife.core.domain.city_places import CityPlaceSet
 from adlife.core.domain.serialization import canonical_json
@@ -16,7 +21,7 @@ from adlife.core.domain.spatial_response import SpatialResponseInput
 
 
 def validate_workbench_execution_binding(
-    workbench_input: WorkbenchRunInput,
+    workbench_input: WorkbenchRunInputDocument,
     *,
     pack: CityPackDocument,
     run_id: str,
@@ -26,12 +31,9 @@ def validate_workbench_execution_binding(
     places: CityPlaceSet | None,
     spatial_scenario: SpatialCampaignScenario | None,
     spatial_response: SpatialResponseInput | None,
-) -> WorkbenchRunInput:
+) -> WorkbenchRunInputDocument:
     """Return a strict canonical input only when every scientific choice matches."""
-    parsed_input = parse_workbench_run_input_json(canonical_json(workbench_input))
-    if not isinstance(parsed_input, WorkbenchRunInput):
-        raise ValueError("workbench execution binding requires input schema 1")
-    workbench_input = parsed_input
+    workbench_input = parse_workbench_run_input_json(canonical_json(workbench_input))
     settings = workbench_input.draft.settings
     if settings.run_id != run_id:
         raise ValueError("workbench run identifier does not match execution")
@@ -46,7 +48,7 @@ def validate_workbench_execution_binding(
     if not isinstance(pack, CityPackV2):
         raise ValueError("workbench execution requires a version 2 city")
     if places is not None:
-        raise ValueError("workbench schema 1 does not represent a place set")
+        raise ValueError("workbench input does not represent a place set")
     if spatial_scenario is None or spatial_response is None:
         raise ValueError("workbench execution requires scenario and response evidence")
     draft_scenario = workbench_input.draft.scenario
@@ -126,24 +128,32 @@ def validate_workbench_execution_binding(
     ):
         raise ValueError("workbench response input does not match execution")
     expected_agent_ids = tuple(f"person-{index:03d}" for index in range(1, agent_count + 1))
-    cohort = workbench_input.draft.cohort
+    assumptions: dict[str, WorkbenchCohortDraft]
+    if isinstance(workbench_input, WorkbenchRunInputV2):
+        population = workbench_input.draft.population
+        personas = {persona.persona_id: persona for persona in population.personas}
+        assumptions = {
+            assignment.agent_id: personas[assignment.persona_id]
+            for assignment in population.assignments
+        }
+    else:
+        assumptions = {agent_id: workbench_input.draft.cohort for agent_id in expected_agent_ids}
     if tuple(
         profile.agent_id for profile in spatial_response.profiles
     ) != expected_agent_ids or any(
         not profile.fictional
-        or profile.interests != cohort.interests
-        or profile.traits != cohort.traits
+        or profile.interests != assumptions[profile.agent_id].interests
+        or profile.traits != assumptions[profile.agent_id].traits
         for profile in spatial_response.profiles
     ):
         raise ValueError("workbench response population does not match execution")
-    initial = cohort.initial_state
     if tuple(
         state.agent_id for state in spatial_response.initial_states
     ) != expected_agent_ids or any(
         state.campaign_id != campaign.campaign_id
-        or state.brand_sentiment != initial.brand_sentiment
-        or state.recall_strength != initial.recall_strength
-        or state.purchase_intention != initial.purchase_intention
+        or state.brand_sentiment != assumptions[state.agent_id].initial_state.brand_sentiment
+        or state.recall_strength != assumptions[state.agent_id].initial_state.recall_strength
+        or state.purchase_intention != assumptions[state.agent_id].initial_state.purchase_intention
         for state in spatial_response.initial_states
     ):
         raise ValueError("workbench initial response state does not match execution")

@@ -353,21 +353,22 @@ def _schema2_copy(workbench_input) -> WorkbenchRunInputV2:
     return parsed
 
 
-def test_legacy_workbench_binding_explicitly_refuses_schema2() -> None:
+def test_schema2_scientific_binding_accepts_equivalent_explicit_assumptions() -> None:
     validated = _validated()
     schema2 = _schema2_copy(validated.workbench_input)
-    with pytest.raises(ValueError, match="schema 1"):
-        validate_workbench_execution_binding(
-            schema2,
-            pack=validated.pack,
-            run_id="launch-run",
-            seed=42,
-            agent_count=2,
-            days=2,
-            places=None,
-            spatial_scenario=validated.scenario,
-            spatial_response=validated.response_input,
-        )
+    bound = validate_workbench_execution_binding(
+        schema2,
+        pack=validated.pack,
+        run_id="launch-run",
+        seed=42,
+        agent_count=2,
+        days=2,
+        places=None,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+    )
+    assert isinstance(bound, WorkbenchRunInputV2)
+    assert bound == schema2
 
 
 def test_legacy_store_explicitly_refuses_schema2_before_reservation(tmp_path: Path) -> None:

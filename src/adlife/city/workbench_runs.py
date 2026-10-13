@@ -11,6 +11,7 @@ from pydantic import Field, field_validator, model_validator
 
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.runs import PreparedCityRun, prepare_city_run, publish_city_run
+from adlife.city.workbench_input import WorkbenchRunInput
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
@@ -272,8 +273,11 @@ class WorkbenchRunRepository:
         """Evaluate one already frozen workbench request without publishing it."""
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
+        workbench_input = validated.workbench_input
+        if not isinstance(workbench_input, WorkbenchRunInput):
+            raise ValueError("workbench run publication requires workbench input schema 1")
         self._root()
-        settings = validated.workbench_input.draft.settings
+        settings = workbench_input.draft.settings
         return prepare_city_run(
             validated.pack,
             run_id=settings.run_id,
@@ -282,7 +286,7 @@ class WorkbenchRunRepository:
             days=settings.days,
             spatial_scenario=validated.scenario,
             spatial_response=validated.response_input,
-            workbench_input=validated.workbench_input,
+            workbench_input=workbench_input,
         )
 
     def publish(self, prepared: PreparedCityRun) -> StoredCityRun:

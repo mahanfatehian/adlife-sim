@@ -15,12 +15,20 @@ from adlife.city.workbench_input import (
     NormalizedPhonePlacementDraft,
     NormalizedRoadsidePlacementDraft,
     NormalizedWorkbenchRunDraft,
+    NormalizedWorkbenchRunDraftV2,
     NormalizedWorkbenchScenarioDraft,
+    WorkbenchCohortDraft,
     WorkbenchDailyWindow,
     WorkbenchRunDraft,
+    WorkbenchRunDraftDocument,
+    WorkbenchRunDraftV2,
     WorkbenchRunInput,
+    WorkbenchRunInputDocument,
+    WorkbenchRunInputV2,
+    materialize_workbench_population,
 )
 from adlife.core.domain.city import CityPackV2
+from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
     PhoneOpportunityPlacement,
     RoadsideBillboardPlacement,
@@ -59,7 +67,7 @@ class ValidatedWorkbenchRun:
 
     pack: CityPackV2
     mobility: CityMobility
-    workbench_input: WorkbenchRunInput
+    workbench_input: WorkbenchRunInputDocument
     scenario: SpatialCampaignScenario
     response_input: SpatialResponseInput
 
@@ -85,7 +93,9 @@ def _absolute_windows(
     )
 
 
-def _normalize_draft(draft: WorkbenchRunDraft) -> NormalizedWorkbenchRunDraft:
+def _normalize_draft(
+    draft: WorkbenchRunDraftDocument,
+) -> NormalizedWorkbenchRunDraft | NormalizedWorkbenchRunDraftV2:
     phone = draft.scenario.phone
     normalized_phone = (
         None
@@ -120,15 +130,25 @@ def _normalize_draft(draft: WorkbenchRunDraft) -> NormalizedWorkbenchRunDraft:
             max_view_distance_meters=roadside.max_view_distance_meters,
         )
     )
+    scenario = NormalizedWorkbenchScenarioDraft(
+        scenario_id=draft.scenario.scenario_id,
+        name=draft.scenario.name,
+        campaign=draft.scenario.campaign,
+        phone=normalized_phone,
+        roadside=normalized_roadside,
+    )
+    if isinstance(draft, WorkbenchRunDraftV2):
+        return NormalizedWorkbenchRunDraftV2(
+            city_id=draft.city_id,
+            scenario=scenario,
+            population=materialize_workbench_population(
+                draft.population, agent_count=draft.settings.agent_count
+            ),
+            settings=draft.settings,
+        )
     return NormalizedWorkbenchRunDraft(
         city_id=draft.city_id,
-        scenario=NormalizedWorkbenchScenarioDraft(
-            scenario_id=draft.scenario.scenario_id,
-            name=draft.scenario.name,
-            campaign=draft.scenario.campaign,
-            phone=normalized_phone,
-            roadside=normalized_roadside,
-        ),
+        scenario=scenario,
         cohort=draft.cohort,
         settings=draft.settings,
     )
@@ -200,18 +220,30 @@ def _roadside_coordinate(
         ) from None
 
 
-def construct_workbench_run(draft: WorkbenchRunDraft) -> ValidatedWorkbenchRun:
+def construct_workbench_run(draft: WorkbenchRunDraftDocument) -> ValidatedWorkbenchRun:
     """Construct complete deterministic inputs without network or filesystem writes."""
-    if not isinstance(draft, WorkbenchRunDraft):
-        raise TypeError("draft must be a WorkbenchRunDraft")
+    if not isinstance(draft, (WorkbenchRunDraft, WorkbenchRunDraftV2)):
+        raise TypeError("draft must be a supported WorkbenchRunDraft")
+    draft = type(draft).model_validate_json(canonical_json(draft))
 
     normalized = _normalize_draft(draft)
     pack = _load_pack(normalized.city_id)
     creative = _load_creative(normalized.scenario.campaign.creative_template_id)
-    workbench_input = WorkbenchRunInput(
-        draft=normalized,
-        creative_template=creative,
-    )
+    workbench_input: WorkbenchRunInputDocument
+    assumptions: dict[str, WorkbenchCohortDraft]
+    if isinstance(normalized, NormalizedWorkbenchRunDraftV2):
+        workbench_input = WorkbenchRunInputV2(draft=normalized, creative_template=creative)
+        personas = {persona.persona_id: persona for persona in normalized.population.personas}
+        assumptions = {
+            assignment.agent_id: personas[assignment.persona_id]
+            for assignment in normalized.population.assignments
+        }
+    else:
+        workbench_input = WorkbenchRunInput(draft=normalized, creative_template=creative)
+        assumptions = {
+            f"person-{index:03d}": normalized.cohort
+            for index in range(1, normalized.settings.agent_count + 1)
+        }
     mobility = CityMobility(
         pack,
         seed=normalized.settings.seed,
@@ -272,13 +304,12 @@ def construct_workbench_run(draft: WorkbenchRunDraft) -> ValidatedWorkbenchRun:
     )
     validate_spatial_scenario_against_city(scenario, pack)
 
-    cohort = normalized.cohort
     profiles = tuple(
         SpatialResponseProfile(
             agent_id=agent.agent_id,
             fictional=True,
-            interests=cohort.interests,
-            traits=cohort.traits,
+            interests=assumptions[agent.agent_id].interests,
+            traits=assumptions[agent.agent_id].traits,
         )
         for agent in mobility.agents
     )
@@ -288,14 +319,13 @@ def construct_workbench_run(draft: WorkbenchRunDraft) -> ValidatedWorkbenchRun:
         target_interests=campaign_draft.target_interests,
         relative_price=campaign_draft.relative_price,
     )
-    initial = cohort.initial_state
     initial_states = tuple(
         SpatialResponseInitialState(
             agent_id=agent.agent_id,
             campaign_id=campaign.campaign_id,
-            brand_sentiment=initial.brand_sentiment,
-            recall_strength=initial.recall_strength,
-            purchase_intention=initial.purchase_intention,
+            brand_sentiment=assumptions[agent.agent_id].initial_state.brand_sentiment,
+            recall_strength=assumptions[agent.agent_id].initial_state.recall_strength,
+            purchase_intention=assumptions[agent.agent_id].initial_state.purchase_intention,
         )
         for agent in mobility.agents
     )

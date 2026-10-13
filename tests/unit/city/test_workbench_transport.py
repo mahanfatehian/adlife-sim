@@ -19,6 +19,7 @@ from adlife.city.workbench_transport import (
     parse_workbench_http_draft,
 )
 from adlife.core.domain.serialization import canonical_json
+from tests.integration.test_city_workbench_artifacts import _schema2_copy
 from tests.unit.city.test_city_run_preparation import _validated
 from tests.unit.city.test_workbench_input import draft_data
 
@@ -241,6 +242,18 @@ def test_run_input_view_projects_the_complete_verified_v7_input_exactly(
         "response_mode": "deterministic-rules",
     }
     assert document["creative_template"] == source.creative_template.model_dump(mode="json")
+
+
+def test_v7_input_view_explicitly_refuses_schema2_sidecar(tmp_path: Path) -> None:
+    stored = _stored_workbench_run(tmp_path)
+    schema2 = _schema2_copy(stored.workbench_input)
+    candidate = replace(
+        stored,
+        workbench_input=schema2,
+        manifest=stored.manifest.model_copy(update={"workbench_input_sha256": schema2.fingerprint}),
+    )
+    with pytest.raises(ValueError, match="schema 1"):
+        _build_run_input_view(candidate)
 
 
 def test_run_input_view_is_strict_frozen_and_round_trips_without_coercion(

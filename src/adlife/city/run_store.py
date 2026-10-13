@@ -451,7 +451,7 @@ class CityRunStore:
             if isinstance(manifest, CityRunManifestV7):
                 if workbench_input is None:
                     raise CorruptRunArtifact("v7 city run requires a workbench input")
-                workbench_input = validate_workbench_execution_binding(
+                bound_input = validate_workbench_execution_binding(
                     workbench_input,
                     pack=pack,
                     run_id=manifest.run_id,
@@ -462,6 +462,9 @@ class CityRunStore:
                     spatial_scenario=spatial_scenario,
                     spatial_response=response_input,
                 )
+                if not isinstance(bound_input, WorkbenchRunInput):
+                    raise CorruptRunArtifact("city run store requires workbench input schema 1")
+                workbench_input = bound_input
                 if (
                     manifest.workbench_input_schema_version != workbench_input.schema_version
                     or manifest.workbench_input_sha256 != workbench_input.fingerprint
@@ -1071,7 +1074,7 @@ class CityRunStore:
                 if workbench_input is None:
                     raise CorruptRunArtifact("city run workbench input is missing")
                 try:
-                    workbench_input = validate_workbench_execution_binding(
+                    bound_input = validate_workbench_execution_binding(
                         workbench_input,
                         pack=pack,
                         run_id=manifest.run_id,
@@ -1082,6 +1085,9 @@ class CityRunStore:
                         spatial_scenario=spatial_scenario,
                         spatial_response=response_input,
                     )
+                    if not isinstance(bound_input, WorkbenchRunInput):
+                        raise CorruptRunArtifact("city run store requires workbench input schema 1")
+                    workbench_input = bound_input
                 except (ValidationError, ValueError, TypeError):
                     raise CorruptRunArtifact(
                         "city run workbench input does not match frozen evidence"

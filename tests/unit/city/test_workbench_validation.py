@@ -11,14 +11,112 @@ import pytest
 from pydantic import ValidationError
 
 from adlife.city.run_store import CityRunStore
-from adlife.city.workbench_input import WorkbenchRunDraft, WorkbenchRunInput
+from adlife.city.workbench_input import (
+    WorkbenchRunDraft,
+    WorkbenchRunDraftV2,
+    WorkbenchRunInput,
+    WorkbenchRunInputV2,
+)
 from adlife.core.domain.spatial_campaign import (
     PhoneOpportunityPlacement,
     RoadsideBillboardPlacement,
 )
 from adlife.core.domain.spatial_response import validate_spatial_response_input
 from tests.unit.city.test_city_pack import load_pack_v2, pack_v2_data
-from tests.unit.city.test_workbench_input import draft_data
+from tests.unit.city.test_workbench_input import draft_data, draft_v2_data, persona_data
+
+
+def persona_draft() -> WorkbenchRunDraftV2:
+    """Two explicitly different causal profiles, submitted in reverse ID order."""
+    data = draft_v2_data()
+    first = persona_data(count=2)
+    second = persona_data(persona_id="persona-002")
+    second["interests"] = ["food"]
+    second["traits"] = dict.fromkeys(second["traits"], 0.9)
+    second["initial_state"] = {
+        "brand_sentiment": -0.6,
+        "recall_strength": 0.8,
+        "purchase_intention": 0.7,
+    }
+    data["population"]["personas"] = [second, first]
+    return WorkbenchRunDraftV2.model_validate_json(json.dumps(data))
+
+
+def test_schema2_compiles_each_assignment_with_its_explicit_causal_values() -> None:
+    result = _module().construct_workbench_run(persona_draft())
+
+    assert isinstance(result.workbench_input, WorkbenchRunInputV2)
+    assert [
+        (a.agent_id, a.persona_id) for a in result.workbench_input.draft.population.assignments
+    ] == [
+        ("person-001", "persona-001"),
+        ("person-002", "persona-001"),
+        ("person-003", "persona-002"),
+    ]
+    assert [profile.interests for profile in result.response_input.profiles] == [
+        frozenset({"technology", "commuting"}),
+        frozenset({"technology", "commuting"}),
+        frozenset({"food"}),
+    ]
+    assert [p.traits.novelty_seeking for p in result.response_input.profiles] == [0.6, 0.6, 0.9]
+    assert result.response_input.profiles[2].traits.model_dump() == {
+        "price_sensitivity": 0.9,
+        "novelty_seeking": 0.9,
+        "advertising_skepticism": 0.9,
+        "mobile_recall_encoding": 0.9,
+        "roadside_recall_encoding": 0.9,
+        "impulsivity": 0.9,
+    }
+    assert [
+        (s.agent_id, s.campaign_id, s.brand_sentiment, s.recall_strength, s.purchase_intention)
+        for s in result.response_input.initial_states
+    ] == [
+        ("person-001", "fictional-launch", 0.0, 0.1, 0.2),
+        ("person-002", "fictional-launch", 0.0, 0.1, 0.2),
+        ("person-003", "fictional-launch", -0.6, 0.8, 0.7),
+    ]
+    assert set(result.response_input.profiles[0].model_dump()) == {
+        "agent_id",
+        "fictional",
+        "interests",
+        "traits",
+    }
+
+
+@pytest.mark.parametrize("count", [1, 30])
+def test_schema2_compiles_exact_agent_coverage_at_population_bounds(count: int) -> None:
+    draft = WorkbenchRunDraftV2.model_validate_json(json.dumps(draft_v2_data(agent_count=count)))
+    result = _module().construct_workbench_run(draft)
+    expected = tuple(f"person-{i:03d}" for i in range(1, count + 1))
+    assert tuple(p.agent_id for p in result.response_input.profiles) == expected
+    assert tuple(s.agent_id for s in result.response_input.initial_states) == expected
+    assert tuple(a.agent_id for a in result.mobility.agents) == expected
+
+
+def test_schema2_compilation_preserves_canonical_persona_order() -> None:
+    first = persona_draft()
+    data = first.model_dump(mode="json")
+    data["population"]["personas"].reverse()
+    second = WorkbenchRunDraftV2.model_validate_json(json.dumps(data))
+    left, right = (_module().construct_workbench_run(draft) for draft in (first, second))
+    assert left.workbench_input.fingerprint == right.workbench_input.fingerprint
+    assert left.response_input == right.response_input
+
+
+@pytest.mark.parametrize("schema", [1, 2])
+@pytest.mark.parametrize("version", [3, True, 2.0])
+def test_compilation_refuses_unvalidated_or_future_draft_versions(
+    schema: int, version: object
+) -> None:
+    draft = _draft() if schema == 1 else persona_draft()
+    unsafe = type(draft).model_construct(
+        **{
+            **{name: getattr(draft, name) for name in type(draft).model_fields},
+            "schema_version": version,
+        }
+    )
+    with pytest.raises(ValueError, match="schema_version"):
+        _module().construct_workbench_run(unsafe)
 
 
 def _module():

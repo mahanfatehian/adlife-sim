@@ -10,16 +10,26 @@ import pytest
 from pydantic import ValidationError
 
 from adlife.city.runs import create_city_run
+from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
     prepare_workbench_workspace,
 )
 from adlife.core.ports.run_store import DuplicateRun, UnsafeRunLocation
 from tests.unit.city.test_city_run_preparation import _validated
+from tests.unit.city.test_workbench_validation import persona_draft
 
 
 def _module():
     return importlib.import_module("adlife.city.workbench_runs")
+
+
+def test_v7_repository_explicitly_refuses_schema2_without_publication(tmp_path: Path) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    repository = _module().WorkbenchRunRepository(workspace)
+    with pytest.raises(ValueError, match="schema 1"):
+        repository.prepare(construct_workbench_run(persona_draft()))
+    assert not (workspace.root / "city-runs" / "launch-run").exists()
 
 
 def _saved_run(root: Path, *, run_id: str, workbench: bool) -> None:

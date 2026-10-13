@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
 import adlife.city.run_store as city_store_module
+from adlife.city.analysis import (
+    metrics_for_stored_city_run,
+    response_metrics_for_stored_city_run,
+)
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.runs import create_city_run, replay_city_run
+from adlife.city.workbench_input import WorkbenchRunDraftV2
+from adlife.city.workbench_validation import construct_workbench_run
 from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_response import SpatialResponseInput
@@ -29,6 +36,101 @@ from adlife.core.simulation.spatial_response import (
 from tests.unit.city.test_city_pack import load_pack, pack_data
 from tests.unit.city.test_spatial_opportunity import _phone, _scenario
 from tests.unit.city.test_spatial_response import _response_input
+from tests.unit.city.test_workbench_validation import persona_draft
+
+
+def _run_compiled_personas(draft: WorkbenchRunDraftV2, root: Path):
+    compiled = construct_workbench_run(draft)
+    settings = draft.settings
+    # Exercise the existing scientific pipeline as direct V6 inputs. V8 sidecar
+    # publication is deliberately a separate task from persona compilation.
+    stored = create_city_run(
+        compiled.pack,
+        root=root,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=compiled.scenario,
+        spatial_response=compiled.response_input,
+    )
+    assert isinstance(stored.manifest, CityRunManifestV6)
+    assert stored.opportunity_evaluation is not None
+    assert stored.attention_evaluation is not None
+    assert stored.response_evaluation is not None
+    assert stored.opportunity_evaluation.opportunities
+    assert stored.attention_evaluation.events
+    assert stored.response_evaluation.records
+    return compiled, stored
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("display_name", "Fictional Arman"),
+        ("age", 65),
+        ("occupation", "Fictional baker"),
+        ("background", "A wholly invented biography with different narrative context."),
+        ("mbti", "ESFP"),
+    ],
+)
+def test_persona_descriptions_change_provenance_but_leave_scientific_outputs_identical(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    original = persona_draft()
+    data = deepcopy(original.model_dump(mode="json"))
+    data["population"]["personas"][0][field] = value
+    changed = WorkbenchRunDraftV2.model_validate_json(json.dumps(data))
+    left, first = _run_compiled_personas(original, tmp_path / "original")
+    right, second = _run_compiled_personas(changed, tmp_path / "changed")
+
+    assert left.workbench_input.fingerprint != right.workbench_input.fingerprint
+    assert left.mobility.metadata() == right.mobility.metadata()
+    assert left.mobility.agents == right.mobility.agents
+    assert left.response_input.fingerprint == right.response_input.fingerprint
+    assert first.manifest.agents_sha256 == second.manifest.agents_sha256
+    assert first.manifest.trace_sha256 == second.manifest.trace_sha256
+    for relative_path in (
+        "outputs/spatial-opportunities.jsonl",
+        "outputs/spatial-attention.jsonl",
+        "outputs/spatial-responses.jsonl",
+        "outputs/response-state.json",
+    ):
+        assert (first.directory / relative_path).read_bytes() == (
+            second.directory / relative_path
+        ).read_bytes()
+    assert metrics_for_stored_city_run(first) == metrics_for_stored_city_run(second)
+    assert response_metrics_for_stored_city_run(first) == response_metrics_for_stored_city_run(
+        second
+    )
+
+
+@pytest.mark.parametrize("field", ["interests", "traits", "initial_state"])
+def test_explicit_persona_causal_edits_change_response_input_and_state(
+    tmp_path: Path, field: str
+) -> None:
+    original = persona_draft()
+    data = original.model_dump(mode="json")
+    persona = data["population"]["personas"][0]
+    if field == "interests":
+        persona[field] = ["food"]
+    elif field == "traits":
+        persona[field]["mobile_recall_encoding"] = 0.0
+    else:
+        persona[field]["brand_sentiment"] = -0.8
+    changed = WorkbenchRunDraftV2.model_validate_json(json.dumps(data))
+    left, first = _run_compiled_personas(original, tmp_path / "original")
+    right, second = _run_compiled_personas(changed, tmp_path / "changed")
+
+    assert left.mobility.metadata() == right.mobility.metadata()
+    assert left.mobility.agents == right.mobility.agents
+    assert left.scenario == right.scenario
+    assert left.response_input.fingerprint != right.response_input.fingerprint
+    assert first.opportunity_evaluation == second.opportunity_evaluation
+    assert first.attention_evaluation == second.attention_evaluation
+    assert first.response_evaluation.final_states != second.response_evaluation.final_states
+    assert left.response_input.profiles[2] == right.response_input.profiles[2]
+    assert left.response_input.initial_states[2] == right.response_input.initial_states[2]
 
 
 def _file_hashes(directory: Path) -> dict[str, str]:

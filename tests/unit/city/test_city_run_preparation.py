@@ -16,6 +16,7 @@ from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import DuplicateRun
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_workbench_input import draft_data
+from tests.unit.city.test_workbench_validation import persona_draft
 
 
 def _validated(*, run_id: str = "launch-run", seed: int = 42, agents: int = 2, days: int = 2):
@@ -47,6 +48,21 @@ def test_prepare_city_run_evaluates_without_touching_the_filesystem(tmp_path: Pa
     assert prepared.mobility.agents == validated.mobility.agents
     assert prepared.mobility.frame(1_440) == validated.mobility.frame(1_440)
     assert prepared.response_evaluation is not None
+
+
+def test_v7_preparation_explicitly_refuses_schema2_input() -> None:
+    validated = construct_workbench_run(persona_draft())
+    with pytest.raises(ValueError, match="schema 1"):
+        runs.prepare_city_run(
+            validated.pack,
+            run_id="launch-run",
+            seed=42,
+            agent_count=3,
+            days=2,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+        )
 
 
 def test_explicit_prepare_publish_matches_the_compatibility_wrapper(tmp_path: Path) -> None:
