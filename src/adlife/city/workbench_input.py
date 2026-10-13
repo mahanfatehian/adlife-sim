@@ -5,13 +5,18 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from itertools import pairwise
-from typing import Annotated, Final, Literal, Self
+from typing import Annotated, Final, Literal, Self, TypeAlias
 
-from pydantic import Field, field_serializer, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_serializer, field_validator, model_validator
 
 from adlife.core.domain.city import TravelDirection, _validate_public_metadata
 from adlife.core.domain.identifiers import validate_portable_run_identifier
-from adlife.core.domain.person import DomainModel, contains_provider_secret_text
+from adlife.core.domain.person import (
+    DomainModel,
+    contains_labelled_secret_member,
+    contains_provider_secret_text,
+    contains_sensitive_text,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
     BillboardSide,
@@ -24,6 +29,28 @@ _ID_PATTERN = r"^[a-z0-9][a-z0-9-]{0,79}$"
 _ACTIVITY_ORDER = {"home": 0, "commute": 1, "work": 2, "leisure": 3}
 CREATIVE_DISCLOSURE: Final = "Fictional creative for synthetic simulation only."
 PublicText = Annotated[str, Field(min_length=1, max_length=80)]
+MAX_WORKBENCH_PERSONA_BYTES: Final = 3_072
+MAX_WORKBENCH_POPULATION_BYTES: Final = 98_304
+MAX_WORKBENCH_INPUT_BYTES: Final = 131_072
+PersonaId = Annotated[str, Field(pattern=r"^persona-(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})$")]
+MbtiLabel = Literal[
+    "INTJ",
+    "INTP",
+    "ENTJ",
+    "ENTP",
+    "INFJ",
+    "INFP",
+    "ENFJ",
+    "ENFP",
+    "ISTJ",
+    "ISFJ",
+    "ESTJ",
+    "ESFJ",
+    "ISTP",
+    "ISFP",
+    "ESTP",
+    "ESFP",
+]
 
 
 def _safe_public_text(value: str) -> str:
@@ -222,6 +249,146 @@ class WorkbenchCohortDraft(DomainModel):
         return sorted(value)
 
 
+def _safe_persona_text(value: str) -> str:
+    checked = _safe_public_text(value)
+    if contains_sensitive_text(checked):
+        raise ValueError("persona text contains a sensitive identifier or secret")
+    if any(
+        character in "\u2028\u2029" or "\ud800" <= character <= "\udfff" for character in checked
+    ):
+        raise ValueError("persona text contains a display control character")
+    return checked
+
+
+def _reject_structural_secrets(value: object) -> object:
+    if contains_labelled_secret_member(value):
+        raise ValueError("workbench input contains a labelled secret member")
+    return value
+
+
+class WorkbenchPersonaDraftV2(WorkbenchCohortDraft):
+    """Fictional context and explicit causal assumptions; context derives no traits."""
+
+    persona_id: PersonaId
+    count: int = Field(ge=1, le=30)
+    fictional: Literal[True]
+    display_name: PublicText
+    age: int | None = Field(default=None, ge=18, le=65)
+    occupation: PublicText | None = None
+    background: Annotated[str, Field(max_length=800)] | None = None
+    mbti: MbtiLabel | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_structural_secrets(cls, value: object) -> object:
+        return _reject_structural_secrets(value)
+
+    @field_validator("fictional", mode="before")
+    @classmethod
+    def exact_fictional_disclosure(cls, value: object) -> object:
+        if value is not True:
+            raise ValueError("persona fictional must be boolean true")
+        return value
+
+    @field_validator("persona_id", "display_name", "occupation", "background", "mbti")
+    @classmethod
+    def safe_persona_text(cls, value: str | None) -> str | None:
+        return None if value is None else _safe_persona_text(value)
+
+    @field_validator("interests")
+    @classmethod
+    def safe_persona_interests(cls, value: frozenset[str]) -> frozenset[str]:
+        for interest in value:
+            _safe_persona_text(interest)
+        return value
+
+    @model_validator(mode="after")
+    def bounded_persona_bytes(self) -> Self:
+        _reject_structural_secrets(self.model_dump(mode="json"))
+        if len(canonical_json(self).encode("utf-8")) > MAX_WORKBENCH_PERSONA_BYTES:
+            raise ValueError("workbench persona exceeds its canonical size limit")
+        return self
+
+
+def validate_workbench_population_bytes(value: DomainModel | dict[str, object]) -> None:
+    """Apply the independent population ceiling to canonical UTF-8, before persistence."""
+    if len(canonical_json(value).encode("utf-8")) > MAX_WORKBENCH_POPULATION_BYTES:
+        raise ValueError("workbench population exceeds its canonical size limit")
+
+
+class WorkbenchPopulationDraftV2(DomainModel):
+    personas: tuple[WorkbenchPersonaDraftV2, ...] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="before")
+    @classmethod
+    def bounded_raw_population(cls, value: object, info: ValidationInfo) -> object:
+        _reject_structural_secrets(value)
+        if info.mode == "json" and isinstance(value, dict):
+            validate_workbench_population_bytes(value)
+            # A model-before validator receives Python lists even in JSON mode;
+            # preserve the wire array contract before strict tuple validation.
+            value = dict(value)
+            for field in ("personas", "assignments"):
+                if isinstance(value.get(field), list):
+                    value[field] = tuple(value[field])
+        return value
+
+    @model_validator(mode="after")
+    def canonical_personas(self) -> Self:
+        personas = tuple(sorted(self.personas, key=lambda item: item.persona_id))
+        if len({item.persona_id for item in personas}) != len(personas):
+            raise ValueError("workbench persona identifiers must be unique")
+        if sum(item.count for item in personas) > 30:
+            raise ValueError("workbench population count exceeds 30 agents")
+        object.__setattr__(self, "personas", personas)
+        validate_workbench_population_bytes(self)
+        return self
+
+
+class WorkbenchPersonaAssignmentV2(DomainModel):
+    agent_id: str = Field(pattern=r"^person-(?:00[1-9]|0[12][0-9]|030)$")
+    persona_id: PersonaId
+
+
+def _population_assignments(
+    personas: tuple[WorkbenchPersonaDraftV2, ...],
+) -> tuple[WorkbenchPersonaAssignmentV2, ...]:
+    assignments: list[WorkbenchPersonaAssignmentV2] = []
+    for persona in personas:
+        for _ in range(persona.count):
+            assignments.append(
+                WorkbenchPersonaAssignmentV2(
+                    agent_id=f"person-{len(assignments) + 1:03d}", persona_id=persona.persona_id
+                )
+            )
+    return tuple(assignments)
+
+
+class NormalizedWorkbenchPopulationV2(WorkbenchPopulationDraftV2):
+    assignments: tuple[WorkbenchPersonaAssignmentV2, ...] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def exact_canonical_assignments(self) -> Self:
+        assignments = tuple(sorted(self.assignments, key=lambda item: item.agent_id))
+        if assignments != _population_assignments(self.personas):
+            raise ValueError("workbench assignments must exactly match canonical persona counts")
+        object.__setattr__(self, "assignments", assignments)
+        return self
+
+
+def materialize_workbench_population(
+    population: WorkbenchPopulationDraftV2, *, agent_count: int
+) -> NormalizedWorkbenchPopulationV2:
+    """Assign canonical contiguous agent IDs to the submitted immutable persona IDs."""
+    if type(agent_count) is not int or not 1 <= agent_count <= 30:
+        raise ValueError("workbench agent count must be an integer from 1 to 30")
+    if sum(item.count for item in population.personas) != agent_count:
+        raise ValueError("workbench persona count total must equal settings agent count")
+    return NormalizedWorkbenchPopulationV2(
+        personas=population.personas, assignments=_population_assignments(population.personas)
+    )
+
+
 class WorkbenchRunSettings(DomainModel):
     run_id: str
     agent_count: int = Field(ge=1, le=30)
@@ -246,6 +413,25 @@ class WorkbenchRunDraft(DomainModel):
     @classmethod
     def safe_city_id(cls, value: str) -> str:
         return _safe_identifier(value)
+
+
+class WorkbenchRunDraftV2(DomainModel):
+    schema_version: Literal[2] = 2
+    city_id: str = Field(pattern=_ID_PATTERN)
+    scenario: WorkbenchScenarioDraft
+    population: WorkbenchPopulationDraftV2
+    settings: WorkbenchRunSettings
+
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
+    @model_validator(mode="after")
+    def exact_population_count(self) -> Self:
+        if sum(item.count for item in self.population.personas) != self.settings.agent_count:
+            raise ValueError("workbench persona count total must equal settings agent count")
+        return self
 
 
 class _NormalizedPlacementDraft(DomainModel):
@@ -327,6 +513,25 @@ class NormalizedWorkbenchRunDraft(DomainModel):
         return _safe_identifier(value)
 
 
+class NormalizedWorkbenchRunDraftV2(DomainModel):
+    schema_version: Literal[2] = 2
+    city_id: str = Field(pattern=_ID_PATTERN)
+    scenario: NormalizedWorkbenchScenarioDraft
+    population: NormalizedWorkbenchPopulationV2
+    settings: WorkbenchRunSettings
+
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
+    @model_validator(mode="after")
+    def exact_population_count(self) -> Self:
+        if len(self.population.assignments) != self.settings.agent_count:
+            raise ValueError("workbench assignment count must equal settings agent count")
+        return self
+
+
 class CreativeTemplate(DomainModel):
     template_id: str = Field(pattern=_ID_PATTERN)
     template_version: Literal[1] = 1
@@ -394,6 +599,28 @@ class WorkbenchRunInput(DomainModel):
         return sha256(canonical_json(self).encode("utf-8")).hexdigest()
 
 
+class WorkbenchRunInputV2(DomainModel):
+    schema_version: Literal[2] = 2
+    draft: NormalizedWorkbenchRunDraftV2
+    creative_template: CreativeTemplate
+
+    @model_validator(mode="after")
+    def creative_matches_draft(self) -> Self:
+        if self.creative_template.template_id != self.draft.scenario.campaign.creative_template_id:
+            raise ValueError("creative template does not match workbench campaign")
+        if len(canonical_json(self).encode("utf-8")) > MAX_WORKBENCH_INPUT_BYTES:
+            raise ValueError("workbench input exceeds its canonical size limit")
+        return self
+
+    @property
+    def fingerprint(self) -> str:
+        return sha256(canonical_json(self).encode("utf-8")).hexdigest()
+
+
+WorkbenchRunDraftDocument: TypeAlias = WorkbenchRunDraft | WorkbenchRunDraftV2
+WorkbenchRunInputDocument: TypeAlias = WorkbenchRunInput | WorkbenchRunInputV2
+
+
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -407,25 +634,34 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"workbench input JSON contains non-finite constant {value}")
 
 
-def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInput:
+def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInputDocument:
     """Parse one strict persisted input without accepting ambiguous JSON."""
     try:
+        encoded = document.encode("utf-8") if isinstance(document, str) else document
+        if len(encoded) > MAX_WORKBENCH_INPUT_BYTES:
+            raise ValueError("workbench input exceeds its size limit")
         payload = json.loads(
-            document,
+            encoded.decode("utf-8", errors="strict"),
             object_pairs_hook=_unique_json_object,
             parse_constant=_reject_json_constant,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+    except (UnicodeError, json.JSONDecodeError, RecursionError):
         raise ValueError("workbench input is not valid UTF-8 JSON") from None
     if not isinstance(payload, dict):
         raise ValueError("workbench input must be a JSON object")
+    version = payload.get("schema_version")
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError("unsupported workbench input schema version")
     normalized = json.dumps(
         payload,
         ensure_ascii=False,
         allow_nan=False,
         separators=(",", ":"),
     )
-    return WorkbenchRunInput.model_validate_json(normalized)
+    if version == 1:
+        return WorkbenchRunInput.model_validate_json(normalized)
+    _reject_structural_secrets(payload)
+    return WorkbenchRunInputV2.model_validate_json(normalized)
 
 
 __all__ = [
@@ -434,17 +670,28 @@ __all__ = [
     "CreativeTemplateCatalog",
     "NormalizedPhonePlacementDraft",
     "NormalizedRoadsidePlacementDraft",
+    "NormalizedWorkbenchPopulationV2",
     "NormalizedWorkbenchRunDraft",
+    "NormalizedWorkbenchRunDraftV2",
     "NormalizedWorkbenchScenarioDraft",
     "WorkbenchCampaignDraft",
     "WorkbenchCohortDraft",
     "WorkbenchDailyWindow",
     "WorkbenchInitialState",
+    "WorkbenchPersonaAssignmentV2",
+    "WorkbenchPersonaDraftV2",
     "WorkbenchPhonePlacementDraft",
+    "WorkbenchPopulationDraftV2",
     "WorkbenchRoadsidePlacementDraft",
     "WorkbenchRunDraft",
+    "WorkbenchRunDraftDocument",
+    "WorkbenchRunDraftV2",
     "WorkbenchRunInput",
+    "WorkbenchRunInputDocument",
+    "WorkbenchRunInputV2",
     "WorkbenchRunSettings",
     "WorkbenchScenarioDraft",
+    "materialize_workbench_population",
     "parse_workbench_run_input_json",
+    "validate_workbench_population_bytes",
 ]

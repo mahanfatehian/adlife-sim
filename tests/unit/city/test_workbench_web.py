@@ -1251,6 +1251,40 @@ def test_structurally_invalid_job_draft_is_screened_and_never_registered(
     assert not (root / "city-runs").exists()
 
 
+@pytest.mark.parametrize("path", ["/api/scenarios/validate", "/api/jobs"])
+def test_well_formed_structural_secret_is_a_semantic_refusal_without_job_or_files(
+    tmp_path: Path,
+    path: str,
+) -> None:
+    client, root = _client(tmp_path)
+    payload = _tiny_draft()
+    # Each string is individually allowed by V1, but the pair is structurally forbidden.
+    payload["cohort"]["interests"] = ["api_key", "opaque-private-marker"]
+    before = _snapshot(root)
+    with client:
+        response = _secure_post(client, path, payload)
+        capabilities = client.get("/api/workbench")
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid-fields"
+    assert "opaque-private-marker" not in response.text
+    assert "api_key" not in response.text
+    assert capabilities.json()["active_job"] is None
+    assert _snapshot(root) == before
+
+
+def test_secret_content_on_cancel_is_not_diagnosed_as_a_run_draft(tmp_path: Path) -> None:
+    client, root = _client(tmp_path)
+    before = _snapshot(root)
+    with client:
+        response = _secure_post(
+            client, "/api/jobs/job-" + "a" * 32 + "/cancel", {"api_key": "opaque-private-marker"}
+        )
+    assert response.status_code == 422
+    assert set(response.json()["error"]["fields"]) == {"request"}
+    assert "opaque-private-marker" not in response.text
+    assert _snapshot(root) == before
+
+
 def test_worker_submission_refusal_is_constant_and_value_free(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

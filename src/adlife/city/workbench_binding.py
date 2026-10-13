@@ -28,7 +28,10 @@ def validate_workbench_execution_binding(
     spatial_response: SpatialResponseInput | None,
 ) -> WorkbenchRunInput:
     """Return a strict canonical input only when every scientific choice matches."""
-    workbench_input = parse_workbench_run_input_json(canonical_json(workbench_input))
+    parsed_input = parse_workbench_run_input_json(canonical_json(workbench_input))
+    if not isinstance(parsed_input, WorkbenchRunInput):
+        raise ValueError("workbench execution binding requires input schema 1")
+    workbench_input = parsed_input
     settings = workbench_input.draft.settings
     if settings.run_id != run_id:
         raise ValueError("workbench run identifier does not match execution")

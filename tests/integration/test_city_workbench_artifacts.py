@@ -12,6 +12,8 @@ import pytest
 from adlife.city import run_store as store_module
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run, replay_city_run
+from adlife.city.workbench_binding import validate_workbench_execution_binding
+from adlife.city.workbench_input import WorkbenchRunInputV2, parse_workbench_run_input_json
 from adlife.core.domain.city_run import CityRunManifestV6, CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import (
@@ -21,6 +23,7 @@ from adlife.core.ports.run_store import (
     UnsafeRunLocation,
 )
 from tests.unit.city.test_city_run_preparation import _validated
+from tests.unit.city.test_workbench_input import persona_data
 
 
 def _create(root: Path, *, run_id: str = "launch-run"):
@@ -331,3 +334,63 @@ def test_v7_duplicate_and_staged_write_failure_never_overwrite_or_complete(
         CityRunStore(tmp_path / "failed").load("launch-run")
     with pytest.raises(DuplicateRun):
         _create(tmp_path / "failed")
+
+
+def _schema2_copy(workbench_input) -> WorkbenchRunInputV2:
+    data = workbench_input.model_dump(mode="json")
+    data["schema_version"] = data["draft"]["schema_version"] = 2
+    cohort = data["draft"].pop("cohort")
+    count = data["draft"]["settings"]["agent_count"]
+    data["draft"]["population"] = {
+        "personas": [{**persona_data(count=count), **cohort}],
+        "assignments": [
+            {"agent_id": f"person-{i:03d}", "persona_id": "persona-001"}
+            for i in range(1, count + 1)
+        ],
+    }
+    parsed = parse_workbench_run_input_json(json.dumps(data))
+    assert isinstance(parsed, WorkbenchRunInputV2)
+    return parsed
+
+
+def test_legacy_workbench_binding_explicitly_refuses_schema2() -> None:
+    validated = _validated()
+    schema2 = _schema2_copy(validated.workbench_input)
+    with pytest.raises(ValueError, match="schema 1"):
+        validate_workbench_execution_binding(
+            schema2,
+            pack=validated.pack,
+            run_id="launch-run",
+            seed=42,
+            agent_count=2,
+            days=2,
+            places=None,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+        )
+
+
+def test_legacy_store_explicitly_refuses_schema2_before_reservation(tmp_path: Path) -> None:
+    stored = _create(tmp_path / "source")
+    destination = tmp_path / "destination"
+    with pytest.raises(CorruptRunArtifact, match="schema 1"):
+        _save_copy(
+            CityRunStore(destination), stored, workbench_input=_schema2_copy(stored.workbench_input)
+        )
+    assert not destination.exists()
+
+
+def test_v7_loader_explicitly_refuses_schema2_sidecar_without_mutation(tmp_path: Path) -> None:
+    stored = _create(tmp_path)
+    schema2 = _schema2_copy(stored.workbench_input)
+    (stored.directory / "inputs" / "workbench.json").write_text(
+        canonical_json(schema2) + "\n", encoding="utf-8", newline="\n"
+    )
+    manifest = stored.manifest.model_copy(update={"workbench_input_sha256": schema2.fingerprint})
+    (stored.directory / "run.json").write_text(
+        canonical_json(manifest) + "\n", encoding="utf-8", newline="\n"
+    )
+    before = _hashes(stored.directory)
+    with pytest.raises(CorruptRunArtifact, match="schema 1"):
+        CityRunStore(tmp_path).load("launch-run")
+    assert _hashes(stored.directory) == before

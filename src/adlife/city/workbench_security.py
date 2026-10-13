@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from adlife.core.domain.json_values import freeze_json_mapping, thaw_json_mapping
-from adlife.core.domain.person import contains_provider_secret_text
+from adlife.core.domain.person import contains_labelled_secret_member, contains_provider_secret_text
 from adlife.core.ports.cognition import redact_provider_body
 
 MAX_WORKBENCH_BODY_BYTES = 131_072
@@ -32,6 +32,10 @@ _LOGGER = logging.getLogger(__name__)
 
 class WorkbenchJsonError(ValueError):
     """A value-free strict JSON refusal."""
+
+
+class WorkbenchJsonContentError(WorkbenchJsonError):
+    """Well-formed JSON carrying forbidden semantic content, not a syntax error."""
 
 
 def new_csrf_token() -> str:
@@ -124,6 +128,8 @@ def strict_json_object(data: bytes) -> dict[str, object]:
             raise WorkbenchJsonError("JSON request must be an object")
         frozen = freeze_json_mapping(payload)
         thawed = thaw_json_mapping(frozen)
+        if contains_labelled_secret_member(thawed):
+            raise WorkbenchJsonContentError("JSON request contains a labelled secret member")
     except WorkbenchJsonError:
         raise
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
@@ -340,6 +346,7 @@ class WorkbenchSecurityMiddleware:
 
 __all__ = [
     "MAX_WORKBENCH_BODY_BYTES",
+    "WorkbenchJsonContentError",
     "WorkbenchJsonError",
     "WorkbenchSecurityMiddleware",
     "new_csrf_token",

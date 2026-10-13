@@ -491,3 +491,429 @@ def test_creative_catalog_refuses_oversize_duplicates_and_unsafe_text(tmp_path: 
 def test_traits_contract_used_by_wire_draft_is_the_existing_domain_type() -> None:
     draft = _parse_draft(draft_data())
     assert isinstance(draft.cohort.traits, SpatialResponseTraits)
+
+
+def persona_data(*, persona_id: str = "persona-001", count: int = 1) -> dict[str, Any]:
+    return {
+        **draft_data()["cohort"],
+        "persona_id": persona_id,
+        "count": count,
+        "fictional": True,
+        "display_name": "Fictional Mina",
+        "age": 28,
+        "occupation": "Fictional designer",
+        "background": "An invented person who enjoys synthetic city scenarios.",
+        "mbti": "INTJ",
+    }
+
+
+def draft_v2_data(*, agent_count: int = 3) -> dict[str, Any]:
+    data = draft_data()
+    data.pop("cohort")
+    data["schema_version"] = 2
+    data["settings"]["agent_count"] = agent_count
+    data["population"] = {"personas": [persona_data(count=agent_count)]}
+    return data
+
+
+def normalized_v2_input():
+    models = _models()
+    wire = models.WorkbenchRunDraftV2.model_validate_json(json.dumps(draft_v2_data()))
+    normalized = models.NormalizedWorkbenchRunDraftV2(
+        city_id=wire.city_id,
+        scenario=_normalized_draft().scenario,
+        population=models.materialize_workbench_population(
+            wire.population, agent_count=wire.settings.agent_count
+        ),
+        settings=wire.settings,
+    )
+    return models.WorkbenchRunInputV2(
+        draft=normalized,
+        creative_template=_creatives().select_creative_template("fictional-device-launch-v1"),
+    )
+
+
+@pytest.mark.parametrize(
+    "mbti",
+    [
+        "INTJ",
+        "INTP",
+        "ENTJ",
+        "ENTP",
+        "INFJ",
+        "INFP",
+        "ENFJ",
+        "ENFP",
+        "ISTJ",
+        "ISFJ",
+        "ESTJ",
+        "ESFJ",
+        "ISTP",
+        "ISFP",
+        "ESTP",
+        "ESFP",
+        None,
+    ],
+)
+def test_persona_v2_accepts_exact_mbti_and_existing_causal_contracts(mbti: str | None) -> None:
+    data = persona_data()
+    data["mbti"] = mbti
+    persona = _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+    assert persona.mbti == mbti
+    assert isinstance(persona.traits, SpatialResponseTraits)
+    assert json.loads(canonical_json(persona))["interests"] == ["commuting", "technology"]
+    with pytest.raises(ValidationError, match="frozen"):
+        persona.display_name = "Changed"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("fictional", False),
+        ("fictional", 1),
+        ("fictional", "true"),
+        ("persona_id", "persona-000"),
+        ("persona_id", "persona-01"),
+        ("persona_id", "person-001"),
+        ("persona_id", "persona-1000"),
+        ("count", True),
+        ("count", 1.0),
+        ("count", "1"),
+        ("count", 0),
+        ("count", 31),
+        ("display_name", ""),
+        ("display_name", "a" * 81),
+        ("display_name", 7),
+        ("age", True),
+        ("age", 18.0),
+        ("age", "28"),
+        ("age", 17),
+        ("age", 66),
+        ("occupation", ""),
+        ("occupation", "a" * 81),
+        ("background", "a" * 801),
+        ("background", 1),
+        ("mbti", "intj"),
+        ("mbti", "XXXX"),
+        ("mbti", 1),
+        ("interests", []),
+        ("interests", ["same", "same"]),
+        ("interests", ["a" * 81]),
+        ("interests", [str(i) for i in range(13)]),
+        ("unexpected", "refused"),
+    ],
+)
+def test_persona_v2_refuses_wrong_types_ranges_and_unknown_fields(
+    field: str, value: object
+) -> None:
+    data = persona_data()
+    data[field] = value
+    with pytest.raises(ValidationError):
+        _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+
+
+def test_persona_v2_optional_context_and_mandatory_fictional_disclosure() -> None:
+    data = persona_data()
+    for field in ("age", "occupation", "background", "mbti"):
+        data.pop(field)
+    persona = _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+    assert (persona.age, persona.occupation, persona.background, persona.mbti) == (None,) * 4
+    data.pop("fictional")
+    with pytest.raises(ValidationError):
+        _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("value", [True, float("nan"), float("inf"), float("-inf"), -1.01, 1.01])
+@pytest.mark.parametrize("field", list(draft_data()["cohort"]["traits"]))
+def test_persona_v2_traits_refuse_bool_nonfinite_and_out_of_bounds(
+    field: str, value: object
+) -> None:
+    data = persona_data()
+    data["traits"][field] = value
+    with pytest.raises(ValidationError):
+        _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("field", ["brand_sentiment", "recall_strength", "purchase_intention"])
+@pytest.mark.parametrize("value", [True, float("nan"), float("inf"), float("-inf"), -1.01, 1.01])
+def test_persona_v2_state_refuses_bool_nonfinite_and_out_of_bounds(
+    field: str, value: object
+) -> None:
+    data = persona_data()
+    data["initial_state"][field] = value
+    with pytest.raises(ValidationError):
+        _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("count", [1, 30])
+def test_v2_materialization_covers_agent_boundaries(count: int) -> None:
+    models = _models()
+    draft = models.WorkbenchRunDraftV2.model_validate_json(
+        json.dumps(draft_v2_data(agent_count=count))
+    )
+    population = models.materialize_workbench_population(draft.population, agent_count=count)
+    assert [item.model_dump() for item in population.assignments] == [
+        {"agent_id": f"person-{index:03d}", "persona_id": "persona-001"}
+        for index in range(1, count + 1)
+    ]
+    assert (
+        models.NormalizedWorkbenchPopulationV2.model_validate_json(canonical_json(population))
+        == population
+    )
+
+
+@pytest.mark.parametrize(
+    "personas",
+    [
+        [],
+        [persona_data(), persona_data()],
+        [persona_data(count=30), persona_data(persona_id="persona-002")],
+    ],
+)
+def test_population_v2_rejects_empty_duplicate_ids_and_excess_total(personas: list[object]) -> None:
+    with pytest.raises(ValidationError):
+        _models().WorkbenchPopulationDraftV2.model_validate_json(json.dumps({"personas": personas}))
+
+
+@pytest.mark.parametrize("agent_count", [True, 0, 31, 2])
+def test_materialization_v2_refuses_invalid_or_mismatched_agent_count(agent_count: object) -> None:
+    models = _models()
+    population = models.WorkbenchPopulationDraftV2.model_validate_json(
+        json.dumps({"personas": [persona_data()]})
+    )
+    with pytest.raises(ValueError):
+        models.materialize_workbench_population(population, agent_count=agent_count)
+
+
+@pytest.mark.parametrize("version", [True, 1, 2.0, "2", 3])
+def test_schema_v2_requires_exact_integer_version_at_every_document_layer(version: object) -> None:
+    models = _models()
+    wire = draft_v2_data()
+    wire["schema_version"] = version
+    with pytest.raises(ValidationError):
+        models.WorkbenchRunDraftV2.model_validate_json(json.dumps(wire))
+    value = normalized_v2_input().model_dump(mode="json")
+    for model, candidate in (
+        (models.WorkbenchRunInputV2, {**value, "schema_version": version}),
+        (models.NormalizedWorkbenchRunDraftV2, {**value["draft"], "schema_version": version}),
+    ):
+        with pytest.raises(ValidationError):
+            model.model_validate_json(json.dumps(candidate))
+
+
+def test_v2_draft_and_normalized_draft_bind_population_total_to_settings() -> None:
+    wire = draft_v2_data()
+    wire["settings"]["agent_count"] = 2
+    with pytest.raises(ValidationError, match="count"):
+        _models().WorkbenchRunDraftV2.model_validate_json(json.dumps(wire))
+    normalized = normalized_v2_input().draft.model_dump(mode="json")
+    normalized["settings"]["agent_count"] = 2
+    with pytest.raises(ValidationError, match="count"):
+        _models().NormalizedWorkbenchRunDraftV2.model_validate_json(json.dumps(normalized))
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "extra", "duplicate", "wrong-persona", "gap", "swapped"]
+)
+def test_normalized_v2_rejects_incomplete_or_noncanonical_assignments(mutation: str) -> None:
+    models = _models()
+    population = models.WorkbenchPopulationDraftV2.model_validate_json(
+        json.dumps({"personas": [persona_data(count=2), persona_data(persona_id="persona-002")]})
+    )
+    data = models.materialize_workbench_population(population, agent_count=3).model_dump(
+        mode="json"
+    )
+    assignments = data["assignments"]
+    if mutation == "missing":
+        assignments.pop()
+    elif mutation == "extra":
+        assignments.append({"agent_id": "person-004", "persona_id": "persona-002"})
+    elif mutation == "duplicate":
+        assignments[1] = assignments[0]
+    elif mutation == "wrong-persona":
+        assignments[0]["persona_id"] = "persona-999"
+    elif mutation == "gap":
+        assignments[0]["agent_id"] = "person-000"
+    else:
+        assignments[1]["persona_id"], assignments[2]["persona_id"] = (
+            assignments[2]["persona_id"],
+            assignments[1]["persona_id"],
+        )
+    with pytest.raises(ValidationError):
+        models.NormalizedWorkbenchPopulationV2.model_validate_json(json.dumps(data))
+
+
+def test_persisted_v2_input_round_trip_hash_creative_binding_and_exact_dispatch() -> None:
+    models = _models()
+    value = normalized_v2_input()
+    assert models.parse_workbench_run_input_json(canonical_json(value)) == value
+    assert models.parse_workbench_run_input_json(canonical_json(value).encode("utf-8")) == value
+    assert len(value.fingerprint) == 64
+    with pytest.raises(ValidationError, match="does not match"):
+        value.model_copy(
+            update={
+                "creative_template": value.creative_template.model_copy(
+                    update={"template_id": "fictional-cafe-launch-v1"}
+                )
+            }
+        )
+    for version in (True, 2.0, "2", 3, None):
+        data = value.model_dump(mode="json")
+        data["schema_version"] = version
+        with pytest.raises(ValueError):
+            models.parse_workbench_run_input_json(json.dumps(data))
+
+
+@pytest.mark.parametrize(
+    "field", ["display_name", "occupation", "background", "interests", "persona_id", "mbti"]
+)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "person@example.org",
+        "+1 415 555 0134",
+        "national-id-1234567890",
+        "Authorization: Bearer secret-token-1234567890",
+        "sk-" + "a" * 32,
+        "unsafe\ntext",
+        "unsafe\u202etext",
+        "unsafe\u2028text",
+        "unsafe\ud800text",
+    ],
+)
+def test_every_persona_string_refuses_private_credential_and_display_control_text(
+    field: str, text: str
+) -> None:
+    data = persona_data()
+    data[field] = [text] if field == "interests" else text
+    with pytest.raises(ValidationError):
+        _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+
+
+def _persona_at_byte_size(size: int) -> dict[str, Any]:
+    data = persona_data()
+    data["background"] = ""
+    overhead = len(canonical_json(data).encode("utf-8"))
+    quotient, remainder = divmod(size - overhead, 4)
+    data["background"] = "😀" * quotient + "a" * remainder
+    assert len(data["background"]) <= 800
+    assert len(canonical_json(data).encode("utf-8")) == size
+    return data
+
+
+def test_persona_canonical_utf8_byte_limit_is_inclusive_and_value_free() -> None:
+    models = _models()
+    exact = _persona_at_byte_size(3_072)
+    models.WorkbenchPersonaDraftV2.model_validate_json(json.dumps(exact))
+    with pytest.raises(ValidationError, match="size") as captured:
+        models.WorkbenchPersonaDraftV2.model_validate_json(json.dumps(_persona_at_byte_size(3_073)))
+    assert "😀" not in str(captured.value.errors(include_input=False))
+
+
+def test_population_has_an_independent_canonical_utf8_size_limit() -> None:
+    models = _models()
+    # A legal population cannot reach this ceiling (30 * 3,072 < 98,304).
+    # Exercise the canonical-byte seam and prove raw oversized populations hit it first.
+    for size in (98_304, 98_305):
+        personas = [persona_data(persona_id=f"persona-{i:03d}") for i in range(1, 31)]
+        for item in personas:
+            item["background"] = "😀" * 600
+        payload = {"personas": personas}
+        delta = size - len(canonical_json(payload).encode("utf-8"))
+        for item in personas:
+            amount = min(delta, 600)
+            quotient, remainder = divmod(amount, 4)
+            item["background"] += "😀" * quotient + "a" * remainder
+            delta -= amount
+        assert delta == 0
+        assert len(canonical_json(payload).encode("utf-8")) == size
+        if size == 98_304:
+            models.validate_workbench_population_bytes(payload)
+        else:
+            with pytest.raises(ValueError, match=r"population.*size"):
+                models.validate_workbench_population_bytes(payload)
+            with pytest.raises(ValidationError, match=r"population.*size") as captured:
+                models.WorkbenchPopulationDraftV2.model_validate_json(json.dumps(payload))
+            assert captured.value.errors()[0]["loc"] == ()
+
+
+def test_persisted_input_retains_independent_raw_request_byte_limit() -> None:
+    models = _models()
+    value = canonical_json(normalized_v2_input()).encode("utf-8")
+    exact = value + b" " * (131_072 - len(value))
+    assert models.parse_workbench_run_input_json(exact).schema_version == 2
+    with pytest.raises(ValueError, match="size"):
+        models.parse_workbench_run_input_json(exact + b" ")
+
+
+@pytest.mark.parametrize("interests", [["technology", "api_key"], ["api_key", "technology"]])
+def test_persona_screen_checks_canonical_nested_members_independently_of_raw_order(
+    interests: list[str],
+) -> None:
+    data = persona_data()
+    data["interests"] = interests
+    with pytest.raises(ValidationError, match="labelled secret"):
+        _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+
+
+def test_persona_python_construction_screens_structural_members_of_interest_sets() -> None:
+    data = persona_data()
+    data["interests"] = frozenset({"api_key", "technology"})
+    data["traits"] = SpatialResponseTraits(**data["traits"])
+    data["initial_state"] = _models().WorkbenchInitialState(**data["initial_state"])
+    with pytest.raises(ValidationError, match="labelled secret"):
+        _models().WorkbenchPersonaDraftV2.model_validate(data)
+
+
+def test_normalized_population_canonicalizes_assignment_array_order() -> None:
+    value = normalized_v2_input()
+    data = value.model_dump(mode="json")
+    data["draft"]["population"]["assignments"].reverse()
+    restored = _models().parse_workbench_run_input_json(json.dumps(data))
+    assert restored == value
+    assert restored.fingerprint == value.fingerprint
+
+
+@pytest.mark.parametrize(
+    "nested", [{"api_key": "opaque-private-marker"}, ["api_key", "opaque-private-marker"]]
+)
+def test_persisted_v2_parser_refuses_structural_secret_before_model_validation(
+    nested: object,
+) -> None:
+    data = normalized_v2_input().model_dump(mode="json")
+    data["draft"]["population"]["personas"][0]["background"] = nested
+    with pytest.raises(ValueError, match="labelled secret") as captured:
+        _models().parse_workbench_run_input_json(json.dumps(data))
+    assert "opaque-private-marker" not in str(captured.value)
+
+
+@pytest.mark.parametrize("field", ["agent_count", "days", "seed"])
+def test_v2_draft_preserves_strict_settings_integer_contract(field: str) -> None:
+    data = draft_v2_data()
+    data["settings"][field] = True
+    with pytest.raises(ValidationError):
+        _models().WorkbenchRunDraftV2.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("value", [-1.0, 1.0])
+def test_persona_v2_accepts_sentiment_endpoints(value: float) -> None:
+    data = persona_data()
+    data["initial_state"]["brand_sentiment"] = value
+    persona = _models().WorkbenchPersonaDraftV2.model_validate_json(json.dumps(data))
+    assert persona.initial_state.brand_sentiment == value
+
+
+def test_population_v2_accepts_30_distinct_personas_and_rejects_31() -> None:
+    data = {"personas": [persona_data(persona_id=f"persona-{i:03d}") for i in range(1, 31)]}
+    population = _models().WorkbenchPopulationDraftV2.model_validate_json(json.dumps(data))
+    assert len(population.personas) == 30
+    data["personas"].append(persona_data(persona_id="persona-031"))
+    with pytest.raises(ValidationError):
+        _models().WorkbenchPopulationDraftV2.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-32"])
+def test_persisted_v2_parser_refuses_non_utf8_json_bytes(encoding: str) -> None:
+    document = canonical_json(normalized_v2_input()).encode(encoding)
+    with pytest.raises(ValueError, match="UTF-8"):
+        _models().parse_workbench_run_input_json(document)

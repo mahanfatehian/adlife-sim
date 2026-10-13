@@ -262,11 +262,16 @@ class CityRunStore:
             manifest = parse_city_run_manifest_json(canonical_json(manifest))
             pack = parse_city_pack_json(canonical_json(pack))
             places = None if places is None else parse_city_place_set_json(canonical_json(places))
-            workbench_input = (
+            parsed_workbench_input = (
                 None
                 if workbench_input is None
                 else parse_workbench_run_input_json(canonical_json(workbench_input))
             )
+            if parsed_workbench_input is not None and not isinstance(
+                parsed_workbench_input, WorkbenchRunInput
+            ):
+                raise CorruptRunArtifact("city run store requires workbench input schema 1")
+            workbench_input = parsed_workbench_input
             _validate_schema_pair(manifest, pack, places)
             mobility = CityMobility(
                 pack,
@@ -907,6 +912,8 @@ class CityRunStore:
                 if workbench_input_bytes is None
                 else parse_workbench_run_input_json(workbench_input_bytes)
             )
+            if workbench_input is not None and not isinstance(workbench_input, WorkbenchRunInput):
+                raise CorruptRunArtifact("city run store requires workbench input schema 1")
             _validate_schema_pair(manifest, pack, places)
             if (
                 manifest.run_id != run_id

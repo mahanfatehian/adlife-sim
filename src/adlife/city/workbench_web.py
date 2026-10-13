@@ -54,6 +54,7 @@ from adlife.city.workbench_runs import (
 )
 from adlife.city.workbench_security import (
     MAX_WORKBENCH_BODY_BYTES,
+    WorkbenchJsonContentError,
     WorkbenchJsonError,
     WorkbenchSecurityMiddleware,
     new_csrf_token,
@@ -529,6 +530,27 @@ def create_city_workbench_app(
             "invalid-fields",
             "One or more request fields are invalid.",
             {error.field: error.message},
+        )
+
+    @app.exception_handler(WorkbenchJsonContentError)
+    async def forbidden_json_content_handler(
+        request: Request,
+        _error: WorkbenchJsonContentError,
+    ) -> JSONResponse:
+        # The strict JSON boundary already checked bytes, syntax, depth, and finiteness.
+        # Recover existing safe field diagnostics without constructing or submitting a run.
+        if request.url.path in {"/api/scenarios/validate", "/api/jobs"}:
+            try:
+                parse_workbench_http_draft(await request.json())
+            except ValidationError as error:
+                return await validation_error_response(error)
+            except WorkbenchDraftTransportError as error:
+                return await draft_transport_error_handler(request, error)
+        return workbench_error(
+            422,
+            "invalid-fields",
+            "One or more request fields are invalid.",
+            {"request": "This field is invalid."},
         )
 
     @app.exception_handler(WorkbenchValidationError)

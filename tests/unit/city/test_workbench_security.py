@@ -414,3 +414,33 @@ def test_error_envelope_is_exact_bounded_and_never_leaks_values(
             {"field": absolute_path},
         )
     assert absolute_path not in str(path_failure.value)
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        {"api_key": "opaque-private-marker"},
+        ["api_key", "opaque-private-marker"],
+        {"nested": [{"Authorization": "opaque-private-marker"}]},
+    ],
+)
+def test_strict_json_object_refuses_nested_labelled_secrets_without_reflection(
+    nested: object,
+) -> None:
+    document = json.dumps({"population": {"personas": [{"background": nested}]}}).encode("utf-8")
+    with pytest.raises(_module().WorkbenchJsonContentError) as captured:
+        _module().strict_json_object(document)
+    assert "opaque-private-marker" not in str(captured.value)
+    assert "api_key" not in str(captured.value)
+
+
+def test_json_request_limit_counts_four_byte_unicode() -> None:
+    module = _module()
+    prefix = b'{"text":"'
+    suffix = b'"}'
+    quotient, remainder = divmod(131_072 - len(prefix) - len(suffix), 4)
+    exact = prefix + "😀".encode() * quotient + b"a" * remainder + suffix
+    assert len(exact) == 131_072
+    assert module.strict_json_object(exact)["text"].startswith("😀")
+    with pytest.raises(ValueError, match="size"):
+        module.strict_json_object(exact + b" ")
