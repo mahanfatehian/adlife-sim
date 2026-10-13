@@ -32,6 +32,11 @@ from pathlib import Path
 from typing import Never, TypeAlias, cast
 
 _FICTIONAL_CREATIVE_SHA256 = sha256(b"fictional clean-room creative").hexdigest()
+_PACKAGED_FICTIONAL_CITY_IDS = (
+    "fictional-grid-v2",
+    "fictional-harbor-loop-v2",
+    "fictional-river-junction-v2",
+)
 _FICTIONAL_GRID_V2_PROVENANCE: dict[str, object] = {
     "schema_version": 2,
     "city_id": "fictional-grid-v2",
@@ -932,6 +937,27 @@ def _expect_sha256(document: dict[str, object], key: str, label: str) -> str:
     if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         _refuse(label, f"{key} is not a SHA-256 digest")
     return value
+
+
+def _expect_packaged_city_catalog(document: dict[str, object]) -> None:
+    label = "city-catalog list"
+    cities = document.get("cities")
+    if not isinstance(cities, list) or len(cities) != len(_PACKAGED_FICTIONAL_CITY_IDS):
+        _refuse(label, "catalog did not return the exact packaged fictional city set")
+    identifiers: list[str] = []
+    for city in cities:
+        if not isinstance(city, dict):
+            _refuse(label, "catalog city is not an object")
+        city_id = city.get("city_id")
+        if not isinstance(city_id, str):
+            _refuse(label, "catalog city identifier is invalid")
+        identifiers.append(city_id)
+        if city.get("qualification") != "fictional-fixture":
+            _refuse(label, "packaged city is not qualified as a fictional fixture")
+        if type(city.get("pack_schema_version")) is not int or city.get("pack_schema_version") != 2:
+            _refuse(label, "packaged city is not schema V2")
+    if tuple(identifiers) != _PACKAGED_FICTIONAL_CITY_IDS:
+        _refuse(label, "catalog did not return the exact packaged fictional city set")
 
 
 def _expect_response_funnel(
@@ -4449,12 +4475,7 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
             ),
             "city-catalog list",
         )
-        cities = catalog_list.get("cities")
-        if not isinstance(cities, list) or not any(
-            isinstance(entry, dict) and entry.get("city_id") == "fictional-grid-v2"
-            for entry in cities
-        ):
-            _refuse("city-catalog list", "fictional-grid-v2 was not listed")
+        _expect_packaged_city_catalog(catalog_list)
         catalog_entry = _expect_json(
             _run(
                 [

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 from dataclasses import FrozenInstanceError
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -209,13 +210,26 @@ def test_catalog_version_dispatch_fails_closed(version: object) -> None:
         parse_city_catalog_json(json.dumps(document))
 
 
-def test_packaged_catalog_contains_only_an_explicit_fictional_v2_fixture() -> None:
+def test_packaged_catalog_contains_exactly_three_explicit_fictional_v2_fixtures() -> None:
     catalog = load_city_catalog()
-    assert catalog.issued_on == "2026-09-29"
-    assert [entry.city_id for entry in catalog.entries] == ["fictional-grid-v2"]
-    entry = catalog.entries[0]
-    assert entry.qualification == "fictional-fixture"
-    assert entry.reviewer_role is None and entry.reviewed_on is None
+    assert catalog.issued_on == "2026-10-13"
+    assert [entry.city_id for entry in catalog.entries] == [
+        "fictional-grid-v2",
+        "fictional-harbor-loop-v2",
+        "fictional-river-junction-v2",
+    ]
+    assert all(entry.data_origin == "fictional" for entry in catalog.entries)
+    assert all(entry.qualification == "fictional-fixture" for entry in catalog.entries)
+    assert all(
+        entry.reviewer_role is None and entry.reviewed_on is None for entry in catalog.entries
+    )
+    assert all(
+        date.fromisoformat(entry.source.published_on) <= date(2026, 10, 13)
+        for entry in catalog.entries
+    )
+    assert len({entry.pack_sha256 for entry in catalog.entries}) == 3
+
+    entry = next(item for item in catalog.entries if item.city_id == "fictional-grid-v2")
     pack = select_catalog_city("fictional-grid-v2")
     assert pack.schema_version == entry.pack_schema_version == 2
     assert (
@@ -226,6 +240,48 @@ def test_packaged_catalog_contains_only_an_explicit_fictional_v2_fixture() -> No
     assert "fictional" in pack.name.lower()
     with pytest.raises(UnknownCatalogCity):
         select_catalog_city("unknown-city")
+
+
+def test_packaged_fictional_city_packs_are_distinct_connected_and_honest() -> None:
+    verified = load_verified_catalog_cities()
+
+    assert len({city.pack.bounds for city in verified}) == 3
+    topology_signatures: set[tuple[int, int, tuple[int, ...]]] = set()
+    for city in verified:
+        pack = city.pack
+        adjacency = {node.node_id: set() for node in pack.nodes}
+        for road in pack.roads:
+            if "forward" in road.directions:
+                adjacency[road.source_node].add(road.target_node)
+            if "backward" in road.directions:
+                adjacency[road.target_node].add(road.source_node)
+        start = pack.nodes[0].node_id
+        visited: set[str] = set()
+        pending = [start]
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(adjacency[current] - visited)
+        assert visited == set(adjacency)
+        topology_signatures.add(
+            (
+                len(pack.nodes),
+                len(pack.roads),
+                tuple(sorted(len(neighbors) for neighbors in adjacency.values())),
+            )
+        )
+        omissions = " ".join(pack.known_omissions).lower()
+        for absent_calibration in ("traffic", "population", "land use"):
+            assert absent_calibration in omissions
+        if pack.city_id != "fictional-grid-v2":
+            assert "resident calibration" in omissions
+        assert city.entry.source == pack.source
+        assert city.entry.coverage == pack.bounds
+        assert city.entry.pack_sha256 == pack.fingerprint
+
+    assert len(topology_signatures) == 3
 
 
 def test_default_catalog_apis_share_one_lazy_verified_snapshot(
@@ -249,7 +305,7 @@ def test_default_catalog_apis_share_one_lazy_verified_snapshot(
     finally:
         catalog_module._default_catalog_snapshot.cache_clear()
 
-    assert labels == ["index", "pack resource"]
+    assert labels == ["index", "pack resource", "pack resource", "pack resource"]
     assert isinstance(verified[0], VerifiedCatalogCity)
     assert catalog.entries == tuple(city.entry for city in verified)
     assert selected is verified[0].pack

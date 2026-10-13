@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "issued_on": "2026-09-29",
+  "issued_on": "2026-10-13",
   "entries": [
     {
       "city_id": "fictional-grid-v2",
@@ -26,6 +26,62 @@
       },
       "known_omissions": [
         "No measured traffic, population, or land use",
+        "No turn restrictions or time-dependent access",
+        "Synthetic geometry; not a real city"
+      ]
+    },
+    {
+      "city_id": "fictional-harbor-loop-v2",
+      "display_name": "Fictional Harbor Loop V2",
+      "resource_name": "fictional-harbor-loop-v2.json",
+      "pack_sha256": "673976087c84f44e26d36a6f67712ed43d376e8e75d1c4f8b571a5af46823bd2",
+      "pack_schema_version": 2,
+      "data_origin": "fictional",
+      "qualification": "fictional-fixture",
+      "reviewer_role": null,
+      "reviewed_on": null,
+      "coverage": {"west": 0.2, "south": -0.01, "east": 0.29, "north": 0.05},
+      "time_zone": "Etc/UTC",
+      "source": {
+        "provider": "AdLife Fictional Cartography",
+        "dataset": "Bundled fictional harbor loop",
+        "version": "2.0.0",
+        "published_on": "2026-10-13",
+        "source_sha256": "a33168a61cb9b0dd130ed59c96c5e441cd69db8edab377e484bb5c59bfc4fd13",
+        "source_url": "https://example.org/fictional-harbor-loop",
+        "license": "CC0-1.0",
+        "attribution": "Fictional harbor-loop streets; not real map data"
+      },
+      "known_omissions": [
+        "No measured traffic, population, land use, or resident calibration",
+        "No turn restrictions or time-dependent access",
+        "Synthetic geometry; not a real city"
+      ]
+    },
+    {
+      "city_id": "fictional-river-junction-v2",
+      "display_name": "Fictional River Junction V2",
+      "resource_name": "fictional-river-junction-v2.json",
+      "pack_sha256": "0700024a28552bd6c9feecee2624d3b4b939ab068eaca3c119350f8c0a09a966",
+      "pack_schema_version": 2,
+      "data_origin": "fictional",
+      "qualification": "fictional-fixture",
+      "reviewer_role": null,
+      "reviewed_on": null,
+      "coverage": {"west": 1.0, "south": 0.1, "east": 1.1, "north": 0.2},
+      "time_zone": "Etc/UTC",
+      "source": {
+        "provider": "AdLife Fictional Cartography",
+        "dataset": "Bundled fictional river junction",
+        "version": "2.0.0",
+        "published_on": "2026-10-13",
+        "source_sha256": "29d564404af8caec35b3920b4231ba77ff62b0337b5b0a2e4217c2b2718d41b4",
+        "source_url": "https://example.org/fictional-river-junction",
+        "license": "CC0-1.0",
+        "attribution": "Fictional river-junction streets; not real map data"
+      },
+      "known_omissions": [
+        "No measured traffic, population, land use, or resident calibration",
         "No turn restrictions or time-dependent access",
         "Synthetic geometry; not a real city"
       ]

@@ -26,6 +26,31 @@ from scripts import smoke_release
 from tests.unit.city.test_city_analysis import _spatial_run
 
 
+def test_smoke_requires_the_exact_packaged_fictional_city_set() -> None:
+    complete = {
+        "cities": [
+            {
+                "city_id": city_id,
+                "qualification": "fictional-fixture",
+                "pack_schema_version": 2,
+            }
+            for city_id in (
+                "fictional-grid-v2",
+                "fictional-harbor-loop-v2",
+                "fictional-river-junction-v2",
+            )
+        ]
+    }
+    smoke_release._expect_packaged_city_catalog(complete)
+
+    missing = copy.deepcopy(complete)
+    cities = missing["cities"]
+    assert isinstance(cities, list)
+    cities.pop()
+    with pytest.raises(SystemExit):
+        smoke_release._expect_packaged_city_catalog(missing)
+
+
 def _expected_response_document(*, city_sha256: str, scenario_sha256: str) -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -2223,10 +2248,15 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
             document = {
                 "cities": [
                     {
-                        "city_id": "fictional-grid-v2",
+                        "city_id": city_id,
                         "qualification": "fictional-fixture",
                         "pack_schema_version": 2,
                     }
+                    for city_id in (
+                        "fictional-grid-v2",
+                        "fictional-harbor-loop-v2",
+                        "fictional-river-junction-v2",
+                    )
                 ]
             }
         elif arguments == [

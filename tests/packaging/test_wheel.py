@@ -112,17 +112,22 @@ def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> Non
     with zipfile.ZipFile(built_wheel) as wheel:
         names = set(wheel.namelist())
         catalog_bytes = wheel.read("adlife/city/catalog.json")
-        pack_bytes = wheel.read("adlife/city/catalog/fictional-grid-v2.json")
     assert "adlife/city/catalog.json" in names
-    assert "adlife/city/catalog/fictional-grid-v2.json" in names
     catalog = parse_city_catalog_json(catalog_bytes)
-    pack = parse_city_pack_json(pack_bytes)
-    assert isinstance(pack, CityPackV2)
-    assert len(catalog.entries) == 1
-    entry = catalog.entries[0]
-    assert entry.city_id == pack.city_id == "fictional-grid-v2"
-    assert entry.qualification == "fictional-fixture"
-    assert entry.pack_sha256 == pack.fingerprint
+    assert [entry.city_id for entry in catalog.entries] == [
+        "fictional-grid-v2",
+        "fictional-harbor-loop-v2",
+        "fictional-river-junction-v2",
+    ]
+    with zipfile.ZipFile(built_wheel) as wheel:
+        for entry in catalog.entries:
+            resource = f"adlife/city/catalog/{entry.resource_name}"
+            assert resource in names
+            pack = parse_city_pack_json(wheel.read(resource))
+            assert isinstance(pack, CityPackV2)
+            assert entry.city_id == pack.city_id
+            assert entry.qualification == "fictional-fixture"
+            assert entry.pack_sha256 == pack.fingerprint
 
 
 def test_exact_installed_wheel_loads_fictional_personas_offline_outside_checkout(
@@ -201,8 +206,10 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         assert resource in names
     catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
     assert [item.template_id for item in catalog.templates] == [
+        "fictional-coffee-pass-v1",
         "fictional-crispy-meal-v1",
         "fictional-device-launch-v1",
+        "fictional-home-delivery-v1",
     ]
     assert "__ADLIFE_CSRF_TOKEN__" in shell
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell

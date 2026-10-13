@@ -53,6 +53,35 @@ def test_fictional_persona_templates_load_through_importlib() -> None:
     assert all(item.fictional is True for item in catalog.templates)
 
 
+def test_all_fictional_city_and_creative_choices_load_through_importlib() -> None:
+    from importlib import resources
+
+    city_root = resources.files("adlife.city")
+    for resource_name in (
+        "catalog/fictional-grid-v2.json",
+        "catalog/fictional-harbor-loop-v2.json",
+        "catalog/fictional-river-junction-v2.json",
+        "catalog.json",
+        "creative_templates.json",
+    ):
+        assert city_root.joinpath(resource_name).is_file(), resource_name
+
+    from adlife.city.catalog import load_verified_catalog_cities
+    from adlife.city.workbench_creatives import load_creative_template_catalog
+
+    assert [city.entry.city_id for city in load_verified_catalog_cities()] == [
+        "fictional-grid-v2",
+        "fictional-harbor-loop-v2",
+        "fictional-river-junction-v2",
+    ]
+    assert [item.template_id for item in load_creative_template_catalog().templates] == [
+        "fictional-coffee-pass-v1",
+        "fictional-crispy-meal-v1",
+        "fictional-device-launch-v1",
+        "fictional-home-delivery-v1",
+    ]
+
+
 def test_wheel_contains_report_resources() -> None:
     dist = Path(__file__).resolve().parents[2] / "dist"
     wheels = sorted(dist.glob("*.whl"))

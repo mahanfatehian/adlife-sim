@@ -14,6 +14,10 @@ def expected_entry() -> dict[str, object]:
     return load_city_catalog().entries[0].model_dump(mode="json")
 
 
+def expected_entries() -> list[dict[str, object]]:
+    return [entry.model_dump(mode="json") for entry in load_city_catalog().entries]
+
+
 def test_city_catalog_help_lists_local_read_only_commands() -> None:
     result = CliRunner().invoke(app, ["city-catalog", "--help"])
     assert result.exit_code == 0, result.output
@@ -26,15 +30,17 @@ def test_city_catalog_list_has_stable_human_json_and_jsonl_output() -> None:
     human = CliRunner().invoke(app, ["city-catalog", "list"])
     assert human.exit_code == 0, human.output
     assert "fictional-grid-v2" in human.stdout
+    assert "fictional-harbor-loop-v2" in human.stdout
+    assert "fictional-river-junction-v2" in human.stdout
     assert "fictional-fixture" in human.stdout
 
     json_result = CliRunner().invoke(app, ["--format", "json", "city-catalog", "list"])
     assert json_result.exit_code == 0, json_result.output
-    assert json.loads(json_result.stdout) == {"cities": [expected_entry()]}
+    assert json.loads(json_result.stdout) == {"cities": expected_entries()}
 
     jsonl = CliRunner().invoke(app, ["--format", "jsonl", "city-catalog", "list"])
     assert jsonl.exit_code == 0, jsonl.output
-    assert [json.loads(line) for line in jsonl.stdout.splitlines()] == [expected_entry()]
+    assert [json.loads(line) for line in jsonl.stdout.splitlines()] == expected_entries()
 
 
 def test_city_catalog_search_is_casefolded_and_no_match_is_clean() -> None:

@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "city_id": "fictional-river-junction-v2",
+  "name": "Fictional River Junction V2",
+  "time_zone": "Etc/UTC",
+  "source": {
+    "provider": "AdLife Fictional Cartography",
+    "dataset": "Bundled fictional river junction",
+    "version": "2.0.0",
+    "published_on": "2026-10-13",
+    "source_sha256": "29d564404af8caec35b3920b4231ba77ff62b0337b5b0a2e4217c2b2718d41b4",
+    "source_url": "https://example.org/fictional-river-junction",
+    "license": "CC0-1.0",
+    "attribution": "Fictional river-junction streets; not real map data"
+  },
+  "bounds": {"west": 1.0, "south": 0.1, "east": 1.1, "north": 0.2},
+  "known_omissions": [
+    "No measured traffic, population, land use, or resident calibration",
+    "No turn restrictions or time-dependent access",
+    "Synthetic geometry; not a real city"
+  ],
+  "nodes": [
+    {"node_id": "junction-center", "longitude": 1.05, "latitude": 0.15},
+    {"node_id": "junction-north", "longitude": 1.05, "latitude": 0.2},
+    {"node_id": "junction-east", "longitude": 1.1, "latitude": 0.15},
+    {"node_id": "junction-south", "longitude": 1.05, "latitude": 0.1},
+    {"node_id": "junction-west", "longitude": 1.0, "latitude": 0.15}
+  ],
+  "roads": [
+    {"road_id": "junction-north-arm", "source_node": "junction-center", "target_node": "junction-north", "kind": "primary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "junction-east-arm", "source_node": "junction-center", "target_node": "junction-east", "kind": "secondary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "junction-south-arm", "source_node": "junction-center", "target_node": "junction-south", "kind": "primary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "junction-west-arm", "source_node": "junction-center", "target_node": "junction-west", "kind": "secondary", "directions": ["forward", "backward"], "shape": []}
+  ]
+}

@@ -430,19 +430,37 @@ def test_persisted_workbench_input_parser_refuses_unknown_fields_and_creative_dr
         models.parse_workbench_run_input_json(json.dumps(mismatch))
 
 
-def test_packaged_creative_catalog_is_bounded_safe_sorted_and_selectable() -> None:
+def test_packaged_creative_catalog_has_exactly_four_safe_fictional_choices() -> None:
     creatives = _creatives()
     catalog = creatives.load_creative_template_catalog()
 
     assert catalog.schema_version == 1
-    assert len(catalog.templates) >= 2
-    assert tuple(item.template_id for item in catalog.templates) == tuple(
-        sorted(item.template_id for item in catalog.templates)
+    assert tuple(item.template_id for item in catalog.templates) == (
+        "fictional-coffee-pass-v1",
+        "fictional-crispy-meal-v1",
+        "fictional-device-launch-v1",
+        "fictional-home-delivery-v1",
     )
     assert all(
         item.disclosure == "Fictional creative for synthetic simulation only."
         for item in catalog.templates
     )
+    assert len({item.fingerprint for item in catalog.templates}) == 4
+    assert all(
+        1 <= len(text) <= limit
+        for item in catalog.templates
+        for text, limit in (
+            (item.product_name, 80),
+            (item.product_category, 80),
+            (item.message, 240),
+            (item.call_to_action, 120),
+        )
+    )
+    copy = " ".join(
+        f"{item.product_name} {item.product_category} {item.message} {item.call_to_action}"
+        for item in catalog.templates
+    ).casefold()
+    assert all(name not in copy for name in ("amazon", "kfc", "google", "tehran", "london"))
     selected = creatives.select_creative_template(catalog.templates[0].template_id)
     assert selected == catalog.templates[0]
     assert len(selected.fingerprint) == 64
@@ -485,6 +503,20 @@ def test_creative_catalog_refuses_oversize_duplicates_and_unsafe_text(tmp_path: 
     valid["templates"].pop()
     valid["templates"][0]["message"] = "api_key=secret-token-1234567890"
     resource.write_text(json.dumps(valid), encoding="utf-8")
+    with pytest.raises(creatives.CreativeTemplateCatalogError, match="schema"):
+        creatives.load_creative_template_catalog(root=tmp_path)
+
+
+@pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "utf-32"])
+def test_creative_catalog_refuses_bom_and_non_utf8_encodings(
+    tmp_path: Path,
+    encoding: str,
+) -> None:
+    creatives = _creatives()
+    source = Path(__file__).parents[3] / "src/adlife/city/creative_templates.json"
+    document = source.read_text(encoding="utf-8")
+    (tmp_path / "creative_templates.json").write_bytes(document.encode(encoding))
+
     with pytest.raises(creatives.CreativeTemplateCatalogError, match="schema"):
         creatives.load_creative_template_catalog(root=tmp_path)
 

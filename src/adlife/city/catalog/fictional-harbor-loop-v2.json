@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "city_id": "fictional-harbor-loop-v2",
+  "name": "Fictional Harbor Loop V2",
+  "time_zone": "Etc/UTC",
+  "source": {
+    "provider": "AdLife Fictional Cartography",
+    "dataset": "Bundled fictional harbor loop",
+    "version": "2.0.0",
+    "published_on": "2026-10-13",
+    "source_sha256": "a33168a61cb9b0dd130ed59c96c5e441cd69db8edab377e484bb5c59bfc4fd13",
+    "source_url": "https://example.org/fictional-harbor-loop",
+    "license": "CC0-1.0",
+    "attribution": "Fictional harbor-loop streets; not real map data"
+  },
+  "bounds": {"west": 0.2, "south": -0.01, "east": 0.29, "north": 0.05},
+  "known_omissions": [
+    "No measured traffic, population, land use, or resident calibration",
+    "No turn restrictions or time-dependent access",
+    "Synthetic geometry; not a real city"
+  ],
+  "nodes": [
+    {"node_id": "harbor-west", "longitude": 0.2, "latitude": 0.02},
+    {"node_id": "harbor-northwest", "longitude": 0.22, "latitude": 0.05},
+    {"node_id": "harbor-northeast", "longitude": 0.27, "latitude": 0.05},
+    {"node_id": "harbor-east", "longitude": 0.29, "latitude": 0.02},
+    {"node_id": "harbor-southeast", "longitude": 0.27, "latitude": -0.01},
+    {"node_id": "harbor-southwest", "longitude": 0.22, "latitude": -0.01}
+  ],
+  "roads": [
+    {"road_id": "harbor-arc-northwest", "source_node": "harbor-west", "target_node": "harbor-northwest", "kind": "secondary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "harbor-arc-north", "source_node": "harbor-northwest", "target_node": "harbor-northeast", "kind": "primary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "harbor-arc-northeast", "source_node": "harbor-northeast", "target_node": "harbor-east", "kind": "secondary", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "harbor-arc-southeast", "source_node": "harbor-east", "target_node": "harbor-southeast", "kind": "residential", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "harbor-arc-south", "source_node": "harbor-southeast", "target_node": "harbor-southwest", "kind": "residential", "directions": ["forward", "backward"], "shape": []},
+    {"road_id": "harbor-arc-southwest", "source_node": "harbor-southwest", "target_node": "harbor-west", "kind": "secondary", "directions": ["forward", "backward"], "shape": []}
+  ]
+}

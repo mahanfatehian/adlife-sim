@@ -1537,8 +1537,12 @@ def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(
     assert [item["city_id"] for item in cities["cities"]] == sorted(
         item["city_id"] for item in cities["cities"]
     )
-    assert len(cities["cities"]) == 1
-    city = cities["cities"][0]
+    assert [item["city_id"] for item in cities["cities"]] == [
+        "fictional-grid-v2",
+        "fictional-harbor-loop-v2",
+        "fictional-river-junction-v2",
+    ]
+    city = next(item for item in cities["cities"] if item["city_id"] == "fictional-grid-v2")
     assert set(city) == {
         "city_id",
         "display_name",
@@ -1567,8 +1571,10 @@ def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(
     creatives = creatives_response.json()
     assert creatives["schema_version"] == 1
     assert [item["template_id"] for item in creatives["templates"]] == [
+        "fictional-coffee-pass-v1",
         "fictional-crispy-meal-v1",
         "fictional-device-launch-v1",
+        "fictional-home-delivery-v1",
     ]
     assert all(len(item["creative_sha256"]) == 64 for item in creatives["templates"])
     assert all(

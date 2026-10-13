@@ -2,6 +2,15 @@
   "schema_version": 1,
   "templates": [
     {
+      "template_id": "fictional-coffee-pass-v1",
+      "template_version": 1,
+      "product_name": "Ember Cup Pass",
+      "product_category": "fictional cafe membership",
+      "message": "A fictional drink pass for quiet breaks in a synthetic neighborhood.",
+      "call_to_action": "Explore the fictional pass",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    },
+    {
       "template_id": "fictional-crispy-meal-v1",
       "template_version": 1,
       "product_name": "Cinder Crunch Box",
@@ -17,6 +26,15 @@
       "product_category": "fictional consumer device",
       "message": "A fictional compact device concept for a synthetic commute.",
       "call_to_action": "Explore the fictional concept",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    },
+    {
+      "template_id": "fictional-home-delivery-v1",
+      "template_version": 1,
+      "product_name": "Parcel Finch",
+      "product_category": "fictional home delivery service",
+      "message": "A fictional delivery concept for planned errands in a synthetic city.",
+      "call_to_action": "Explore the fictional service",
       "disclosure": "Fictional creative for synthetic simulation only."
     }
   ]

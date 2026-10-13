@@ -49,10 +49,27 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"creative template catalog contains non-finite constant {value}")
 
 
+def _strict_utf8(document: bytes) -> str:
+    if document.startswith(
+        (
+            b"\xef\xbb\xbf",
+            b"\xff\xfe",
+            b"\xfe\xff",
+            b"\xff\xfe\x00\x00",
+            b"\x00\x00\xfe\xff",
+        )
+    ):
+        raise ValueError("creative template catalog must be strict UTF-8 without a BOM")
+    try:
+        return document.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise ValueError("creative template catalog must be strict UTF-8") from None
+
+
 def _parse_catalog(document: bytes) -> CreativeTemplateCatalog:
     try:
         payload = json.loads(
-            document,
+            _strict_utf8(document),
             object_pairs_hook=_unique_json_object,
             parse_constant=_reject_json_constant,
         )
