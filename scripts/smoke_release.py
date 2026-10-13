@@ -528,6 +528,8 @@ async def _main() -> None:
             accepted_settings = accepted_document["job"]["accepted_settings"]
             assert accepted_settings == {
                 "schema_version": 1,
+                "workbench_input_schema_version": 1,
+                "run_schema_version": 7,
                 "city_id": "fictional-grid-v2",
                 "scenario_id": "wheel-workbench-study",
                 "campaign_id": "wheel-workbench-campaign",

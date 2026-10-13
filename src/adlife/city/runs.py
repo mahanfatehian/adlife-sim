@@ -11,7 +11,7 @@ from pathlib import Path
 from adlife import __version__
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.workbench_binding import validate_workbench_execution_binding
-from adlife.city.workbench_input import WorkbenchRunInput
+from adlife.city.workbench_input import WorkbenchRunInputDocument
 from adlife.core.domain.city import CityPackDocument, CityPackV2
 from adlife.core.domain.city_places import CityPlaceSet
 from adlife.core.domain.city_run import (
@@ -23,6 +23,7 @@ from adlife.core.domain.city_run import (
     CityRunManifestV5,
     CityRunManifestV6,
     CityRunManifestV7,
+    CityRunManifestV8,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
@@ -105,7 +106,7 @@ class PreparedCityRun:
     attention_evaluation: SpatialAttentionEvaluation | None = None
     response_input: SpatialResponseInput | None = None
     response_evaluation: SpatialResponseEvaluation | None = None
-    workbench_input: WorkbenchRunInput | None = None
+    workbench_input: WorkbenchRunInputDocument | None = None
 
 
 def _document_sha256(value: Mapping[str, object]) -> str:
@@ -113,7 +114,7 @@ def _document_sha256(value: Mapping[str, object]) -> str:
 
 
 def _validated_workbench_input(
-    workbench_input: WorkbenchRunInput | None,
+    workbench_input: WorkbenchRunInputDocument | None,
     *,
     pack: CityPackDocument,
     run_id: str,
@@ -123,7 +124,7 @@ def _validated_workbench_input(
     places: CityPlaceSet | None,
     spatial_scenario: SpatialCampaignScenario | None,
     spatial_response: SpatialResponseInput | None,
-) -> WorkbenchRunInput | None:
+) -> WorkbenchRunInputDocument | None:
     if workbench_input is None:
         return None
     bound_input = validate_workbench_execution_binding(
@@ -137,8 +138,6 @@ def _validated_workbench_input(
         spatial_scenario=spatial_scenario,
         spatial_response=spatial_response,
     )
-    if not isinstance(bound_input, WorkbenchRunInput):
-        raise ValueError("city run preparation requires workbench input schema 1")
     return bound_input
 
 
@@ -152,7 +151,7 @@ def prepare_city_run(
     places: CityPlaceSet | None = None,
     spatial_scenario: SpatialCampaignScenario | None = None,
     spatial_response: SpatialResponseInput | None = None,
-    workbench_input: WorkbenchRunInput | None = None,
+    workbench_input: WorkbenchRunInputDocument | None = None,
 ) -> PreparedCityRun:
     """Evaluate a bounded mobility trace without reserving or writing a run ID."""
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
@@ -261,7 +260,10 @@ def prepare_city_run(
             if workbench_input is None:
                 manifest = CityRunManifestV6.model_validate(response_receipt)
             else:
-                manifest = CityRunManifestV7.model_validate(
+                manifest_model = (
+                    CityRunManifestV7 if workbench_input.schema_version == 1 else CityRunManifestV8
+                )
+                manifest = manifest_model.model_validate(
                     {
                         **response_receipt,
                         "workbench_input_schema_version": workbench_input.schema_version,
@@ -371,7 +373,7 @@ def create_city_run(
     places: CityPlaceSet | None = None,
     spatial_scenario: SpatialCampaignScenario | None = None,
     spatial_response: SpatialResponseInput | None = None,
-    workbench_input: WorkbenchRunInput | None = None,
+    workbench_input: WorkbenchRunInputDocument | None = None,
 ) -> StoredCityRun:
     """Prepare and publish a fresh, never-reused city run."""
     prepared = prepare_city_run(
@@ -392,7 +394,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     """Recompute all minute frames; a mismatch is corruption, never a repair."""
     summary = summarize_city_trace(stored.mobility)
     manifest = stored.manifest
-    if isinstance(manifest, CityRunManifestV7):
+    if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)):
         if stored.workbench_input is None:
             raise CorruptRunArtifact("city run is missing its frozen workbench input")
         try:
@@ -426,7 +428,13 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         or (
             isinstance(
                 manifest,
-                (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
+                (
+                    CityRunManifestV4,
+                    CityRunManifestV5,
+                    CityRunManifestV6,
+                    CityRunManifestV7,
+                    CityRunManifestV8,
+                ),
             )
             and manifest.place_schema_version is not None
         )
@@ -466,7 +474,13 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     response_counts: SpatialResponseCounts | None = None
     if isinstance(
         manifest,
-        (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
+        (
+            CityRunManifestV4,
+            CityRunManifestV5,
+            CityRunManifestV6,
+            CityRunManifestV7,
+            CityRunManifestV8,
+        ),
     ):
         if stored.spatial_scenario is None or stored.opportunity_evaluation is None:
             raise CorruptRunArtifact("city run is missing its frozen spatial evidence")
@@ -483,7 +497,9 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         opportunity_counts = opportunity_summary.counts
         if opportunity_evaluation != stored.opportunity_evaluation:
             raise CorruptRunArtifact("city run spatial evidence does not replay identically")
-        if isinstance(manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7)):
+        if isinstance(
+            manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+        ):
             if stored.attention_evaluation is None:
                 raise CorruptRunArtifact("city run is missing its frozen attention evidence")
             attention_evaluation = evaluate_spatial_attention(
@@ -503,7 +519,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             attention_counts = attention_summary.counts
             if attention_evaluation != stored.attention_evaluation:
                 raise CorruptRunArtifact("city run attention evidence does not replay identically")
-            if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
+            if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)):
                 if stored.response_input is None or stored.response_evaluation is None:
                     raise CorruptRunArtifact("city run is missing its frozen response evidence")
                 response_evaluation = evaluate_spatial_responses(
@@ -547,7 +563,13 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         or (
             isinstance(
                 manifest,
-                (CityRunManifestV4, CityRunManifestV5, CityRunManifestV6, CityRunManifestV7),
+                (
+                    CityRunManifestV4,
+                    CityRunManifestV5,
+                    CityRunManifestV6,
+                    CityRunManifestV7,
+                    CityRunManifestV8,
+                ),
             )
             and (
                 scenario_sha256 != manifest.scenario_sha256
@@ -558,7 +580,10 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             )
         )
         or (
-            isinstance(manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7))
+            isinstance(
+                manifest,
+                (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8),
+            )
             and (
                 attention_model_id != manifest.spatial_attention_model_id
                 or attention_stream_sha256 != manifest.attention_stream_sha256
@@ -569,7 +594,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             )
         )
         or (
-            isinstance(manifest, (CityRunManifestV6, CityRunManifestV7))
+            isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8))
             and (
                 response_model_id != manifest.spatial_response_model_id
                 or response_input_sha256 != manifest.response_input_sha256

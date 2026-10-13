@@ -18,6 +18,32 @@ from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, p
 from tests.unit.city.test_spatial_opportunity import _phone, _scenario
 
 
+@pytest.mark.parametrize("catalog_change", ["removed", "modified"])
+def test_persona_replay_uses_frozen_inputs_after_template_catalog_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    catalog_change: str,
+) -> None:
+    from adlife.city import workbench_personas
+    from tests.integration.test_city_workbench_artifacts import _create_v8
+
+    stored = _create_v8(tmp_path / "source")
+    before = _file_hashes(stored.directory)
+    baseline = replay_city_run(stored)
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+    if catalog_change == "modified":
+        (catalog_root / "persona_templates.json").write_bytes(b"{}")
+    # Redirect the actual package-resource reader to a missing or invalid catalog.
+    monkeypatch.setattr(workbench_personas, "files", lambda _package: catalog_root)
+    with pytest.raises(workbench_personas.PersonaTemplateCatalogError):
+        workbench_personas.load_persona_template_catalog()
+    replay = replay_city_run(CityRunStore(tmp_path / "source").load("launch-run"))
+    assert replay.identical is True
+    assert replay == baseline
+    assert _file_hashes(stored.directory) == before
+
+
 def _file_hashes(directory: Path) -> dict[str, str]:
     return {
         str(path.relative_to(directory)): sha256(path.read_bytes()).hexdigest()

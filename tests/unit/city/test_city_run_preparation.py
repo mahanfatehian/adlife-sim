@@ -50,19 +50,23 @@ def test_prepare_city_run_evaluates_without_touching_the_filesystem(tmp_path: Pa
     assert prepared.response_evaluation is not None
 
 
-def test_v7_preparation_explicitly_refuses_schema2_input() -> None:
+def test_schema2_preparation_selects_v8_without_touching_the_filesystem(tmp_path: Path) -> None:
     validated = construct_workbench_run(persona_draft())
-    with pytest.raises(ValueError, match="schema 1"):
-        runs.prepare_city_run(
-            validated.pack,
-            run_id="launch-run",
-            seed=42,
-            agent_count=3,
-            days=2,
-            spatial_scenario=validated.scenario,
-            spatial_response=validated.response_input,
-            workbench_input=validated.workbench_input,
-        )
+    prepared = runs.prepare_city_run(
+        validated.pack,
+        run_id="launch-run",
+        seed=42,
+        agent_count=3,
+        days=2,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+    assert prepared.manifest.schema_version == 8
+    assert prepared.manifest.workbench_input_schema_version == 2
+    assert prepared.workbench_input == validated.workbench_input
+    assert prepared.response_input == validated.response_input
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_explicit_prepare_publish_matches_the_compatibility_wrapper(tmp_path: Path) -> None:

@@ -483,11 +483,59 @@ def test_v7_manifest_refuses_invalid_workbench_bindings(field: str, value: objec
         model.model_validate({**valid_manifest_v7(), field: value})
 
 
-def test_manifest_parser_refuses_unknown_version_after_v7() -> None:
+def test_manifest_parser_refuses_unknown_version_after_v8() -> None:
     with pytest.raises(ValueError, match="unsupported"):
         city_run.parse_city_run_manifest_json(
-            json.dumps({**valid_manifest_v7(), "schema_version": 8})
+            json.dumps({**valid_manifest_v7(), "schema_version": 9})
         )
+
+
+def test_v8_manifest_dispatch_is_a_sibling_of_v7() -> None:
+    model = getattr(city_run, "CityRunManifestV8", None)
+    assert model is not None, "CityRunManifestV8 is not implemented"
+    document = {**valid_manifest_v7(), "schema_version": 8, "workbench_input_schema_version": 2}
+    manifest = city_run.parse_city_run_manifest_json(json.dumps(document))
+    assert isinstance(manifest, model)
+    assert not isinstance(manifest, city_run.CityRunManifestV7)
+    assert manifest.workbench_input_schema_version == 2
+    assert manifest.response_count == manifest.noticed_count == 3
+    assert city_run.parse_city_run_manifest_json(canonical_json(manifest)) == manifest
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", True),
+        ("schema_version", 8.0),
+        ("schema_version", "8"),
+        ("schema_version", 7),
+        ("schema_version", 9),
+        ("workbench_input_schema_version", 1),
+        ("workbench_input_schema_version", True),
+        ("workbench_input_schema_version", 2.0),
+        ("workbench_input_schema_version", "2"),
+        ("workbench_input_schema_version", 3),
+        ("workbench_input_sha256", "short"),
+        ("response_count", 2),
+        ("state_update_count", 4),
+        ("final_state_count", 3),
+        ("frame_count", 1439),
+        ("position_count", 1),
+        ("impression_count", 6),
+        ("noticed_count", 8),
+        ("place_schema_version", 1),
+        ("spatial_response_schema_version", True),
+        ("unknown_member", "unexpected"),
+    ],
+)
+def test_v8_manifest_preserves_strict_versions_receipts_and_counts(
+    field: str, value: object
+) -> None:
+    model = getattr(city_run, "CityRunManifestV8", None)
+    assert model is not None, "CityRunManifestV8 is not implemented"
+    document = {**valid_manifest_v7(), "schema_version": 8, "workbench_input_schema_version": 2}
+    with pytest.raises(ValidationError):
+        model.model_validate({**document, field: value})
 
 
 @pytest.mark.parametrize(
@@ -545,6 +593,18 @@ def test_v6_manifest_preserves_complete_mobility_attention_and_place_invariants(
             valid_manifest_v5,
             1_353,
             "03081287daf54116505a22a56366da683631b4d49a61a2e26d92e4a8b305cb5a",
+        ),
+        (
+            city_run.CityRunManifestV6,
+            valid_manifest_v6,
+            1927,
+            "2e04fe0c1ba4d53813e2dd338063f10477d677ca601f0d2deb158d37c8a18656",
+        ),
+        (
+            city_run.CityRunManifestV7,
+            valid_manifest_v7,
+            2054,
+            "e04bcaa1da05e798c34d6272c97a663a704ecebc667fa4238f2e964bea768798",
         ),
     ],
 )

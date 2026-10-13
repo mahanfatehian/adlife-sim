@@ -73,7 +73,7 @@ def _rewrite_bound_input(stored, mutate) -> None:
     parsed = store_module.parse_workbench_run_input_json(encoded)
     sidecar = (canonical_json(parsed) + "\n").encode("utf-8")
     (stored.directory / "inputs" / "workbench.json").write_bytes(sidecar)
-    assert isinstance(stored.manifest, CityRunManifestV7)
+    assert stored.manifest.schema_version in (7, 8)
     manifest = stored.manifest.model_copy(update={"workbench_input_sha256": parsed.fingerprint})
     (stored.directory / "run.json").write_text(
         canonical_json(manifest) + "\n",
@@ -374,7 +374,7 @@ def test_schema2_scientific_binding_accepts_equivalent_explicit_assumptions() ->
 def test_legacy_store_explicitly_refuses_schema2_before_reservation(tmp_path: Path) -> None:
     stored = _create(tmp_path / "source")
     destination = tmp_path / "destination"
-    with pytest.raises(CorruptRunArtifact, match="schema 1"):
+    with pytest.raises(CorruptRunArtifact, match="workbench"):
         _save_copy(
             CityRunStore(destination), stored, workbench_input=_schema2_copy(stored.workbench_input)
         )
@@ -392,6 +392,178 @@ def test_v7_loader_explicitly_refuses_schema2_sidecar_without_mutation(tmp_path:
         canonical_json(manifest) + "\n", encoding="utf-8", newline="\n"
     )
     before = _hashes(stored.directory)
-    with pytest.raises(CorruptRunArtifact, match="schema 1"):
+    with pytest.raises(CorruptRunArtifact, match="workbench"):
         CityRunStore(tmp_path).load("launch-run")
     assert _hashes(stored.directory) == before
+
+
+def _create_v8(root: Path):
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_validation import persona_draft
+
+    validated = construct_workbench_run(persona_draft())
+    return create_city_run(
+        validated.pack,
+        root=root,
+        run_id="launch-run",
+        seed=42,
+        agent_count=3,
+        days=2,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+
+
+def test_v8_canonical_round_trip_and_replay_hash_every_source_artifact(tmp_path: Path) -> None:
+    stored = _create_v8(tmp_path)
+    assert stored.manifest.schema_version == 8
+    assert stored.manifest.workbench_input_schema_version == 2
+    assert stored.manifest.workbench_input_sha256 == stored.workbench_input.fingerprint
+    assert (stored.directory / "inputs/workbench.json").read_bytes() == (
+        canonical_json(stored.workbench_input) + "\n"
+    ).encode("utf-8")
+    before = _hashes(stored.directory)
+    loaded = CityRunStore(tmp_path).load("launch-run")
+    assert loaded.workbench_input == stored.workbench_input
+    assert replay_city_run(loaded).identical is True
+    assert _hashes(stored.directory) == before
+
+
+@pytest.mark.parametrize("mutation", ["missing", "changed", "noncanonical", "oversized", "schema1"])
+def test_v8_refuses_missing_changed_noncanonical_oversized_and_cross_paired_inputs(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    stored = _create_v8(tmp_path)
+    sidecar = stored.directory / "inputs/workbench.json"
+    if mutation == "missing":
+        sidecar.unlink()
+    elif mutation == "oversized":
+        sidecar.write_bytes(b"x" * (store_module.MAX_WORKBENCH_INPUT_BYTES + 2))
+    elif mutation == "noncanonical":
+        sidecar.write_text(json.dumps(json.loads(sidecar.read_bytes()), indent=2), encoding="utf-8")
+    elif mutation == "schema1":
+        legacy = _validated(agents=3).workbench_input
+        sidecar.write_bytes((canonical_json(legacy) + "\n").encode("utf-8"))
+        manifest = stored.manifest.model_copy(update={"workbench_input_sha256": legacy.fingerprint})
+        (stored.directory / "run.json").write_bytes(
+            (canonical_json(manifest) + "\n").encode("utf-8")
+        )
+    else:
+        data = stored.workbench_input.model_dump(mode="json")
+        data["draft"]["population"]["personas"][0]["display_name"] = "Changed fictional name"
+        changed = parse_workbench_run_input_json(json.dumps(data))
+        sidecar.write_bytes((canonical_json(changed) + "\n").encode("utf-8"))
+    before = _hashes(stored.directory)
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path).load("launch-run")
+    assert _hashes(stored.directory) == before
+
+
+def test_v8_store_refuses_missing_and_cross_paired_inputs_before_reservation(
+    tmp_path: Path,
+) -> None:
+    stored = _create_v8(tmp_path / "source")
+    for index, workbench_input in enumerate((None, _validated(agents=3).workbench_input)):
+        destination = tmp_path / f"refused-{index}"
+        with pytest.raises(CorruptRunArtifact):
+            _save_copy(CityRunStore(destination), stored, workbench_input=workbench_input)
+        assert not destination.exists()
+
+
+@pytest.mark.parametrize("boundary", ["save", "load", "replay"])
+def test_v8_refuses_rehashed_but_causally_misassigned_population(
+    tmp_path: Path, boundary: str
+) -> None:
+    stored = _create_v8(tmp_path / "source")
+
+    def mutate(document):
+        # A valid different allocation: person-002 is now assigned persona-002.
+        population = document["draft"]["population"]
+        population["personas"][0]["count"] = 1
+        population["personas"][1]["count"] = 2
+        population["assignments"][1]["persona_id"] = "persona-002"
+
+    document = stored.workbench_input.model_dump(mode="json")
+    mutate(document)
+    changed = parse_workbench_run_input_json(json.dumps(document))
+    changed_manifest = stored.manifest.model_copy(
+        update={"workbench_input_sha256": changed.fingerprint}
+    )
+    with pytest.raises(CorruptRunArtifact):
+        if boundary == "save":
+            _save_copy(
+                CityRunStore(tmp_path / "destination"),
+                replace(stored, manifest=changed_manifest),
+                workbench_input=changed,
+            )
+        elif boundary == "load":
+            _rewrite_bound_input(stored, mutate)
+            CityRunStore(tmp_path / "source").load("launch-run")
+        else:
+            replay_city_run(replace(stored, manifest=changed_manifest, workbench_input=changed))
+    assert not (tmp_path / "destination").exists()
+
+
+@pytest.mark.parametrize("failed_name", ["workbench.json", ".run.json.tmp"])
+def test_v8_manifest_last_failure_is_not_reusable_or_clobbering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_name: str,
+) -> None:
+    stored = _create_v8(tmp_path / "source")
+    before = _hashes(stored.directory)
+    with pytest.raises(DuplicateRun):
+        _create_v8(tmp_path / "source")
+    assert _hashes(stored.directory) == before
+    original = store_module._write_new
+
+    def failing_write(path, contents):
+        if path.name == failed_name:
+            assert not (path.parent.parent / "run.json").exists()
+            raise OSError("injected failure")
+        original(path, contents)
+
+    monkeypatch.setattr(store_module, "_write_new", failing_write)
+    with pytest.raises(StorageError):
+        _create_v8(tmp_path / "failed")
+    directory = tmp_path / "failed/city-runs/launch-run"
+    assert directory.is_dir()
+    assert not (directory / "run.json").exists()
+    assert not (directory / ".run.json.tmp").exists()
+    with pytest.raises(CorruptRunArtifact):
+        CityRunStore(tmp_path / "failed").load("launch-run")
+    with pytest.raises(DuplicateRun):
+        _create_v8(tmp_path / "failed")
+
+
+def test_v8_sidecar_accounts_for_exactly_one_storage_newline(tmp_path: Path, monkeypatch) -> None:
+    stored = _create_v8(tmp_path / "source")
+    canonical = canonical_json(stored.workbench_input).encode("utf-8")
+    # Exercise the storage bound at equality without changing the schema-2 model bounds.
+    monkeypatch.setattr(store_module, "MAX_WORKBENCH_INPUT_BYTES", len(canonical))
+    _save_copy(CityRunStore(tmp_path / "copy"), stored, workbench_input=stored.workbench_input)
+    loaded = CityRunStore(tmp_path / "copy").load("launch-run")
+    assert loaded.workbench_input.fingerprint == sha256(canonical).hexdigest()
+    sidecar = loaded.directory / "inputs/workbench.json"
+    assert sidecar.stat().st_size == len(canonical) + 1
+    sidecar.write_bytes(canonical + b"\n\n")
+    with pytest.raises(CorruptRunArtifact, match="size"):
+        CityRunStore(tmp_path / "copy").load("launch-run")
+
+
+def test_v8_refuses_symlinked_input_without_reading_the_target(tmp_path: Path) -> None:
+    stored = _create_v8(tmp_path / "source")
+    sidecar = stored.directory / "inputs/workbench.json"
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(sidecar.read_bytes())
+    sidecar.unlink()
+    try:
+        sidecar.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create file symlinks")
+    before = outside.read_bytes()
+    with pytest.raises(UnsafeRunLocation):
+        CityRunStore(tmp_path / "source").load("launch-run")
+    assert outside.read_bytes() == before

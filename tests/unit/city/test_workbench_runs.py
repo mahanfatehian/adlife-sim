@@ -24,11 +24,11 @@ def _module():
     return importlib.import_module("adlife.city.workbench_runs")
 
 
-def test_v7_repository_explicitly_refuses_schema2_without_publication(tmp_path: Path) -> None:
+def test_repository_schema2_preparation_does_not_publish(tmp_path: Path) -> None:
     workspace = prepare_workbench_workspace(tmp_path / "state")
     repository = _module().WorkbenchRunRepository(workspace)
-    with pytest.raises(ValueError, match="schema 1"):
-        repository.prepare(construct_workbench_run(persona_draft()))
+    prepared = repository.prepare(construct_workbench_run(persona_draft()))
+    assert prepared.manifest.schema_version == 8
     assert not (workspace.root / "city-runs" / "launch-run").exists()
 
 
@@ -284,6 +284,20 @@ def test_repository_prepares_publishes_and_independently_verifies_one_run(
     assert published.manifest.run_id == summary.run_id == "repository-run"
     assert summary.run_schema_version == 7
     assert repository.load("repository-run").manifest == published.manifest
+
+
+def test_repository_publishes_and_summarizes_schema2_as_v8(tmp_path: Path) -> None:
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_validation import persona_draft
+
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    repository = _module().WorkbenchRunRepository(workspace)
+    validated = construct_workbench_run(persona_draft())
+    prepared = repository.prepare(validated)
+    stored = repository.publish(prepared)
+    assert stored.manifest.schema_version == 8
+    assert repository.verified_summary("launch-run").run_schema_version == 8
+    assert repository.list_runs(offset=0, limit=20).runs[0].run_schema_version == 8
 
 
 def test_repository_rejects_reparse_points_at_every_direct_store_boundary(

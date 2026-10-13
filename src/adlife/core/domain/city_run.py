@@ -488,6 +488,21 @@ class CityRunManifestV7(_CityRunResponseManifestBase):
         return value
 
 
+class CityRunManifestV8(_CityRunResponseManifestBase):
+    """A response run bound to normalized fictional-persona workbench input."""
+
+    schema_version: Literal[8] = 8
+    workbench_input_schema_version: Literal[2]
+    workbench_input_sha256: str = Field(pattern=_HASH_PATTERN)
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_workbench_input_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("workbench_input_schema_version must be integer 2")
+        return value
+
+
 CityRunManifestDocument: TypeAlias = (
     CityRunManifest
     | CityRunManifestV2
@@ -496,6 +511,7 @@ CityRunManifestDocument: TypeAlias = (
     | CityRunManifestV5
     | CityRunManifestV6
     | CityRunManifestV7
+    | CityRunManifestV8
 )
 
 
@@ -542,6 +558,8 @@ def parse_city_run_manifest_json(document: str | bytes) -> CityRunManifestDocume
         return CityRunManifestV6.model_validate_json(normalized)
     if version == 7:
         return CityRunManifestV7.model_validate_json(normalized)
+    if version == 8:
+        return CityRunManifestV8.model_validate_json(normalized)
     raise ValueError("unsupported city run manifest schema_version")
 
 
@@ -554,6 +572,7 @@ __all__ = [
     "CityRunManifestV5",
     "CityRunManifestV6",
     "CityRunManifestV7",
+    "CityRunManifestV8",
     "CityTraceSummary",
     "PackageVersion",
     "parse_city_run_manifest_json",

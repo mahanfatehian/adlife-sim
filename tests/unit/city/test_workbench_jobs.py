@@ -94,6 +94,64 @@ class _DeferredExecutor:
         self.shutdown_called = True
 
 
+@pytest.mark.parametrize("wrong_version", [False, True])
+def test_schema2_jobs_retain_and_verify_the_exact_accepted_schema_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    wrong_version: bool,
+) -> None:
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_validation import persona_draft
+
+    jobs, runs = _modules()
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    repository = runs.WorkbenchRunRepository(workspace)
+    if wrong_version:
+        original = repository.verified_summary
+
+        def wrong_summary(run_id):
+            return original(run_id).model_copy(update={"run_schema_version": 7})
+
+        monkeypatch.setattr(repository, "verified_summary", wrong_summary)
+    manager = jobs.CityJobManager(repository)
+    try:
+        submitted = manager.submit(construct_workbench_run(persona_draft()))
+        assert submitted.accepted_settings.workbench_input_schema_version == 2
+        assert submitted.accepted_settings.run_schema_version == 8
+        deferred.run()
+        terminal = _await_terminal(manager, submitted.job_id)
+        if wrong_version:
+            assert terminal.phase == "failed"
+            assert terminal.error.code == "verification-failed"
+            assert terminal.result is None
+        else:
+            assert terminal.phase == "completed"
+            assert terminal.result.run_schema_version == 8
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("input_version,run_version", [(1, 8), (2, 7), (True, 7), (2.0, 8)])
+def test_accepted_settings_refuse_crossed_or_coerced_schema_pairs(
+    input_version, run_version
+) -> None:
+    jobs, _ = _modules()
+    with pytest.raises(ValidationError):
+        jobs.WorkbenchAcceptedSettings(
+            city_id="fictional-grid-v2",
+            scenario_id="launch-study",
+            campaign_id="fictional-launch",
+            seed="42",
+            agent_count=3,
+            days=2,
+            response_mode="deterministic-rules",
+            workbench_input_schema_version=input_version,
+            run_schema_version=run_version,
+        )
+
+
 def test_every_job_view_carries_the_exact_frozen_accepted_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -114,6 +172,8 @@ def test_every_job_view_carries_the_exact_frozen_accepted_settings(
     try:
         expected = {
             "schema_version": 1,
+            "workbench_input_schema_version": 1,
+            "run_schema_version": 7,
             "city_id": "fictional-grid-v2",
             "scenario_id": "launch-study",
             "campaign_id": "fictional-launch",

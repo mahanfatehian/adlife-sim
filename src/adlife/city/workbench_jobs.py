@@ -82,6 +82,8 @@ class WorkbenchAcceptedSettings(DomainModel):
     """Bounded immutable scientific settings retained through every job phase."""
 
     schema_version: Literal[1] = 1
+    workbench_input_schema_version: Literal[1, 2]
+    run_schema_version: Literal[7, 8]
     city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     campaign_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
@@ -89,6 +91,19 @@ class WorkbenchAcceptedSettings(DomainModel):
     agent_count: int = Field(ge=1, le=30)
     days: int = Field(ge=1, le=7)
     response_mode: Literal["deterministic-rules"]
+
+    @field_validator("workbench_input_schema_version", "run_schema_version", mode="before")
+    @classmethod
+    def exact_schema_versions(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("accepted schema versions must be exact integers")
+        return value
+
+    @model_validator(mode="after")
+    def legal_schema_pair(self) -> Self:
+        if (self.workbench_input_schema_version, self.run_schema_version) not in ((1, 7), (2, 8)):
+            raise ValueError("accepted workbench input and run schema versions do not match")
+        return self
 
     @field_validator("seed")
     @classmethod
@@ -103,7 +118,7 @@ def _summary_matches_accepted_settings(
     settings: WorkbenchAcceptedSettings,
 ) -> bool:
     return (
-        summary.run_schema_version == 7
+        summary.run_schema_version == settings.run_schema_version
         and summary.city_id == settings.city_id
         and summary.scenario_id == settings.scenario_id
         and summary.campaign_ids == (settings.campaign_id,)
@@ -275,6 +290,8 @@ class CityJobManager:
         run_id = validated.workbench_input.draft.settings.run_id
         draft = validated.workbench_input.draft
         accepted_settings = WorkbenchAcceptedSettings(
+            workbench_input_schema_version=validated.workbench_input.schema_version,
+            run_schema_version=7 if validated.workbench_input.schema_version == 1 else 8,
             city_id=draft.city_id,
             scenario_id=draft.scenario.scenario_id,
             campaign_id=draft.scenario.campaign.campaign_id,

@@ -11,7 +11,6 @@ from pydantic import Field, field_validator, model_validator
 
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.runs import PreparedCityRun, prepare_city_run, publish_city_run
-from adlife.city.workbench_input import WorkbenchRunInput
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
@@ -43,7 +42,7 @@ class WorkbenchRunSummary(DomainModel):
 
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
-    run_schema_version: Literal[1, 2, 3, 4, 5, 6, 7]
+    run_schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8]
     city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     city_schema_version: Literal[1, 2]
     city_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -274,8 +273,6 @@ class WorkbenchRunRepository:
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
         workbench_input = validated.workbench_input
-        if not isinstance(workbench_input, WorkbenchRunInput):
-            raise ValueError("workbench run publication requires workbench input schema 1")
         self._root()
         settings = workbench_input.draft.settings
         return prepare_city_run(
