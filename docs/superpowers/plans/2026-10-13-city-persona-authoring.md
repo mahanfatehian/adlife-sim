@@ -45,11 +45,13 @@
 WorkbenchRunDraftDocument = WorkbenchRunDraft | WorkbenchRunDraftV2
 WorkbenchRunInputDocument = WorkbenchRunInput | WorkbenchRunInputV2
 
+
 def materialize_workbench_population(
     population: WorkbenchPopulationDraftV2,
     *,
     agent_count: int,
 ) -> NormalizedWorkbenchPopulationV2: ...
+
 
 def parse_workbench_run_input_json(
     document: str | bytes,

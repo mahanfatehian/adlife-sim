@@ -55,17 +55,20 @@ class CityCognitionProvider(Protocol):
         context: CityProviderRepairContextV1,
     ) -> CityProviderAttemptV1: ...
 
+
 def build_city_cognition_requests(
     context: CityCognitionRunContextV1,
     mobility: CityMobility,
     response_evaluation: SpatialResponseEvaluation,
 ) -> tuple[CityCognitionRequestV1, ...]: ...
 
+
 def allocate_city_cognition_reservations(
     requests: tuple[CityCognitionRequestV1, ...],
     *,
     aggregate_output_token_ceiling: int,
 ) -> tuple[CityCognitionReservationV1, ...]: ...
+
 
 def validate_city_cognition_evaluation(
     cognition_input: CityCognitionInputV1,
@@ -109,6 +112,7 @@ class WorkbenchCognitionDraftV3(DomainModel):
     provider_revision_sha256: str | None
     aggregate_output_token_ceiling: int
 
+
 class NormalizedWorkbenchCognitionV3(DomainModel):
     mode: Literal["rules", "mock", "local", "remote"]
     provider_profile_id: str | None
@@ -131,8 +135,10 @@ class NormalizedWorkbenchCognitionV3(DomainModel):
     attempt_timeout_seconds: Literal[30]
     aggregate_deadline_seconds: Literal[180]
 
+
 WorkbenchRunDraftDocument = WorkbenchRunDraft | WorkbenchRunDraftV2 | WorkbenchRunDraftV3
 WorkbenchRunInputDocument = WorkbenchRunInput | WorkbenchRunInputV2 | WorkbenchRunInputV3
+
 
 def build_city_cognition_run_context(
     workbench_input: WorkbenchRunInputV3,
@@ -188,14 +194,17 @@ class ProviderProfileDraftV1(DomainModel):
     repair_attempts: int  # exact 0-1
     origin_approval_id: str
 
+
 class ProviderProfileRevisionV1(ProviderProfileDraftV1):
     revision_sha256: Hash
     credential_slot_id: str
+
 
 class ProviderProfileRegistry:
     def list(self) -> tuple[ProviderProfileRevisionV1, ...]: ...
     def create(self, draft: ProviderProfileDraftV1) -> ProviderProfileRevisionV1: ...
     def load(self, profile_id: str, revision_sha256: str) -> ProviderProfileRevisionV1: ...
+
 
 class CityCredentialStore(Protocol):
     def available(self, profile: ProviderProfileRevisionV1) -> bool: ...
@@ -239,7 +248,9 @@ class CityEndpointPolicy:
         endpoint: BoundProviderEndpoint,
     ) -> ResolvedProviderEndpoint: ...
 
+
 class CityOpenAICompatibleProvider(CityCognitionProvider): ...
+
 
 class CityCognitionCache:
     @staticmethod
@@ -364,6 +375,7 @@ def finalize_city_run(
     cognition_evaluation: CityCognitionEvaluationV1,
 ) -> PreparedCityRun: ...
 
+
 class CityCognitionManifestReceiptV1(DomainModel):
     cognition_input_sha256: Hash
     cognition_input_bytes: int
@@ -389,9 +401,11 @@ class CityCognitionManifestReceiptV1(DomainModel):
     terminal_record_count: int
     summary_sha256: Hash
 
+
 class CityCognitionStudyReceiptV1(CityCognitionManifestReceiptV1):
     # Exact bounded noncausal V9 provenance; no prose or credential.
     pass
+
 
 class WorkbenchAcceptedSettings(DomainModel):
     workbench_input_schema_version: Literal[1, 2, 3]

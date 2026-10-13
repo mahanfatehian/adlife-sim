@@ -51,10 +51,12 @@ class VerifiedCatalogCity:
     entry: CityCatalogEntry
     pack: CityPackV2
 
+
 def load_verified_catalog_cities(
     *,
     root: Path | None = None,
 ) -> tuple[VerifiedCatalogCity, ...]: ...
+
 
 StorageOrigin = Literal["package", "workspace-upload"]
 WorkbenchDataOrigin = Literal["fictional", "real-world", "operator-supplied"]
@@ -63,6 +65,7 @@ WorkbenchQualification = Literal[
     "rights-reviewed",
     "operator-supplied-unreviewed",
 ]
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedWorkbenchCity:
@@ -73,8 +76,13 @@ class ResolvedWorkbenchCity:
     reviewer_role: str | None
     reviewed_on: str | None
 
+
 class UnknownWorkbenchCity(ValueError): ...
+
+
 class WorkbenchCityRegistryUnavailable(RuntimeError): ...
+
+
 class PackagedCityCatalogUnavailable(RuntimeError): ...
 ```
 
@@ -113,6 +121,7 @@ class WorkspaceCityRegistry:
         *,
         forbidden_city_ids: frozenset[str],
     ) -> CityPackV2: ...
+
 
 def strict_json_object(
     data: bytes,
@@ -160,6 +169,7 @@ class WorkbenchCityResolver:
     def resolve_city(self, city_id: str) -> ResolvedWorkbenchCity: ...
     def register_city(self, document: bytes) -> ResolvedWorkbenchCity: ...
 
+
 def construct_workbench_run(
     draft: WorkbenchRunDraft,
     *,
@@ -196,7 +206,6 @@ WorkbenchSecurityMiddleware(
     max_body_bytes=131_072,
     route_body_limits={"/api/catalog/cities/upload": 4_194_304},
 )
-
 ```
 
 Add `POST /api/catalog/cities/upload`, require `application/json`, forbid query parameters, and return HTTP 201 with exactly one path-free catalog row.
