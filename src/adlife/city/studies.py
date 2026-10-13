@@ -11,7 +11,12 @@ from adlife.city.analysis import (
 )
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.core.domain.city import CityPackV2
-from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6, CityRunManifestV7
+from adlife.core.domain.city_run import (
+    CityRunManifestV5,
+    CityRunManifestV6,
+    CityRunManifestV7,
+    CityRunManifestV8,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition
 from adlife.core.experiments._spatial_study_validation import document_sha256, pair_classifications
@@ -50,10 +55,16 @@ class _RunProjection:
 
 def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
     manifest = stored.manifest
-    if not isinstance(manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7)):
-        raise SchemaVersionMismatch("spatial study requires a schema-v5, v6 or v7 city run")
-    if response_scope and not isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
-        raise SchemaVersionMismatch("spatial response study requires a schema-v6 or v7 city run")
+    if not isinstance(
+        manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+    ):
+        raise SchemaVersionMismatch("spatial study requires a schema-v5, v6, v7 or v8 city run")
+    if response_scope and not isinstance(
+        manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+    ):
+        raise SchemaVersionMismatch(
+            "spatial response study requires a schema-v6, v7 or v8 city run"
+        )
     pack = stored.pack
     if isinstance(pack, CityPackV2):
         city = SpatialStudyCityProvenance(
@@ -87,13 +98,13 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
         "place_schema_version": manifest.place_schema_version,
         "place_set_sha256": manifest.place_set_sha256,
         "response_model_id": "spatial-response-v1"
-        if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7))
+        if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8))
         else None,
     }
     attention = metrics_for_stored_city_run(stored)
     response_metrics = response_metrics_for_stored_city_run(stored) if response_scope else None
     response_receipt = None
-    if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7)):
+    if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)):
         if stored.response_input is None or stored.spatial_scenario is None:
             raise CorruptRunArtifact("response city run has incomplete response inputs")
         response_fields: dict[str, object] = {
@@ -127,6 +138,26 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
                 ),
             }
         )
+        if isinstance(manifest, CityRunManifestV8):
+            # Only materialized causal population values belong in compatibility.
+            # Workbench provenance includes descriptive identity; response assumptions
+            # additionally include legitimate campaign/placement treatment contrasts.
+            population = {
+                "profiles": [
+                    profile.model_dump(mode="json")
+                    for profile in sorted(stored.response_input.profiles, key=lambda p: p.agent_id)
+                ],
+                "initial_states": [
+                    state.model_dump(mode="json")
+                    for state in sorted(
+                        stored.response_input.initial_states,
+                        key=lambda s: (s.agent_id, s.campaign_id),
+                    )
+                ],
+            }
+            response_fields["response_population_sha256"] = sha256(
+                canonical_json(population).encode("utf-8")
+            ).hexdigest()
         response_receipt = SpatialStudyResponseReceipt.model_validate(response_fields)
     arm_fields: dict[str, object] = {
         name: getattr(manifest, name)
@@ -154,11 +185,13 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
             "response": response_receipt,
             "workbench_input_schema_version": (
                 manifest.workbench_input_schema_version
-                if isinstance(manifest, CityRunManifestV7)
+                if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8))
                 else None
             ),
             "workbench_input_sha256": (
-                manifest.workbench_input_sha256 if isinstance(manifest, CityRunManifestV7) else None
+                manifest.workbench_input_sha256
+                if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8))
+                else None
             ),
         }
     )
@@ -196,6 +229,7 @@ def analyze_stored_spatial_study(
     response_scope = checked.analysis_scope == "attention-and-response"
     shared: dict[str, object] | None = None
     identities: dict[str, object] | None = None
+    population_sha256: str | None = None
     receipts: list[SpatialStudyPairReceipt] = []
     for declared in checked.pairs:
         control = _load_projection(store, declared.control_run_id, response_scope=response_scope)
@@ -212,6 +246,18 @@ def analyze_stored_spatial_study(
             control.place_assignments_sha256,
         ) != (treatment.agents_sha256, treatment.trace_sha256, treatment.place_assignments_sha256):
             raise SpatialStudyCompatibilityError("study arms do not share matched provenance")
+        if control.shared["source_run_schema_version"] == 8:
+            assert control.arm.response is not None and treatment.arm.response is not None
+            current_population = control.arm.response.response_population_sha256
+            if current_population != treatment.arm.response.response_population_sha256:
+                raise SpatialStudyCompatibilityError(
+                    "study arms have different response populations"
+                )
+            if population_sha256 is not None and population_sha256 != current_population:
+                raise SpatialStudyCompatibilityError(
+                    "study response population varies across seeds"
+                )
+            population_sha256 = current_population
         if shared is None:
             shared = control.shared
         elif shared != control.shared:

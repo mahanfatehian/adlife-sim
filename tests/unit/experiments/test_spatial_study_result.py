@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from adlife.core.experiments import spatial_study
 from adlife.core.simulation._validation import revalidate_model
-from tests.integration.test_city_spatial_study import analyze, definition, make_runs
+from tests.integration.test_city_spatial_study import analyze, definition, make_runs, persona_runs
 
 
 @pytest.fixture(scope="module")
@@ -16,6 +16,56 @@ def result(tmp_path_factory):
     root: Path = tmp_path_factory.mktemp("spatial-study-result")
     make_runs(root, response=True, same=False)
     return analyze(root, definition(response=True, same=False))
+
+
+@pytest.fixture(scope="module")
+def persona_result(tmp_path_factory):
+    root = tmp_path_factory.mktemp("persona-study-result")
+    persona_runs(root)
+    return analyze(root, definition(response=True, same=False))
+
+
+def test_native_v8_result_round_trips_exact_manifest_and_population_receipts(persona_result):
+    from adlife.core.experiments._spatial_study_validation import reconstruct_manifest
+
+    assert persona_result.source_run_schema_version == 8
+    restored = spatial_study.SpatialStudyResult.model_validate_json(
+        persona_result.model_dump_json()
+    )
+    assert restored == persona_result
+    pair = restored.pairs[0]
+    assert reconstruct_manifest(restored, pair, pair.control).schema_version == 8
+    assert pair.control.workbench_input_schema_version == 2
+    assert pair.control.response.response_population_sha256 is not None
+
+
+@pytest.mark.parametrize("version", [9, True, 8.0, "8"])
+def test_native_v8_result_refuses_future_and_noninteger_versions(persona_result, version):
+    document = persona_result.model_dump(mode="python")
+    document["source_run_schema_version"] = version
+    with pytest.raises(ValueError):
+        validate(document)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "across-seeds", "across-arms"])
+def test_native_v8_result_requires_matched_population_receipts(persona_result, mutation):
+    document = persona_result.model_dump(mode="python")
+    if mutation == "missing":
+        del document["pairs"][0]["control"]["response"]["response_population_sha256"]
+    elif mutation == "across-seeds":
+        for arm in ("control", "treatment"):
+            document["pairs"][1][arm]["response"]["response_population_sha256"] = "0" * 64
+    else:
+        document["pairs"][0]["treatment"]["response"]["response_population_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="population"):
+        validate(document)
+
+
+def test_legacy_result_cannot_invent_v8_population_receipts(result):
+    document = result.model_dump(mode="python")
+    document["pairs"][0]["control"]["response"]["response_population_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="legacy"):
+        validate(document)
 
 
 def validate(document):

@@ -670,7 +670,8 @@ def test_metrics_refuse_public_identity_tampering(field: str) -> None:
         SpatialResponseMetrics.model_validate(document)
 
 
-def test_response_metrics_preserve_schema_v7_source_provenance() -> None:
+@pytest.mark.parametrize("version", [7, 8])
+def test_response_metrics_preserve_exact_source_provenance(version: int) -> None:
     scenario, opportunities, attention, response_input, response, _ = _billboard_bundle(
         attention_seed=0
     )
@@ -678,7 +679,7 @@ def test_response_metrics_preserve_schema_v7_source_provenance() -> None:
         opportunities,
         attention,
         agent_ids=("person-001",),
-        source_run_schema_version=7,
+        source_run_schema_version=version,
     )
 
     result = _derive(
@@ -690,7 +691,26 @@ def test_response_metrics_preserve_schema_v7_source_provenance() -> None:
         attention_metrics=attention_metrics,
     )
 
-    assert result.source_run_schema_version == 7
+    assert result.source_run_schema_version == version
+
+
+@pytest.mark.parametrize("version", [9, True, 8.0, "8"])
+def test_response_metrics_refuse_future_or_noninteger_source_versions(version: object) -> None:
+    scenario, opportunities, attention, response_input, response, metrics = _billboard_bundle(
+        attention_seed=0
+    )
+    result = _derive(
+        response_input,
+        response,
+        scenario=scenario,
+        opportunities=opportunities,
+        attention=attention,
+        attention_metrics=metrics,
+    )
+    with pytest.raises(ValueError):
+        SpatialResponseMetrics.model_validate(
+            result.model_dump(mode="python") | {"source_run_schema_version": version}
+        )
 
 
 def test_derivation_revalidates_attention_metric_and_response_artifact_anchors() -> None:

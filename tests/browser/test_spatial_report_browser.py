@@ -6,9 +6,63 @@ import pytest
 from playwright.sync_api import Route, expect, sync_playwright
 
 from tests.browser.test_city_places_browser import _installed_browser
-from tests.integration.test_city_spatial_study import analyze, definition, make_runs
+from tests.integration.test_city_spatial_study import (
+    analyze,
+    definition,
+    descriptive_edit,
+    make_runs,
+    persona_runs,
+)
 from tests.security.test_spatial_report_security import public_city_result
 from tests.unit.reporting.test_spatial_html import report_module
+
+
+def test_saved_v8_viewer_displays_response_metrics_offline_without_identity_support(tmp_path):
+    from adlife.city.analysis import (
+        metrics_for_stored_city_run,
+        response_metrics_for_stored_city_run,
+    )
+    from adlife.city.web import create_city_app
+    from tests.browser.test_city_places_browser import _serve
+    from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run
+
+    browser_path = _installed_browser()
+    stored = _persona_run(tmp_path)
+    before = _artifact_bytes(tmp_path)
+    application = create_city_app(
+        stored.mobility,
+        run_id=stored.manifest.run_id,
+        run_schema_version=8,
+        spatial_scenario=stored.spatial_scenario,
+        opportunity_evaluation=stored.opportunity_evaluation,
+        attention_evaluation=stored.attention_evaluation,
+        spatial_metrics=metrics_for_stored_city_run(stored),
+        response_input=stored.response_input,
+        response_evaluation=stored.response_evaluation,
+        spatial_response_metrics=response_metrics_for_stored_city_run(stored),
+    )
+    with _serve(application) as base_url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=str(browser_path), headless=True)
+        page = browser.new_page()
+        external, errors = [], []
+
+        def route_request(route):
+            if route.request.url.startswith(base_url + "/"):
+                route.continue_()
+            else:
+                external.append(route.request.url)
+                route.abort()
+
+        page.route("**/*", route_request)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(base_url, wait_until="networkidle")
+        expect(page.locator("#response-metrics-panel")).to_be_visible()
+        assert page.locator("#response-metrics-event-body tr").count() > 0
+        assert page.locator("#response-metrics-state-body tr").count() > 0
+        assert "V8" in page.locator("#saved-run-label").inner_text()
+        assert not external and not errors
+        browser.close()
+    assert _artifact_bytes(tmp_path) == before
 
 
 def contrast(foreground, background):
@@ -26,16 +80,36 @@ def contrast(foreground, background):
     return (values[1] + 0.05) / (values[0] + 0.05)
 
 
-@pytest.mark.parametrize("response", [False, True])
-def test_static_evidence_report_with_javascript_disabled_is_accessible_offline(tmp_path, response):
+@pytest.mark.parametrize("schema,response", [(5, False), (6, True), (8, False), (8, True)])
+def test_static_evidence_report_with_javascript_disabled_is_accessible_offline(
+    tmp_path, schema, response
+):
     browser_path = _installed_browser()
-    make_runs(tmp_path, response=response)
-    result = public_city_result(
-        analyze(tmp_path, definition(response=response)),
-        'شهر آزمایشی تهران </script><img src="https://invalid.test/x">',
-    )
+    if schema == 8:
+        persona_runs(tmp_path, change=descriptive_edit)
+    else:
+        make_runs(tmp_path, response=response)
+    result = analyze(tmp_path, definition(response=response))
+    hostile = 'شهر آزمایشی تهران </script><img src="https://invalid.test/x">'
+    if schema == 8:
+        from adlife.core.experiments._spatial_study_validation import document_sha256
+        from adlife.core.experiments.spatial_study import SpatialStudyResult
+
+        city = result.city.model_copy(update={"name": hostile})
+        result = SpatialStudyResult.model_validate(
+            result.model_dump(mode="python")
+            | {"city": city, "city_provenance_sha256": document_sha256(city)}
+        )
+    else:
+        result = public_city_result(result, hostile)
+    from tests.unit.city.test_city_analysis import _artifact_bytes
+
+    sources_before = _artifact_bytes(tmp_path / "city-runs")
     receipt = report_module().publish_spatial_study_report(result, tmp_path)
     report = tmp_path / receipt.report_path
+    assert _artifact_bytes(tmp_path / "city-runs") == sources_before
+    assert "Fictional biography marker" not in report.read_text(encoding="utf-8")
+    assert "Another fictional name" not in report.read_text(encoding="utf-8")
     unexpected, console_errors, page_errors = [], [], []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -73,6 +147,8 @@ def test_static_evidence_report_with_javascript_disabled_is_accessible_offline(t
         page.on("pageerror", lambda error: page_errors.append(str(error)))
         page.goto(report.as_uri(), wait_until="networkidle")
         expect(page.get_by_role("heading", level=1)).to_have_text("Study verdict")
+        if schema == 8 and response:
+            assert "schema v6, v7 or v8" in page.locator("main").inner_text()
         assert page.get_by_role("main").count() == 1
         assert page.locator(".evidence-route li").count() == 5
         assert page.get_by_role("table").count() == 1

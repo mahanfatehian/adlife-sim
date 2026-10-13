@@ -69,7 +69,7 @@ _VIEW_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _VIEW_TOKEN_META = '<meta name="adlife-view-token" content="">'
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
-CityRunSchemaVersion = Literal[1, 2, 3, 4, 5, 6, 7]
+CityRunSchemaVersion = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +115,7 @@ def create_city_view_context(
     if run_id is None and run_schema_version is not None:
         raise ValueError("run schema version requires a saved run identifier")
     if run_schema_version is not None and (
-        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4, 5, 6, 7}
+        type(run_schema_version) is not int or run_schema_version not in {1, 2, 3, 4, 5, 6, 7, 8}
     ):
         raise ValueError("unsupported city run schema version")
     if (spatial_scenario is None) != (opportunity_evaluation is None):
@@ -123,42 +123,47 @@ def create_city_view_context(
     has_spatial_evidence = spatial_scenario is not None
     if run_schema_version == 4 and not has_spatial_evidence:
         raise ValueError("schema version 4 requires spatial opportunity evidence")
-    if run_schema_version in {5, 6, 7} and (
+    if run_schema_version in {5, 6, 7, 8} and (
         not has_spatial_evidence or attention_evaluation is None
     ):
         raise ValueError(f"schema version {run_schema_version} requires spatial attention evidence")
-    if has_spatial_evidence and (run_id is None or run_schema_version not in {4, 5, 6, 7}):
+    if has_spatial_evidence and (run_id is None or run_schema_version not in {4, 5, 6, 7, 8}):
         raise ValueError(
-            "spatial opportunity evidence is only valid for a saved schema version 4, 5, 6 or 7 run"
+            "spatial opportunity evidence is only valid for a saved "
+            "schema version 4, 5, 6, 7 or 8 run"
         )
-    if attention_evaluation is not None and (run_id is None or run_schema_version not in {5, 6, 7}):
+    if attention_evaluation is not None and (
+        run_id is None or run_schema_version not in {5, 6, 7, 8}
+    ):
         raise ValueError(
-            "spatial attention evidence is only valid for a saved schema version 5, 6 or 7 run"
+            "spatial attention evidence is only valid for a saved schema version 5, 6, 7 or 8 run"
         )
-    if spatial_metrics is not None and (run_id is None or run_schema_version not in {5, 6, 7}):
-        raise ValueError("spatial metrics are only valid for a saved schema version 5, 6 or 7 run")
+    if spatial_metrics is not None and (run_id is None or run_schema_version not in {5, 6, 7, 8}):
+        raise ValueError(
+            "spatial metrics are only valid for a saved schema version 5, 6, 7 or 8 run"
+        )
     if (response_input is None) != (response_evaluation is None):
         raise ValueError("spatial response input and evaluation must be supplied together")
     has_response_evidence = response_input is not None
-    if run_schema_version in {6, 7} and not has_response_evidence:
+    if run_schema_version in {6, 7, 8} and not has_response_evidence:
         raise ValueError(f"schema version {run_schema_version} requires spatial response evidence")
-    if has_response_evidence and (run_id is None or run_schema_version not in {6, 7}):
+    if has_response_evidence and (run_id is None or run_schema_version not in {6, 7, 8}):
         raise ValueError(
-            "spatial response evidence is only valid for a saved schema version 6 or 7 run"
+            "spatial response evidence is only valid for a saved schema version 6, 7 or 8 run"
         )
     if spatial_response_metrics is not None and (
-        run_id is None or run_schema_version not in {6, 7}
+        run_id is None or run_schema_version not in {6, 7, 8}
     ):
         raise ValueError(
-            "spatial response metrics are only valid for a saved schema version 6 or 7 run"
+            "spatial response metrics are only valid for a saved schema version 6, 7 or 8 run"
         )
     if workbench_input_sha256 is not None and (
         run_id is None
-        or run_schema_version != 7
+        or run_schema_version not in {7, 8}
         or not isinstance(workbench_input_sha256, str)
         or _SHA256_PATTERN.fullmatch(workbench_input_sha256) is None
     ):
-        raise ValueError("workbench input hash requires a schema version 7 saved run")
+        raise ValueError("workbench input hash requires a schema version 7 or 8 saved run")
     if spatial_scenario is not None and opportunity_evaluation is not None:
         spatial_scenario = SpatialCampaignScenario.model_validate(
             spatial_scenario.model_dump(mode="python")
@@ -187,8 +192,10 @@ def create_city_view_context(
         if opportunity_evaluation is None or attention_evaluation is None:
             raise ValueError("spatial metrics require opportunity and attention evidence")
         spatial_metrics = SpatialMetrics.model_validate(spatial_metrics.model_dump(mode="python"))
-        metrics_source_version: Literal[5, 6, 7]
-        if run_schema_version == 7:
+        metrics_source_version: Literal[5, 6, 7, 8]
+        if run_schema_version == 8:
+            metrics_source_version = 8
+        elif run_schema_version == 7:
             metrics_source_version = 7
         elif run_schema_version == 6:
             metrics_source_version = 6
@@ -239,7 +246,13 @@ def create_city_view_context(
         spatial_response_metrics = SpatialResponseMetrics.model_validate(
             spatial_response_metrics.model_dump(mode="python")
         )
-        response_source_version: Literal[6, 7] = 7 if run_schema_version == 7 else 6
+        response_source_version: Literal[6, 7, 8]
+        if run_schema_version == 8:
+            response_source_version = 8
+        elif run_schema_version == 7:
+            response_source_version = 7
+        else:
+            response_source_version = 6
         response_attention_metrics = spatial_metrics or derive_spatial_metrics(
             opportunity_evaluation,
             attention_evaluation,

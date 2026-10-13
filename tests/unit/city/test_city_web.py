@@ -599,7 +599,7 @@ def test_saved_v5_view_requires_matching_attention_evidence() -> None:
             spatial_scenario=scenario,
             opportunity_evaluation=opportunities,
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 5, 6 or 7 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 5, 6, 7 or 8 run"):
         create_city_app(
             simulation,
             run_id="wrong-attention-schema",
@@ -756,7 +756,9 @@ def test_spatial_view_requires_a_complete_schema_v4_saved_run() -> None:
             run_id="incomplete-spatial-study",
             run_schema_version=4,
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 4, 5, 6 or 7 run"):
+    with pytest.raises(
+        ValueError, match="only valid for a saved schema version 4, 5, 6, 7 or 8 run"
+    ):
         create_city_app(
             simulation,
             run_id="wrong-schema-study",
@@ -1068,7 +1070,7 @@ async def test_saved_v7_view_preserves_exact_metric_source_schema() -> None:
     assert metadata["run_schema_version"] == 7
     assert projected_attention["source_run_schema_version"] == 7
     assert projected_response["source_run_schema_version"] == 7
-    assert "![6, 7].includes(document.source_run_schema_version)" in javascript
+    assert "![6, 7, 8].includes(document.source_run_schema_version)" in javascript
     assert "document.source_run_schema_version !== state.meta.run_schema_version" in javascript
 
 
@@ -1130,7 +1132,7 @@ def test_saved_view_rederives_response_metrics_and_rejects_wrong_schema() -> Non
                 update={"scenario_sha256": "f" * 64}
             ),
         )
-    with pytest.raises(ValueError, match="only valid for a saved schema version 6 or 7 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 6, 7 or 8 run"):
         create_city_app(
             simulation,
             run_id="wrong-response-metrics-schema",
@@ -1405,7 +1407,7 @@ def test_saved_v6_view_requires_complete_matching_revalidated_response_evidence(
     ):
         with pytest.raises(ValueError, match="must be supplied together"):
             create_city_app(simulation, **common, **partial)
-    with pytest.raises(ValueError, match="only valid for a saved schema version 6 or 7 run"):
+    with pytest.raises(ValueError, match="only valid for a saved schema version 6, 7 or 8 run"):
         create_city_app(
             simulation,
             **(common | {"run_schema_version": 5}),

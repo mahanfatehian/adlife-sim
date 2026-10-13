@@ -158,7 +158,7 @@ def test_schema_v7_report_discloses_response_enabled_schema_scope(tmp_path) -> N
 
     text = " ".join(Document(report_module().render_spatial_study_html(result)).text)
 
-    assert "schema v6 or v7" in text
+    assert "schema v6, v7 or v8" in text
     assert "workbench_input_sha256" in text
     assert result.pairs[0].control.workbench_input_sha256 in text
 

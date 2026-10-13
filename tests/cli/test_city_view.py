@@ -21,6 +21,27 @@ from tests.unit.city.test_spatial_response import _response_input
 
 
 @pytest.mark.asyncio
+async def test_city_view_serves_persisted_v8_metrics_read_only(tmp_path, monkeypatch):
+    from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run
+
+    _persona_run(tmp_path)
+    before = _artifact_bytes(tmp_path)
+    calls = []
+    monkeypatch.setattr("uvicorn.run", lambda application, **kwargs: calls.append(application))
+    result = CliRunner().invoke(app, ["city-view", str(tmp_path), "persona-study"])
+    assert result.exit_code == 0, result.output
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=calls[0]), base_url="http://127.0.0.1"
+    ) as web:
+        assert (await web.get("/api/meta")).json()["run_schema_version"] == 8
+        for route in ("/api/spatial-metrics", "/api/spatial-response-metrics"):
+            result = await web.get(route)
+            assert result.status_code == 200
+            assert result.json()["source_run_schema_version"] == 8
+    assert _artifact_bytes(tmp_path) == before
+
+
+@pytest.mark.asyncio
 async def test_city_view_loads_saved_run_before_binding_and_serves_exact_core_frame(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

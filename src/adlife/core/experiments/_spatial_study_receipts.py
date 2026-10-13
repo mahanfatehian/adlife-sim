@@ -81,7 +81,7 @@ class _StudyReceipt(DomainModel):
 
 
 class SpatialStudyResponseReceipt(_StudyReceipt):
-    """Schema-v6/v7 response evidence, retained even for attention-only A/A checks."""
+    """Schema-v6/v7/v8 response evidence, retained for attention-only A/A checks."""
 
     response_input_sha256: StudyHash
     response_stream_sha256: StudyHash
@@ -93,6 +93,10 @@ class SpatialStudyResponseReceipt(_StudyReceipt):
     response_campaign_count: int = Field(ge=1, le=20)
     final_state_count: int = Field(ge=1, le=600)
     response_assumption_structure_sha256: StudyHash
+    response_population_sha256: StudyHash | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     response_metrics_sha256: StudyHash | None = None
     campaign_ids: tuple[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")], ...] = Field(
         min_length=1, max_length=20
@@ -127,7 +131,7 @@ class SpatialStudyArmReceipt(_StudyReceipt):
     opportunity_structure_sha256: StudyHash
     attention_metrics_sha256: StudyHash
     response: SpatialStudyResponseReceipt | None = None
-    workbench_input_schema_version: Literal[1] | None = Field(
+    workbench_input_schema_version: Literal[1, 2] | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
@@ -144,8 +148,8 @@ class SpatialStudyArmReceipt(_StudyReceipt):
     @field_validator("workbench_input_schema_version", mode="before")
     @classmethod
     def exact_optional_workbench_version(cls, value: object) -> object:
-        if value is not None and (type(value) is not int or value != 1):
-            raise ValueError("workbench input schema version must be integer 1 when present")
+        if value is not None and (type(value) is not int or value not in {1, 2}):
+            raise ValueError("workbench input schema version must be integer 1 or 2 when present")
         return value
 
     @model_validator(mode="after")

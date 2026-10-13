@@ -303,10 +303,10 @@ def _validate_matched_provenance(
     response: SpatialResponseMetrics,
 ) -> None:
     if (
-        attention.source_run_schema_version not in {6, 7}
+        attention.source_run_schema_version not in {6, 7, 8}
         or attention.source_run_schema_version != response.source_run_schema_version
     ):
-        raise ValueError("response observations require matching schema-v6/v7 spatial metrics")
+        raise ValueError("response observations require matching schema-v6/v7/v8 spatial metrics")
     checks = (
         (attention.opportunity_model_id, response.opportunity_model_id),
         (attention.attention_model_id, response.attention_model_id),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -15,6 +16,114 @@ from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatc
 from tests.unit.city.test_city_pack import load_pack, pack_data
 from tests.unit.city.test_spatial_opportunity import _phone, _scenario
 from tests.unit.city.test_spatial_response import _response_input
+
+
+def _persona_run(root: Path, run_id: str = "persona-study", *, seed: int = 0, change=None):
+    from adlife.city.workbench_input import WorkbenchRunDraftV2
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_validation import persona_draft
+
+    data = persona_draft().model_dump(mode="json")
+    data["settings"].update(run_id=run_id, seed=seed, days=1)
+    data["scenario"]["phone"]["active_windows"] = [
+        {"day": 1, "start_minute": 480, "end_minute": 482}
+    ]
+    data["scenario"]["phone"]["opportunity_probability_per_minute"] = 1.0
+    if change is not None:
+        change(data)
+    validated = construct_workbench_run(WorkbenchRunDraftV2.model_validate_json(json.dumps(data)))
+    return create_city_run(
+        validated.pack,
+        root=root,
+        run_id=run_id,
+        seed=seed,
+        agent_count=3,
+        days=1,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+
+
+def test_persisted_v8_analysis_preserves_exact_provenance_and_source_bytes(tmp_path):
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+    from adlife.city.run_store import CityRunStore
+
+    _persona_run(tmp_path)
+    stored = CityRunStore(tmp_path).load("persona-study")
+    before = _artifact_bytes(tmp_path)
+    attention = metrics_for_stored_city_run(stored)
+    response = response_metrics_for_stored_city_run(stored)
+    assert attention.source_run_schema_version == response.source_run_schema_version == 8
+    assert compare_stored_city_runs(stored, stored).control.source_run_schema_version == 8
+    assert _compare_stored_city_response_runs(stored, stored).control.source_run_schema_version == 8
+    assert _artifact_bytes(tmp_path) == before
+
+
+def test_v8_single_pair_compare_retains_population_assumption_confounding(tmp_path):
+    def change(data):
+        data["population"]["personas"][0]["traits"]["novelty_seeking"] = 0.2
+
+    control = _persona_run(tmp_path, "control")
+    treatment = _persona_run(tmp_path, "treatment", change=change)
+    before = _artifact_bytes(tmp_path)
+    result = _compare_stored_city_response_runs(control, treatment)
+    assert (
+        result.control.source_run_schema_version == result.treatment.source_run_schema_version == 8
+    )
+    assert result.response_assumption_classification == "response-assumption-confounded"
+    assert _artifact_bytes(tmp_path) == before
+
+
+def test_descriptive_only_v8_edit_changes_provenance_without_changing_response_input(tmp_path):
+    def change(data):
+        data["population"]["personas"][0].update(
+            display_name="Another fictional name",
+            age=54,
+            occupation="Artist",
+            background="Fictional biography marker",
+            mbti="INTJ",
+        )
+
+    base = _persona_run(tmp_path / "base", "same")
+    edited = _persona_run(tmp_path / "edited", "same", change=change)
+    assert base.manifest.workbench_input_sha256 != edited.manifest.workbench_input_sha256
+    assert base.response_input == edited.response_input
+    assert base.manifest.response_input_sha256 == edited.manifest.response_input_sha256
+
+
+@pytest.mark.parametrize("version", [8, 9, True, 8.0, "8"])
+def test_v8_view_context_accepts_only_exact_saved_version_and_verified_metric_pair(
+    tmp_path, version
+):
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+    from adlife.city.web import create_city_view_context
+
+    stored = _persona_run(tmp_path)
+    arguments = {
+        "run_id": stored.manifest.run_id,
+        "run_schema_version": version,
+        "spatial_scenario": stored.spatial_scenario,
+        "opportunity_evaluation": stored.opportunity_evaluation,
+        "attention_evaluation": stored.attention_evaluation,
+        "spatial_metrics": metrics_for_stored_city_run(stored),
+        "response_input": stored.response_input,
+        "response_evaluation": stored.response_evaluation,
+        "spatial_response_metrics": response_metrics_for_stored_city_run(stored),
+        "workbench_input_sha256": stored.manifest.workbench_input_sha256,
+    }
+    if type(version) is int and version == 8:
+        context = create_city_view_context(stored.mobility, **arguments)
+        assert context.run_schema_version == 8
+        assert context.workbench_input_sha256 == stored.workbench_input.fingerprint
+        arguments["spatial_metrics"] = arguments["spatial_metrics"].model_copy(
+            update={"source_run_schema_version": 7}
+        )
+        with pytest.raises(ValueError, match="do not match"):
+            create_city_view_context(stored.mobility, **arguments)
+    else:
+        with pytest.raises(ValueError, match="unsupported city run schema version"):
+            create_city_view_context(stored.mobility, **arguments)
 
 
 def _spatial_run(

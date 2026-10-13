@@ -557,3 +557,37 @@ def test_parser_does_not_mutate_the_callers_python_document() -> None:
     parse_spatial_study_definition_json(json.dumps(document))
 
     assert document == original
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, True, 2.0, "2"])
+def test_workbench_receipt_versions_are_exact_and_bounded(version):
+    from adlife.core.experiments.spatial_study import SpatialStudyArmReceipt
+
+    data = {
+        name: "a" * 64
+        for name in (
+            "manifest_sha256",
+            "scenario_sha256",
+            "opportunity_stream_sha256",
+            "opportunity_summary_sha256",
+            "attention_stream_sha256",
+            "attention_summary_sha256",
+            "opportunity_structure_sha256",
+            "attention_metrics_sha256",
+            "workbench_input_sha256",
+        )
+    }
+    data.update(
+        run_id="receipt",
+        opportunity_stream_bytes=0,
+        opportunity_count=0,
+        attention_stream_bytes=0,
+        impression_count=0,
+        noticed_count=0,
+        workbench_input_schema_version=version,
+    )
+    if type(version) is int and version in (1, 2):
+        assert SpatialStudyArmReceipt.model_validate(data).workbench_input_schema_version == version
+    else:
+        with pytest.raises(ValueError):
+            SpatialStudyArmReceipt.model_validate(data)

@@ -13,8 +13,32 @@ from adlife.city.analysis import compare_stored_city_runs
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
 from adlife.core.domain.city_run import CityRunManifestV7
-from tests.unit.city.test_city_analysis import _artifact_bytes, _spatial_run
+from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run, _spatial_run
 from tests.unit.city.test_city_pack import load_pack, pack_data
+
+
+@pytest.mark.parametrize("layer", ["attention", "response"])
+def test_city_compare_reads_persisted_v8_read_only(tmp_path, layer):
+    _persona_run(tmp_path)
+    before = _artifact_bytes(tmp_path)
+    result = CliRunner().invoke(
+        app,
+        [
+            "--format",
+            "json",
+            "city-compare",
+            str(tmp_path),
+            "persona-study",
+            "persona-study",
+            "--layer",
+            layer,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["control"]["source_run_schema_version"] == 8
+    assert document["treatment"]["source_run_schema_version"] == 8
+    assert _artifact_bytes(tmp_path) == before
 
 
 def _v7(stored):

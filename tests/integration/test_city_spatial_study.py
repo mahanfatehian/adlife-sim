@@ -11,7 +11,139 @@ from adlife.core.domain.city_run import CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition, SpatialStudyPair
 from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatch
-from tests.unit.city.test_city_analysis import _artifact_bytes, _spatial_run
+from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run, _spatial_run
+
+
+def persona_runs(root, *, change=None, changed_run_ids=None, treatment_change=None):
+    for seed in range(2):
+        for arm in ("control", "treatment"):
+            run_id = f"{arm}-{seed}"
+            apply = change if changed_run_ids is None or run_id in changed_run_ids else None
+
+            def edits(data, apply=apply, arm=arm):
+                if apply is not None:
+                    apply(data)
+                if arm == "treatment" and treatment_change is not None:
+                    treatment_change(data)
+
+            _persona_run(root, run_id, seed=seed, change=edits)
+
+
+def descriptive_edit(data):
+    persona = data["population"]["personas"][0]
+    persona.update(
+        display_name="Another fictional name",
+        age=54,
+        occupation="Artist",
+        background="Fictional biography marker",
+        mbti="INTJ",
+    )
+
+
+@pytest.mark.parametrize("response", [False, True])
+def test_v8_aa_ignores_descriptive_identity_and_authenticates_receipts(tmp_path, response):
+    from adlife.core.experiments._spatial_study_validation import reconstruct_manifest
+    from adlife.core.experiments.spatial_study import SpatialStudyResult
+
+    persona_runs(tmp_path, change=descriptive_edit, changed_run_ids={"treatment-0", "treatment-1"})
+    before = _artifact_bytes(tmp_path)
+    result = analyze(tmp_path, definition(response=response, same=False))
+    assert result.source_run_schema_version == 8
+    assert result.a_a_status == "exact-zero-verified"
+    populations = set()
+    for pair in result.pairs:
+        assert pair.control.workbench_input_sha256 != pair.treatment.workbench_input_sha256
+        for arm in (pair.control, pair.treatment):
+            assert arm.workbench_input_schema_version == 2
+            assert arm.response.response_population_sha256 is not None
+            populations.add(arm.response.response_population_sha256)
+            reconstructed = reconstruct_manifest(result, pair, arm)
+            stored = CityRunStore(tmp_path).load(arm.run_id)
+            assert reconstructed == stored.manifest
+        assert all(row.delta == 0.0 for row in pair.scalars)
+    assert len(populations) == 1
+    assert SpatialStudyResult.model_validate_json(canonical_json(result)) == result
+    assert _artifact_bytes(tmp_path) == before
+    public = canonical_json(result)
+    for forbidden in (
+        "fictional biography marker",
+        "Another fictional name",
+        '"profiles"',
+        '"traits"',
+        '"interests"',
+        '"initial_states"',
+    ):
+        assert forbidden not in public
+
+
+@pytest.mark.parametrize("response", [False, True])
+@pytest.mark.parametrize("run_ids", [{"treatment-0", "treatment-1"}, {"control-1", "treatment-1"}])
+@pytest.mark.parametrize("kind", ["interests", "traits", "initial_state", "assignment"])
+def test_v8_study_refuses_causal_population_changes(tmp_path, response, run_ids, kind):
+    def change(data):
+        persona = data["population"]["personas"][0]
+        if kind == "interests":
+            persona["interests"] = ["art"]
+        elif kind == "traits":
+            persona["traits"]["novelty_seeking"] = 0.2
+        elif kind == "initial_state":
+            persona["initial_state"]["brand_sentiment"] = 0.3
+        else:
+            for item in data["population"]["personas"]:
+                item["persona_id"] = (
+                    "persona-003" if item["persona_id"] == "persona-001" else "persona-001"
+                )
+
+    def treatment(data):
+        data["scenario"]["phone"]["frequency_cap_per_agent_per_day"] = 1
+
+    persona_runs(tmp_path, change=change, changed_run_ids=run_ids, treatment_change=treatment)
+    from adlife.core.experiments.spatial_study import SpatialStudyCompatibilityError
+
+    with pytest.raises(SpatialStudyCompatibilityError, match="population"):
+        analyze(tmp_path, definition(response=response, contrast=True, same=False))
+
+
+@pytest.mark.parametrize("kind", ["price", "targeting", "placement"])
+def test_v8_study_preserves_legitimate_treatment_contrasts(tmp_path, kind):
+    def change(data):
+        if kind == "price":
+            data["scenario"]["campaign"]["relative_price"] = 2.0
+        elif kind == "targeting":
+            data["scenario"]["campaign"]["target_interests"] = ["food"]
+        else:
+            data["scenario"]["phone"]["frequency_cap_per_agent_per_day"] = 1
+
+    persona_runs(tmp_path, change=change, changed_run_ids={"treatment-0", "treatment-1"})
+    result = analyze(tmp_path, definition(response=True, contrast=True, same=False))
+    assert result.source_run_schema_version == 8
+    assert result.response_assumption_classification == "response-assumption-confounded"
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "hash", "cross-pair", "future", "boolean", "float", "population"]
+)
+def test_v8_receipt_graph_refuses_incomplete_or_modified_evidence(tmp_path, mutation):
+    from adlife.core.experiments.spatial_study import SpatialStudyResult
+
+    persona_runs(tmp_path)
+    result = analyze(tmp_path, definition(response=True, same=False))
+    document = result.model_dump(mode="python")
+    arm = document["pairs"][0]["control"]
+    if mutation == "missing":
+        del arm["workbench_input_sha256"]
+    elif mutation == "hash":
+        arm["workbench_input_sha256"] = "0" * 64
+    elif mutation == "cross-pair":
+        arm["workbench_input_schema_version"] = 1
+    elif mutation == "population":
+        arm["response"]["response_population_sha256"] = "0" * 64
+    else:
+        document["source_run_schema_version"] = {"future": 9, "boolean": True, "float": 8.0}[
+            mutation
+        ]
+    with pytest.raises(ValueError):
+        SpatialStudyResult.model_validate(document)
 
 
 def definition(*, response: bool = False, contrast: bool = False, same: bool = True, n: int = 2):

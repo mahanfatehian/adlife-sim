@@ -6,7 +6,12 @@ from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV6, CityRunManifestV7
+from adlife.core.domain.city_run import (
+    CityRunManifestV5,
+    CityRunManifestV6,
+    CityRunManifestV7,
+    CityRunManifestV8,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition
 from adlife.core.experiments._spatial_study_receipts import (
@@ -71,7 +76,7 @@ def reconstruct_manifest(
     result: SpatialStudyResult,
     pair: SpatialStudyPairReceipt,
     arm: SpatialStudyArmReceipt,
-) -> CityRunManifestV5 | CityRunManifestV6 | CityRunManifestV7:
+) -> CityRunManifestV5 | CityRunManifestV6 | CityRunManifestV7 | CityRunManifestV8:
     data: dict[str, object] = {
         "schema_version": result.source_run_schema_version,
         "run_id": arm.run_id,
@@ -120,6 +125,11 @@ def reconstruct_manifest(
         return CityRunManifestV5.model_validate(data)
     if arm.response is None or result.response_model_id != "spatial-response-v1":
         raise ValueError("response study requires response artifact receipts and model identity")
+    if result.source_run_schema_version == 8:
+        if arm.response.response_population_sha256 is None:
+            raise ValueError("v8 study requires complete response population provenance")
+    elif arm.response.response_population_sha256 is not None:
+        raise ValueError("legacy study cannot carry v8 response population provenance")
     data.update(
         {
             "spatial_response_schema_version": 1,
@@ -143,14 +153,18 @@ def reconstruct_manifest(
             raise ValueError("v6 study cannot carry workbench input provenance")
         return CityRunManifestV6.model_validate(data)
     if arm.workbench_input_schema_version is None or arm.workbench_input_sha256 is None:
-        raise ValueError("v7 study requires complete workbench input provenance")
+        raise ValueError("v7/v8 study requires complete workbench input provenance")
     data.update(
         {
             "workbench_input_schema_version": arm.workbench_input_schema_version,
             "workbench_input_sha256": arm.workbench_input_sha256,
         }
     )
-    return CityRunManifestV7.model_validate(data)
+    if result.source_run_schema_version == 7:
+        return CityRunManifestV7.model_validate(data)
+    if result.source_run_schema_version == 8:
+        return CityRunManifestV8.model_validate(data)
+    raise ValueError("unsupported study source run schema version")
 
 
 def _event_reach_bounds(count: float, reach: float, population: int) -> None:
@@ -408,7 +422,7 @@ def validate_study_result(result: SpatialStudyResult) -> None:
     )
     if response_scope:
         if (
-            result.source_run_schema_version not in {6, 7}
+            result.source_run_schema_version not in {6, 7, 8}
             or not result.campaign_ids
             or any(value is None for value in response_identities)
         ):
@@ -421,6 +435,7 @@ def validate_study_result(result: SpatialStudyResult) -> None:
     differences: dict[str, list[float]] = {key: [] for key in keys}
     sources = {}
     opportunity_matched = response_matched = 0
+    population_sha256: str | None = None
     for declared, raw_pair in zip(definition.pairs, result.pairs, strict=True):
         pair = revalidate_model(raw_pair, SpatialStudyPairReceipt, label="study pair receipt")
         if (
@@ -460,6 +475,14 @@ def validate_study_result(result: SpatialStudyResult) -> None:
                     "study arm response assumptions vary across seeds"
                 )
             manifest = reconstruct_manifest(result, pair, arm)
+            if result.source_run_schema_version == 8:
+                assert arm.response is not None  # reconstruct_manifest requires this
+                current_population = arm.response.response_population_sha256
+                if population_sha256 is not None and population_sha256 != current_population:
+                    raise SpatialStudyCompatibilityError(
+                        "study response population differs across arms or seeds"
+                    )
+                population_sha256 = current_population
             if (
                 sha256((canonical_json(manifest) + "\n").encode("utf-8")).hexdigest()
                 != arm.manifest_sha256
