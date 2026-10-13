@@ -2805,8 +2805,8 @@ function validateWorkbenchPopulation(value, agentCount) {
       interests: persona.interests, traits: persona.traits, initial_state: persona.initial_state,
     });
     for (const interest of persona.interests) requirePersonaText(interest, 80);
-    // The server verifies canonical bytes; also refuse an oversized browser projection.
-    if (new TextEncoder().encode(JSON.stringify(persona)).length > 3072) invalidWorkbenchInput();
+    // Canonical byte limits are server-verified. JSON.stringify uses different numeric
+    // formatting and cannot authoritatively recheck the persisted Python byte bound.
     personas.set(persona.persona_id, persona);
   }
   const expectedIds = Array.from({ length: agentCount }, (_, index) => (

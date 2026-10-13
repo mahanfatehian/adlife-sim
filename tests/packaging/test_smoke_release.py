@@ -1681,12 +1681,88 @@ def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> Non
         '"seed": "17",',
         'accepted_settings = accepted_document["job"]["accepted_settings"]',
         'assert completed_job["accepted_settings"] == accepted_settings',
-        '"workbench_run_schema_version": 7',
+        '"workbench_run_schema_version": 8',
+        '"workbench_input_schema_version": 2',
+        '"workbench_persona_count": 2',
+        '"workbench_replay_verified": True',
+        '"workbench_source_immutable": True',
+        '"legacy_workbench_run_schema_version": 7',
         '"workbench_input_view_verified": True',
         '"workbench_scoped_frame_verified": True',
         '"workbench_browser_asset_verified": True',
     ):
         assert required in source
+
+
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        (None, None),
+        ("workbench_run_schema_version", 7),
+        ("workbench_run_schema_version", True),
+        ("workbench_input_schema_version", 1),
+        ("workbench_persona_count", 1),
+        ("workbench_assignment_binding_verified", False),
+        ("workbench_templates_verified", False),
+        ("workbench_replay_verified", False),
+        ("workbench_source_immutable", False),
+        ("workbench_source_immutable", None),
+        ("legacy_workbench_run_schema_version", 8),
+    ],
+)
+def test_parent_refuses_incomplete_persona_wheel_certification(tmp_path, monkeypatch, field, bad):
+    child_site = tmp_path / "venv" / "Lib" / "site-packages"
+    receipt = {
+        "run_schema_version": 6,
+        "response_model_id": "spatial-response-v1",
+        "claim_scope": "synthetic-response-not-observed-behavior",
+        "summary_model_id": "spatial-response-artifact-v1",
+        "state_model_id": "spatial-response-state-v1",
+        "state_scope": "final-end-of-run-not-scrubbed-minute",
+        "response_count": 2,
+        "final_state_count": 2,
+        "child_site_path": str(child_site.resolve()),
+        "adlife_module_path": str(child_site / "adlife" / "__init__.py"),
+        "module_origin_verified": True,
+        "network_guard_verified": True,
+        "ui_verified": True,
+        "workbench_run_schema_version": 8,
+        "workbench_sidecar_verified": True,
+        "workbench_discovery_verified": True,
+        "workbench_inspector_verified": True,
+        "workbench_input_view_verified": True,
+        "workbench_scoped_frame_verified": True,
+        "workbench_browser_asset_verified": True,
+        "workbench_input_schema_version": 2,
+        "workbench_persona_count": 2,
+        "workbench_assignment_binding_verified": True,
+        "workbench_templates_verified": True,
+        "workbench_replay_verified": True,
+        "workbench_source_immutable": True,
+        "legacy_workbench_run_schema_version": 7,
+    }
+    if field is not None:
+        if bad is None:
+            del receipt[field]
+        else:
+            receipt[field] = bad
+    monkeypatch.setattr(
+        smoke_release,
+        "_run",
+        lambda *args, **kwargs: subprocess.CompletedProcess([], 0, json.dumps(receipt) + "\n", ""),
+    )
+    from contextlib import nullcontext
+
+    with pytest.raises(SystemExit) if field is not None else nullcontext():
+        smoke_release._verify_installed_viewer(
+            Path("child-python"),
+            root=tmp_path,
+            run_id="source",
+            child_site=child_site,
+            response_count=2,
+            final_state_count=2,
+            cwd=tmp_path,
+        )
 
 
 def test_smoke_network_guard_refuses_to_replace_sitecustomize(
@@ -2105,7 +2181,14 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "module_origin_verified": True,
                 "network_guard_verified": True,
                 "ui_verified": True,
-                "workbench_run_schema_version": 7,
+                "workbench_run_schema_version": 8,
+                "workbench_input_schema_version": 2,
+                "workbench_persona_count": 2,
+                "workbench_assignment_binding_verified": True,
+                "workbench_templates_verified": True,
+                "workbench_replay_verified": True,
+                "workbench_source_immutable": True,
+                "legacy_workbench_run_schema_version": 7,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
                 "workbench_inspector_verified": True,

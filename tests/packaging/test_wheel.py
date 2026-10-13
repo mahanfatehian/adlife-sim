@@ -324,8 +324,8 @@ def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path
     assert completed.returncode == 0, report.read_text(encoding="utf-8")
     assert "smoke ok" in completed.stdout
     assert (
-        "schema-v6 response API/UI and schema-v7 workbench lifecycle verified without network"
-        in completed.stdout
+        "schema-v6 response API/UI, schema-v7 compatibility and "
+        "schema-v8 persona lifecycle verified without network" in completed.stdout
     )
 
 

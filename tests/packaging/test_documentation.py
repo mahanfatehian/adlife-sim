@@ -13,6 +13,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 from adlife import __version__
@@ -1065,6 +1066,121 @@ def test_spatial_public_status_is_complete_only_for_bounded_c4b() -> None:
         "spatial",
         "campaign-scoped",
     )
+
+
+def test_persona_authoring_docs_publish_version_and_scientific_boundaries() -> None:
+    paths = (
+        "README.md",
+        "CHANGELOG.md",
+        "docs/architecture.md",
+        "docs/city-pilot.md",
+        "docs/cli-reference.md",
+        "docs/reproducibility.md",
+        "docs/methodology/model-card.md",
+        "docs/methodology/limitations.md",
+        "docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md",
+    )
+    for path in paths:
+        text = _squash(_read(path)).lower()
+        for term in (
+            "schema-v8",
+            "schema-2",
+            "schema-v7",
+            "schema-1",
+            "fictional",
+            "mbti",
+            "noncausal",
+        ):
+            assert term in text, (path, term)
+    cli = _read("docs/cli-reference.md")
+    assert "GET /api/persona-templates" in cli
+    assert "3,072" in cli and "98,304" in cli and "131,072" in cli
+    assert "32,768" in cli
+    reproducibility = _squash(_read("docs/reproducibility.md")).lower()
+    for term in ("reordering", "persona id", "template", "assignments", "descriptive"):
+        assert term in reproducibility
+
+
+@pytest.mark.parametrize(
+    "path,anchor,versions",
+    [
+        (
+            "docs/architecture.md",
+            "Saved city studies use separate strict",
+            "v1/v2/v3/v4/v5/v6/v7/v8",
+        ),
+        (
+            "docs/architecture.md",
+            "validates before serving one immutable mobility projection",
+            "V4 through V8",
+        ),
+        (
+            "docs/architecture.md",
+            "The adapter-free core exposes the original read-only",
+            "V5, V6, V7, and V8",
+        ),
+        ("docs/architecture.md", "Schema V6", "V6, V7, and V8"),
+        ("docs/city-pilot.md", "Use `city-metrics --layer response`", "V6/V7/V8"),
+        (
+            "docs/city-pilot.md",
+            "`city-view` validates the full trace before opening",
+            "v4, v5, v6, v7, and v8",
+        ),
+        (
+            "docs/city-pilot.md",
+            "`/api/response-summary`, paged",
+            "V6, V7, and V8",
+        ),
+        (
+            "docs/methodology/model-card.md",
+            "City-pack v2 can preserve real-world road geometry",
+            "v3/v4/v5/v6/v7/v8",
+        ),
+    ],
+)
+def test_current_city_consumer_and_replay_descriptions_include_v8(path, anchor, versions):
+    paragraphs = re.split(r"\n\s*\n", _read(path))
+    paragraph = next(value for value in paragraphs if anchor in value)
+    assert versions in paragraph, (path, anchor, versions)
+    assert re.search(r"\bv8\b", paragraph, re.IGNORECASE), (path, anchor)
+    for stale in ("through V7", "V6 or V7", "V6/V7 endpoint", "all three"):
+        assert stale not in paragraph, (path, anchor, stale)
+
+
+def test_city_pilot_allows_descriptive_mbti_but_refuses_predictive_claims() -> None:
+    text = _read("docs/city-pilot.md")
+    _assert_terms_share_paragraph(
+        text, "MBTI", "descriptive", "noncausal", "predictive", "not implemented"
+    )
+    assert "adding mbti labels without" not in _squash(text).lower()
+
+
+@pytest.mark.parametrize("path", ["README.md", "docs/methodology/model-card.md"])
+def test_fictional_only_policy_does_not_claim_identity_enforcement(path) -> None:
+    text = _read(path)
+    _assert_terms_share_paragraph(text, "fictional-only", "policy", "editable", "optional")
+    _assert_terms_share_paragraph(text, "best effort", "cannot prove", "fictional identity")
+    lowered = _squash(text).lower()
+    for overclaim in (
+        "every agent in this simulator is fictional and generated from templates",
+        "this constraint is enforced in code, not merely documented",
+        "the model contains none",
+    ):
+        assert overclaim not in lowered
+
+
+@pytest.mark.parametrize(
+    "path,anchor",
+    [
+        ("docs/cli-reference.md", "Load the frozen inputs, regenerate"),
+        ("docs/methodology/model-card.md", "workbench artifacts retain that entire"),
+    ],
+)
+def test_workbench_replay_provenance_paragraph_covers_v7_and_v8(path, anchor) -> None:
+    paragraph = next(value for value in re.split(r"\n\s*\n", _read(path)) if anchor in value)
+    for version in ("schema-v7", "schema-v8"):
+        assert version in paragraph.lower(), (path, version)
+    assert "inputs/workbench.json" in paragraph
 
 
 def test_d1b_workbench_contract_is_documented_without_claiming_later_gates() -> None:

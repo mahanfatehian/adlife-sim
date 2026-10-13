@@ -76,10 +76,12 @@ def _response_delta_line(
 def command(
     root: Annotated[Path, typer.Argument(help="Root containing city-runs/.")],
     control_run_id: Annotated[
-        str, typer.Argument(help="Control schema-v5, schema-v6 or schema-v7 city run ID.")
+        str,
+        typer.Argument(help="Control schema-v5, schema-v6, schema-v7 or schema-v8 city run ID."),
     ],
     treatment_run_id: Annotated[
-        str, typer.Argument(help="Treatment schema-v5, schema-v6 or schema-v7 city run ID.")
+        str,
+        typer.Argument(help="Treatment schema-v5, schema-v6, schema-v7 or schema-v8 city run ID."),
     ],
     layer: Annotated[
         Literal["attention", "response"],

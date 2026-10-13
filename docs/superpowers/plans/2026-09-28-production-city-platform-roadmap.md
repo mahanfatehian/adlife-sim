@@ -482,3 +482,19 @@ identity, calibration, operational, and
 enterprise gates. No rights-reviewed real city, authentication boundary, provider settings,
 browser paired-study/comparison/report operation, or external-validity evidence is claimed
 by this ledger.
+
+## Persona authoring evidence — 2026-10-13
+
+The local deterministic D2 slice now defaults to schema-2 fictional persona authoring and
+schema-v8 artifacts, retaining schema-1/schema-v7 homogeneous compatibility and direct V6.
+Four bundled templates, Audience count reconciliation and immutable IDs compile only explicit
+interests, six traits and initial campaign state. Name, age, occupation, background and MBTI
+remain noncausal; no predictive validity or identity-derived mobility is implied.
+Verified saved identities, canonical inputs/workbench.json assignments, template-independent
+replay and explicit V8 analysis/study consumers extend this bounded local slice.
+
+This evidence does not close D3 provider/authentication/browser report-download/study operation,
+worldwide qualified catalog, durable jobs, month simulation or empirical-validation gates.
+Screening refuses recognized unsafe inputs but does not prove absence of personal information.
+Purchase intention remains an uncalibrated proxy without purchase transactions. No release,
+package-version change or real-person validation is recorded by this dated progress note.

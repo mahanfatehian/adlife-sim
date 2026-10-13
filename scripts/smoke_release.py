@@ -6,7 +6,8 @@ exactly the wheel it was handed, changes to a scratch directory outside the chec
 and runs the documented workflow — including the verified packaged city catalog,
 validated fictional place, campaign, and response inputs, a schema-v6 spatial opportunity,
 attention, and rules-only response run, its replay, its read-only ASGI viewer, and a complete
-schema-v7 workbench submit/poll/discover/inspect lifecycle — validating the JSON output contract
+schema-v8 persona submit/poll/discover/inspect lifecycle with explicit V7 compatibility,
+validating the JSON output contract
 along the way. Every temporary artifact is cleaned up on success and on failure.
 """
 
@@ -184,7 +185,7 @@ with Path(__file__).with_name("adlife-smoke-network-guard.log").open(
 ) as _guard_log:
     _guard_log.write(f"{_guard_token}\\t{sys.argv[0]}\\n")
 '''
-_VIEWER_PROBE_SOURCE = '''"""Verify installed v6 viewing and the v7 workbench without a socket."""
+_VIEWER_PROBE_SOURCE = '''"""Verify installed V6, V7 and V8 personas without a socket."""
 from __future__ import annotations
 
 import asyncio
@@ -192,6 +193,7 @@ import builtins
 import inspect
 import json
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 def _inside(path: str | Path, root: Path) -> bool:
@@ -229,7 +231,10 @@ import httpx
 
 from adlife.city.analysis import metrics_for_stored_city_run
 from adlife.city.run_store import CityRunStore
+from adlife.city.runs import replay_city_run
 from adlife.city.web import create_city_app
+from adlife.city.workbench_personas import PersonaTemplateCatalog
+from adlife.city.workbench_transport import WorkbenchRunInputViewV2
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.serialization import canonical_json
@@ -475,7 +480,7 @@ async def _main() -> None:
         },
         "settings": {
             "run_id": "wheel-workbench",
-            "agent_count": 1,
+            "agent_count": 2,
             "days": 1,
             "seed": "17",
             "response_mode": "deterministic-rules",
@@ -490,12 +495,6 @@ async def _main() -> None:
         "Origin": "http://127.0.0.1",
         "X-AdLife-CSRF": "installed-wheel-workbench-token",
     }
-    encoded_draft = json.dumps(
-        workbench_draft,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
     async with workbench.router.lifespan_context(workbench):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=workbench),
@@ -503,6 +502,37 @@ async def _main() -> None:
         ) as workbench_client:
             workbench_shell = await workbench_client.get("/")
             workbench_script = await workbench_client.get("/assets/workbench.js")
+            template_response = await workbench_client.get("/api/persona-templates")
+            assert template_response.status_code == 200
+            templates = PersonaTemplateCatalog.model_validate_json(template_response.content)
+            assert [p.persona_id for p in templates.templates] == [
+                "persona-001", "persona-002", "persona-003", "persona-004"
+            ]
+            personas = [p.model_dump(mode="json") for p in templates.templates[:2]]
+            for persona in personas:
+                persona["count"] = 1
+            assert personas[0]["traits"] != personas[1]["traits"]
+            legacy_draft = json.loads(json.dumps(workbench_draft))
+            legacy_draft["settings"]["run_id"] = "wheel-legacy"
+            workbench_draft.pop("cohort")
+            workbench_draft["schema_version"] = 2
+            workbench_draft["population"] = {"personas": list(reversed(personas))}
+            encoded_draft = json.dumps(workbench_draft, ensure_ascii=False).encode("utf-8")
+            for name, content_type in (
+                ("workbench-personas.js", "text/javascript"),
+                ("workbench-personas.css", "text/css"),
+            ):
+                asset = await workbench_client.get("/assets/" + name)
+                assert asset.status_code == 200
+                assert asset.headers["content-type"].startswith(content_type)
+                assert asset.headers["x-content-type-options"] == "nosniff"
+                assert "script-src 'self'" in asset.headers["content-security-policy"]
+                assert "innerHTML" not in asset.text
+                assert "https://" not in asset.text and "http://" not in asset.text
+                assert "/assets/" + name in workbench_shell.text
+            assert workbench_shell.text.index("workbench-personas.js") < workbench_shell.text.index(
+                'src="/assets/workbench.js"'
+            )
             city_detail = await workbench_client.get("/api/catalog/cities/fictional-grid-v2")
             assert (
                 workbench_shell.status_code
@@ -528,13 +558,13 @@ async def _main() -> None:
             accepted_settings = accepted_document["job"]["accepted_settings"]
             assert accepted_settings == {
                 "schema_version": 1,
-                "workbench_input_schema_version": 1,
-                "run_schema_version": 7,
+                "workbench_input_schema_version": 2,
+                "run_schema_version": 8,
                 "city_id": "fictional-grid-v2",
                 "scenario_id": "wheel-workbench-study",
                 "campaign_id": "wheel-workbench-campaign",
                 "seed": "17",
-                "agent_count": 1,
+                "agent_count": 2,
                 "days": 1,
                 "response_mode": "deterministic-rules",
             }
@@ -551,9 +581,14 @@ async def _main() -> None:
                 await asyncio.sleep(0.01)
             assert completed_job["phase"] == "completed", completed_job
             assert completed_job["accepted_settings"] == accepted_settings
-            assert completed_job["result"]["run_schema_version"] == 7
+            assert completed_job["result"]["run_schema_version"] == 8
             assert completed_job["result"]["inspector_url"] == "/runs/wheel-workbench"
 
+            workbench_directory = root / "city-runs" / "wheel-workbench"
+            before_inspection = {
+                p.relative_to(workbench_directory).as_posix(): sha256(p.read_bytes()).hexdigest()
+                for p in workbench_directory.rglob("*") if p.is_file()
+            }
             run_page = await workbench_client.get("/api/runs?offset=0&limit=100")
             assert run_page.status_code == 200, run_page.text
             summaries = run_page.json()["runs"]
@@ -580,16 +615,63 @@ async def _main() -> None:
                 == 200
             )
             assert 'name="adlife-api-base" content="/api/runs/wheel-workbench"' in inspector.text
-            assert scoped_meta.json()["run_schema_version"] == 7
+            assert scoped_meta.json()["run_schema_version"] == 8
+            verified_input_view = WorkbenchRunInputViewV2.model_validate_json(
+                workbench_input.content
+            )
+            assert verified_input_view.workbench_input_schema_version == 2
+            assert workbench_input.json()["population"]["personas"] == personas
+            assert workbench_input.json()["population"]["assignments"] == [
+                {"agent_id": "person-001", "persona_id": "persona-001"},
+                {"agent_id": "person-002", "persona_id": "persona-002"},
+            ]
             assert workbench_input.json()["settings"]["seed"] == "17"
             assert workbench_input.json()["run_id"] == "wheel-workbench"
             assert scoped_frame.json()["minute"] == 0
             assert scoped_timeline.json()["agent_id"] == "person-001"
             assert "function validatedApiBase()" in inspector_script.text
+            assert 'id="identity-context"' in inspector.text
+            assert "does not affect simulation" in inspector.text.lower()
+            assert before_inspection == {
+                p.relative_to(workbench_directory).as_posix(): sha256(p.read_bytes()).hexdigest()
+                for p in workbench_directory.rglob("*") if p.is_file()
+            }
+
+            legacy_accepted = await workbench_client.post(
+                "/api/jobs", headers=secure_headers, json=legacy_draft,
+            )
+            assert legacy_accepted.status_code == 202, legacy_accepted.text
+            legacy_settings = legacy_accepted.json()["job"]["accepted_settings"]
+            assert (legacy_settings["workbench_input_schema_version"],
+                    legacy_settings["run_schema_version"]) == (1, 7)
+            deadline = asyncio.get_running_loop().time() + 30.0
+            while True:
+                legacy_status = await workbench_client.get(legacy_accepted.json()["status_url"])
+                legacy_job = legacy_status.json()
+                if legacy_job["phase"] in {"completed", "failed", "cancelled"}:
+                    break
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.01)
+            assert legacy_job["phase"] == "completed", legacy_job
+            assert legacy_job["result"]["run_schema_version"] == 7
 
     workbench_stored = CityRunStore(root).load("wheel-workbench")
-    assert workbench_stored.manifest.schema_version == 7
+    assert workbench_stored.manifest.schema_version == 8
     assert workbench_stored.workbench_input is not None
+    assert workbench_stored.workbench_input.schema_version == 2
+    assert workbench_stored.manifest.workbench_input_schema_version == 2
+    population = workbench_stored.workbench_input.draft.population
+    assert [p.persona_id for p in population.personas] == ["persona-001", "persona-002"]
+    assert workbench_stored.response_input is not None
+    for assignment, profile, state in zip(
+        population.assignments, workbench_stored.response_input.profiles,
+        workbench_stored.response_input.initial_states, strict=True,
+    ):
+        persona = next(p for p in population.personas if p.persona_id == assignment.persona_id)
+        assert assignment.agent_id == profile.agent_id == state.agent_id
+        assert profile.interests == persona.interests and profile.traits == persona.traits
+        for field in ("brand_sentiment", "recall_strength", "purchase_intention"):
+            assert getattr(state, field) == getattr(persona.initial_state, field)
     sidecar = root / "city-runs" / "wheel-workbench" / "inputs" / "workbench.json"
     assert sidecar.read_bytes() == (
         canonical_json(workbench_stored.workbench_input) + "\\n"
@@ -598,6 +680,17 @@ async def _main() -> None:
         workbench_stored.manifest.workbench_input_sha256
         == workbench_stored.workbench_input.fingerprint
     )
+    directory = sidecar.parent.parent
+    def hashes():
+        return {p.relative_to(directory).as_posix(): sha256(p.read_bytes()).hexdigest()
+                for p in directory.rglob("*") if p.is_file()}
+    before_replay = hashes()
+    assert replay_city_run(workbench_stored).identical is True
+    assert hashes() == before_replay
+    legacy_stored = CityRunStore(root).load("wheel-legacy")
+    assert legacy_stored.manifest.schema_version == 7
+    assert legacy_stored.workbench_input.schema_version == 1
+    assert replay_city_run(legacy_stored).identical is True
 
     print(
         json.dumps(
@@ -615,7 +708,14 @@ async def _main() -> None:
                 "module_origin_verified": True,
                 "network_guard_verified": True,
                 "ui_verified": True,
-                "workbench_run_schema_version": 7,
+                "workbench_run_schema_version": 8,
+                "workbench_input_schema_version": 2,
+                "workbench_persona_count": 2,
+                "workbench_assignment_binding_verified": True,
+                "workbench_templates_verified": True,
+                "workbench_replay_verified": True,
+                "workbench_source_immutable": True,
+                "legacy_workbench_run_schema_version": 7,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
                 "workbench_inspector_verified": True,
@@ -4067,7 +4167,14 @@ def _verify_installed_viewer(
         ("module_origin_verified", True),
         ("network_guard_verified", True),
         ("ui_verified", True),
-        ("workbench_run_schema_version", 7),
+        ("workbench_run_schema_version", 8),
+        ("workbench_input_schema_version", 2),
+        ("workbench_persona_count", 2),
+        ("workbench_assignment_binding_verified", True),
+        ("workbench_templates_verified", True),
+        ("workbench_replay_verified", True),
+        ("workbench_source_immutable", True),
+        ("legacy_workbench_run_schema_version", 7),
         ("workbench_sidecar_verified", True),
         ("workbench_discovery_verified", True),
         ("workbench_inspector_verified", True),
@@ -4895,7 +5002,8 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
         print(
             "smoke ok: "
             f"report at {html.stat().st_size} bytes; "
-            "schema-v6 response API/UI and schema-v7 workbench lifecycle verified without network; "
+            "schema-v6 response API/UI, schema-v7 compatibility and "
+            "schema-v8 persona lifecycle verified without network; "
             "catalog fictional-grid-v2 metrics, A/A comparison, and replay verified; "
             f"two-seed response study and {spatial_report_bytes}-byte static report verified"
         )

@@ -9,14 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fictional persona authoring (2026-10-13)** — default browser schema-2 Audience
+  authoring publishes schema-v8 with frozen `inputs/workbench.json`, deterministic persona
+  assignments and verified saved identities. Schema-1/schema-v7 homogeneous cohort and
+  direct V6 compatibility remain supported. Four bundled fictional templates support
+  explicit count reconciliation, immutable IDs and collapsed identity context.
+  Name, age, occupation, background and MBTI are noncausal; explicit interests, six traits
+  and initial state are causal response assumptions. No MBTI predictive power,
+  real-person validation, identity-derived mobility or purchase transactions are claimed.
+  V8 replay, metrics, comparisons, reports and homogeneous paired-study consumers retain
+  strict provenance. Replay preserves source bytes and is independent of current templates.
+  Persona text screening refuses recognized unsafe patterns; it does not prove absence
+  of personal information. This is an unreleased artifact-schema extension, not package
+  version 0.8.0 or a public launch.
 - **Browser-operated local city workbench and immutable inspection (D1b/D2 local)** —
   `city-workbench --workspace PATH` now validates and freezes a complete packaged-city,
   fictional-creative scenario, executes at most one deterministic-rules job through
   truthful process-local phases, and lists only independently verified completed runs.
-  Successful workbench runs extend schema-v6 evidence as schema-v7 with canonical
+  Schema-1 compatibility runs extend schema-v6 evidence as schema-v7; default schema-2
+  persona authoring uses schema-v8 with canonical
   `inputs/workbench.json` bound by `workbench_input_sha256`; load and replay refuse missing,
   noncanonical, changed, or inconsistent provenance. Run-scoped APIs and the shared
-  immutable inspector verify current artifacts on every request. Same-origin/CSRF/body
+  immutable inspector verifies current artifacts on opening and serves token-bound snapshots
+  for subsequent scoped reads; reload and tokenless reads verify anew. Same-origin/CSRF/body
   bounds, no-path HTTP inputs, workspace link/reparse refusal, no-clobber publication, and
   exact-wheel coverage remain enforced. Every phase retains a frozen `accepted_settings`
   receipt, which completion cross-checks against the independently verified run. The

@@ -121,7 +121,8 @@ schema-v5 attention addition, and C3c adds a validated `--spatial-response` docu
 create a schema-v6 artifact with deterministic bounded response/state evidence. Older
 schema-v4 artifacts remain readable as opportunity-only evidence.
 
-The D1b workbench creates schema-v7 rather than changing the CLI contract. V7 is the exact
+The browser workbench defaults to schema-2/schema-v8; schema-1/schema-v7 remains compatible
+without changing the CLI contract. V7 and V8 retain the exact
 schema-v6 scientific receipt plus canonical `inputs/workbench.json`, which freezes the
 complete accepted draft and creative-template snapshot. Its canonical bytes must match
 `workbench_input_sha256`, and its city, settings, run ID, campaign, creative and response
@@ -135,7 +136,7 @@ The browser control contract preserves every seed as a canonical decimal string,
 `9223372036854775807`, until the HTTP adapter validates it and converts it exactly once to
 the bounded Python integer used by domain construction. The browser's unsaved draft, stage,
 validation display, polling interval, playback state, selected agent/evidence, filters, map
-zoom, and model-clock position are presentation state only and never enter a schema-v7
+zoom, and model-clock position are presentation state only and never enter a schema-v7 or schema-v8
 artifact. Refresh may resume polling a live process-local job from its frozen
 `accepted_settings`; process restart does not reconstruct transient job history. Reopening
 a completed run starts from a fresh artifact verification and the persisted canonical
@@ -163,7 +164,7 @@ so paired variants reuse common random numbers. Records are ordered by continuou
 agent, campaign, placement and channel; IDs hash scenario/city fingerprints and that
 canonical identity. Campaign, placement, window and activity input order and
 `PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4, schema-v5, schema-v6,
-and schema-v7 runs this same computation is also artifact replay: the frozen scenario is
+schema-v7, and schema-v8 runs this same computation is also artifact replay: the frozen scenario is
 re-evaluated and the canonical stream and independently derived summary must match their
 manifest-bound evidence.
 
@@ -194,13 +195,13 @@ purchase probability, sales, or a transaction.
 
 `adlife city-metrics ROOT ID` derives canonical read-only projections only after complete
 artifact verification. The default attention layer remains the exact C4a contract for
-schema-v5, schema-v6, and schema-v7: it reads opportunity and attention evidence, records
+schema-v5, schema-v6, schema-v7, and schema-v8: it reads opportunity and attention evidence, records
 the source schema version, and does not consume response records or final campaign state.
 Every value
 carries its exact numerator, denominator, and source paths plus
 `synthetic-metrics-not-observed-outcomes`.
 
-For schema-v6 and schema-v7, `city-metrics --layer response` derives the separate
+For schema-v6, schema-v7, and schema-v8, `city-metrics --layer response` derives the separate
 `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`. It re-evaluates response evidence from
 the frozen response input and notice stream before folding it. Direct rule responses have
@@ -211,7 +212,7 @@ derived in memory, and never stored back into the source run.
 
 `adlife city-compare ROOT CONTROL_ID TREATMENT_ID` preserves the attention layer by default
 and requires identical city, assignment, trace model, seed, duration, and population
-provenance. Same-run A/A deltas are exactly zero. Its additive schema-v6/schema-v7
+provenance. Same-run A/A deltas are exactly zero. Its additive schema-v6/schema-v7/schema-v8
 response layer separately classifies opportunity structure and numeric response
 assumptions; a different normalized placement/channel structure is
 `opportunity-confounded`, and changed assumptions are `response-assumption-confounded`.
@@ -227,8 +228,8 @@ interpretation.
 pair is the experimental unit; the analyzer never pools agents, events, opportunities,
 notices, or campaign-state rows as independent samples. Matching assignment, mobility trace,
 and optional place-assignment hashes provide the within-pair common-random-number evidence.
-Attention studies are homogeneous all-v5, all-v6, or all-v7; attention-and-response studies
-are homogeneous all-v6 or all-v7.
+Attention studies are homogeneous all-v5, all-v6, all-v7 or all-v8; attention-and-response studies
+are homogeneous all-v6, all-v7 or all-v8.
 
 Each metric's treatment-minus-control vector yields its mean, sample standard deviation,
 median, nullable paired standardized difference, exact sign counts, agreement, direction,
@@ -305,27 +306,46 @@ state-update counts, campaign count, and complete final-state count. All files a
 and verified before the final manifest is atomically published; a failed publication leaves
 a reserved, non-loadable directory rather than a partially trusted run.
 
-Workbench publication retains all of those v6 files as schema-v7 and adds only canonical
+Workbench publication retains all of those v6 files as schema-v7 (input 1) or schema-v8
+(input 2) and adds canonical
 `inputs/workbench.json` plus its manifest schema/hash binding. The sidecar is written and
 verified before the final manifest becomes authoritative.
 
 `adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
-without changing source files; for v4 through v7 it also recomputes and compares the
-normalized opportunity stream and summary, for v5 through v7 it independently recomputes
-attention, and for v6/v7 it re-evaluates the response stream, final-state document, and
-summary. V7 also verifies and reuses its immutable workbench sidecar. A mismatch, partial
+without changing source files; for v4 through v8 it also recomputes and compares the
+normalized opportunity stream and summary, for v5 through v8 it independently recomputes
+attention, and for v6/v7/v8 it re-evaluates the response stream, final-state document, and
+summary. V7/V8 also verify and reuse their immutable workbench sidecars. A mismatch, partial
 publication, or incompatible artifact is refused.
 `adlife city-view ROOT ID` performs the same load verification before
 opening the read-only mobility timeline. For schema-v4 it also presents canonical,
 persisted current-minute opportunity evidence; scrubbing or selecting an evidence record
 does not recompute, append to or mutate the source artifact. Schema-v5 additionally presents
 persisted current-minute attention evidence with the synthetic claim and 0.5 assumption.
-Schema-v6 and schema-v7 present persisted current-minute response/state-update records and
+Schema-v6, schema-v7, and schema-v8 present persisted current-minute response/state-update records and
 complete final end-of-run state explicitly labeled as not state at the scrubbed minute.
-Schema-v5, schema-v6, and schema-v7 viewers derive the same attention-only, receipt-bearing
-spatial metrics ledger in memory; a fully prevalidated schema-v6/schema-v7 viewer also
+Schema-v5, schema-v6, schema-v7, and schema-v8 viewers derive the same attention-only, receipt-bearing
+spatial metrics ledger in memory; a fully prevalidated schema-v6/schema-v7/schema-v8 viewer also
 re-derives the separate response metrics document. Viewing, scrubbing, metrics, comparison,
 study analysis, and reporting never modify the saved artifact. A digest proves equality
 against that artifact, not authenticity against an owner rewriting all files. Identical
 frames are expected on a compatible implementation/runtime;
 cross-platform bitwise identity of floating-point interpolation is not claimed.
+
+## Schema-2 persona replay provenance
+
+Schema-v8 binds schema-2 canonical inputs/workbench.json with the same scientific equations
+as direct V6 and schema-1/schema-v7 compatibility. Reordering persona definitions preserves
+canonical population hashes and assignments. A persona ID is structural: changing it changes
+provenance and may change canonical assignment order. Counts determine contiguous person-NNN
+assignments. Name, age, occupation, background and MBTI are noncausal descriptive metadata:
+a descriptive edit changes workbench provenance but leaves mobility, scientific response-input
+fingerprints, normalized evidence and metrics unchanged. Explicit interests, six response
+traits and initial campaign state are causal assumptions and may change response evidence.
+
+Replay reads frozen persona records, creative snapshots and scientific inputs; changing or
+removing bundled template resources cannot change a saved run. Independent binding refuses
+rehashed-but-misassigned sidecars. Scientific replay verifies identical recomputation and
+leaves every source artifact byte unchanged. V8 metrics/reports/studies/viewers explicitly
+support the version; paired studies ignore descriptive identity but reject differing causal
+population profiles or initial state. Campaign/scenario treatments retain the declared study rules.

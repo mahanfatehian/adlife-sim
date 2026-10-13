@@ -53,18 +53,19 @@ bounded:
 
 ```text
 CITY -> CAMPAIGN -> RUN -> INSPECT (packaged vanilla browser)
-        -> loopback schema-1 HTTP
+        -> loopback schema-2 HTTP (schema-1 compatibility)
         -> same-origin, CSRF, size and strict-JSON boundary
         -> packaged city + fictional creative resolution
         -> immutable CityMobility / SpatialCampaignScenario / SpatialResponseInput
         -> one process-local worker: prepare -> publish -> verify
-        -> schema-v7 artifact + immutable run-scoped viewer
+        -> schema-v8 artifact (schema-v7 compatibility) + immutable run-scoped viewer
 ```
 
 `adlife city-workbench --workspace PATH` first checks every unresolved workspace path
 component for links, junctions, reparse points and non-directories, then pins the resolved
 directory identity. HTTP clients never submit filesystem paths, creative copy, derived
-coordinates/hashes, agent IDs or fictional flags. Validation constructs and independently
+coordinates/hashes or mobility agent IDs. Schema-2 clients submit bounded persona IDs and
+explicit `fictional: true` records. Validation constructs and independently
 checks complete domain inputs but performs no network request, reserves no run ID and
 writes no artifact. Job submission repeats that construction synchronously, freezes the
 accepted values, refuses collisions, and hands them to one process-local worker. Its
@@ -80,7 +81,8 @@ completion is accepted only when the verified result matches that receipt.
 
 The browser owns one unsaved draft and presentation state only. It retrieves verified city
 and creative choices, sends the seed as a canonical exact decimal string, and asks the
-server to validate the complete draft before enabling schema-v7 execution. The HTTP adapter
+server to validate the complete draft before enabling schema-v8 execution (schema-v7
+remains the authoritative schema-1 compatibility path). The HTTP adapter
 converts that string once to a bounded Python integer; the existing strict domain
 construction is still authoritative. A browser refresh can recover the active
 process-local job and resume polling from `/api/workbench`, but a process restart cannot
@@ -99,7 +101,7 @@ malformed, and cross-run tokens are refused. Thus a file changed after a page op
 detected on reload rather than silently changing the already-open observation. The legacy
 single-run viewer and workbench routes share one immutable projection service; the latter
 mirrors scientific reads under `/api/runs/{run_id}/...` and serves the same packaged
-inspector at `/runs/{run_id}`. For schema-v7,
+inspector at `/runs/{run_id}`. For schema-v7 and schema-v8,
 `/api/runs/{run_id}/workbench-input` projects verified frozen assumptions and the exact
 creative snapshot; it never exposes a filesystem path or treats the presentation
 projection as canonical artifact bytes. A run-scoped response-capable interaction uses the
@@ -108,11 +110,12 @@ additive GET-only
 opportunity/attention/response pages, and selected-agent final state are built from that
 one immutable context. The legacy `/api/timeline` contract uses its startup-validated
 immutable context, and legacy individual endpoints remain compatible. FastAPI, the worker,
-workspace pinning, CSRF and packaged-resource loading stay outside `adlife.core`; the only
-core addition remains the pure road-coordinate helper shared by construction and geographic
-validation.
+workspace pinning, CSRF and packaged-resource loading stay outside `adlife.core`. The
+core includes pure road-coordinate, V8 manifest and native experiment contracts; none
+imports workbench adapters, providers, HTTP, or storage frameworks.
 
-A workbench execution extends the schema-v6 evidence receipt as schema-v7. Canonical
+A schema-2 workbench execution extends the schema-v6 evidence receipt as schema-v8;
+schema-1 execution remains schema-v7. Canonical
 `inputs/workbench.json` freezes the complete accepted draft and selected creative-template
 snapshot; the final manifest binds its schema and `workbench_input_sha256`. Publication,
 load, replay, metrics, studies and run inspection require a canonical, hash-matching,
@@ -190,7 +193,7 @@ viewing do not contact a public tile service or geocoder and do not accept an ar
 resource URL.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6/v7
+misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6/v7/v8
 `CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
 `CityRunStore`; v1-v3 remain mobility-only.
 V3 freezes the canonical place set and its generated assignment document alongside the
@@ -203,23 +206,25 @@ V6 retains all v5 evidence and adds the four manifest-bound C3c response artifac
 above; ordinary `--spatial-campaign` runs remain v5, while `--spatial-response` selects v6.
 V7 retains the exact V6 scientific evidence and adds only the canonical, manifest-bound
 workbench input sidecar described above.
+V8 freezes schema-2 persona definitions and assignments in that same sidecar while
+retaining V6 scientific evidence and the exact input-2/manifest-8 binding.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute and each applicable evidence layer before reporting
 equality, and `city-view`
-validates before serving one immutable mobility projection. For V4 through V7, the same
+validates before serving one immutable mobility projection. For V4 through V8, the same
 loopback-only read-only adapter serves a bounded summary and canonical, paged
-current-minute opportunity evidence; V5, V6, and V7 additionally serve
-current-minute attention evidence. V6 and V7 add bounded current-minute response records plus final
+current-minute opportunity evidence; V5, V6, V7, and V8 additionally serve
+current-minute attention evidence. V6, V7, and V8 add bounded current-minute response records plus final
 end-of-run campaign state, explicitly not state at the scrubbed minute. `city-view` also
 presents the verified
 full-run `/api/spatial-response-metrics` projection as separate direct-rule and committed-state
 receipts. It does not create or mutate evidence.
 V4 remains opportunity-only evidence, V5 adds bounded synthetic attention evidence, V6
-adds bounded rules-only response evidence, and V7 freezes workbench provenance; none is an
+adds bounded rules-only response evidence, and V7/V8 freeze workbench provenance; none is an
 observed advertising-outcome run.
 
 The adapter-free core exposes the original read-only spatial-metrics projection over
-verified V5, V6, and V7 artifacts. That C4a projection remains attention-only in all three:
+verified V5, V6, V7, and V8 artifacts. That C4a projection remains attention-only in all four:
 it folds opportunity and attention evidence, not response or final-state evidence. Each
 value has an exact numerator, denominator, and source paths and carries
 `synthetic-metrics-not-observed-outcomes`. The matched comparison requires identical city,
@@ -228,16 +233,16 @@ deltas, and labels changed normalized placement/channel structure
 `opportunity-confounded`. It carries
 `synthetic-comparison-not-causal-or-observed-effect`.
 
-Schema V6 and V7 have a separate additive `spatial-response-metrics-v1` projection under
+Schema V6, V7, and V8 have a separate additive `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`. Its event receipts summarize response
 count, reach, frequency, and mean planned rule deltas overall, by channel, and by campaign.
 Its complete-grid state receipts summarize initial, final, and changed brand sentiment,
 recall strength, and purchase-intention proxy overall and by campaign. Channel state is
 intentionally absent: notices from different channels can share one nonlinear committed
 state update, so allocating that state to a channel would invent evidence. The response
-comparison requires V6 or V7 and reports opportunity and response-assumption classifications
+comparison requires V6, V7 or V8 and reports opportunity and response-assumption classifications
 independently. `/api/spatial-metrics` remains the attention-only endpoint;
-`/api/spatial-response-metrics` is a separate GET-only, path-free V6/V7 endpoint.
+`/api/spatial-response-metrics` is a separate GET-only, path-free V6/V7/V8 endpoint.
 
 Bounded C4b evidence is complete without closing the parent C4 gate. The immutable,
 path-free study definition names 2–100 committed seed pairs. `city-study` verifies and
@@ -370,3 +375,19 @@ metrics fold and the stored artifact, a Jinja2 template (autoescape on) lays out
 sections beginning with a synthetic-data disclosure, and one inlined Plotly runtime powers
 the charts with no remote requests. Chart payloads are escaped so no data value can close
 its own script tag.
+
+## Persona compilation and version binding
+
+The only workbench input/manifest pairs are (1,7) and (2,8): schema-1 homogeneous cohort
+maps to schema-v7, schema-2 fictional population maps to schema-v8. The application layer
+materializes canonical persona-ID order into contiguous person-NNN assignments and compiles
+only explicit interests, six response traits and initial campaign state into SpatialResponseInput.
+Name, age, occupation, background and MBTI are noncausal descriptive metadata, excluded from
+scientific response inputs and mobility. IDs/counts/assignments are structural provenance.
+
+V8 load independently cross-binds every assignment/profile/state as well as canonical
+inputs/workbench.json and its hash. Frozen persona records make replay independent of the
+current template catalog. Schema-v8 consumers explicitly include metrics, comparisons,
+native paired studies and viewers; unknown future schemas remain refused. The saved inspector
+uses verified assignments to show fictional names beside immutable person IDs and collapses
+noncausal biography/MBTI. This preserves the token-bound immutable snapshot contract above.

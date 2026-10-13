@@ -956,7 +956,7 @@ def test_schema_v8_inspector_refuses_incomplete_or_misbound_identity_before_rend
             "wrong-trait",
             "wrong-state",
             "missing-name",
-            "oversize-persona",
+            "oversize-background",
         ]
         for mutation in mutations:
             page = browser.new_page()
@@ -1007,8 +1007,10 @@ def test_schema_v8_inspector_refuses_incomplete_or_misbound_identity_before_rend
                     personas[0]["initial_state"]["brand_sentiment"] = -2
                 elif case == "missing-name":
                     personas[0].pop("display_name")
-                elif case == "oversize-persona":
-                    personas[0]["background"] = "😀" * 800
+                elif case == "oversize-background":
+                    # Canonical byte bounds are authoritative on the server; this
+                    # mocked DTO instead exercises the browser's codepoint bound.
+                    personas[0]["background"] = "😀" * 801
                 route.fulfill(json=document)
 
             if mutation in ("wrong-agent-set", "duplicate-agent"):

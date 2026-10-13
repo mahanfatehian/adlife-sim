@@ -1051,10 +1051,117 @@ def test_real_job_completes_without_auto_navigation_and_enters_verified_library(
             assert page.url == original_url
             assert inspect.evaluate("element => document.activeElement === element")
             assert (root / "city-runs" / "browser-complete" / "inputs" / "workbench.json").is_file()
+            from adlife.city.run_store import CityRunStore
+
+            stored = CityRunStore(root).load("browser-complete")
+            assert stored.manifest.schema_version == 8
+            assert stored.workbench_input.schema_version == 2
 
             page.locator("#stage-inspect").click()
             expect(page.locator("#run-library")).to_contain_text("browser-complete")
             expect(page.locator("#run-library a[href='/runs/browser-complete']")).to_be_visible()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_v8_inspector_accepts_authoritative_persona_at_inclusive_byte_limit(tmp_path: Path):
+    from adlife.city.run_store import CityRunStore
+    from adlife.city.runs import create_city_run
+    from adlife.city.workbench_input import WorkbenchRunDraftV2
+    from adlife.city.workbench_validation import construct_workbench_run
+    from adlife.core.domain.serialization import canonical_json
+    from tests.unit.city.test_workbench_input import draft_v2_data
+
+    payload = draft_v2_data(agent_count=1)
+    persona = payload["population"]["personas"][0]
+    persona["traits"] = dict.fromkeys(persona["traits"], 1e-6)
+    persona["initial_state"] = dict.fromkeys(persona["initial_state"], 1e-6)
+    persona["background"] = ""
+    quotient, remainder = divmod(3072 - len(canonical_json(persona).encode("utf-8")), 4)
+    persona["background"] = "\U0001f600" * quotient + "a" * remainder
+    assert len(canonical_json(persona).encode("utf-8")) == 3072
+    validated = construct_workbench_run(
+        WorkbenchRunDraftV2.model_validate_json(json.dumps(payload))
+    )
+    settings = validated.workbench_input.draft.settings
+
+    with _workbench(tmp_path) as (base_url, root):
+        stored = create_city_run(
+            validated.pack,
+            root=root,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+        )
+        assert stored.manifest.schema_version == 8
+        verified = CityRunStore(root).load(settings.run_id)
+        frozen = verified.workbench_input.draft.population.personas[0]
+        assert len(canonical_json(frozen).encode("utf-8")) == 3072
+        before = _artifact_hashes(stored.directory)
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            projected_bytes = page.evaluate(
+                "value => new TextEncoder().encode(JSON.stringify(value)).length",
+                frozen.model_dump(mode="json"),
+            )
+            assert projected_bytes == 3099
+            page.goto(f"{base_url}/runs/{settings.run_id}")
+            expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=15_000)
+            expect(page.locator("#people-list .person")).to_have_count(1)
+            page.locator("#people-list .person").click()
+            page.locator("#identity-context summary").click()
+            expect(page.locator("#identity-background")).to_have_text(persona["background"])
+            assert _artifact_hashes(stored.directory) == before
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+@pytest.mark.parametrize("first_persona", [False, True])
+def test_later_persona_field_errors_are_not_silent_or_unsafe(tmp_path: Path, first_persona):
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            first_path = "population.personas.0.display_name" if first_persona else "settings.seed"
+            first_control = "#persona-display-name" if first_persona else "#seed"
+            unsafe = '<img src="https://outside.invalid/x" onerror="window.errorExecuted=true">'
+            page.route(
+                "**/api/scenarios/validate",
+                lambda route: route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {
+                                "code": "validation-error",
+                                "message": "Study fields were refused.",
+                                "fields": {
+                                    first_path: "Review this value.",
+                                    "population.personas.0.background": unsafe,
+                                },
+                            }
+                        }
+                    ),
+                ),
+            )
+            page.locator("#validate-run").click()
+            expect(page.locator(first_control)).to_be_focused()
+            expect(page.locator("#error-banner-message")).to_contain_text(
+                "Additional persona fields were refused"
+            )
+            assert unsafe not in page.locator("body").inner_text()
+            assert page.locator("#error-banner img").count() == 0
+            assert page.evaluate("window.errorExecuted === undefined")
+            if first_persona:
+                expect(page.locator("#persona-display-name-error")).not_to_be_empty()
         finally:
             browser.close()
             playwright.stop()

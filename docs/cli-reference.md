@@ -119,12 +119,13 @@ local worker, and reopens verified artifacts from the bounded library. The brows
 unsaved draft and presentation state only; the server derives coordinates and remains
 authoritative for validation, collisions, storage, and scientific evidence.
 
-The bundled, no-network shell and schema-1 API report capabilities, list the
-verified fictional city catalog, list complete packaged fictional creative snapshots,
-and validate a bounded scenario through `POST /api/scenarios/validate`. Writes require
+The bundled, no-network shell defaults to schema-2 requests, supports schema-1 compatibility,
+reports capabilities, lists the verified fictional city catalog and complete packaged
+fictional creative snapshots, and validates a bounded scenario through
+`POST /api/scenarios/validate`. Writes require
 an exact same-origin request, exact `application/json`, a per-process CSRF header, and a
 128 KiB body limit. Validation derives roadside coordinates from verified geometry,
-constructs a complete synthetic cohort response grid, and returns only identifiers,
+constructs a complete synthetic persona response grid, and returns only identifiers,
 counts, channels, and canonical hashes. It creates no run directory and reserves no run
 identifier.
 
@@ -137,7 +138,8 @@ The process-local control API exposes these bounded job and discovery routes:
   terminal phase;
 - `POST /api/jobs/{job_id}/cancel` requests cooperative cancellation before persistence;
 - `GET /api/runs?offset=&limit=` lists only independently loaded, verified completed runs;
-- `GET /api/runs/{run_id}/workbench-input` returns the verified schema-v7 bounded
+- `GET /api/persona-templates` returns the four validated fictional persona templates;
+- `GET /api/runs/{run_id}/workbench-input` returns the verified schema-v8/schema-v7 bounded
   assumptions/creative projection with the seed as an exact decimal string;
 - `GET /api/runs/{run_id}/timeline?minute=&agent_id=&...` combines the immutable frame and
   bounded evidence/state pages from one verified run context; `/api/timeline`
@@ -168,7 +170,8 @@ records the accepted city, scenario, campaign, exact decimal seed string, agent 
 days, and rules mode; a completed job is emitted only when its verified result matches
 that receipt.
 
-A successful workbench run is schema-v7: it has the same deterministic spatial evidence as
+A default schema-2 workbench run is schema-v8; schema-1 requests remain schema-v7.
+Both have the same deterministic spatial evidence as
 schema-v6 plus canonical `inputs/workbench.json`. The final manifest binds
 `workbench_input_schema_version` and `workbench_input_sha256`; load, replay, discovery, and
 inspection refuse a missing, changed, noncanonical, or execution-inconsistent sidecar.
@@ -248,8 +251,9 @@ independent summary. For schema-v5, additionally recompute and compare the canon
 attention stream and summary, including the fixed 0.5 model contract. Schema-v6 repeats all
 of those checks, then re-evaluates the frozen response input and verifies the canonical
 response stream, complete final-state document, summary, hashes, bytes, and counts.
-Schema-v7 additionally requires the canonical, hash-bound `inputs/workbench.json` and
-reuses that validated accepted input during replay. Success emits
+Schema-v7 and schema-v8 additionally require the canonical, hash-bound `inputs/workbench.json`
+(input schema 1 and 2, respectively) and reuse that validated accepted input during replay.
+Schema-v8 also verifies the authored population and persona assignments. Success emits
 `"identical": true`; missing, damaged,
 partial, or incompatible artifacts exit 4 without modifying the source files. This
 proves replay against the saved artifact on a compatible implementation/runtime; it
@@ -261,12 +265,12 @@ real-person behavior, or externally valid geographic campaign effects.
 
 Validate a saved run and derive deterministic spatial metrics without changing or caching
 anything in the artifact. `city-metrics --layer attention` is the default and preserves
-the exact prior schema-v5/schema-v6/schema-v7 JSON shape: persisted opportunity and
+the exact prior schema-v5/schema-v6/schema-v7/schema-v8 JSON shape: persisted opportunity and
 attention evidence only, under
 `synthetic-metrics-not-observed-outcomes`, with exact numerator, denominator, and source
 paths. It does not fold response records or final campaign state.
 
-`city-metrics --layer response` requires schema-v6 or schema-v7 and emits the separate
+`city-metrics --layer response` requires schema-v6, schema-v7 or schema-v8 and emits the separate
 `spatial-response-metrics-v1` document under
 `synthetic-response-metrics-not-observed-outcomes`. It reports response count, reach,
 frequency, planned mean rule sentiment/recall deltas, and complete-grid initial/final/change
@@ -279,13 +283,13 @@ not purchase probability or sales. Corrupt, partial, older, or incompatible arti
 
 Compare two fully verified runs only when city, place assignments, trace model, seed,
 duration, and population match. `--layer attention` is the default, retains the exact prior
-output, accepts schema-v5, schema-v6, schema-v7, or mixed compatible evidence, and never
+output, accepts schema-v5, schema-v6, schema-v7, schema-v8, or mixed compatible evidence, and never
 treats
 response state as an attention metric. Same-run A/A produces exact-zero deltas. A changed
 normalized placement/channel structure is `opportunity-confounded`, never a channel effect,
 and the result carries `synthetic-comparison-not-causal-or-observed-effect`.
 
-`city-compare --layer response` requires schema-v6 or schema-v7 and emits
+`city-compare --layer response` requires schema-v6, schema-v7 or schema-v8 and emits
 `spatial-response-metrics-comparison-v1` under
 `synthetic-response-comparison-not-causal-or-observed-effect`. It independently classifies
 opportunity structure as `matched-opportunity-structure` or `opportunity-confounded` and
@@ -298,8 +302,8 @@ exit 4.
 
 Analyze the explicit study definition's 2–100 saved, seed-matched run pairs using the
 contiguous seeds `0..N-1`. Attention-only studies use homogeneous schema-v5, schema-v6,
-or schema-v7 runs; attention-and-response studies require homogeneous schema-v6 or
-schema-v7. Every source is verified, and
+schema-v7 or schema-v8 runs; attention-and-response studies require homogeneous schema-v6,
+schema-v7 or schema-v8. Every source is verified, and
 the command does not rerun, discover, modify, cache, or publish artifacts. There is no
 output or discovery option. The strict path-free JSON definition is capped at 64 KiB.
 JSON emits the fully revalidated compact result; human
@@ -342,18 +346,18 @@ Open a **validated saved** city mobility run in the same read-only browser timel
 at `http://127.0.0.1:8765` (loopback only). The run is fully verified before the
 server binds; a corrupt or partial run exits 4. The HTTP API cannot select another
 run or open a filesystem path. The header displays the saved run ID and artifact
-schema version. For schema-v4, schema-v5, schema-v6, and schema-v7 runs, the viewer adds a
+schema version. For schema-v4, schema-v5, schema-v6, schema-v7, and schema-v8 runs, the viewer adds a
 read-only current-minute opportunity
 panel with persisted totals, channel counts and canonical records for the timeline
 scrubber. Its bounded `/api/opportunities` endpoint accepts a required minute, optional
 saved agent ID, offset and a maximum page size of 100; `/api/opportunity-summary` exposes
 only validated scenario metadata and aggregate counts. Neither endpoint accepts a path or
 changes the run. Every record remains `synthetic-opportunity-not-impression`; the viewer
-does not invent a response or outcome. Schema-v5, schema-v6, and schema-v7 also add bounded
+does not invent a response or outcome. Schema-v5, schema-v6, schema-v7, and schema-v8 also add bounded
 `/api/attention-events` and `/api/attention-summary` endpoints and displays persisted
 current-minute attention evidence. Those records remain
 `synthetic-attention-not-observed-behavior`; noticed means only that the deterministic draw
-was below the uncalibrated 0.5 threshold. Schema-v6 and schema-v7 additionally expose the
+was below the uncalibrated 0.5 threshold. Schema-v6, schema-v7, and schema-v8 additionally expose the
 exact persisted
 response artifact through `/api/response-summary`, bounded and filterable
 `/api/response-events`, and bounded `/api/response-state`. The state endpoint returns
@@ -367,10 +371,10 @@ selection, and refuse stale or inconsistent page responses without replacing the
 committed evidence. Opportunity and attention map markers represent only the displayed
 page; full-minute totals remain unchanged. `--port` accepts 1–65535. Like
 `adlife city`, this interactive command accepts human output mode only and does not launch
-a browser automatically. Schema-v5, schema-v6, and schema-v7 runs also expose a read-only
+a browser automatically. Schema-v5, schema-v6, schema-v7, and schema-v8 runs also expose a read-only
 `/api/spatial-metrics` receipt ledger. It uses the same exact numerator, denominator, and
 source paths as `city-metrics`, remains attention-only, and does not write to the artifact.
-A fully prevalidated schema-v6 or schema-v7 viewer additionally exposes the separate
+A fully prevalidated schema-v6, schema-v7 or schema-v8 viewer additionally exposes the separate
 GET-only, path-free `/api/spatial-response-metrics` document; mutation methods return 405 and older
 or unconfigured runs return 404.
 
@@ -503,3 +507,36 @@ directories are still refused; the destination does not alter mock responses.
 `--format json` prints one document per command; `--format jsonl` prints one JSON object
 per line for stream-shaped output (events, live progress). Diagnostics always go to
 stderr, so `adlife --format json run my-study > doc.json` is clean piped output.
+
+## Fictional persona request contract
+
+Default browser authoring loads GET /api/persona-templates and submits schema-2
+population.personas to POST validation/jobs; schema-1 cohort requests remain schema-v7 compatibility.
+The exact pairs are (1,7) and (2,8), with schema-v8 used for schema-2. The template GET is
+read-only and returns exactly four validated fictional records (catalog ceiling 32,768
+canonical UTF-8 bytes). Requests allow 1–30 agents and 1–7 days. Persona records are capped
+at 3,072 canonical UTF-8 bytes, populations at 98,304 and workbench inputs/HTTP bodies at
+131,072. Counts, versions and seeds are exact bounded integers after seed-string transport;
+non-finite values and unknown members are refused before job reservation.
+
+Each persona has persona_id, count, fictional: true, display_name, optional age (18–65),
+occupation, background and MBTI, plus explicit interests, six traits and initial_state.
+Persona IDs are `persona-001` through `persona-999`; each count is 1–30 and their sum must
+equal `settings.agent_count`. Names/occupation labels are bounded to 80 characters,
+background to 800, and interests to 1–12 unique 1–80-character strings. Optional MBTI
+is null or one of the 16 uppercase labels; it is never converted into numeric assumptions.
+Name, age, occupation, background and MBTI are noncausal. The six causal traits are
+price_sensitivity, novelty_seeking, advertising_skepticism, mobile_recall_encoding,
+roadside_recall_encoding and impulsivity; initial_state contains brand_sentiment,
+recall_strength and purchase_intention. All six traits and recall/intention are finite values
+from 0 through 1; sentiment is from -1 through 1. IDs/counts/assignments are structural, with no
+client-supplied mobility agent IDs, coordinates or hashes. Security screening refuses
+recognized identifiers, credentials, structural secret labels and unsafe display text;
+it does not prove absence of personal information. Supply fictional data only.
+
+The Audience editor supports template selection/add/duplicate/remove, explicit count
+reconciliation, causal editing and server validation; IDs cannot be renamed. V8 verified
+input DTOs expose normalized personas/assignments; the saved inspector collapses noncausal
+context. V8 works with city-view, city-replay, city-metrics, city-compare and homogeneous
+all-v8 city-study sources. Paired studies accept descriptive-only changes and refuse causal
+profile/state changes. Browser comparison/study/report download remains unshipped.

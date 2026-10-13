@@ -180,6 +180,7 @@
     clearFieldErrors();
     let firstControl = null;
     let hasRootError = false;
+    let hasAdditionalPersonaErrors = false;
     if (!isObject(fields)) {
       showBanner("The server refused one or more study fields.");
       return;
@@ -193,7 +194,7 @@
         if (!firstControl) {
           if (state.personaEditor?.focusError(path)) firstControl = document.activeElement;
           else hasRootError = true;
-        }
+        } else hasAdditionalPersonaErrors = true;
         continue;
       }
       const target = targetForField(path);
@@ -213,7 +214,9 @@
         }
       }
     }
-    if (hasRootError) {
+    if (hasAdditionalPersonaErrors) {
+      showBanner("Additional persona fields were refused. Review the audience and validate again.");
+    } else if (hasRootError) {
       showBanner("The server refused one or more study fields. Review the draft and try again.");
     }
     if (firstControl) {

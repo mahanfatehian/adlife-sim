@@ -25,16 +25,17 @@ movement change. All spatial evidence is persisted and replayed from frozen inpu
 schema-v4 runs remain opportunity-only and ordinary schema-v5 runs remain
 opportunity/attention-only.
 
-The loopback D1b workbench publishes that same deterministic rules evidence as schema-v7.
-V7 does not add a new behavioral model: canonical `inputs/workbench.json` freezes the
+The loopback workbench publishes that same deterministic rules evidence as schema-v8 for
+schema-2 persona requests, retaining schema-1/schema-v7 compatibility.
+Neither version adds a new behavioral model: canonical `inputs/workbench.json` freezes the
 complete accepted draft and exact fictional creative-template snapshot, and the manifest's
 `workbench_input_sha256` binds it to the other run inputs. Verified discovery, replay and
 run-scoped inspection refuse a missing, changed, noncanonical or inconsistent sidecar.
 Process-local job progress is operational metadata and has no effect on synthetic outcomes.
 
 The packaged browser operates `CITY -> CAMPAIGN -> RUN -> INSPECT` for this local
-deterministic profile. Its editor assigns the same explicitly displayed interests, traits,
-and initial response-state assumptions to every generated synthetic agent: this is a
+deterministic profile. Its Audience editor assigns explicitly displayed interests, traits,
+and initial response-state assumptions per persona. The schema-1 compatibility path is a
 homogeneous response cohort, not demographic calibration or evidence about a real
 population. The model clock, map animation, playback speed, filtering, and selection are
 presentation only and cannot change the frozen run. Provider-backed city cognition is not
@@ -52,18 +53,21 @@ installed; city responses remain the transparent deterministic rules described h
 
 - Forecasting real market outcomes, sales, or election-like behaviour.
 - Claiming any accuracy, adoption, or investment figure derived from this model.
-- Targeting, scoring, or profiling real people — the model contains none and accepts no
-  real-person data by policy; validation is not proof of fictional identity.
+- Targeting, scoring, or profiling real people, or supplying real-person data; validation
+  is not proof of fictional identity.
 - Operating as a decision system for real advertising spend.
 
 ## Synthetic population construction
 
-Agents are generated from packaged fictional templates: trait draws (attention,
-skepticism, susceptibility, novelty seeking, impulsivity, price sensitivity), interest
-sets and daily routines over the packaged eight-zone world, plus a connected
-relationship graph. Persona validation rejects recognized national identifiers, phone
-numbers, email addresses, and secret patterns. Screening is best effort: it cannot
-establish that an arbitrary name is fictional. Users must supply fictional data only.
+Fictional-only use is an operator policy. Packaged templates are optional, editable
+starting points for city persona authoring; explicit population inputs are also supported.
+The standard zone generator draws traits (attention, skepticism, susceptibility, novelty
+seeking, impulsivity, price sensitivity), interests and daily routines over the packaged
+eight-zone world, plus a connected relationship graph.
+
+Persona validation rejects recognized national identifiers, phone numbers, email addresses,
+and secret patterns. Screening is best effort and cannot prove fictional identity or detect
+all real-person data. Users remain responsible for supplying fictional data only.
 
 The standard CLI/demo initializes `active_need=False` and `disposable_budget=0`; it does
 not generate purchase needs or budgets. Its committed-purchase count is therefore zero
@@ -110,7 +114,7 @@ source provenance, but it contains no real-person trajectories. Its IANA time zo
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
 pilot can optionally assign synthetic home, workplace and leisure points supplied in a
 pack-hash-bound place set. Those points must be routable road nodes, carry explicit
-authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6/v7 replay;
+authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6/v7/v8 replay;
 they are
 scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
@@ -154,8 +158,10 @@ intention values are synthetic internal state: purchase intention is not purchas
 probability, sales, or evidence of effect, and the formulas are not calibrated to any real
 person, city, brand, or population.
 
-Schema-v7 workbench artifacts retain that entire schema-v6 scientific layer and add only
-the manifest-bound `inputs/workbench.json` provenance sidecar. The workbench accepts only
+Schema-v7 and schema-v8 workbench artifacts retain that entire schema-v6 scientific layer
+and bind the canonical `inputs/workbench.json` provenance sidecar (input schema 1 and 2,
+respectively); schema-v8 additionally binds the authored persona population and assignments.
+Replay validates and reuses those accepted inputs. The workbench accepts only
 packaged fictional creatives and deterministic rules; it neither invokes the zone engine's
 language-model providers nor upgrades any geographic validity claim.
 
@@ -167,13 +173,13 @@ intention delta, high-intention count, purchases, and cognition counters — eac
 numerator, denominator, and event/state sources recorded, so provenance is re-derivable
 from the artifact.
 
-For schema-v5, schema-v6, and schema-v7 city runs, the original spatial-metrics fold
+For schema-v5, schema-v6, schema-v7, and schema-v8 city runs, the original spatial-metrics fold
 remains the attention default: it derives exact opportunity, impression, and noticed
 receipts from verified persisted evidence and carries
 `synthetic-metrics-not-observed-outcomes`. It does not consume v6 response or final-state
 evidence.
 
-Schema-v6 and schema-v7 add a separate `spatial-response-metrics-v1` fold under
+Schema-v6, schema-v7, and schema-v8 add a separate `spatial-response-metrics-v1` fold under
 `synthetic-response-metrics-not-observed-outcomes`. It derives direct rule-response receipts
 plus complete initial/final campaign-state receipts. Event evidence may be grouped by
 channel, but nonlinear committed state is only overall/campaign scoped. The response
@@ -237,3 +243,20 @@ re-baseline.
 **Unknown.** The model has not been calibrated against any real-world data, and no claim
 of external validity is made. Its honest use is mechanism study and relative comparison
 inside the synthetic world, not absolute prediction.
+
+## Fictional personas and external validity
+
+Default schema-2 authoring creates schema-v8, with schema-1/schema-v7 homogeneous compatibility.
+Four fictional templates are editable starting assumptions, not real residents or population
+samples. Name, age, occupation, background and MBTI are noncausal descriptive context;
+no personality predictive power, demographic calibration or real-person validity is claimed.
+Only explicit interests, six response traits and initial campaign state enter response equations.
+IDs/counts/assignments are structural; identity does not derive movement or provider prompts.
+The saved inspector shows verified identities with collapsed noncausal biography/MBTI.
+
+Studies remain bounded to 1–30 agents and 1–7 days. Purchase intention is an uncalibrated proxy,
+not a purchase probability or transaction. Screening refuses recognized identifier/secret
+patterns and unsafe display text but cannot prove absence of personal information. Fictional-only
+inputs remain the operator's responsibility. Replay freezes persona records rather than relying
+on current templates; deterministic invariance is an internal software property, not empirical
+validation. No provider-generated personas or identity-derived mobility are implemented.

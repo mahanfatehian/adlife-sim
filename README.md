@@ -23,14 +23,16 @@ structure and changed numeric response assumptions are classified explicitly.
 
 ## Scientific scope
 
-> **Every agent in this simulator is fictional and generated from templates. No real person's data is
-> used, collected, or modelled.** Results are synthetic and exploratory: they describe behaviour *inside
+> **Fictional-only use is an operator policy: do not supply real-person data.** Packaged templates are
+> optional, editable starting points for authored personas, not a restriction to template-only input.
+> Results are synthetic and exploratory: they describe behaviour *inside
 > a synthetic model* and are not a representative survey of, nor a statistically representative
 > prediction about, any real population, market, or country.
 
-This constraint is enforced in code, not merely documented. Persona fields reject national identifiers,
-phone numbers, email addresses, and free-form secrets; provider prompts are minimised and carry no
-filesystem paths; and every generated report renders a synthetic-data disclosure.
+Persona validation rejects recognized national identifiers, phone numbers, email addresses, and secret
+patterns. This screening is best effort and cannot prove fictional identity or detect all real-person
+data. Operators remain responsible for supplying fictional data only. Provider prompts are minimised
+and carry no filesystem paths; generated reports render a synthetic-data disclosure.
 
 The simulator does not make purchasing or targeting decisions for real people, and it does not connect to
 any advertising network.
@@ -92,7 +94,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
 | Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
 | Verified offline, content-addressed city catalog with one `fictional-fixture` entry | Foundation complete; no real city is qualified |
-| Browser-operated local city workbench, immutable schema-v7 inputs, verified run library, and run-scoped inspection | Local deterministic slice complete; one process-local worker and fictional catalog only |
+| Browser-operated local city workbench, immutable schema-v8 persona inputs, verified run library, and run-scoped inspection | Local deterministic slice complete; one process-local worker and fictional catalog only |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
@@ -198,6 +200,19 @@ inspector. The browser keeps only one unsaved in-memory draft. The server remain
 authoritative for geometry, validation, run-ID collisions, artifact integrity, and all
 scientific results.
 
+The CAMPAIGN stage includes an Audience editor: choose from four bundled templates,
+add/duplicate/remove personas, edit counts and explicit assumptions, then validate and run.
+Counts must total 1–30 agents over 1–7 days; changing run agent count never silently changes
+the audience. Persona IDs are immutable in the UI. Saved schema-v8 inspection shows verified
+fictional names beside stable agent IDs; biography and MBTI stay collapsed with a noncausal label.
+
+Name, age, occupation, background and MBTI are descriptive, noncausal context. They do not
+infer response values or mobility. Only explicit interests, six response traits and initial
+campaign state affect response equations. Persona IDs/counts/assignments are structural.
+Purchase intention is an uncalibrated proxy, not a transaction or real purchase probability.
+Screening refuses recognized personal identifiers, credentials and unsafe text; it cannot
+prove the absence of personal information. Supply wholly fictional data only.
+
 Workbench input and control seed values cross the HTTP boundary as canonical exact decimal
 strings from `0` through `9223372036854775807`; the server converts the accepted string
 once to the Python integer used by the deterministic model. One process-local worker reports
@@ -210,10 +225,11 @@ resume polling the same active process through `/api/workbench` and its frozen
 library rediscovers fully verified run artifacts at
 `<workspace>/city-runs/<run-id>/`.
 
-Successful workbench runs are schema-v7 city artifacts. They retain schema-v6 scientific
+Default browser workbench runs use schema-2 fictional personas and schema-v8 city artifacts;
+schema-1 homogeneous cohort requests remain schema-v7 compatibility. Both retain schema-v6 scientific
 evidence and add canonical `inputs/workbench.json`, bound by
-`workbench_input_sha256`, so the accepted city, creative snapshot, campaign, homogeneous
-cohort assumptions, and settings are frozen for load and replay. The scoped inspector
+`workbench_input_sha256`, so the accepted city, creative snapshot, campaign,
+population assumptions, and settings are frozen for load and replay. The scoped inspector
 freshly verifies the artifact when the page opens and exposes its read-only model-clock
 timeline and persisted evidence. That page's reads reuse one opaque-token-bound,
 process-local immutable snapshot; reload and direct tokenless API reads verify the files
@@ -296,15 +312,15 @@ adds no cognition, memory, social propagation, budget mutation, purchase event, 
 change.
 
 `city-replay` recomputes and verifies every layer without changing the source. For verified
-schema-v5, schema-v6, and schema-v7 runs, `city-view` shows read-only
+schema-v5, schema-v6, schema-v7, and schema-v8 runs, `city-view` shows read-only
 current-minute opportunity and current-minute attention evidence on the map and in bounded
-evidence rails; schema-v6 and schema-v7 also show response records and complete end-of-run
+evidence rails; schema-v6, schema-v7, and schema-v8 also show response records and complete end-of-run
 campaign state. It also renders
 the verified full-run response ledger, keeping planned rule deltas separate from committed
 state and retaining exact receipt provenance without changing the scrubbed timeline or
 source run. The existing `/api/spatial-metrics` ledger and default `city-metrics` output
-remain attention-only for all three schema versions under
-`synthetic-metrics-not-observed-outcomes`. Schema-v6 and schema-v7 add the separate
+remain attention-only for all four schema versions under
+`synthetic-metrics-not-observed-outcomes`. Schema-v6, schema-v7, and schema-v8 add the separate
 `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`, selected with `--layer response` or read
 from `/api/spatial-response-metrics`. It reports direct rule-response receipts and
@@ -318,7 +334,7 @@ configuration do not change numeric response values when the frozen response ass
 remain fixed.
 
 `city-metrics` and `city-compare` preserve the exact attention output by default. Their
-additive `--layer response` mode requires schema-v6 or schema-v7 and independently
+additive `--layer response` mode requires schema-v6, schema-v7 or schema-v8 and independently
 classifies opportunity structure and numeric response assumptions. A same-run A/A
 comparison is exactly zero. When
 the normalized placement/channel opportunity structure differs, the result is explicitly
@@ -345,7 +361,7 @@ terminal window for you.
 
 `city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
 schema-v5 spatial runs additionally persist opportunity and attention evidence, schema-v6
-runs add the bounded response/state layer above, and schema-v7 workbench runs add immutable
+runs add the bounded response/state layer above, and schema-v7/schema-v8 workbench runs add immutable
 accepted-input provenance without changing that scientific model. `city-replay` verifies
 the selected contract without changing source artifacts, and `city-view` opens its verified
 mobility projection plus persisted evidence in the same read-only local timeline.
@@ -500,7 +516,7 @@ software produces.
 
 ## Privacy, ethics, and data handling
 
-- Personas are fictional and generated from templates; no real individual is represented.
+- Personas must be fictional; city audiences can be authored from editable templates.
 - Persona inputs screen recognized identifier and secret patterns; screening is best effort and
   cannot prove fictional identity. Users must supply fictional data only.
 - Campaign files are untrusted input: safe YAML loading, and asset paths confined to the project root.

@@ -61,7 +61,7 @@ What this model cannot support. Read alongside the
 - **The D1b workbench is local orchestration, not an enterprise service.** One
   process-local worker executes at most one deterministic-rules job, and operational job
   history disappears on restart; only fully verified run artifacts are rediscovered.
-  Schema-v7 adds canonical `inputs/workbench.json` provenance to schema-v6 evidence, not a
+  Schema-v7/schema-v8 add canonical `inputs/workbench.json` provenance to schema-v6 evidence, not a
   new or calibrated behavior model. The four-stage browser can validate and operate this
   local deterministic workflow, cooperatively cancel before persistence, resume polling
   after a page refresh in the same live process, and reopen the verified library. It does
@@ -70,9 +70,9 @@ What this model cannot support. Read alongside the
   rights-reviewed real city/worldwide catalog. It remains loopback-only and makes no
   observed or calibrated population, traffic, attention, sales, or external-validity
   claim.
-- **The browser workflow does not make the city model more realistic.** It assigns one
-  homogeneous set of interests, response traits, and initial state to every generated
-  synthetic agent. The model clock and day/night presentation are illustrative; fixed
+- **The browser workflow does not make the city model more realistic.** Schema-2 assigns
+  explicit interests, response traits and initial state per fictional persona; schema-1
+  retains one homogeneous set for every synthetic agent. The model clock and day/night presentation are illustrative; fixed
   schedules are not calendar-, daylight-, traffic-, or demand-calibrated. Playback,
   filters, map controls, and selection reveal persisted model evidence but cannot turn it
   into observed residents or outcomes.
@@ -95,14 +95,14 @@ What this model cannot support. Read alongside the
   C3b schema-v5 runs add one synthetic impression per opportunity and a keyed
   noticed/ignored label using a fixed 0.5 probability under
   `synthetic-attention-not-observed-behavior`. The threshold is uncalibrated and is not
-  observed attention. For schema-v5, schema-v6, and schema-v7, the C4a spatial metrics remain
+  observed attention. For schema-v5, schema-v6, schema-v7, and schema-v8, the C4a spatial metrics remain
   attention-only: they summarize verified opportunity/attention files, not response state,
   with exact numerator, denominator, and source paths under
   `synthetic-metrics-not-observed-outcomes`. Schema-v6's separate response layer derives
   `spatial-response-metrics-v1` under
   `synthetic-response-metrics-not-observed-outcomes`; its state receipts are overall and
   campaign scoped, never allocated to a channel.
-- **Schema-v6/schema-v7 response state is an illustrative rules model, not observed behavior.** Only
+- **Schema-v6/schema-v7/schema-v8 response state is an illustrative rules model, not observed behavior.** Only
   a validated noticed record can produce a bounded response and campaign-scoped state
   update under `synthetic-response-not-observed-behavior`. Purchase intention is an
   uncalibrated internal proxy, not purchase probability, sales, or a transaction. Schema-v6
@@ -146,3 +146,21 @@ If paired A/A comparisons under the pinned protocol ever produce nonzero differe
 replay of a stored run fails to reproduce its event stream, the tool's central guarantees
 are broken and its results should not be trusted until fixed. The test suite treats both
 as release blockers.
+
+## Fictional audience limits
+
+Default schema-2 personas produce schema-v8; schema-1/schema-v7 remains the homogeneous
+compatibility path. Names, ages, occupations, backgrounds and MBTI are noncausal descriptive
+metadata, with no real-person validity, demographic calibration or MBTI predictive power.
+Explicit interests, six traits and initial campaign state are causal response assumptions;
+IDs/counts/assignments are structural. Reordering definitions preserves assignments, while
+changing IDs may remap agents. No identity-derived mobility or provider-generated personas
+are implemented. Frozen inputs/workbench.json supports replay independent of current templates.
+
+The Audience editor and verified identity inspector operate within 1–30 agents and 1–7 days.
+Purchase intention is an uncalibrated proxy, never a transaction. Canonical byte ceilings
+(3,072 per persona, 98,304 population, 131,072 input; 32,768 template catalog) bound resource
+use. Screening refuses recognized sensitive identifiers/secrets and unsafe text; it cannot
+prove absence of personal information. Use wholly fictional data only. There is no authenticated
+shared deployment, durable job recovery, worldwide qualified catalog, provider persona generation,
+or full browser comparison/study/report workflow. These limitations remain despite V8 consumer support.

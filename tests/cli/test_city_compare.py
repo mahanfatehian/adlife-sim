@@ -17,6 +17,14 @@ from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run, _s
 from tests.unit.city.test_city_pack import load_pack, pack_data
 
 
+def test_city_compare_help_lists_v8_for_both_run_ids():
+    result = CliRunner().invoke(app, ["city-compare", "--help"], terminal_width=200)
+    assert result.exit_code == 0, result.output
+    help_text = " ".join(result.output.replace("│", " ").split())
+    for arm in ("Control", "Treatment"):
+        assert f"{arm} schema-v5, schema-v6, schema-v7 or schema-v8 city run ID." in help_text
+
+
 @pytest.mark.parametrize("layer", ["attention", "response"])
 def test_city_compare_reads_persisted_v8_read_only(tmp_path, layer):
     _persona_run(tmp_path)

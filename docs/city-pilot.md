@@ -61,16 +61,18 @@ restarts at minute zero. It does not re-execute the scientific model. Use
 `adlife city-replay ROOT RUN_ID` for full deterministic recomputation and digest
 verification against the immutable source artifact.
 
-Successful workbench runs are schema-v7. They retain the schema-v6 opportunity, attention,
+Default schema-2 workbench runs are schema-v8; schema-1 requests remain schema-v7.
+They retain the schema-v6 opportunity, attention,
 response, state, and metric semantics and add canonical `inputs/workbench.json`. The final
-manifest binds `workbench_input_schema_version: 1` and `workbench_input_sha256`; the sidecar
-freezes the accepted city, settings, scenario, cohort assumptions, and exact fictional
+manifest binds `workbench_input_schema_version: 2` (1 for V7) and `workbench_input_sha256`; the sidecar
+freezes the accepted city, settings, scenario, population assumptions, and exact fictional
 creative-template snapshot. Load and replay refuse any missing, noncanonical, changed, or
 inconsistent sidecar. Job IDs, phases, and timestamps are operational process-local state,
 not scientific inputs.
 
-The editor explicitly applies one displayed homogeneous response cohort to all generated
-synthetic agents. This is a controllable modeling assumption, not demographic or behavioral
+The Audience editor assigns explicit per-persona response assumptions to generated
+synthetic agents. The schema-1 compatibility path retains a homogeneous cohort.
+These are controllable modeling assumptions, not demographic or behavioral
 calibration. Its model clock, day/night styling, fixed schedules, movement, exposures,
 attention, and response state are illustrative synthetic evidence. Workbench studies are
 capped at seven model days; month navigation, observed traffic, and calendar-accurate local
@@ -412,7 +414,7 @@ purchase probability, sales, or a transaction. The slice adds no cognition, pros
 output, memory, social propagation, budget mutation, purchase event, or movement change.
 
 The saved-run viewer can inspect persisted current-minute opportunity and
-current-minute attention evidence without changing it. Schema-v6 and schema-v7 additionally
+current-minute attention evidence without changing it. Schema-v6, schema-v7, and schema-v8 additionally
 expose current-minute response/state-update records and complete final end-of-run campaign
 state.
 Opportunity, attention, and response rails page immutable records in canonical order with a
@@ -421,7 +423,7 @@ same-minute agent selection keeps the displayed pages because selection is prese
 A delayed, failed, or inconsistent page cannot replace the last committed evidence, and map
 markers are explicitly scoped to the displayed opportunity or attention page.
 The original read-only `spatial-metrics-v1` projection remains attention-only for
-schema-v5, schema-v6, and schema-v7. It never folds response scores or final state into
+schema-v5, schema-v6, schema-v7, and schema-v8. It never folds response scores or final state into
 metrics; every value records its exact numerator, denominator, and source paths under
 `synthetic-metrics-not-observed-outcomes`.
 
@@ -464,7 +466,7 @@ In this model one persisted notice mechanically creates one response; response c
 rule-processing counts, not engagement, persuasion, or observed acceptance. Purchase
 intention remains an uncalibrated internal proxy, never purchase probability or sales.
 
-Use `city-metrics --layer response` and `city-compare --layer response` for this V6/V7
+Use `city-metrics --layer response` and `city-compare --layer response` for this V6/V7/V8
 layer. The default `--layer attention` preserves the exact prior output. Response
 comparison reports `matched-opportunity-structure` or `opportunity-confounded` separately
 from `matched-response-assumptions` or `response-assumption-confounded`. The viewer exposes
@@ -479,8 +481,8 @@ seed pair is the experimental unit; it never pools agents, notices, events, oppo
 or state rows across seeds. Exact assignment, trace, and optional place-assignment evidence
 must match within a pair—the declared seed alone does not prove common random numbers.
 Attention scope accepts homogeneous schema-v5 (`all-v5`), schema-v6 (`all-v6`), or
-schema-v7 (`all-v7`) inputs; attention-and-response scope accepts homogeneous schema-v6
-(`all-v6`) or schema-v7 (`all-v7`) inputs. Opportunity classification is independently
+schema-v7 (`all-v7`) or schema-v8 (`all-v8`) inputs; attention-and-response scope accepts homogeneous schema-v6
+(`all-v6`) or schema-v7 (`all-v7`) or schema-v8 (`all-v8`) inputs. Opportunity classification is independently
 `matched-opportunity-structure` or `opportunity-confounded`; response assumptions are
 independently `matched-response-assumptions` or `response-assumption-confounded`.
 
@@ -608,21 +610,21 @@ response/state-update counts, campaign count, and complete final-state count. Ea
 v1/v2/v3 runs and schema-v4 opportunity-only runs remain readable. `city-replay` refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
-API has no path or run-selection endpoint. For v4, v5, v6, and v7, a bounded summary endpoint
+API has no path or run-selection endpoint. For v4, v5, v6, v7, and v8, a bounded summary endpoint
 and canonical 100-record pages of current-minute opportunity records drive the read-only
-evidence rail and page-scoped map markers. V5, v6, and v7 add bounded summary and page endpoints
+evidence rail and page-scoped map markers. V5, v6, v7, and v8 add bounded summary and page endpoints
 for current-minute attention; noticed markers reflect only persisted model evidence. The
 browser can traverse every opportunity, attention, and response page with exact ranges while
 keeping only one bounded page per rail in the DOM. Selecting a record changes presentation
 only. The panels retain the literal synthetic claim scopes and create no downstream event.
-V6 and V7 add `/api/response-summary`, paged `/api/response-events`, and paged
+V6, V7, and V8 add `/api/response-summary`, paged `/api/response-events`, and paged
 `/api/response-state`. The state endpoint always labels its values
 `final-end-of-run-not-scrubbed-minute`: changing the timeline does not pretend that final
-state belongs to the scrubbed minute. Schema-v5, schema-v6, and schema-v7 runs also expose
+state belongs to the scrubbed minute. Schema-v5, schema-v6, schema-v7, and schema-v8 runs also expose
 `/api/spatial-metrics` and a metrics evidence ledger. The projection is derived only after
 full artifact validation and has exact
 numerator/denominator/source receipts; it remains attention-only and is not written back to
-the run. A fully prevalidated schema-v6 or schema-v7 viewer additionally exposes the
+the run. A fully prevalidated schema-v6, schema-v7 or schema-v8 viewer additionally exposes the
 separate GET-only `/api/spatial-response-metrics` projection as a full-run response ledger;
 it is likewise derived in memory, never written back, and keeps channel receipts event-only
 rather than inventing channel attribution for nonlinear committed state.
@@ -640,8 +642,24 @@ This is an early product-track slice. The packaged browser now operates the comp
 local deterministic single-run city workbench workflow, but authentication,
 provider/OAuth settings, browser comparison/report operation, rights-reviewed real-city
 data, traffic data, and population calibration are not implemented. Schema-v6 and
-schema-v7 saved runs add bounded, uncalibrated rule response and campaign-state evidence
-to schema-v5 opportunity/attention evidence; schema-v7 additionally freezes workbench
+schema-v7/schema-v8 saved runs add bounded, uncalibrated rule response and campaign-state evidence
+to schema-v5 opportunity/attention evidence; schema-v7/schema-v8 additionally freeze workbench
 inputs. Neither adds cognition, memory, social or purchase events, and neither is a
-validated geographic advertising-outcome study. Adding MBTI labels without
-evidence would not make behavior realistic and is deliberately deferred.
+validated geographic advertising-outcome study. Descriptive, noncausal MBTI labels are
+allowed as optional fictional context. Using MBTI as a causal or predictive input is
+not implemented and is not scientifically validated by this simulator.
+
+## Audience authoring and saved identities
+
+CAMPAIGN includes Audience controls backed by GET /api/persona-templates: four wholly
+fictional starting points with explicit causal values. Add, duplicate, remove and edit
+personas; the last persona cannot be removed. Count totals must match the run's 1–30 agents,
+and runs stay within 1–7 days. Editing any assumption invalidates the validation receipt.
+IDs cannot be renamed. The saved schema-v8 inspector shows names beside immutable agent IDs
+from verified assignments, with biography/MBTI collapsed and labeled noncausal.
+
+Name, age, occupation, background and MBTI never infer numeric traits or mobility. Explicit
+interests, six response traits and initial campaign state are the causal response inputs;
+IDs/counts/assignments determine structure. Templates are not demographic samples. Screening
+refuses recognized personal data/secrets and unsafe text but cannot prove fictional identity.
+Purchase intention remains an uncalibrated proxy; no purchase transactions are simulated.
