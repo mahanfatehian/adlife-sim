@@ -1,6 +1,6 @@
 # Workspace City-Pack Registry Design
 
-**Status:** Proposed; written-spec review required before implementation planning
+**Status:** Approved for implementation planning on 2026-10-13
 **Date:** 2026-10-12
 **Scope:** Safe, offline upload and selection of operator-supplied CityPack V2 files in the local workbench
 

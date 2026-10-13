@@ -1,6 +1,6 @@
 # City Provider Cognition Design
 
-**Status:** Proposed; written-spec review required before implementation planning
+**Status:** Approved for implementation planning on 2026-10-13
 **Date:** 2026-10-12
 **Depends on:** `2026-10-12-city-personas-design.md`
 **Scope:** Optional, provider-backed narrative explanations for deterministic city responses
@@ -85,7 +85,7 @@ Campaign and persona text are delimited as untrusted data. The system instructio
 
 There are no provider-chosen reaction labels, probabilities, valence, relevance, credibility, sharing, rule-modifier, movement, budget, memory, event, identity, or state-update fields. Unknown fields are rejected rather than dropped. Non-finite values, invalid Unicode, control/bidi override characters, secret-like text, request-ID mismatch, and oversized output are invalid.
 
-The UI calls the text an “AI-generated explanation,” never “the person's thoughts,” “reasoning trace,” or “prediction.”
+The UI calls provider/cache text an “AI-generated explanation” and labels rules, mock, fallback, and skipped text by its actual deterministic source. It never calls any explanation “the person's thoughts,” “reasoning trace,” or “prediction.”
 
 ## Deterministic selection and budgets
 

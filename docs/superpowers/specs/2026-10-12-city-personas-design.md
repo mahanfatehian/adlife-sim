@@ -1,6 +1,6 @@
 # City Persona Authoring Design
 
-**Status:** Proposed; written-spec review required before implementation planning
+**Status:** Approved for implementation planning on 2026-10-13
 **Date:** 2026-10-12
 **Scope:** Fictional, per-person identity and response assumptions in the local city workbench
 
