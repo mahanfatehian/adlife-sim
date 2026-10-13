@@ -36,6 +36,7 @@
     capabilities: null,
     cities: [],
     templates: [],
+    personaEditor: null,
     cityDetail: null,
     cityGeneration: 0,
     validationGeneration: 0,
@@ -89,9 +90,7 @@
     ["scenario.roadside.orientation_degrees", ["road-orientation-error", "road-orientation"]],
     ["scenario.roadside.max_view_distance_meters", ["road-distance-error", "road-distance"]],
     ["scenario.roadside.frequency_cap_per_agent_per_day", ["road-cap-error", "road-cap"]],
-    ["cohort.interests", ["cohort-interests-error", null]],
-    ["cohort.traits", ["traits-error", "trait-price"]],
-    ["cohort.initial_state", ["initial-state-error", "initial-sentiment"]],
+    ["population", ["population-error", "persona-use-total"]],
     ["settings.run_id", ["run-id-error", "run-id"]],
     ["settings.agent_count", ["agent-count-error", "agent-count"]],
     ["settings.days", ["days-error", "days"]],
@@ -151,6 +150,7 @@
   }
 
   function clearFieldErrors() {
+    state.personaEditor?.clearErrors();
     const seen = new Set();
     for (const [errorId, controlId] of FIELD_TARGETS.values()) {
       if (!seen.has(errorId)) {
@@ -186,6 +186,12 @@
     for (const [path, message] of Object.entries(fields).slice(0, 32)) {
       if (!boundedText(path, 160) || !boundedText(message, 240)) {
         hasRootError = true;
+        continue;
+      }
+      if (path.startsWith("population.personas.")) {
+        if (!firstControl && state.personaEditor?.focusError(path)) {
+          firstControl = document.activeElement;
+        }
         continue;
       }
       const target = targetForField(path);
@@ -413,8 +419,12 @@
         }
       : null;
 
+    const agentCount = numberValue("agent-count", "settings.agent_count", 1, 30, true);
+    if (!state.personaEditor) throw new DraftError("population", "The fictional audience catalog is unavailable.", null);
+    const issue = state.personaEditor.issue(agentCount);
+    if (issue) throw new DraftError(issue.path, issue.message, null);
     return {
-      schema_version: 1,
+      schema_version: 2,
       city_id: state.cityDetail.city_id,
       scenario: {
         scenario_id: requiredText("scenario-id", "scenario.scenario_id", 80),
@@ -429,25 +439,10 @@
         phone,
         roadside,
       },
-      cohort: {
-        interests: checkedValues("cohort-interest", "cohort.interests"),
-        traits: {
-          price_sensitivity: numberValue("trait-price", "cohort.traits.price_sensitivity", 0, 1),
-          novelty_seeking: numberValue("trait-novelty", "cohort.traits.novelty_seeking", 0, 1),
-          advertising_skepticism: numberValue("trait-skepticism", "cohort.traits.advertising_skepticism", 0, 1),
-          mobile_recall_encoding: numberValue("trait-mobile-recall", "cohort.traits.mobile_recall_encoding", 0, 1),
-          roadside_recall_encoding: numberValue("trait-road-recall", "cohort.traits.roadside_recall_encoding", 0, 1),
-          impulsivity: numberValue("trait-impulsivity", "cohort.traits.impulsivity", 0, 1),
-        },
-        initial_state: {
-          brand_sentiment: numberValue("initial-sentiment", "cohort.initial_state.brand_sentiment", -1, 1),
-          recall_strength: numberValue("initial-recall", "cohort.initial_state.recall_strength", 0, 1),
-          purchase_intention: numberValue("initial-intention", "cohort.initial_state.purchase_intention", 0, 1),
-        },
-      },
+      population: state.personaEditor.serialize(),
       settings: {
         run_id: requiredText("run-id", "settings.run_id", 40),
-        agent_count: numberValue("agent-count", "settings.agent_count", 1, 30, true),
+        agent_count: agentCount,
         days,
         seed: parseSeedText(byId("seed").value),
         response_mode: "deterministic-rules",
@@ -456,12 +451,22 @@
   }
 
   function invalidateValidation(message = "Validate the revised draft before starting a run.") {
+    updateAudienceCount();
     state.validationGeneration += 1;
     state.validatedDraft = null;
     byId("validation-review").hidden = true;
     byId("start-run").disabled = true;
     byId("validation-state").classList.remove("valid");
     setText("validation-state", message);
+  }
+
+  function updateAudienceCount() {
+    if (!state.personaEditor) return;
+    const total = state.personaEditor.total();
+    const mismatch = total !== Number(byId("agent-count").value);
+    setText("persona-count-status", total === null ? "Enter valid audience counts before validation." :
+      `${total} people assigned in the audience · ${byId("agent-count").value || "?"} run agents${mismatch ? " · counts must match" : ""}`);
+    byId("persona-use-total").hidden = !mismatch || total === null || total > 30;
   }
 
   function showStage(stage) {
@@ -574,7 +579,6 @@
       byId("creative-template").value = "fictional-device-launch-v1";
     }
     setNamedChecks("target-interest", ["commuting", "technology"]);
-    setNamedChecks("cohort-interest", ["commuting", "technology"]);
     setNamedChecks("phone-activity", ["commute", "leisure"]);
     byId("relative-price").value = "1.0";
     byId("phone-enabled").checked = true;
@@ -587,21 +591,13 @@
     byId("road-distance").value = "120";
     byId("road-cap").value = "2";
     for (const [id, value] of [
-      ["trait-price", "0.5"],
-      ["trait-novelty", "0.6"],
-      ["trait-skepticism", "0.4"],
-      ["trait-mobile-recall", "0.7"],
-      ["trait-road-recall", "0.6"],
-      ["trait-impulsivity", "0.3"],
-      ["initial-sentiment", "0.0"],
-      ["initial-recall", "0.1"],
-      ["initial-intention", "0.2"],
       ["agent-count", "20"],
       ["days", "2"],
       ["seed", "42"],
     ]) {
       byId(id).value = value;
     }
+    state.personaEditor?.reset(20);
     byId("run-id").dataset.touched = "false";
     byId("run-id").value = suggestedRunId();
     resetSchedules();
@@ -1043,6 +1039,7 @@
 
   function renderLocalDraftError(error) {
     clearFieldErrors();
+    if (state.personaEditor?.focusError(error.path, error.message)) return;
     const target = targetForField(error.path);
     if (target) {
       const [errorId, mappedControl] = target;
@@ -1103,6 +1100,8 @@
     if (
       !isObject(value) ||
       value.schema_version !== 1 ||
+      !((value.workbench_input_schema_version === 1 && value.run_schema_version === 7) ||
+        (value.workbench_input_schema_version === 2 && value.run_schema_version === 8)) ||
       !RUN_ID_PATTERN.test(runId || "") ||
       !ID_PATTERN.test(value.city_id || "") ||
       !ID_PATTERN.test(value.scenario_id || "") ||
@@ -1129,7 +1128,7 @@
       !RUN_ID_PATTERN.test(value.run_id || "") ||
       !Number.isInteger(value.run_schema_version) ||
       value.run_schema_version < 1 ||
-      value.run_schema_version > 7 ||
+      value.run_schema_version > 8 ||
       !ID_PATTERN.test(value.city_id || "") ||
       !SEED_PATTERN.test(value.seed || "") ||
       BigInt(value.seed) > MAX_SEED ||
@@ -1167,7 +1166,7 @@
       const settings = value.accepted_settings;
       if (
         result.run_id !== value.run_id ||
-        result.run_schema_version !== 7 ||
+        result.run_schema_version !== settings.run_schema_version ||
         result.city_id !== settings.city_id ||
         result.scenario_id !== settings.scenario_id ||
         !Array.isArray(result.campaign_ids) ||
@@ -1272,6 +1271,10 @@
       if (statusUrl !== `/api/jobs/${job.job_id}`) {
         throw new RequestError("The worker status address changed unexpectedly.");
       }
+      if (!state.activeJob || job.run_id !== state.activeJob.run_id ||
+          JSON.stringify(job.accepted_settings) !== JSON.stringify(state.activeJob.accepted_settings)) {
+        throw new RequestError("The worker status is incompatible with its accepted settings.");
+      }
       renderJob(job);
       if (TERMINAL_PHASES.has(job.phase)) {
         if (job.phase === "completed") {
@@ -1321,8 +1324,10 @@
       return;
     }
     byId("start-run").disabled = true;
+    const generation = state.validationGeneration;
     try {
       const documentValue = await fetchJson("/api/jobs", { method: "POST", body: draft });
+      if (generation !== state.validationGeneration) return;
       if (
         !isObject(documentValue) ||
         documentValue.schema_version !== 1 ||
@@ -1331,9 +1336,19 @@
         throw new RequestError("The worker acceptance response is incompatible.");
       }
       const job = assertJob(documentValue.job);
+      const accepted = job.accepted_settings;
+      if (job.run_id !== draft.settings.run_id ||
+          accepted.workbench_input_schema_version !== draft.schema_version ||
+          accepted.agent_count !== draft.settings.agent_count || accepted.days !== draft.settings.days ||
+          accepted.seed !== draft.settings.seed || accepted.city_id !== draft.city_id ||
+          accepted.scenario_id !== draft.scenario.scenario_id ||
+          accepted.campaign_id !== draft.scenario.campaign.campaign_id) {
+        throw new RequestError("The worker acceptance is incompatible with the submitted draft.");
+      }
       beginPolling(job, documentValue.status_url);
       announce(`Run ${job.run_id} accepted in ${job.phase} phase.`);
     } catch (error) {
+      if (generation !== state.validationGeneration) return;
       byId("start-run").disabled = false;
       if (error instanceof RequestError && isObject(error.documentValue) && isObject(error.documentValue.error)) {
         const fields = error.documentValue.error.fields;
@@ -1502,6 +1517,13 @@
     byId("start-run").addEventListener("click", startRun);
     byId("cancel-job").addEventListener("click", cancelActiveJob);
     byId("reset-draft").addEventListener("click", resetDraft);
+    byId("persona-use-total").addEventListener("click", () => {
+      const total = state.personaEditor?.total();
+      if (Number.isInteger(total) && total >= 1 && total <= 30) {
+        byId("agent-count").value = String(total);
+        invalidateValidation();
+      }
+    });
     byId("library-previous").addEventListener("click", () => loadRunPage(Math.max(0, state.libraryOffset - state.libraryLimit)));
     byId("library-next").addEventListener("click", () => loadRunPage(state.libraryOffset + state.libraryLimit));
     byId("run-id").addEventListener("input", () => {
@@ -1535,15 +1557,19 @@
     updatePlacementVisibility();
     clearFieldErrors();
     try {
-      const [capabilitiesDocument, catalogDocument, templatesDocument, runsDocument] = await Promise.all([
+      const [capabilitiesDocument, catalogDocument, templatesDocument, runsDocument, personasDocument] = await Promise.all([
         fetchJson("/api/workbench"),
         fetchJson("/api/catalog/cities"),
         fetchJson("/api/creative-templates"),
         fetchJson("/api/runs?offset=0&limit=20"),
+        fetchJson("/api/persona-templates"),
       ]);
       state.capabilities = assertCapabilities(capabilitiesDocument);
       state.cities = assertCatalog(catalogDocument);
       state.templates = assertTemplates(templatesDocument);
+      state.personaEditor = new window.AdLifePersonaEditor(byId("persona-editor"), personasDocument,
+        Number(byId("agent-count").value), () => invalidateValidation(), () => showStage("campaign"));
+      updateAudienceCount();
       renderCatalog();
       renderTemplates();
       renderRunPage(assertRunPage(runsDocument));

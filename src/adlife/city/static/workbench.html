@@ -8,6 +8,8 @@
   <title>AdLife City Workbench</title>
   <link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/workbench.css">
+  <link rel="stylesheet" href="/assets/workbench-personas.css">
+  <script defer src="/assets/workbench-personas.js"></script>
   <script defer src="/assets/workbench.js"></script>
 </head>
 <body>
@@ -204,34 +206,10 @@
             <p id="placements-error" class="field-error" role="status"></p>
           </section>
 
-          <section class="form-section" aria-labelledby="cohort-title">
-            <div class="section-heading"><h2 id="cohort-title">Synthetic audience profile</h2></div>
-            <p class="section-note">This version applies one shared response profile to every synthetic person. These values are model assumptions, not measured demographics.</p>
-            <fieldset class="choice-field" data-field-path="cohort.interests">
-              <legend>Cohort interests</legend>
-              <div class="choice-grid">
-                <label><input type="checkbox" name="cohort-interest" value="commuting" checked> Commuting</label>
-                <label><input type="checkbox" name="cohort-interest" value="technology" checked> Technology</label>
-                <label><input type="checkbox" name="cohort-interest" value="food"> Food</label>
-                <label><input type="checkbox" name="cohort-interest" value="leisure"> Leisure</label>
-              </div>
-              <p id="cohort-interests-error" class="field-error" role="status"></p>
-            </fieldset>
-            <div class="field-grid three trait-grid">
-              <div class="field"><label for="trait-price">Price sensitivity <span>0–1</span></label><input id="trait-price" type="number" min="0" max="1" step="0.1" value="0.5"></div>
-              <div class="field"><label for="trait-novelty">Novelty seeking <span>0–1</span></label><input id="trait-novelty" type="number" min="0" max="1" step="0.1" value="0.6"></div>
-              <div class="field"><label for="trait-skepticism">Ad skepticism <span>0–1</span></label><input id="trait-skepticism" type="number" min="0" max="1" step="0.1" value="0.4"></div>
-              <div class="field"><label for="trait-mobile-recall">Phone recall strength <span>0–1</span></label><input id="trait-mobile-recall" type="number" min="0" max="1" step="0.1" value="0.7"></div>
-              <div class="field"><label for="trait-road-recall">Billboard recall strength <span>0–1</span></label><input id="trait-road-recall" type="number" min="0" max="1" step="0.1" value="0.6"></div>
-              <div class="field"><label for="trait-impulsivity">Impulsivity <span>0–1</span></label><input id="trait-impulsivity" type="number" min="0" max="1" step="0.1" value="0.3"></div>
-            </div>
-            <p id="traits-error" class="field-error" role="status"></p>
-            <div class="field-grid three initial-grid">
-              <div class="field"><label for="initial-sentiment">Initial sentiment <span>−1–1</span></label><input id="initial-sentiment" type="number" min="-1" max="1" step="0.1" value="0.0"></div>
-              <div class="field"><label for="initial-recall">Initial recall <span>0–1</span></label><input id="initial-recall" type="number" min="0" max="1" step="0.1" value="0.1"></div>
-              <div class="field"><label for="initial-intention">Initial purchase-intention proxy <span>0–1</span></label><input id="initial-intention" type="number" min="0" max="1" step="0.1" value="0.2"></div>
-            </div>
-            <p id="initial-state-error" class="field-error" role="status"></p>
+          <section class="form-section" aria-labelledby="audience-title">
+            <div class="section-heading"><h2 id="audience-title">Fictional audience</h2></div>
+            <p id="persona-disclosure">Names, age, occupation, biographies and MBTI describe fictional characters; they do not affect the model. Interests and response values are explicit model inputs. These are assumptions, not measured demographics.</p>
+            <div id="persona-editor"></div>
           </section>
 
           <aside id="provider-boundary" class="boundary-note" role="note">
@@ -283,6 +261,9 @@
             </div>
           </section>
 
+          <p id="persona-count-status" class="section-note" role="status"></p>
+          <button id="persona-use-total" class="button quiet" type="button" hidden>Use audience total as run agent count</button>
+          <p id="population-error" class="field-error" role="status"></p>
           <div id="validation-state" class="validation-state" role="status">Validate the study before starting.</div>
           <div class="stage-actions split">
             <button id="reset-draft" class="button quiet" type="button">Reset draft</button>

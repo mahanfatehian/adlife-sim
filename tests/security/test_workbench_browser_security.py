@@ -18,6 +18,7 @@ from tests.browser.test_city_workbench_browser import (
     _installed_browser,
     _open_page,
     _serve,
+    _set_audience_count,
     _workbench,
 )
 from tests.unit.city import test_workbench_web as web_helpers
@@ -155,6 +156,8 @@ def _job_documents() -> tuple[dict[str, object], dict[str, object]]:
     job_id = "job-" + "a" * 32
     settings = {
         "schema_version": 1,
+        "workbench_input_schema_version": 2,
+        "run_schema_version": 8,
         "city_id": "fictional-grid-v2",
         "scenario_id": "city-study",
         "campaign_id": "fictional-campaign",
@@ -187,11 +190,18 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         shell = client.get("/")
         stylesheet = client.get("/assets/workbench.css")
         script = client.get("/assets/workbench.js")
+        persona_script = client.get("/assets/workbench-personas.js")
+        persona_style = client.get("/assets/workbench-personas.css")
         icon = client.get("/assets/workbench-icon.svg")
         capabilities = client.get("/api/workbench")
 
     assert shell.status_code == stylesheet.status_code == script.status_code == 200
     assert icon.status_code == capabilities.status_code == 200
+    assert persona_script.status_code == persona_style.status_code == 200
+    for asset in (persona_script, persona_style):
+        assert asset.headers["cache-control"] == "no-store"
+        assert asset.headers["x-content-type-options"] == "nosniff"
+        assert asset.headers["content-security-policy"] == shell.headers["content-security-policy"]
     policy = shell.headers["content-security-policy"]
     assert "default-src 'none'" in policy
     assert "script-src 'self'" in policy
@@ -211,6 +221,8 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         "/",
         "/",
         "/assets/workbench-icon.svg",
+        "/assets/workbench-personas.css",
+        "/assets/workbench-personas.js",
         "/assets/workbench.css",
         "/assets/workbench.js",
     ]
@@ -238,8 +250,8 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         "https://",
         "//outside",
     ):
-        assert forbidden not in script.text
-    lowered_css = stylesheet.text.lower()
+        assert forbidden not in script.text + persona_script.text
+    lowered_css = stylesheet.text.lower() + persona_style.text.lower()
     for forbidden in ("@import", "@font-face", "url(", "expression("):
         assert forbidden not in lowered_css
     assert re.search(r"(?m)^\s*behavior\s*:", lowered_css) is None
@@ -517,6 +529,7 @@ def test_real_worker_exception_is_screened_from_dom_response_log_and_artifacts(
             page.locator("#campaign-continue").click()
             page.locator("#run-id").fill("screened-worker-failure")
             page.locator("#agent-count").fill("1")
+            _set_audience_count(page, 1)
             page.locator("#validate-run").click()
             expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
             page.locator("#start-run").click()

@@ -148,6 +148,344 @@ def _artifact_hashes(directory: Path) -> dict[str, str]:
     }
 
 
+def _persona_population(page):
+    return page.locator("#persona-editor").evaluate("root => root.editor.serialize()")
+
+
+def _set_audience_count(page, count: int) -> None:
+    """Explicitly edit counts; changing run settings must never rewrite personas."""
+    page.locator("#stage-campaign").click()
+    page.locator("#persona-count").fill(str(count))
+    page.locator("#campaign-continue").click()
+
+
+def _publish_v7_inspector_fixture(page, root: Path):
+    """Create an explicitly legacy inspector fixture, independent of authoring jobs."""
+    from adlife.city.runs import create_city_run
+    from adlife.city.workbench_transport import parse_workbench_http_draft
+    from adlife.city.workbench_validation import construct_workbench_run
+
+    captured = []
+
+    def capture(route: Route) -> None:
+        captured.append(json.loads(route.request.post_data))
+        route.continue_()
+
+    page.route("**/api/scenarios/validate", capture)
+    page.locator("#validate-run").click()
+    expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+    page.unroute("**/api/scenarios/validate", capture)
+    payload = captured[-1]
+    assert payload["schema_version"] == 2
+    population = payload.pop("population")
+    assert len(population["personas"]) == 1
+    persona = population["personas"][0]
+    payload["schema_version"] = 1
+    payload["cohort"] = {key: persona[key] for key in ("interests", "traits", "initial_state")}
+    validated = construct_workbench_run(parse_workbench_http_draft(payload))
+    settings = validated.workbench_input.draft.settings
+    stored = create_city_run(
+        validated.pack,
+        root=root,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+    assert stored.manifest.schema_version == 7
+    return stored
+
+
+def test_audience_templates_preserve_causal_values_and_submit_schema_two(tmp_path: Path) -> None:
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            expect(page.locator("#persona-disclosure")).to_contain_text("MBTI")
+            page.locator("#persona-template").select_option("persona-004")
+            page.locator("#persona-add").click()
+            page.locator("#persona-remove").click()
+            page.locator("#persona-template").select_option("persona-002")
+            page.locator("#persona-add").click()
+            before = _persona_population(page)["personas"][1]
+            expect(page.locator("#persona-id")).to_have_text("persona-002")
+            assert page.locator("input[name='persona_id']").count() == 0
+            page.locator("#persona-display-name").fill("شخصیت خیالی")
+            page.locator("#persona-description summary").click()
+            page.locator("#persona-occupation").fill("")
+            page.locator("#persona-age").fill("")
+            page.locator("#persona-background").fill("")
+            page.locator("#persona-mbti").select_option("")
+            after = _persona_population(page)["personas"][1]
+            assert after["interests"] == ["books", "cooking"]
+            assert after["traits"] == before["traits"]
+            assert after["initial_state"] == before["initial_state"]
+            assert all(after[key] is None for key in ("age", "occupation", "background", "mbti"))
+            assert after["fictional"] is True
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill("persona-browser")
+            page.locator("#persona-use-total").click()
+            posted = []
+            page.on(
+                "request",
+                lambda req: (
+                    posted.append(json.loads(req.post_data))
+                    if req.method == "POST" and req.url.endswith(("/validate", "/api/jobs"))
+                    else None
+                ),
+            )
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#stage-campaign").click()
+            page.locator("#persona-display-name").fill("شخصیت تازه خیالی")
+            expect(page.locator("#start-run")).to_be_disabled()
+            page.locator("#campaign-continue").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#start-run").click()
+            expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
+            assert posted[-1] == posted[-2]
+            assert posted[-1]["schema_version"] == 2
+            assert "cohort" not in posted[-1]
+            assert posted[-1]["population"]["personas"][1]["interests"] == ["books", "cooking"]
+            manifest = json.loads((root / "city-runs/persona-browser/run.json").read_text())
+            assert manifest["schema_version"] == 8
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_audience_ids_bounds_deep_copy_and_stable_serialization(tmp_path: Path) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            expect(page.locator("#persona-remove")).to_be_disabled()
+            page.locator("#persona-count").fill("1")
+            page.locator("#persona-template").select_option("persona-001")
+            page.locator("#persona-add").click()
+            expect(page.locator("#persona-id")).to_have_text("persona-002")
+            page.locator("#persona-duplicate").click()
+            expect(page.locator("#persona-id")).to_have_text("persona-003")
+            page.locator("#persona-trait-price-sensitivity").fill("0.12")
+            assert _persona_population(page)["personas"][1]["traits"]["price_sensitivity"] == 0.65
+            page.locator("[data-persona-id='persona-002']").click()
+            page.locator("#persona-remove").click()
+            page.locator("#persona-add").click()
+            assert [p["persona_id"] for p in _persona_population(page)["personas"]] == [
+                "persona-001",
+                "persona-003",
+                "persona-002",
+            ]
+            snapshot = _persona_population(page)
+            assert _persona_population(page) == snapshot
+            page.locator("#persona-editor").evaluate(
+                "root => { while(root.editor.serialize().personas.length < 30) "
+                "root.editor.add('persona-001'); }"
+            )
+            expect(page.locator("#persona-roster button")).to_have_count(30)
+            expect(page.locator("#persona-add")).to_be_disabled()
+            expect(page.locator("#persona-duplicate")).to_be_disabled()
+            expect(page.locator("#persona-detail")).to_have_count(1)
+            assert (
+                page.locator("#persona-editor").evaluate("root => root.editor.add('persona-001')")
+                is False
+            )
+            assert len(_persona_population(page)["personas"]) == 30
+            page.locator("#persona-roster button").last.click()
+            expect(page.locator("#persona-id")).to_have_text("persona-030")
+            page.locator("#campaign-continue").click()
+            page.locator("#persona-use-total").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_count_mismatch_never_rewrites_audience_and_blank_count_stays_invalid(
+    tmp_path: Path,
+) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            before = _persona_population(page)
+            page.locator("#campaign-continue").click()
+            page.locator("#agent-count").fill("3")
+            assert _persona_population(page) == before
+            expect(page.locator("#persona-count-status")).to_contain_text("20")
+            page.locator("#persona-use-total").click()
+            expect(page.locator("#agent-count")).to_have_value("20")
+            page.locator("#stage-campaign").click()
+            page.locator("#persona-count").fill("")
+            assert _persona_population(page)["personas"][0]["count"] is None
+            page.locator("#campaign-continue").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#panel-campaign")).to_be_visible()
+            expect(page.locator("#persona-count")).to_be_focused()
+            expect(page.locator("#persona-count-error")).not_to_be_empty()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+@pytest.mark.parametrize(
+    "field,control",
+    [
+        ("background", "persona-background"),
+        ("interests", "persona-interests"),
+        ("traits.mobile_recall_encoding", "persona-trait-mobile-recall-encoding"),
+        ("initial_state.purchase_intention", "persona-initial-purchase-intention"),
+    ],
+)
+def test_indexed_persona_errors_reveal_exact_field_without_reflecting_values(
+    tmp_path: Path,
+    field: str,
+    control: str,
+) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#persona-count").fill("19")
+            page.locator("#persona-add").click()
+            page.locator("[data-persona-id='persona-001']").click()
+            page.route(
+                "**/api/scenarios/validate",
+                lambda route: route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {
+                                "message": "Refused",
+                                "fields": {f"population.personas.1.{field}": "secret-unsafe-value"},
+                            }
+                        }
+                    ),
+                ),
+            )
+            page.locator("#campaign-continue").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#persona-id")).to_have_text("persona-002")
+            expect(page.locator(f"#{control}")).to_be_focused()
+            if field == "background":
+                expect(page.locator("#persona-description")).to_have_attribute("open", "")
+            assert "secret-unsafe-value" not in page.locator("body").inner_text()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_audience_keyboard_small_screen_and_large_text_containment(tmp_path: Path) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url, width=390)
+        try:
+            page.emulate_media(reduced_motion="reduce")
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#persona-template").focus()
+            page.keyboard.press("Tab")
+            expect(page.locator("#persona-add")).to_be_focused()
+            page.keyboard.press("Enter")
+            expect(page.locator("#persona-display-name")).to_be_focused()
+            page.locator("#persona-description summary").focus()
+            page.keyboard.press("Enter")
+            expect(page.locator("#persona-background")).to_be_visible()
+            page.locator("html").evaluate("el => el.style.fontSize = '200%'")
+            assert page.locator("#persona-editor").evaluate(
+                "el => el.scrollWidth <= el.clientWidth"
+            )
+            assert (
+                page.locator("#persona-add").evaluate("el => getComputedStyle(el).animationName")
+                == "none"
+            )
+            page.locator("#persona-editor").screenshot(
+                path=str(
+                    Path(__file__).parents[2] / ".superpowers/sdd/"
+                    "2026-10-13-city-persona-authoring/task-7-audience-390.png"
+                )
+            )
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+@pytest.mark.parametrize("input_version,run_version", [(1, 7), (2, 8)])
+def test_exact_completed_schema_pairs_resume_from_server_authority(
+    tmp_path: Path, input_version: int, run_version: int
+) -> None:
+    from tests.security.test_workbench_browser_security import _job_documents
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            settings, job = _job_documents()
+            summary = _library_summary("city-study-001").model_dump(mode="json")
+            settings.update(
+                workbench_input_schema_version=input_version,
+                run_schema_version=run_version,
+                days=1,
+                agent_count=1,
+            )
+            summary["run_schema_version"] = run_version
+            job.update(phase="completed", can_cancel=False, result=summary)
+
+            def active(route: Route) -> None:
+                response = route.fetch()
+                document = response.json()
+                document["active_job"] = job
+                route.fulfill(response=response, json=document)
+
+            page.route("**/api/workbench", active)
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#stage-run").click()
+            expect(page.locator("#job-inspect-link")).to_be_visible()
+            expect(page.locator("#job-inspect-link")).to_have_attribute(
+                "href", "/runs/city-study-001"
+            )
+            expect(page.locator("#error-banner")).to_be_hidden()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_hostile_persona_text_is_inert_and_interests_are_unfiltered(tmp_path: Path) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            hostile = '<img src="https://outside.invalid/x" onerror="window.personaExecuted=true">'
+            page.locator("#persona-display-name").fill(hostile)
+            page.locator("#persona-interests").fill("crafts\nکتاب\ncustom-interest")  # noqa: RUF001
+            assert _persona_population(page)["personas"][0]["interests"] == [
+                "crafts",
+                "کتاب",
+                "custom-interest",
+            ]
+            expect(page.locator("#persona-roster")).to_contain_text(hostile)
+            assert page.locator("#persona-editor img").count() == 0
+            assert page.evaluate("window.personaExecuted === undefined")
+            assert page.evaluate("localStorage.length === 0 && sessionStorage.length === 0")
+            page.locator("#campaign-continue").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            assert page.locator("#persona-editor img").count() == 0
+            assert page.evaluate("window.personaExecuted === undefined")
+        finally:
+            browser.close()
+            playwright.stop()
+
+
 def test_city_stage_boots_from_verified_local_catalog_without_external_requests(
     tmp_path: Path,
 ) -> None:
@@ -260,8 +598,8 @@ def test_phone_roadside_and_combined_drafts_use_only_verified_placement_inputs(
             page.locator("#city-continue").click()
             page.locator("#campaign-name").fill("A complete fictional campaign")
             page.locator("#relative-price").fill("2.5")
-            page.locator("#trait-novelty").fill("0.8")
-            page.locator("#initial-sentiment").fill("-0.2")
+            page.locator("#persona-trait-novelty-seeking").fill("0.8")
+            page.locator("#persona-initial-brand-sentiment").fill("-0.2")
 
             page.locator("#campaign-continue").click()
             page.locator("#validate-run").click()
@@ -294,8 +632,16 @@ def test_phone_roadside_and_combined_drafts_use_only_verified_placement_inputs(
             assert request_documents[2]["scenario"]["phone"] is not None
             assert request_documents[2]["scenario"]["roadside"] is not None
             assert request_documents[2]["scenario"]["campaign"]["relative_price"] == 2.5
-            assert request_documents[2]["cohort"]["traits"]["novelty_seeking"] == 0.8
-            assert request_documents[2]["cohort"]["initial_state"]["brand_sentiment"] == -0.2
+            assert (
+                request_documents[2]["population"]["personas"][0]["traits"]["novelty_seeking"]
+                == 0.8
+            )
+            assert (
+                request_documents[2]["population"]["personas"][0]["initial_state"][
+                    "brand_sentiment"
+                ]
+                == -0.2
+            )
             serialized = json.dumps(request_documents, sort_keys=True)
             assert "latitude" not in serialized
             assert "longitude" not in serialized
@@ -420,7 +766,9 @@ def test_edit_during_validation_prevents_the_stale_receipt_from_committing(
                 page.locator("#validate-run").click()
                 assert entered.wait(5)
 
-                page.locator("#seed").fill("43")
+                page.locator("#stage-campaign").click()
+                page.locator("#persona-display-name").fill("Revised fictional persona")
+                page.locator("#campaign-continue").click()
                 release.set()
                 expect(page.locator("#validate-run")).to_be_enabled(timeout=10_000)
                 expect(page.locator("#validation-review")).to_be_hidden()
@@ -428,13 +776,58 @@ def test_edit_during_validation_prevents_the_stale_receipt_from_committing(
 
                 page.locator("#validate-run").click()
                 expect(page.locator("#validation-review")).to_be_visible(timeout=10_000)
-                expect(page.locator("#review-seed")).to_have_text("43")
+                expect(page.locator("#review-seed")).to_have_text("42")
             finally:
                 release.set()
                 browser.close()
                 playwright.stop()
     finally:
         release.set()
+
+
+def test_persona_edit_during_job_acceptance_cannot_unlock_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    original = workbench_web._construct_validated_run
+    calls = 0
+
+    def block_submission(payload):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            entered.set()
+            if not release.wait(15):
+                raise RuntimeError("job acceptance gate timed out")
+        return original(payload)
+
+    monkeypatch.setattr(workbench_web, "_construct_validated_run", block_submission)
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#persona-count").fill("1")
+            page.locator("#campaign-continue").click()
+            page.locator("#persona-use-total").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#start-run").click()
+            assert entered.wait(5)
+            page.locator("#stage-campaign").click()
+            page.locator("#persona-display-name").fill("A revised fictional character")
+            with page.expect_response("**/api/jobs"):
+                release.set()
+            page.wait_for_load_state("networkidle")
+            expect(page.locator("#job-panel")).to_be_hidden()
+            expect(page.locator("#job-inspect-link")).to_be_hidden()
+            expect(page.locator("#start-run")).to_be_disabled()
+        finally:
+            release.set()
+            browser.close()
+            playwright.stop()
 
 
 def test_stale_library_page_cannot_replace_a_newer_verified_page(
@@ -510,6 +903,7 @@ def test_real_job_completes_without_auto_navigation_and_enters_verified_library(
             page.locator("#campaign-continue").click()
             page.locator("#run-id").fill("browser-complete")
             page.locator("#agent-count").fill("1")
+            _set_audience_count(page, 1)
             page.locator("#validate-run").click()
             expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
             original_url = page.url
@@ -530,14 +924,14 @@ def test_real_job_completes_without_auto_navigation_and_enters_verified_library(
             playwright.stop()
 
 
-def test_inspector_sends_one_run_bound_snapshot_token_for_all_scoped_reads(
+def test_v7_inspector_sends_one_run_bound_snapshot_token_for_all_scoped_reads(
     tmp_path: Path,
 ) -> None:
     browser_path = _installed_browser()
     run_id = "browser-snapshot"
     scoped_requests: list[object] = []
 
-    with _workbench(tmp_path) as (base_url, _root):
+    with _workbench(tmp_path) as (base_url, root):
         playwright, browser, page = _open_page(browser_path, base_url)
         try:
             page.on(
@@ -553,12 +947,9 @@ def test_inspector_sends_one_run_bound_snapshot_token_for_all_scoped_reads(
             page.locator("#campaign-continue").click()
             page.locator("#run-id").fill(run_id)
             page.locator("#agent-count").fill("1")
-            page.locator("#validate-run").click()
-            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
-            page.locator("#start-run").click()
-            inspect_link = page.locator("#job-inspect-link")
-            expect(inspect_link).to_be_visible(timeout=30_000)
-            inspect_link.click()
+            _set_audience_count(page, 1)
+            _publish_v7_inspector_fixture(page, root)
+            page.goto(f"{base_url}/runs/{run_id}")
             page.wait_for_url(f"{base_url}/runs/{run_id}")
             expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=30_000)
             page.locator("#time-slider").fill("480")
@@ -580,6 +971,7 @@ def test_inspector_sends_one_run_bound_snapshot_token_for_all_scoped_reads(
 def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
     tmp_path: Path,
 ) -> None:
+    """Explicit V7 inspector compatibility; historical node ID is a stable CI selector."""
     browser_path = _installed_browser()
     external_requests: list[str] = []
     console_errors: list[str] = []
@@ -619,6 +1011,7 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
             page.locator("#campaign-continue").click()
             page.locator("#run-id").fill(run_id)
             page.locator("#agent-count").fill("2")
+            _set_audience_count(page, 2)
             page.locator("#days").fill("2")
             page.locator("#seed").fill("9223372036854775807")
             page.locator("#validate-run").click()
@@ -635,18 +1028,15 @@ def test_browser_drives_combined_study_and_inspection_never_changes_artifacts(
                 "creative": page.locator("#review-creative-hash").inner_text(),
             }
             expect(page.locator("#review-seed")).to_have_text("9223372036854775807")
-            page.locator("#start-run").click()
-
-            inspect_link = page.locator("#job-inspect-link")
-            expect(inspect_link).to_be_visible(timeout=30_000)
-            expect(inspect_link).to_have_attribute("href", f"/runs/{run_id}")
+            stored = _publish_v7_inspector_fixture(page, root)
+            review_hashes["workbench-input"] = stored.manifest.workbench_input_sha256
             run_directory = root / "city-runs" / run_id
             before_inspection = _artifact_hashes(run_directory)
             assert "run.json" in before_inspection
             assert "inputs/workbench.json" in before_inspection
             assert len(before_inspection) >= 10
 
-            inspect_link.click()
+            page.goto(f"{base_url}/runs/{run_id}")
             page.wait_for_url(f"{base_url}/runs/{run_id}")
             expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=30_000)
             page.locator("#assumptions-drawer summary").click()
@@ -733,6 +1123,7 @@ def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Explicit V7 maximum inspector fixture; preserve the historical CI node ID."""
     browser_path = _installed_browser()
     external_requests: list[str] = []
     console_errors: list[str] = []
@@ -906,21 +1297,20 @@ def test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive(
             page.locator("#campaign-continue").click()
             page.locator("#run-id").fill(run_id)
             page.locator("#agent-count").fill("30")
+            _set_audience_count(page, 30)
             page.locator("#days").fill("7")
             page.locator("#seed").fill("9223372036854775807")
             page.locator("#validate-run").click()
             expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
 
             run_started = time.perf_counter()
-            page.locator("#start-run").click()
-            inspect_link = page.locator("#job-inspect-link")
-            expect(inspect_link).to_be_visible(timeout=60_000)
+            _publish_v7_inspector_fixture(page, root)
             run_elapsed = time.perf_counter() - run_started
             run_directory = root / "city-runs" / run_id
             before_inspection = _artifact_hashes(run_directory)
             assert len(before_inspection) >= 10
             inspector_started = time.perf_counter()
-            inspect_link.click()
+            page.goto(f"{base_url}/runs/{run_id}")
             page.wait_for_url(f"{base_url}/runs/{run_id}")
             expect(page.locator("#assumptions-status")).to_have_text("Verified", timeout=60_000)
             expect(page.locator("#people-list .person")).to_have_count(30, timeout=60_000)
@@ -1069,6 +1459,7 @@ def test_refresh_resumes_the_exact_active_job_and_polling(
                 page.locator("#campaign-continue").click()
                 page.locator("#run-id").fill("refresh-resume")
                 page.locator("#agent-count").fill("1")
+                _set_audience_count(page, 1)
                 page.locator("#seed").fill("9223372036854775807")
                 page.locator("#validate-run").click()
                 expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
@@ -1128,6 +1519,7 @@ def test_cooperative_cancellation_never_presents_a_completed_artifact(
                 page.locator("#campaign-continue").click()
                 page.locator("#run-id").fill("cancel-browser")
                 page.locator("#agent-count").fill("1")
+                _set_audience_count(page, 1)
                 page.locator("#validate-run").click()
                 expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
                 page.locator("#start-run").click()
@@ -1150,7 +1542,17 @@ def test_cooperative_cancellation_never_presents_a_completed_artifact(
 
 @pytest.mark.parametrize(
     "corruption",
-    ["accepted-seed-mismatch", "external-inspector-url", "encoded-inspector-url"],
+    [
+        "accepted-seed-mismatch",
+        "external-inspector-url",
+        "encoded-inspector-url",
+        "crossed-input",
+        "crossed-run",
+        "future-input",
+        "future-run",
+        "completed-run-mismatch",
+        "accepted-settings-drift",
+    ],
 )
 def test_incompatible_completed_job_never_unlocks_or_requests_inspector(
     tmp_path: Path,
@@ -1160,6 +1562,8 @@ def test_incompatible_completed_job_never_unlocks_or_requests_inspector(
     job_id = "job-" + "a" * 32
     accepted_settings = {
         "schema_version": 1,
+        "workbench_input_schema_version": 2,
+        "run_schema_version": 8,
         "city_id": "fictional-grid-v2",
         "scenario_id": "city-study",
         "campaign_id": "fictional-campaign",
@@ -1184,7 +1588,7 @@ def test_incompatible_completed_job_never_unlocks_or_requests_inspector(
     mismatched_result = {
         "schema_version": 1,
         "run_id": "city-study-001",
-        "run_schema_version": 7,
+        "run_schema_version": 8,
         "city_id": "fictional-grid-v2",
         "city_schema_version": 2,
         "city_sha256": "a" * 64,
@@ -1204,8 +1608,16 @@ def test_incompatible_completed_job_never_unlocks_or_requests_inspector(
             "accepted-seed-mismatch": "/runs/city-study-001",
             "external-inspector-url": "//outside.invalid/run",
             "encoded-inspector-url": "/runs/%2e%2e",
-        }[corruption],
+        }.get(corruption, "/runs/city-study-001"),
     }
+    if corruption in ("crossed-input", "future-input"):
+        accepted_settings["workbench_input_schema_version"] = (
+            1 if corruption == "crossed-input" else 3
+        )
+    if corruption in ("crossed-run", "future-run"):
+        accepted_settings["run_schema_version"] = 7 if corruption == "crossed-run" else 9
+    if corruption == "completed-run-mismatch":
+        mismatched_result["run_schema_version"] = 7
     external_requests: list[str] = []
 
     with _workbench(tmp_path) as (base_url, _root):
@@ -1240,6 +1652,9 @@ def test_incompatible_completed_job_never_unlocks_or_requests_inspector(
                     "can_cancel": False,
                     "result": mismatched_result,
                 }
+                if corruption == "accepted-settings-drift":
+                    completed["accepted_settings"] = {**accepted_settings, "seed": "43"}
+                    completed["result"] = {**mismatched_result, "seed": "43"}
                 route.fulfill(
                     status=200,
                     content_type="application/json",

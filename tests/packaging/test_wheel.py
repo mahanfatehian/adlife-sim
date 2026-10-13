@@ -195,6 +195,8 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "adlife/city/static/workbench.css",
         "adlife/city/static/workbench-icon.svg",
         "adlife/city/static/workbench.js",
+        "adlife/city/static/workbench-personas.js",
+        "adlife/city/static/workbench-personas.css",
     ):
         assert resource in names
     catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
@@ -206,7 +208,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell
     assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell
     assert '<script defer src="/assets/workbench.js"></script>' in shell
-    assert shell.lower().count("<script") == 1
+    assert shell.lower().count("<script") == 2
     assert re.search(r"\son[a-z]+\s*=", shell, flags=re.IGNORECASE) is None
     assert "http://" not in shell and "https://" not in shell
     assert "@import" not in style.lower() and "url(" not in style.lower()
@@ -254,6 +256,14 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
             "    assert [p.persona_id for p in catalog.templates] == "
             "['persona-001', 'persona-002', 'persona-003', 'persona-004']\n"
             "    assert all(p.fictional is True for p in catalog.templates)\n"
+            "    for name, media in [('workbench-personas.js', 'text/javascript'), "
+            "('workbench-personas.css', 'text/css')]:\n"
+            "        asset=client.get('/assets/'+name)\n"
+            "        assert asset.status_code == 200 and len(asset.content) > 100\n"
+            "        assert asset.headers['content-type'].startswith(media)\n"
+            "        assert asset.headers['cache-control'] == 'no-store'\n"
+            "        assert asset.headers['x-content-type-options'] == 'nosniff'\n"
+            "        assert \"script-src 'self'\" in asset.headers['content-security-policy']\n"
             "print(json.dumps(paths))",
             str(scratch / "workspace"),
         ],
@@ -275,6 +285,8 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/assets/workbench-icon.svg",
         "/assets/workbench.css",
         "/assets/workbench.js",
+        "/assets/workbench-personas.js",
+        "/assets/workbench-personas.css",
         "/runs/{run_id}",
         "/static/{asset_name}",
     }

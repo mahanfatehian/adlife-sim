@@ -773,6 +773,22 @@ def create_city_workbench_app(
             headers={"X-Content-Type-Options": "nosniff"},
         )
 
+    @app.get("/assets/workbench-personas.js", include_in_schema=False)
+    def persona_script() -> Response:
+        return Response(
+            _read_packaged_text("workbench-personas.js"),
+            media_type="text/javascript",
+            headers=_SHELL_HEADERS,
+        )
+
+    @app.get("/assets/workbench-personas.css", include_in_schema=False)
+    def persona_stylesheet() -> Response:
+        return Response(
+            _read_packaged_text("workbench-personas.css"),
+            media_type="text/css",
+            headers=_SHELL_HEADERS,
+        )
+
     @app.get("/assets/workbench-icon.svg", include_in_schema=False)
     def icon() -> Response:
         return Response(
