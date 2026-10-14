@@ -13,7 +13,12 @@ from adlife.city import run_store as store_module
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run, replay_city_run
 from adlife.city.workbench_binding import validate_workbench_execution_binding
+from adlife.city.workbench_catalog import WorkbenchCityResolver
 from adlife.city.workbench_input import WorkbenchRunInputV2, parse_workbench_run_input_json
+from adlife.city.workbench_runs import WorkbenchRunRepository
+from adlife.city.workbench_transport import parse_workbench_http_draft
+from adlife.city.workbench_validation import construct_workbench_run
+from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city_run import CityRunManifestV6, CityRunManifestV7
 from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.serialization import canonical_json
@@ -23,6 +28,7 @@ from adlife.core.ports.run_store import (
     StorageError,
     UnsafeRunLocation,
 )
+from tests.integration.test_city_workbench_registry import _document, _roadside_draft
 from tests.unit.city.test_city_run_preparation import _validated
 from tests.unit.city.test_workbench_input import persona_data
 
@@ -419,7 +425,6 @@ def test_v7_loader_explicitly_refuses_schema2_sidecar_without_mutation(tmp_path:
 
 
 def _create_v8(root: Path):
-    from adlife.city.workbench_validation import construct_workbench_run
     from tests.unit.city.test_workbench_validation import persona_draft
 
     validated = construct_workbench_run(persona_draft())
@@ -434,6 +439,72 @@ def _create_v8(root: Path):
         spatial_response=validated.response_input,
         workbench_input=validated.workbench_input,
     )
+
+
+def _create_uploaded_workbench_run(
+    root: Path,
+    *,
+    input_schema_version: int,
+    run_id: str,
+):
+    workspace = prepare_workbench_workspace(root)
+    city_id = f"registered-city-v{input_schema_version}"
+    resolved = WorkbenchCityResolver(workspace).register_city(_document(city_id))
+    wire_draft = _roadside_draft(
+        input_schema_version,
+        city_id=city_id,
+        run_id=run_id,
+    )
+    draft = parse_workbench_http_draft(wire_draft)
+    validated = construct_workbench_run(draft, selected_pack=resolved.pack)
+    repository = WorkbenchRunRepository(workspace)
+    stored = repository.publish(repository.prepare(validated))
+    return workspace, resolved, stored
+
+
+@pytest.mark.parametrize(
+    ("input_schema_version", "run_schema_version"),
+    [(1, 7), (2, 8)],
+)
+def test_uploaded_city_v7_v8_freezes_exact_canonical_bindings(
+    tmp_path: Path,
+    input_schema_version: int,
+    run_schema_version: int,
+) -> None:
+    root = tmp_path / f"uploaded-v{run_schema_version}"
+    run_id = f"frozen-upload-v{run_schema_version}"
+    _workspace, resolved, stored = _create_uploaded_workbench_run(
+        root,
+        input_schema_version=input_schema_version,
+        run_id=run_id,
+    )
+    assert stored.workbench_input is not None
+    assert stored.spatial_scenario is not None
+    assert stored.response_input is not None
+
+    assert stored.manifest.schema_version == run_schema_version
+    assert stored.workbench_input.schema_version == input_schema_version
+    assert stored.workbench_input.draft.city_id == resolved.pack.city_id
+    assert stored.pack == resolved.pack
+    assert stored.manifest.city_sha256 == resolved.pack.fingerprint
+    assert stored.manifest.workbench_input_schema_version == input_schema_version
+    assert stored.manifest.workbench_input_sha256 == stored.workbench_input.fingerprint
+    assert stored.spatial_scenario.city_id == resolved.pack.city_id
+    assert stored.spatial_scenario.city_sha256 == resolved.pack.fingerprint
+    assert stored.response_input.city_sha256 == resolved.pack.fingerprint
+
+    assert (stored.directory / "inputs" / "city.json").read_bytes() == (
+        canonical_json(resolved.pack) + "\n"
+    ).encode("utf-8")
+    assert (stored.directory / "inputs" / "workbench.json").read_bytes() == (
+        canonical_json(stored.workbench_input) + "\n"
+    ).encode("utf-8")
+
+    loaded = CityRunStore(root).load(run_id)
+    assert loaded.pack == resolved.pack
+    assert loaded.workbench_input == stored.workbench_input
+    assert loaded.spatial_scenario == stored.spatial_scenario
+    assert loaded.response_input == stored.response_input
 
 
 def test_v8_canonical_round_trip_and_replay_hash_every_source_artifact(tmp_path: Path) -> None:

@@ -6,12 +6,23 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import CityReplayResult, create_city_run, replay_city_run
+from adlife.city.workbench_catalog import (
+    UnknownWorkbenchCity,
+    WorkbenchCityRegistryUnavailable,
+    WorkbenchCityResolver,
+)
+from adlife.city.workbench_web import create_city_workbench_app
+from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.domain.city import CityPackV2, parse_city_pack_json
 from adlife.core.domain.city_run import CityRunManifestV5
+from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import CorruptRunArtifact
+from tests.integration.test_city_workbench_artifacts import _create_uploaded_workbench_run
 from tests.unit.city.test_city_catalog_contract import write_catalog_root
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
@@ -46,8 +57,8 @@ def test_persona_replay_uses_frozen_inputs_after_template_catalog_changes(
 
 def _file_hashes(directory: Path) -> dict[str, str]:
     return {
-        str(path.relative_to(directory)): sha256(path.read_bytes()).hexdigest()
-        for path in directory.rglob("*")
+        path.relative_to(directory).as_posix(): sha256(path.read_bytes()).hexdigest()
+        for path in sorted(directory.rglob("*"))
         if path.is_file()
     }
 
@@ -302,3 +313,110 @@ def test_spatial_city_run_refuses_city_or_duration_mismatch_before_reserving_id(
                 spatial_scenario=scenario,
             )
         assert not (tmp_path / "city-runs" / run_id).exists()
+
+
+@pytest.mark.parametrize(
+    ("input_schema_version", "run_schema_version"),
+    [(1, 7), (2, 8)],
+)
+def test_uploaded_run_replay_ignores_removed_replaced_and_corrupt_registry(
+    tmp_path: Path,
+    input_schema_version: int,
+    run_schema_version: int,
+) -> None:
+    root = tmp_path / f"registry-independent-v{run_schema_version}"
+    run_id = f"registry-independent-v{run_schema_version}"
+    workspace, resolved, stored = _create_uploaded_workbench_run(
+        root,
+        input_schema_version=input_schema_version,
+        run_id=run_id,
+    )
+    record = workspace.root / "city-packs" / f"{resolved.pack.city_id}.json"
+    before = _file_hashes(stored.directory)
+    baseline = replay_city_run(CityRunStore(root).load(run_id))
+    assert _file_hashes(stored.directory) == before
+
+    record.unlink()
+    with pytest.raises(UnknownWorkbenchCity):
+        WorkbenchCityResolver(prepare_workbench_workspace(root)).resolve_city(resolved.pack.city_id)
+    assert replay_city_run(CityRunStore(root).load(run_id)) == baseline
+    assert _file_hashes(stored.directory) == before
+
+    replacement_data = resolved.pack.model_dump(mode="json")
+    replacement_data["name"] = "Externally replaced operator city"
+    replacement = parse_city_pack_json(canonical_json(replacement_data))
+    assert isinstance(replacement, CityPackV2)
+    assert replacement.fingerprint != resolved.pack.fingerprint
+    record.write_bytes((canonical_json(replacement) + "\n").encode("utf-8"))
+    replacement_resolved = WorkbenchCityResolver(prepare_workbench_workspace(root)).resolve_city(
+        resolved.pack.city_id
+    )
+    assert replacement_resolved.pack.fingerprint == replacement.fingerprint
+    assert replay_city_run(CityRunStore(root).load(run_id)) == baseline
+    assert _file_hashes(stored.directory) == before
+
+    record.write_bytes(b'{"schema_version":2}\n')
+    with pytest.raises(WorkbenchCityRegistryUnavailable):
+        WorkbenchCityResolver(prepare_workbench_workspace(root)).list_cities()
+
+    app = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="fixed-replay-integration-token",
+    )
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        catalog = client.get("/api/catalog/cities")
+        inspector = client.get(f"/runs/{run_id}")
+        metadata = client.get(f"/api/runs/{run_id}/meta")
+        frozen_city = client.get(f"/api/runs/{run_id}/city")
+        frame = client.get(f"/api/runs/{run_id}/frame?minute=0")
+
+    assert catalog.status_code == 409
+    assert catalog.json()["error"]["code"] == "city-registry-unavailable"
+    assert all(
+        response.status_code == 200 for response in (inspector, metadata, frozen_city, frame)
+    )
+    assert metadata.json()["run_schema_version"] == run_schema_version
+    assert metadata.json()["city_sha256"] == resolved.pack.fingerprint
+    assert frozen_city.json()["city_id"] == resolved.pack.city_id
+    assert replay_city_run(CityRunStore(root).load(run_id)) == baseline
+    assert _file_hashes(stored.directory) == before
+
+
+@pytest.mark.parametrize(
+    ("input_schema_version", "run_schema_version"),
+    [(1, 7), (2, 8)],
+)
+def test_uploaded_run_refuses_misbound_frozen_city_without_registry_repair(
+    tmp_path: Path,
+    input_schema_version: int,
+    run_schema_version: int,
+) -> None:
+    root = tmp_path / f"misbound-frozen-v{run_schema_version}"
+    run_id = f"misbound-frozen-v{run_schema_version}"
+    workspace, resolved, stored = _create_uploaded_workbench_run(
+        root,
+        input_schema_version=input_schema_version,
+        run_id=run_id,
+    )
+    original_hashes = _file_hashes(stored.directory)
+    sidecar = stored.directory / "inputs" / "city.json"
+    changed_data = resolved.pack.model_dump(mode="json")
+    changed_data["name"] = "Canonical but causally different frozen city"
+    changed_pack = parse_city_pack_json(canonical_json(changed_data))
+    assert isinstance(changed_pack, CityPackV2)
+    changed_bytes = (canonical_json(changed_pack) + "\n").encode("utf-8")
+    assert changed_pack.fingerprint != resolved.pack.fingerprint
+    sidecar.write_bytes(changed_bytes)
+    tampered_hashes = _file_hashes(stored.directory)
+    assert tampered_hashes != original_hashes
+
+    with pytest.raises(CorruptRunArtifact):
+        replay_city_run(CityRunStore(root).load(run_id))
+
+    registered = WorkbenchCityResolver(prepare_workbench_workspace(workspace.root)).resolve_city(
+        resolved.pack.city_id
+    )
+    assert registered.pack.fingerprint == resolved.pack.fingerprint
+    assert registered.pack.fingerprint != changed_pack.fingerprint
+    assert sidecar.read_bytes() == changed_bytes
+    assert _file_hashes(stored.directory) == tampered_hashes
