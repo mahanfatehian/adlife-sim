@@ -235,6 +235,7 @@ import adlife
 import httpx
 
 from adlife.city.analysis import metrics_for_stored_city_run
+from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import replay_city_run
 from adlife.city.web import create_city_app
@@ -267,6 +268,7 @@ async def _main() -> None:
 
     origins = (
         Path(adlife.__file__).resolve(),
+        Path(inspect.getfile(select_catalog_city)).resolve(),
         Path(inspect.getfile(CityRunStore)).resolve(),
         Path(inspect.getfile(create_city_app)).resolve(),
         Path(inspect.getfile(create_city_workbench_app)).resolve(),
@@ -444,9 +446,19 @@ async def _main() -> None:
     assert ".response-panel" in stylesheet.text
     assert ".response-state-panel" in stylesheet.text
 
+    uploaded_city_id = "wheel-uploaded-city"
+    uploaded_city_document = select_catalog_city("fictional-grid-v2").model_dump(mode="json")
+    uploaded_city_document["city_id"] = uploaded_city_id
+    uploaded_city_document["name"] = "Installed wheel uploaded city"
+    uploaded_city_bytes = json.dumps(
+        uploaded_city_document,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
     workbench_draft = {
         "schema_version": 1,
-        "city_id": "fictional-grid-v2",
+        "city_id": uploaded_city_id,
         "scenario": {
             "scenario_id": "wheel-workbench-study",
             "name": "Installed wheel workbench study",
@@ -524,6 +536,7 @@ async def _main() -> None:
             workbench_draft["population"] = {"personas": list(reversed(personas))}
             encoded_draft = json.dumps(workbench_draft, ensure_ascii=False).encode("utf-8")
             for name, content_type in (
+                ("workbench-city-packs.js", "text/javascript"),
                 ("workbench-personas.js", "text/javascript"),
                 ("workbench-personas.css", "text/css"),
             ):
@@ -535,13 +548,39 @@ async def _main() -> None:
                 assert "innerHTML" not in asset.text
                 assert "https://" not in asset.text and "http://" not in asset.text
                 assert "/assets/" + name in workbench_shell.text
+            assert workbench_shell.text.index("workbench-city-packs.js") < (
+                workbench_shell.text.index("workbench-personas.js")
+            )
             assert workbench_shell.text.index("workbench-personas.js") < workbench_shell.text.index(
                 'src="/assets/workbench.js"'
             )
-            city_detail = await workbench_client.get("/api/catalog/cities/fictional-grid-v2")
+
+            uploaded = await workbench_client.post(
+                "/api/catalog/cities/upload",
+                headers=secure_headers,
+                content=uploaded_city_bytes,
+            )
+            assert uploaded.status_code == 201, uploaded.text
+            uploaded_row = uploaded.json()
+            assert uploaded_row["city_id"] == uploaded_city_id
+            assert (
+                uploaded_row["storage_origin"],
+                uploaded_row["data_origin"],
+                uploaded_row["qualification"],
+            ) == (
+                "workspace-upload",
+                "operator-supplied",
+                "operator-supplied-unreviewed",
+            )
+            assert not ({"path", "filename", "source_path"} & uploaded_row.keys())
+            city_listing = await workbench_client.get("/api/catalog/cities")
+            city_detail = await workbench_client.get(
+                f"/api/catalog/cities/{uploaded_city_id}"
+            )
             assert (
                 workbench_shell.status_code
                 == workbench_script.status_code
+                == city_listing.status_code
                 == city_detail.status_code
                 == 200
             )
@@ -551,7 +590,12 @@ async def _main() -> None:
             assert "RUN" in workbench_shell.text
             assert "INSPECT" in workbench_shell.text
             assert "localStorage" not in workbench_script.text
-            assert city_detail.json()["city_id"] == "fictional-grid-v2"
+            assert uploaded_city_id in {
+                row["city_id"] for row in city_listing.json()["cities"]
+            }
+            assert city_detail.json()["city_id"] == uploaded_city_id
+            assert city_detail.json()["city_sha256"] == uploaded_row["pack_sha256"]
+            assert city_detail.json()["pack"]["city_id"] == uploaded_city_id
 
             accepted = await workbench_client.post(
                 "/api/jobs",
@@ -565,7 +609,7 @@ async def _main() -> None:
                 "schema_version": 1,
                 "workbench_input_schema_version": 2,
                 "run_schema_version": 8,
-                "city_id": "fictional-grid-v2",
+                "city_id": uploaded_city_id,
                 "scenario_id": "wheel-workbench-study",
                 "campaign_id": "wheel-workbench-campaign",
                 "seed": "17",
@@ -587,6 +631,8 @@ async def _main() -> None:
             assert completed_job["phase"] == "completed", completed_job
             assert completed_job["accepted_settings"] == accepted_settings
             assert completed_job["result"]["run_schema_version"] == 8
+            assert completed_job["result"]["city_id"] == uploaded_city_id
+            assert completed_job["result"]["city_sha256"] == uploaded_row["pack_sha256"]
             assert completed_job["result"]["inspector_url"] == "/runs/wheel-workbench"
 
             workbench_directory = root / "city-runs" / "wheel-workbench"
@@ -632,6 +678,7 @@ async def _main() -> None:
             ]
             assert workbench_input.json()["settings"]["seed"] == "17"
             assert workbench_input.json()["run_id"] == "wheel-workbench"
+            assert workbench_input.json()["city_sha256"] == uploaded_row["pack_sha256"]
             assert scoped_frame.json()["minute"] == 0
             assert scoped_timeline.json()["agent_id"] == "person-001"
             assert "function validatedApiBase()" in inspector_script.text
@@ -662,8 +709,11 @@ async def _main() -> None:
 
     workbench_stored = CityRunStore(root).load("wheel-workbench")
     assert workbench_stored.manifest.schema_version == 8
+    assert workbench_stored.pack.city_id == uploaded_city_id
+    assert workbench_stored.manifest.city_sha256 == uploaded_row["pack_sha256"]
     assert workbench_stored.workbench_input is not None
     assert workbench_stored.workbench_input.schema_version == 2
+    assert workbench_stored.workbench_input.draft.city_id == uploaded_city_id
     assert workbench_stored.manifest.workbench_input_schema_version == 2
     population = workbench_stored.workbench_input.draft.population
     assert [p.persona_id for p in population.personas] == ["persona-001", "persona-002"]
@@ -686,12 +736,97 @@ async def _main() -> None:
         == workbench_stored.workbench_input.fingerprint
     )
     directory = sidecar.parent.parent
+
     def hashes():
-        return {p.relative_to(directory).as_posix(): sha256(p.read_bytes()).hexdigest()
-                for p in directory.rglob("*") if p.is_file()}
+        return {
+            p.relative_to(directory).as_posix(): sha256(p.read_bytes()).hexdigest()
+            for p in directory.rglob("*")
+            if p.is_file()
+        }
+
+    async def assert_saved_run_available(client):
+        paths = (
+            "/api/runs?offset=0&limit=100",
+            "/runs/wheel-workbench",
+            "/api/runs/wheel-workbench/meta",
+            "/api/runs/wheel-workbench/city",
+            "/api/runs/wheel-workbench/workbench-input",
+            "/api/runs/wheel-workbench/frame?minute=0",
+        )
+        responses = [await client.get(path) for path in paths]
+        assert all(response.status_code == 200 for response in responses), [
+            (path, response.status_code, response.text)
+            for path, response in zip(paths, responses, strict=True)
+        ]
+        assert responses[2].json()["city_sha256"] == uploaded_row["pack_sha256"]
+        assert responses[3].json()["city_id"] == uploaded_city_id
+        assert responses[4].json()["city_sha256"] == uploaded_row["pack_sha256"]
+
     before_replay = hashes()
     assert replay_city_run(workbench_stored).identical is True
     assert hashes() == before_replay
+
+    restarted = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="installed-wheel-restart-token",
+    )
+    async with restarted.router.lifespan_context(restarted):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=restarted),
+            base_url="http://127.0.0.1",
+        ) as restarted_client:
+            restarted_listing = await restarted_client.get("/api/catalog/cities")
+            restarted_detail = await restarted_client.get(
+                f"/api/catalog/cities/{uploaded_city_id}"
+            )
+            assert restarted_listing.status_code == restarted_detail.status_code == 200
+            assert uploaded_city_id in {
+                row["city_id"] for row in restarted_listing.json()["cities"]
+            }
+            assert restarted_detail.json()["city_sha256"] == uploaded_row["pack_sha256"]
+            await assert_saved_run_available(restarted_client)
+    assert hashes() == before_replay
+
+    registry_record = root / "city-packs" / f"{uploaded_city_id}.json"
+    stored_registry_bytes = registry_record.read_bytes()
+    assert stored_registry_bytes.endswith(b"\\n")
+    assert sha256(stored_registry_bytes[:-1]).hexdigest() == uploaded_row["pack_sha256"]
+    registry_record.unlink()
+
+    without_registry = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="installed-wheel-deleted-registry-token",
+    )
+    async with without_registry.router.lifespan_context(without_registry):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=without_registry),
+            base_url="http://127.0.0.1",
+        ) as deleted_client:
+            deleted_listing = await deleted_client.get("/api/catalog/cities")
+            assert deleted_listing.status_code == 200
+            assert uploaded_city_id not in {
+                row["city_id"] for row in deleted_listing.json()["cities"]
+            }
+            await assert_saved_run_available(deleted_client)
+    assert replay_city_run(CityRunStore(root).load("wheel-workbench")).identical is True
+    assert hashes() == before_replay
+
+    registry_record.write_bytes(b"{")
+    corrupt_registry = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="installed-wheel-corrupt-registry-token",
+    )
+    async with corrupt_registry.router.lifespan_context(corrupt_registry):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=corrupt_registry),
+            base_url="http://127.0.0.1",
+        ) as corrupt_client:
+            corrupt_listing = await corrupt_client.get("/api/catalog/cities")
+            assert corrupt_listing.status_code == 409, corrupt_listing.text
+            await assert_saved_run_available(corrupt_client)
+    assert replay_city_run(CityRunStore(root).load("wheel-workbench")).identical is True
+    assert hashes() == before_replay
+
     legacy_stored = CityRunStore(root).load("wheel-legacy")
     assert legacy_stored.manifest.schema_version == 7
     assert legacy_stored.workbench_input.schema_version == 1
@@ -720,6 +855,9 @@ async def _main() -> None:
                 "workbench_templates_verified": True,
                 "workbench_replay_verified": True,
                 "workbench_source_immutable": True,
+                "workbench_uploaded_city_verified": True,
+                "workbench_registry_restart_verified": True,
+                "workbench_registry_independence_verified": True,
                 "legacy_workbench_run_schema_version": 7,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
@@ -4200,6 +4338,9 @@ def _verify_installed_viewer(
         ("workbench_templates_verified", True),
         ("workbench_replay_verified", True),
         ("workbench_source_immutable", True),
+        ("workbench_uploaded_city_verified", True),
+        ("workbench_registry_restart_verified", True),
+        ("workbench_registry_independence_verified", True),
         ("legacy_workbench_run_schema_version", 7),
         ("workbench_sidecar_verified", True),
         ("workbench_discovery_verified", True),

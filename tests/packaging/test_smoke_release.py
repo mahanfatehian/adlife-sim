@@ -1688,13 +1688,15 @@ def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> Non
     source = smoke_release._VIEWER_PROBE_SOURCE
 
     for required in (
+        "from adlife.city.catalog import select_catalog_city",
         "from adlife.city.workbench_web import create_city_workbench_app",
+        '"/api/catalog/cities/upload",',
         "accepted = await workbench_client.post(",
         '"/api/jobs",',
         "await workbench_client.get(status_url)",
         'await workbench_client.get("/api/runs?offset=0&limit=100")',
         'await workbench_client.get("/assets/workbench.js")',
-        'await workbench_client.get("/api/catalog/cities/fictional-grid-v2")',
+        'f"/api/catalog/cities/{uploaded_city_id}"',
         'await workbench_client.get("/runs/wheel-workbench")',
         'await workbench_client.get("/api/runs/wheel-workbench/meta")',
         '"/api/runs/wheel-workbench/workbench-input"',
@@ -1711,6 +1713,9 @@ def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> Non
         '"workbench_persona_count": 2',
         '"workbench_replay_verified": True',
         '"workbench_source_immutable": True',
+        '"workbench_uploaded_city_verified": True',
+        '"workbench_registry_restart_verified": True',
+        '"workbench_registry_independence_verified": True',
         '"legacy_workbench_run_schema_version": 7',
         '"workbench_input_view_verified": True',
         '"workbench_scoped_frame_verified": True',
@@ -1732,6 +1737,9 @@ def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> Non
         ("workbench_replay_verified", False),
         ("workbench_source_immutable", False),
         ("workbench_source_immutable", None),
+        ("workbench_uploaded_city_verified", False),
+        ("workbench_registry_restart_verified", False),
+        ("workbench_registry_independence_verified", False),
         ("legacy_workbench_run_schema_version", 8),
     ],
 )
@@ -1764,6 +1772,9 @@ def test_parent_refuses_incomplete_persona_wheel_certification(tmp_path, monkeyp
         "workbench_templates_verified": True,
         "workbench_replay_verified": True,
         "workbench_source_immutable": True,
+        "workbench_uploaded_city_verified": True,
+        "workbench_registry_restart_verified": True,
+        "workbench_registry_independence_verified": True,
         "legacy_workbench_run_schema_version": 7,
     }
     if field is not None:
@@ -2213,6 +2224,9 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "workbench_templates_verified": True,
                 "workbench_replay_verified": True,
                 "workbench_source_immutable": True,
+                "workbench_uploaded_city_verified": True,
+                "workbench_registry_restart_verified": True,
+                "workbench_registry_independence_verified": True,
                 "legacy_workbench_run_schema_version": 7,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
