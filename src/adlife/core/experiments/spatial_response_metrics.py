@@ -249,7 +249,7 @@ class SpatialResponseCampaignSeries(SpatialResponseAggregateSeries):
 
 
 class SpatialResponseMetrics(DomainModel):
-    """Frozen provenance and deterministic metrics for a schema-v6/v7/v8 response run."""
+    """Frozen provenance and deterministic metrics for a schema-v6-v9 response run."""
 
     model_config = ConfigDict(hide_input_in_errors=True)
     schema_version: Literal[1] = 1
@@ -257,7 +257,7 @@ class SpatialResponseMetrics(DomainModel):
     claim_scope: Literal["synthetic-response-metrics-not-observed-outcomes"] = (
         "synthetic-response-metrics-not-observed-outcomes"
     )
-    source_run_schema_version: Literal[6, 7, 8] = 6
+    source_run_schema_version: Literal[6, 7, 8, 9] = 6
     opportunity_model_id: Literal["spatial-opportunity-v1"] = "spatial-opportunity-v1"
     attention_model_id: Literal["spatial-attention-v1"] = "spatial-attention-v1"
     response_model_id: Literal["spatial-response-v1"] = "spatial-response-v1"
@@ -284,8 +284,8 @@ class SpatialResponseMetrics(DomainModel):
     @field_validator("source_run_schema_version", mode="before")
     @classmethod
     def exact_source_schema(cls, value: object) -> object:
-        if type(value) is not int or value not in {6, 7, 8}:
-            raise ValueError("source run schema version must be integer 6, 7 or 8")
+        if type(value) is not int or value not in {6, 7, 8, 9}:
+            raise ValueError("source run schema version must be integer 6, 7, 8 or 9")
         return value
 
     @model_validator(mode="after")
@@ -529,7 +529,7 @@ def derive_spatial_response_metrics(
     agent_ids: Collection[str],
     attention_metrics: SpatialMetrics,
 ) -> SpatialResponseMetrics:
-    """Re-derive and summarize one complete schema-v6/v7/v8 spatial response run."""
+    """Re-derive and summarize one complete schema-v6-v9 spatial response run."""
     validated_input, validated_scenario = _validated_response_sources(response_input, scenario)
     validated_opportunities = revalidate_model(
         opportunities,
@@ -551,15 +551,17 @@ def derive_spatial_response_metrics(
         SpatialMetrics,
         label="spatial attention metrics",
     )
-    response_source_version: Literal[6, 7, 8]
+    response_source_version: Literal[6, 7, 8, 9]
     if validated_attention_metrics.source_run_schema_version == 6:
         response_source_version = 6
     elif validated_attention_metrics.source_run_schema_version == 7:
         response_source_version = 7
     elif validated_attention_metrics.source_run_schema_version == 8:
         response_source_version = 8
+    elif validated_attention_metrics.source_run_schema_version == 9:
+        response_source_version = 9
     else:
-        raise ValueError("spatial response metrics require source run schema 6, 7 or 8")
+        raise ValueError("spatial response metrics require source run schema 6, 7, 8 or 9")
     population = _validated_population(agent_ids)
     validate_spatial_response_input(
         validated_input,

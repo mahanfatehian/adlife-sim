@@ -559,7 +559,82 @@ def test_parser_does_not_mutate_the_callers_python_document() -> None:
     assert document == original
 
 
-@pytest.mark.parametrize("version", [1, 2, 3, True, 2.0, "2"])
+def _cognition_receipt_document(*, source: str = "rules", salt: str = "receipt"):
+    def digest(label: str) -> str:
+        return sha256(f"{salt}:{label}".encode()).hexdigest()
+
+    outcomes = dict.fromkeys(
+        ("rules", "mock", "provider", "cache", "fallback", "budget_skipped"), 0
+    )
+    outcomes[source] = 1
+    provider_bound = source in {"provider", "cache", "fallback", "budget_skipped"}
+    return {
+        "cognition_input_sha256": digest("input"),
+        "cognition_input_bytes": 1,
+        "request_schema_version": 1,
+        "result_schema_version": 1,
+        "explainer_id": (
+            f"city-{source}-explainer-v1"
+            if source in {"rules", "mock"}
+            else "city-provider-explainer-v1"
+        ),
+        "prompt_contract_version": 1,
+        "prompt_contract_sha256": digest("prompt"),
+        "result_schema_contract_version": 1,
+        "result_schema_contract_sha256": digest("result-schema"),
+        "selection_policy_version": 1,
+        "selection_policy_sha256": digest("selection"),
+        "fallback_policy_version": 1,
+        "fallback_policy_sha256": digest("fallback"),
+        "provider_profile_snapshot_sha256": digest("profile") if provider_bound else None,
+        "provider_revision_sha256": digest("revision") if provider_bound else None,
+        "effective_settings_sha256": digest("settings"),
+        "budget_allocation_sha256": digest("budget"),
+        "selected_request_count": 1,
+        "outcome_counts": {"schema_version": 1, **outcomes},
+        "terminal_stream_sha256": digest("stream"),
+        "terminal_stream_bytes": 1,
+        "terminal_record_count": 1,
+        "summary_sha256": digest("summary"),
+    }
+
+
+def test_cognition_study_receipt_is_exact_bounded_nonsecret_manifest_provenance() -> None:
+    from adlife.core.experiments import spatial_study
+
+    receipt_type = getattr(spatial_study, "CityCognitionStudyReceiptV1", None)
+    assert receipt_type is not None, "V9 cognition study receipt is not implemented"
+    document = _cognition_receipt_document()
+    receipt = receipt_type.model_validate(document)
+
+    assert set(receipt_type.model_fields) == set(document)
+    assert receipt.model_dump(mode="python") == document
+    for version_field in (
+        "request_schema_version",
+        "result_schema_version",
+        "prompt_contract_version",
+        "result_schema_contract_version",
+        "selection_policy_version",
+        "fallback_policy_version",
+    ):
+        for invalid in (True, 1.0, 2):
+            with pytest.raises(ValueError):
+                receipt_type.model_validate(document | {version_field: invalid})
+    for extra in (
+        {"prompt_text": "hidden provider prompt"},
+        {"provider_configuration": {"base_url": "https://example.invalid"}},
+        {"api_key": "sk-live-abcdefghij"},
+    ):
+        with pytest.raises(ValueError) as error:
+            receipt_type.model_validate(document | extra)
+        assert "sk-live-abcdefghij" not in str(error.value)
+    secret = "sk-live-abcdefghij"
+    with pytest.raises(ValueError) as error:
+        receipt_type.model_validate(document | {"explainer_id": f"city-{secret}-explainer-v1"})
+    assert secret not in str(error.value)
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4, True, 3.0, "3"])
 def test_workbench_receipt_versions_are_exact_and_bounded(version):
     from adlife.core.experiments.spatial_study import SpatialStudyArmReceipt
 
@@ -586,7 +661,9 @@ def test_workbench_receipt_versions_are_exact_and_bounded(version):
         noticed_count=0,
         workbench_input_schema_version=version,
     )
-    if type(version) is int and version in (1, 2):
+    if type(version) is int and version in (1, 2, 3):
+        if version == 3:
+            data["cognition"] = _cognition_receipt_document()
         assert SpatialStudyArmReceipt.model_validate(data).workbench_input_schema_version == version
     else:
         with pytest.raises(ValueError):

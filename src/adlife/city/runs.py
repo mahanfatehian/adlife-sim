@@ -35,6 +35,7 @@ from adlife.core.domain.city_cognition import (
     CITY_COGNITION_RESULT_SCHEMA_SHA256,
     CITY_COGNITION_SELECTION_POLICY_SHA256,
     CityCognitionEffectiveSettingsV1,
+    CityCognitionEvaluationV1,
     CityCognitionInputV1,
     CityCognitionProviderProfileSnapshotV1,
     CityCognitionRequestV1,
@@ -50,6 +51,8 @@ from adlife.core.domain.city_run import (
     CityRunManifestV6,
     CityRunManifestV7,
     CityRunManifestV8,
+    CityRunManifestV9,
+    build_city_cognition_manifest_receipt,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
@@ -62,6 +65,7 @@ from adlife.core.simulation._validation import revalidate_model
 from adlife.core.simulation.city_cognition import (
     allocate_city_cognition_reservations,
     build_city_cognition_requests,
+    validate_city_cognition_evaluation,
 )
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
@@ -125,6 +129,7 @@ class CityReplayResult:
     response_campaign_count: int | None
     final_state_count: int | None
     response_counts: SpatialResponseCounts | None
+    cognition_evaluation: CityCognitionEvaluationV1 | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +145,8 @@ class PreparedCityRun:
     response_input: SpatialResponseInput | None = None
     response_evaluation: SpatialResponseEvaluation | None = None
     workbench_input: WorkbenchRunInputDocument | None = None
+    cognition_input: CityCognitionInputV1 | None = None
+    cognition_evaluation: CityCognitionEvaluationV1 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +443,125 @@ def prepare_city_scientific_run(
     )
 
 
+def finalize_city_run(
+    prepared: PreparedCityScientificRun,
+    *,
+    cognition_input: CityCognitionInputV1,
+    cognition_evaluation: CityCognitionEvaluationV1,
+) -> PreparedCityRun:
+    """Bind complete validated terminal explanations to a schema-9 run manifest."""
+    if type(prepared) is not PreparedCityScientificRun:
+        raise TypeError("prepared must be a PreparedCityScientificRun")
+    if type(cognition_input) is not CityCognitionInputV1:
+        raise TypeError("cognition_input must be a CityCognitionInputV1")
+    if type(cognition_evaluation) is not CityCognitionEvaluationV1:
+        raise TypeError("cognition_evaluation must be a CityCognitionEvaluationV1")
+
+    checked_input = _value_free_revalidate(
+        cognition_input,
+        CityCognitionInputV1,
+        label="city cognition input",
+        refusal="city cognition input failed finalization validation",
+    )
+    checked_evaluation = _value_free_revalidate(
+        cognition_evaluation,
+        CityCognitionEvaluationV1,
+        label="city cognition evaluation",
+        refusal="city cognition evaluation failed finalization validation",
+    )
+    if checked_input != prepared.cognition_input:
+        raise ValueError("city cognition input does not match scientific preparation")
+    try:
+        verified_evaluation = validate_city_cognition_evaluation(
+            checked_input,
+            prepared.cognition_requests,
+            checked_evaluation.records,
+        )
+    except ValueError:
+        raise ValueError(
+            "city cognition evaluation does not match scientific preparation"
+        ) from None
+    if verified_evaluation != checked_evaluation:
+        raise ValueError("city cognition evaluation does not match scientific preparation")
+
+    trace = summarize_city_trace(prepared.mobility)
+    opportunity = summarize_spatial_opportunity_artifact(prepared.opportunity_evaluation)
+    attention = summarize_spatial_attention_artifact(prepared.attention_evaluation)
+    response = summarize_spatial_response_artifact(prepared.response_evaluation)
+    opportunity_summary_bytes = (canonical_json(opportunity) + "\n").encode("utf-8")
+    attention_summary_bytes = (canonical_json(attention) + "\n").encode("utf-8")
+    response_summary_bytes = (canonical_json(response) + "\n").encode("utf-8")
+    places = prepared.mobility.places
+    settings = prepared.workbench_input.draft.settings
+    manifest = CityRunManifestV9(
+        run_id=settings.run_id,
+        package_version=__version__,
+        python_version=(
+            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        ),
+        city_sha256=prepared.pack.fingerprint,
+        agents_sha256=trace.agents_sha256,
+        trace_sha256=trace.trace_sha256,
+        scenario_sha256=prepared.spatial_scenario.fingerprint,
+        opportunity_stream_sha256=opportunity.stream_sha256,
+        opportunity_summary_sha256=sha256(opportunity_summary_bytes).hexdigest(),
+        opportunity_stream_bytes=opportunity.stream_bytes,
+        opportunity_count=opportunity.counts.opportunity_count,
+        attention_stream_sha256=attention.stream_sha256,
+        attention_summary_sha256=sha256(attention_summary_bytes).hexdigest(),
+        attention_stream_bytes=attention.stream_bytes,
+        impression_count=attention.counts.impression_count,
+        noticed_count=attention.counts.noticed_count,
+        spatial_response_schema_version=prepared.response_evaluation.schema_version,
+        spatial_response_model_id=prepared.response_evaluation.model_id,
+        response_input_sha256=prepared.response_input.fingerprint,
+        response_stream_sha256=response.stream_sha256,
+        response_state_sha256=response.state_document_sha256,
+        response_summary_sha256=sha256(response_summary_bytes).hexdigest(),
+        response_stream_bytes=response.stream_bytes,
+        response_count=response.counts.response_count,
+        state_update_count=response.counts.state_update_count,
+        response_campaign_count=response.counts.campaign_count,
+        final_state_count=response.counts.final_state_count,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        frame_count=trace.frame_count,
+        position_count=trace.position_count,
+        city_schema_version=prepared.pack.schema_version,
+        spatial_scenario_schema_version=prepared.spatial_scenario.schema_version,
+        spatial_opportunity_schema_version=prepared.opportunity_evaluation.schema_version,
+        spatial_attention_schema_version=prepared.attention_evaluation.schema_version,
+        spatial_attention_model_id=prepared.attention_evaluation.model_id,
+        place_schema_version=None if places is None else places.schema_version,
+        place_set_sha256=None if places is None else places.fingerprint,
+        place_assignments_sha256=(
+            None
+            if places is None
+            else _document_sha256(prepared.mobility.place_assignment_document())
+        ),
+        workbench_input_schema_version=prepared.workbench_input.schema_version,
+        workbench_input_sha256=prepared.workbench_input.fingerprint,
+        cognition=build_city_cognition_manifest_receipt(
+            checked_input,
+            verified_evaluation,
+        ),
+    )
+    return PreparedCityRun(
+        manifest=manifest,
+        pack=prepared.pack,
+        mobility=prepared.mobility,
+        spatial_scenario=prepared.spatial_scenario,
+        opportunity_evaluation=prepared.opportunity_evaluation,
+        attention_evaluation=prepared.attention_evaluation,
+        response_input=prepared.response_input,
+        response_evaluation=prepared.response_evaluation,
+        workbench_input=prepared.workbench_input,
+        cognition_input=checked_input,
+        cognition_evaluation=verified_evaluation,
+    )
+
+
 def prepare_city_run(
     pack: CityPackDocument,
     *,
@@ -648,6 +774,8 @@ def publish_city_run(prepared: PreparedCityRun, *, root: Path) -> StoredCityRun:
         response_input=prepared.response_input,
         response_evaluation=prepared.response_evaluation,
         workbench_input=prepared.workbench_input,
+        cognition_input=prepared.cognition_input,
+        cognition_evaluation=prepared.cognition_evaluation,
     )
     return StoredCityRun(
         prepared.manifest,
@@ -660,6 +788,8 @@ def publish_city_run(prepared: PreparedCityRun, *, root: Path) -> StoredCityRun:
         response_input=prepared.response_input,
         response_evaluation=prepared.response_evaluation,
         workbench_input=prepared.workbench_input,
+        cognition_input=prepared.cognition_input,
+        cognition_evaluation=prepared.cognition_evaluation,
     )
 
 
@@ -695,7 +825,8 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     """Recompute all minute frames; a mismatch is corruption, never a repair."""
     summary = summarize_city_trace(stored.mobility)
     manifest = stored.manifest
-    if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)):
+    replayed_workbench: WorkbenchRunInputDocument | None = None
+    if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)):
         if stored.workbench_input is None:
             raise CorruptRunArtifact("city run is missing its frozen workbench input")
         try:
@@ -719,6 +850,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             or manifest.workbench_input_sha256 != workbench_input.fingerprint
         ):
             raise CorruptRunArtifact("city run workbench input does not replay identically")
+        replayed_workbench = workbench_input
     elif stored.workbench_input is not None:
         raise CorruptRunArtifact("legacy city run has an undeclared workbench input")
     place_set_sha256: str | None = None
@@ -735,6 +867,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
                     CityRunManifestV6,
                     CityRunManifestV7,
                     CityRunManifestV8,
+                    CityRunManifestV9,
                 ),
             )
             and manifest.place_schema_version is not None
@@ -773,6 +906,8 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     response_campaign_count: int | None = None
     final_state_count: int | None = None
     response_counts: SpatialResponseCounts | None = None
+    replayed_response_evaluation: SpatialResponseEvaluation | None = None
+    cognition_evaluation: CityCognitionEvaluationV1 | None = None
     if isinstance(
         manifest,
         (
@@ -781,6 +916,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             CityRunManifestV6,
             CityRunManifestV7,
             CityRunManifestV8,
+            CityRunManifestV9,
         ),
     ):
         if stored.spatial_scenario is None or stored.opportunity_evaluation is None:
@@ -799,7 +935,14 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         if opportunity_evaluation != stored.opportunity_evaluation:
             raise CorruptRunArtifact("city run spatial evidence does not replay identically")
         if isinstance(
-            manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+            manifest,
+            (
+                CityRunManifestV5,
+                CityRunManifestV6,
+                CityRunManifestV7,
+                CityRunManifestV8,
+                CityRunManifestV9,
+            ),
         ):
             if stored.attention_evaluation is None:
                 raise CorruptRunArtifact("city run is missing its frozen attention evidence")
@@ -820,7 +963,15 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             attention_counts = attention_summary.counts
             if attention_evaluation != stored.attention_evaluation:
                 raise CorruptRunArtifact("city run attention evidence does not replay identically")
-            if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)):
+            if isinstance(
+                manifest,
+                (
+                    CityRunManifestV6,
+                    CityRunManifestV7,
+                    CityRunManifestV8,
+                    CityRunManifestV9,
+                ),
+            ):
                 if stored.response_input is None or stored.response_evaluation is None:
                     raise CorruptRunArtifact("city run is missing its frozen response evidence")
                 response_evaluation = evaluate_spatial_responses(
@@ -848,6 +999,51 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
                     raise CorruptRunArtifact(
                         "city run response evidence does not replay identically"
                     )
+                replayed_response_evaluation = response_evaluation
+    if isinstance(manifest, CityRunManifestV9):
+        if (
+            not isinstance(replayed_workbench, WorkbenchRunInputV3)
+            or not isinstance(stored.pack, CityPackV2)
+            or stored.cognition_input is None
+            or stored.cognition_evaluation is None
+            or stored.spatial_scenario is None
+            or stored.response_input is None
+            or replayed_response_evaluation is None
+        ):
+            raise CorruptRunArtifact("city run is missing its frozen cognition evidence")
+        try:
+            cognition_context = build_city_cognition_run_context(
+                replayed_workbench,
+                pack=stored.pack,
+                spatial_scenario=stored.spatial_scenario,
+                response_input=stored.response_input,
+                response_evaluation=replayed_response_evaluation,
+            )
+            cognition_requests = build_city_cognition_requests(
+                cognition_context,
+                stored.mobility,
+                replayed_response_evaluation,
+            )
+            cognition_evaluation = validate_city_cognition_evaluation(
+                stored.cognition_input,
+                cognition_requests,
+                stored.cognition_evaluation.records,
+            )
+            cognition_receipt = build_city_cognition_manifest_receipt(
+                stored.cognition_input,
+                cognition_evaluation,
+            )
+        except ValueError:
+            raise CorruptRunArtifact(
+                "city run cognition evidence does not replay identically"
+            ) from None
+        if (
+            cognition_evaluation != stored.cognition_evaluation
+            or cognition_receipt != manifest.cognition
+        ):
+            raise CorruptRunArtifact("city run cognition evidence does not replay identically")
+    elif stored.cognition_input is not None or stored.cognition_evaluation is not None:
+        raise CorruptRunArtifact("legacy city run has undeclared cognition evidence")
     if (
         stored.pack.fingerprint != manifest.city_sha256
         or summary.agents_sha256 != manifest.agents_sha256
@@ -870,6 +1066,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
                     CityRunManifestV6,
                     CityRunManifestV7,
                     CityRunManifestV8,
+                    CityRunManifestV9,
                 ),
             )
             and (
@@ -883,7 +1080,13 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         or (
             isinstance(
                 manifest,
-                (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8),
+                (
+                    CityRunManifestV5,
+                    CityRunManifestV6,
+                    CityRunManifestV7,
+                    CityRunManifestV8,
+                    CityRunManifestV9,
+                ),
             )
             and (
                 attention_model_id != manifest.spatial_attention_model_id
@@ -895,7 +1098,15 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
             )
         )
         or (
-            isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8))
+            isinstance(
+                manifest,
+                (
+                    CityRunManifestV6,
+                    CityRunManifestV7,
+                    CityRunManifestV8,
+                    CityRunManifestV9,
+                ),
+            )
             and (
                 response_model_id != manifest.spatial_response_model_id
                 or response_input_sha256 != manifest.response_input_sha256
@@ -948,6 +1159,7 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         response_campaign_count=response_campaign_count,
         final_state_count=final_state_count,
         response_counts=response_counts,
+        cognition_evaluation=cognition_evaluation,
     )
 
 
@@ -956,6 +1168,7 @@ __all__ = [
     "PreparedCityRun",
     "PreparedCityScientificRun",
     "create_city_run",
+    "finalize_city_run",
     "prepare_city_run",
     "prepare_city_scientific_run",
     "publish_city_run",

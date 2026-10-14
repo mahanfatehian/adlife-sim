@@ -2,15 +2,45 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
+from adlife.adapters.cognition.city_cache import CityCognitionCache
+from adlife.adapters.cognition.city_credentials import (
+    CityCredentialStore,
+    OSKeyringCityCredentialStore,
+    ResolvedCredential,
+)
+from adlife.adapters.cognition.city_endpoint_policy import (
+    BoundProviderEndpoint,
+    CityEndpointPolicy,
+)
+from adlife.adapters.cognition.city_openai_compatible import CityOpenAICompatibleProvider
+from adlife.adapters.cognition.city_service import (
+    CityCognitionCancellation,
+    CityCognitionService,
+)
+from adlife.city.provider_profiles import (
+    ProviderProfileRegistry,
+    ProviderProfileRevisionV1,
+)
+from adlife.city.provider_runtime import ProviderRuntimePolicy, build_provider_runtime_policy
 from adlife.city.run_store import CityRunStore, StoredCityRun
-from adlife.city.runs import PreparedCityRun, prepare_city_run, publish_city_run
+from adlife.city.runs import (
+    PreparedCityRun,
+    PreparedCityScientificRun,
+    finalize_city_run,
+    prepare_city_run,
+    prepare_city_scientific_run,
+    publish_city_run,
+)
+from adlife.city.workbench_input import WorkbenchRunInputV3
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
@@ -24,6 +54,7 @@ from adlife.core.ports.run_store import (
     UnsafeRunLocation,
     validate_run_id,
 )
+from adlife.core.simulation.city_cognition import allocate_city_cognition_reservations
 
 MAX_DISCOVERY_CANDIDATES = 256
 MAX_RUN_PAGE_LIMIT = 100
@@ -42,7 +73,7 @@ class WorkbenchRunSummary(DomainModel):
 
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
-    run_schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8]
+    run_schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8, 9]
     city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     city_schema_version: Literal[1, 2]
     city_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -63,6 +94,13 @@ class WorkbenchRunSummary(DomainModel):
     impression_count: int = Field(ge=0, le=520_800)
     noticed_count: int = Field(ge=0, le=520_800)
     response_count: int = Field(ge=0, le=520_800)
+    cognition_mode: Literal["rules", "mock", "local", "remote"] | None = None
+    provider_profile_id: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9-]{0,63}$",
+    )
+    provider_revision_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
+    aggregate_output_token_ceiling: int | None = Field(default=None, ge=0, le=92_160)
     inspector_url: str = Field(pattern=r"^/runs/[a-z0-9][a-z0-9-]{0,39}$", max_length=46)
 
     @field_validator("run_schema_version", "city_schema_version", mode="before")
@@ -91,32 +129,51 @@ class WorkbenchRunSummary(DomainModel):
             raise ValueError("run summary campaign identifiers must be unique and canonical")
         if self.channels != tuple(sorted(set(self.channels))):
             raise ValueError("run summary channels must be unique and canonical")
-        if self.run_schema_version < 4 and self.opportunity_count != 0:
+        if self.run_schema_version in {1, 2, 3} and self.opportunity_count != 0:
             raise ValueError("legacy run summary cannot carry opportunity evidence")
-        if self.run_schema_version >= 5:
+        if self.run_schema_version in {5, 6, 7, 8, 9}:
             if self.impression_count != self.opportunity_count:
                 raise ValueError("run summary impressions must match opportunities")
         elif self.impression_count != 0 or self.noticed_count != 0:
             raise ValueError("run summary cannot carry unavailable attention evidence")
         if self.noticed_count > self.impression_count:
             raise ValueError("run summary notices cannot exceed impressions")
-        if self.run_schema_version >= 6:
+        if self.run_schema_version in {6, 7, 8, 9}:
             if self.response_count != self.noticed_count:
                 raise ValueError("run summary responses must match notices")
         elif self.response_count != 0:
             raise ValueError("run summary cannot carry unavailable response evidence")
         if (self.scenario_id is None) != (self.scenario_sha256 is None):
             raise ValueError("run summary scenario binding must be complete")
-        if self.run_schema_version >= 4 and self.scenario_id is None:
+        if self.run_schema_version in {4, 5, 6, 7, 8, 9} and self.scenario_id is None:
             raise ValueError("spatial run summary requires a scenario")
-        if self.run_schema_version >= 4 and not self.campaign_ids:
+        if self.run_schema_version in {4, 5, 6, 7, 8, 9} and not self.campaign_ids:
             raise ValueError("spatial run summary requires at least one campaign")
-        if self.run_schema_version >= 4 and not self.channels:
+        if self.run_schema_version in {4, 5, 6, 7, 8, 9} and not self.channels:
             raise ValueError("spatial run summary requires at least one channel")
-        if self.run_schema_version < 4 and (
+        if self.run_schema_version in {1, 2, 3} and (
             self.scenario_id is not None or self.campaign_ids or self.channels
         ):
             raise ValueError("legacy run summary cannot carry spatial identities")
+        cognition_fields = (
+            self.cognition_mode,
+            self.provider_profile_id,
+            self.provider_revision_sha256,
+            self.aggregate_output_token_ceiling,
+        )
+        if self.run_schema_version != 9:
+            if any(value is not None for value in cognition_fields):
+                raise ValueError("pre-V9 run summary cannot carry cognition settings")
+        else:
+            if self.cognition_mode is None or self.aggregate_output_token_ceiling is None:
+                raise ValueError("V9 run summary requires cognition settings")
+            provider_mode = self.cognition_mode in {"local", "remote"}
+            if provider_mode != (
+                self.provider_profile_id is not None and self.provider_revision_sha256 is not None
+            ):
+                raise ValueError("V9 run summary provider binding is incomplete or misplaced")
+            if not provider_mode and self.aggregate_output_token_ceiling != 0:
+                raise ValueError("offline V9 run summary cannot reserve provider tokens")
         if self.inspector_url != f"/runs/{self.run_id}":
             raise ValueError("run summary inspector URL does not match its run identifier")
         return self
@@ -181,6 +238,8 @@ def _summary(stored: StoredCityRun) -> WorkbenchRunSummary:
         if scenario is None
         else tuple(sorted({placement.channel for placement in scenario.placements}))
     )
+    cognition_input = stored.cognition_input
+    provider_profile = None if cognition_input is None else cognition_input.provider_profile
     return WorkbenchRunSummary(
         run_id=manifest.run_id,
         run_schema_version=manifest.schema_version,
@@ -199,8 +258,29 @@ def _summary(stored: StoredCityRun) -> WorkbenchRunSummary:
         impression_count=int(getattr(manifest, "impression_count", 0)),
         noticed_count=int(getattr(manifest, "noticed_count", 0)),
         response_count=int(getattr(manifest, "response_count", 0)),
+        cognition_mode=None if cognition_input is None else cognition_input.mode,
+        provider_profile_id=(None if provider_profile is None else provider_profile.profile_id),
+        provider_revision_sha256=(
+            None if provider_profile is None else provider_profile.revision_sha256
+        ),
+        aggregate_output_token_ceiling=(
+            None if cognition_input is None else cognition_input.aggregate_output_token_ceiling
+        ),
         inspector_url=f"/runs/{manifest.run_id}",
     )
+
+
+@dataclass(slots=True)
+class WorkbenchCognitionOperation:
+    """Private operation-scoped provider material, never exposed by job DTOs."""
+
+    profile: ProviderProfileRevisionV1 | None
+    endpoint: BoundProviderEndpoint | None
+    credential: ResolvedCredential | None
+
+    def clear(self) -> None:
+        if self.credential is not None:
+            self.credential.clear()
 
 
 def _pagination(offset: object, limit: object) -> tuple[int, int]:
@@ -251,10 +331,34 @@ def _direct_location_exists(path: Path, *, label: str) -> bool:
 class WorkbenchRunRepository:
     """Recheck one pinned workspace around every artifact boundary."""
 
-    def __init__(self, workspace: WorkbenchWorkspace) -> None:
+    def __init__(
+        self,
+        workspace: WorkbenchWorkspace,
+        *,
+        provider_runtime: ProviderRuntimePolicy | None = None,
+        provider_registry: ProviderProfileRegistry | None = None,
+        credential_store: CityCredentialStore | None = None,
+        endpoint_policy: CityEndpointPolicy | None = None,
+        cognition_service: CityCognitionService | None = None,
+    ) -> None:
         if not isinstance(workspace, WorkbenchWorkspace):
             raise TypeError("workspace must be a WorkbenchWorkspace")
         self._workspace = workspace
+        runtime = build_provider_runtime_policy() if provider_runtime is None else provider_runtime
+        self._provider_registry = (
+            ProviderProfileRegistry(workspace) if provider_registry is None else provider_registry
+        )
+        self._credential_store = (
+            OSKeyringCityCredentialStore(runtime) if credential_store is None else credential_store
+        )
+        self._endpoint_policy = (
+            CityEndpointPolicy(runtime) if endpoint_policy is None else endpoint_policy
+        )
+        self._cognition_service = (
+            CityCognitionService(cache=CityCognitionCache(workspace))
+            if cognition_service is None
+            else cognition_service
+        )
 
     def _root(self) -> Path:
         return verify_workbench_workspace(self._workspace)
@@ -268,11 +372,39 @@ class WorkbenchRunRepository:
         if _direct_location_exists(directory, label="city run candidate"):
             raise DuplicateRun("city run identifier already exists")
 
+    def preflight_cognition(
+        self,
+        validated: ValidatedWorkbenchRun,
+    ) -> WorkbenchCognitionOperation:
+        """Resolve immutable provider inputs before inspecting a run destination."""
+        if not isinstance(validated, ValidatedWorkbenchRun) or not isinstance(
+            validated.workbench_input, WorkbenchRunInputV3
+        ):
+            raise TypeError("cognition preflight requires a schema-3 workbench run")
+        cognition = validated.workbench_input.draft.cognition
+        if cognition.mode in {"rules", "mock"}:
+            return WorkbenchCognitionOperation(profile=None, endpoint=None, credential=None)
+        assert cognition.provider_profile_id is not None
+        assert cognition.provider_revision_sha256 is not None
+        profile = self._provider_registry.load(
+            cognition.provider_profile_id,
+            cognition.provider_revision_sha256,
+        )
+        endpoint = self._endpoint_policy.bind(profile)
+        credential = self._credential_store.resolve(profile)
+        return WorkbenchCognitionOperation(
+            profile=profile,
+            endpoint=endpoint,
+            credential=credential,
+        )
+
     def prepare(self, validated: ValidatedWorkbenchRun) -> PreparedCityRun:
         """Evaluate one already frozen workbench request without publishing it."""
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
         workbench_input = validated.workbench_input
+        if isinstance(workbench_input, WorkbenchRunInputV3):
+            raise ValueError("schema-3 workbench runs require cognition preparation")
         self._root()
         settings = workbench_input.draft.settings
         return prepare_city_run(
@@ -285,6 +417,104 @@ class WorkbenchRunRepository:
             spatial_response=validated.response_input,
             workbench_input=workbench_input,
         )
+
+    def prepare_scientific(
+        self,
+        validated: ValidatedWorkbenchRun,
+        operation: WorkbenchCognitionOperation,
+    ) -> PreparedCityScientificRun:
+        """Compute rule-owned science without contacting a provider or publishing."""
+        if not isinstance(validated, ValidatedWorkbenchRun) or not isinstance(
+            validated.workbench_input, WorkbenchRunInputV3
+        ):
+            raise TypeError("scientific preparation requires a schema-3 workbench run")
+        if not isinstance(operation, WorkbenchCognitionOperation):
+            raise TypeError("operation must be a WorkbenchCognitionOperation")
+        settings = validated.workbench_input.draft.settings
+        self._root()
+        return prepare_city_scientific_run(
+            validated.pack,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+            provider_profile=operation.profile,
+        )
+
+    @staticmethod
+    def select_explanations(
+        prepared: PreparedCityScientificRun,
+        operation: WorkbenchCognitionOperation,
+    ) -> None:
+        """Recheck the frozen selection and operation binding before async calls."""
+        if not isinstance(prepared, PreparedCityScientificRun):
+            raise TypeError("prepared must be a PreparedCityScientificRun")
+        if not isinstance(operation, WorkbenchCognitionOperation):
+            raise TypeError("operation must be a WorkbenchCognitionOperation")
+        provider_mode = prepared.cognition_input.mode in {"local", "remote"}
+        if provider_mode != (
+            operation.profile is not None
+            and operation.endpoint is not None
+            and operation.credential is not None
+        ):
+            raise ValueError("cognition operation does not match the frozen input")
+        profile = prepared.cognition_input.provider_profile
+        if operation.profile is not None and (
+            profile is None
+            or profile.profile_id != operation.profile.profile_id
+            or profile.revision_sha256 != operation.profile.revision_sha256
+            or operation.credential is None
+            or operation.credential.secret.cleared
+        ):
+            raise ValueError("cognition operation does not match the frozen provider")
+        expected_reservations = allocate_city_cognition_reservations(
+            prepared.cognition_requests,
+            aggregate_output_token_ceiling=(
+                prepared.cognition_input.aggregate_output_token_ceiling
+            ),
+        )
+        if prepared.cognition_input.reservations != expected_reservations or tuple(
+            reservation.request_id for reservation in prepared.cognition_input.reservations
+        ) != tuple(request.request_id for request in prepared.cognition_requests):
+            raise ValueError("cognition selection does not match its reservations")
+
+    def resolve_cognition(
+        self,
+        prepared: PreparedCityScientificRun,
+        operation: WorkbenchCognitionOperation,
+        cancellation: CityCognitionCancellation,
+    ) -> PreparedCityRun:
+        """Resolve bounded explanations and finalize one publishable V9 artifact."""
+        self.select_explanations(prepared, operation)
+        provider = None
+        try:
+            if operation.profile is not None:
+                assert operation.endpoint is not None
+                assert operation.credential is not None
+                provider = CityOpenAICompatibleProvider(
+                    endpoint_policy=self._endpoint_policy,
+                    endpoint=operation.endpoint,
+                    cognition_input=prepared.cognition_input,
+                    credential=operation.credential,
+                )
+            evaluation = asyncio.run(
+                self._cognition_service.resolve_many(
+                    prepared.cognition_input,
+                    prepared.cognition_requests,
+                    provider=provider,
+                    cancellation=cancellation,
+                )
+            )
+            return finalize_city_run(
+                prepared,
+                cognition_input=prepared.cognition_input,
+                cognition_evaluation=evaluation,
+            )
+        finally:
+            operation.clear()
 
     def publish(self, prepared: PreparedCityRun) -> StoredCityRun:
         """Recheck collision and let the store perform final no-clobber publication."""

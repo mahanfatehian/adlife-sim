@@ -45,6 +45,79 @@ def _persona_run(root: Path, run_id: str = "persona-study", *, seed: int = 0, ch
     )
 
 
+def _cognition_receipt(source: str, *, salt: str) -> dict[str, object]:
+    def digest(label: str) -> str:
+        return sha256(f"{salt}:{label}".encode()).hexdigest()
+
+    outcomes = dict.fromkeys(
+        ("rules", "mock", "provider", "cache", "fallback", "budget_skipped"), 0
+    )
+    outcomes[source] = 1
+    provider_bound = source in {"provider", "cache", "fallback", "budget_skipped"}
+    return {
+        "cognition_input_sha256": digest("input"),
+        "cognition_input_bytes": 1,
+        "request_schema_version": 1,
+        "result_schema_version": 1,
+        "explainer_id": (
+            f"city-{source}-explainer-v1"
+            if source in {"rules", "mock"}
+            else "city-provider-explainer-v1"
+        ),
+        "prompt_contract_version": 1,
+        "prompt_contract_sha256": digest("prompt"),
+        "result_schema_contract_version": 1,
+        "result_schema_contract_sha256": digest("result-schema"),
+        "selection_policy_version": 1,
+        "selection_policy_sha256": digest("selection"),
+        "fallback_policy_version": 1,
+        "fallback_policy_sha256": digest("fallback"),
+        "provider_profile_snapshot_sha256": digest("profile") if provider_bound else None,
+        "provider_revision_sha256": digest("revision") if provider_bound else None,
+        "effective_settings_sha256": digest("settings"),
+        "budget_allocation_sha256": digest("budget"),
+        "selected_request_count": 1,
+        "outcome_counts": {"schema_version": 1, **outcomes},
+        "terminal_stream_sha256": digest("stream"),
+        "terminal_stream_bytes": 1,
+        "terminal_record_count": 1,
+        "summary_sha256": digest("summary"),
+    }
+
+
+def _as_v9(stored, *, source: str, salt: str):
+    from adlife.core.domain.city_run import CityRunManifestV9
+
+    manifest = CityRunManifestV9.model_validate(
+        stored.manifest.model_dump(mode="python")
+        | {
+            "schema_version": 9,
+            "workbench_input_schema_version": 3,
+            "workbench_input_sha256": sha256(f"{salt}:workbench".encode()).hexdigest(),
+            "cognition": _cognition_receipt(source, salt=salt),
+        }
+    )
+    return replace(stored, manifest=manifest)
+
+
+def test_v9_projections_keep_cognition_out_of_numeric_metrics_and_aa_equality(tmp_path):
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+
+    stored = _persona_run(tmp_path)
+    rules = _as_v9(stored, source="rules", salt="rules")
+    provider = _as_v9(stored, source="provider", salt="provider")
+
+    attention = metrics_for_stored_city_run(rules)
+    response = response_metrics_for_stored_city_run(provider)
+    attention_comparison = compare_stored_city_runs(rules, provider)
+    response_comparison = _compare_stored_city_response_runs(rules, provider)
+
+    assert attention.source_run_schema_version == response.source_run_schema_version == 9
+    assert attention_comparison.control == attention_comparison.treatment
+    assert response_comparison.control == response_comparison.treatment
+    assert rules.manifest.cognition != provider.manifest.cognition
+
+
 def test_persisted_v8_analysis_preserves_exact_provenance_and_source_bytes(tmp_path):
     from adlife.city.analysis import response_metrics_for_stored_city_run
     from adlife.city.run_store import CityRunStore
@@ -119,6 +192,9 @@ def test_v8_view_context_accepts_only_exact_saved_version_and_verified_metric_pa
         arguments["spatial_metrics"] = arguments["spatial_metrics"].model_copy(
             update={"source_run_schema_version": 7}
         )
+        with pytest.raises(ValueError, match="do not match"):
+            create_city_view_context(stored.mobility, **arguments)
+    elif version == 9:
         with pytest.raises(ValueError, match="do not match"):
             create_city_view_context(stored.mobility, **arguments)
     else:

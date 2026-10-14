@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Mapping
@@ -16,13 +17,31 @@ from adlife.city.loader import MAX_CITY_PACK_BYTES
 from adlife.city.place_loader import MAX_CITY_PLACE_SET_BYTES
 from adlife.city.response_loader import MAX_SPATIAL_RESPONSE_INPUT_BYTES
 from adlife.city.spatial_loader import MAX_SPATIAL_CAMPAIGN_BYTES
-from adlife.city.workbench_binding import validate_workbench_execution_binding
-from adlife.city.workbench_input import WorkbenchRunInputDocument, parse_workbench_run_input_json
+from adlife.city.workbench_binding import (
+    build_city_cognition_run_context,
+    validate_workbench_execution_binding,
+)
+from adlife.city.workbench_input import (
+    WorkbenchRunInputDocument,
+    WorkbenchRunInputV3,
+    parse_workbench_run_input_json,
+)
 from adlife.core.domain.city import (
     CityPack,
     CityPackDocument,
     CityPackV2,
     parse_city_pack_json,
+)
+from adlife.core.domain.city_cognition import (
+    MAX_CITY_COGNITION_INPUT_BYTES,
+    MAX_CITY_COGNITION_REQUESTS,
+    MAX_CITY_COGNITION_STREAM_BYTES,
+    MAX_CITY_COGNITION_SUMMARY_BYTES,
+    MAX_CITY_COGNITION_TERMINAL_RECORD_BYTES,
+    CityCognitionEvaluationV1,
+    CityCognitionInputV1,
+    CityCognitionSummaryV1,
+    CityCognitionTerminalRecordV1,
 )
 from adlife.core.domain.city_places import CityPlaceSet, parse_city_place_set_json
 from adlife.core.domain.city_run import (
@@ -35,6 +54,8 @@ from adlife.core.domain.city_run import (
     CityRunManifestV6,
     CityRunManifestV7,
     CityRunManifestV8,
+    CityRunManifestV9,
+    build_city_cognition_manifest_receipt,
     parse_city_run_manifest_json,
 )
 from adlife.core.domain.serialization import DocumentNotSerialisable, canonical_json
@@ -53,6 +74,10 @@ from adlife.core.ports.run_store import (
     StorageError,
     UnsafeRunLocation,
     validate_run_id,
+)
+from adlife.core.simulation.city_cognition import (
+    build_city_cognition_requests,
+    validate_city_cognition_evaluation,
 )
 from adlife.core.simulation.city_mobility import (
     CityAgent,
@@ -109,6 +134,8 @@ class StoredCityRun:
     response_input: SpatialResponseInput | None = None
     response_evaluation: SpatialResponseEvaluation | None = None
     workbench_input: WorkbenchRunInputDocument | None = None
+    cognition_input: CityCognitionInputV1 | None = None
+    cognition_evaluation: CityCognitionEvaluationV1 | None = None
 
 
 def _runtime_version() -> str:
@@ -127,6 +154,8 @@ def _canonical_bytes(
         | SpatialResponseInput
         | SpatialResponseStateDocument
         | WorkbenchRunInputDocument
+        | CityCognitionInputV1
+        | CityCognitionSummaryV1
         | dict[str, object]
     ),
 ) -> bytes:
@@ -150,6 +179,7 @@ def _validate_schema_pair(
             CityRunManifestV6,
             CityRunManifestV7,
             CityRunManifestV8,
+            CityRunManifestV9,
         ),
     ):
         if manifest.city_schema_version != pack.schema_version:
@@ -217,6 +247,114 @@ def _write_response_stream(path: Path, evaluation: SpatialResponseEvaluation) ->
         os.fsync(target.fileno())
 
 
+def _write_cognition_stream(path: Path, evaluation: CityCognitionEvaluationV1) -> None:
+    with path.open("xb") as target:
+        for record in evaluation.records:
+            line = (canonical_json(record) + "\n").encode("utf-8")
+            if target.write(line) != len(line):
+                raise OSError("short city cognition stream write")
+        target.flush()
+        os.fsync(target.fileno())
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("city cognition JSON contains a duplicate object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    del value
+    raise ValueError("city cognition JSON contains a non-finite constant")
+
+
+def _inspect_cognition_json(document: bytes) -> None:
+    try:
+        text = document.decode("utf-8")
+        value = json.loads(
+            text,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+            parse_float=lambda token: token,
+            parse_int=lambda token: token,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
+        raise ValueError("city cognition artifact is not strict UTF-8 JSON") from None
+    if not isinstance(value, dict):
+        raise ValueError("city cognition artifact must be a JSON object")
+
+
+def _parse_cognition_input(document: bytes) -> CityCognitionInputV1:
+    _inspect_cognition_json(document)
+    return CityCognitionInputV1.model_validate_json(document)
+
+
+def _parse_cognition_summary(document: bytes) -> CityCognitionSummaryV1:
+    _inspect_cognition_json(document)
+    return CityCognitionSummaryV1.model_validate_json(document)
+
+
+def _parse_cognition_stream(document: bytes) -> tuple[CityCognitionTerminalRecordV1, ...]:
+    if len(document) > MAX_CITY_COGNITION_STREAM_BYTES:
+        raise ValueError("city cognition terminal stream exceeds its size limit")
+    if not document:
+        return ()
+    lines = document.splitlines(keepends=True)
+    if len(lines) > MAX_CITY_COGNITION_REQUESTS:
+        raise ValueError("city cognition terminal stream has too many records")
+    records: list[CityCognitionTerminalRecordV1] = []
+    for line in lines:
+        if not line.endswith(b"\n") or line.endswith(b"\r\n"):
+            raise ValueError("city cognition terminal stream is not canonical JSONL")
+        payload = line[:-1]
+        if not payload or len(payload) > MAX_CITY_COGNITION_TERMINAL_RECORD_BYTES:
+            raise ValueError("city cognition terminal record exceeds its size limit")
+        _inspect_cognition_json(payload)
+        record = CityCognitionTerminalRecordV1.model_validate_json(payload)
+        if line != (canonical_json(record) + "\n").encode("utf-8"):
+            raise ValueError("city cognition terminal record is not canonical")
+        records.append(record)
+    return tuple(records)
+
+
+def _validate_cognition_workbench_binding(
+    cognition_input: CityCognitionInputV1,
+    workbench_input: WorkbenchRunInputV3,
+) -> None:
+    cognition = workbench_input.draft.cognition
+    profile = cognition_input.provider_profile
+    if (
+        cognition_input.run_input_sha256 != workbench_input.fingerprint
+        or cognition_input.mode != cognition.mode
+        or cognition_input.aggregate_output_token_ceiling
+        != cognition.aggregate_output_token_ceiling
+        or cognition_input.prompt_contract_version != cognition.prompt_contract_version
+        or cognition_input.result_schema_version != cognition.result_schema_version
+        or cognition_input.selection_policy_version != cognition.selection_policy_version
+        or cognition_input.fallback_policy_version != cognition.fallback_policy_version
+        or cognition_input.selected_requests_per_agent != cognition.selected_requests_per_agent
+        or cognition_input.selected_requests_per_run != cognition.selected_requests_per_run
+        or cognition_input.concurrency_limit != cognition.concurrency_limit
+        or cognition_input.max_request_bytes != cognition.max_request_bytes
+        or cognition_input.max_wire_response_bytes != cognition.max_wire_response_bytes
+        or cognition_input.max_output_tokens_per_attempt != cognition.max_output_tokens_per_attempt
+        or cognition_input.reservation_tokens_per_request
+        != cognition.reservation_tokens_per_request
+        or cognition_input.initial_attempts != cognition.initial_attempts
+        or cognition_input.transient_retries_ceiling != cognition.transient_retries
+        or cognition_input.repair_attempts_ceiling != cognition.repair_attempts
+        or cognition_input.attempt_timeout_seconds_ceiling != cognition.attempt_timeout_seconds
+        or cognition_input.aggregate_deadline_seconds != cognition.aggregate_deadline_seconds
+        or (None if profile is None else profile.profile_id) != cognition.provider_profile_id
+        or (None if profile is None else profile.revision_sha256)
+        != cognition.provider_revision_sha256
+    ):
+        raise ValueError("city cognition input does not match schema-3 workbench input")
+
+
 class CityRunStore:
     """A city run is complete only when its final manifest exists and verifies."""
 
@@ -263,6 +401,8 @@ class CityRunStore:
         response_input: SpatialResponseInput | None = None,
         response_evaluation: SpatialResponseEvaluation | None = None,
         workbench_input: WorkbenchRunInputDocument | None = None,
+        cognition_input: CityCognitionInputV1 | None = None,
+        cognition_evaluation: CityCognitionEvaluationV1 | None = None,
     ) -> Path:
         """Reserve a fresh ID; publish the completion manifest only after frozen inputs."""
         try:
@@ -297,6 +437,7 @@ class CityRunStore:
                             CityRunManifestV6,
                             CityRunManifestV7,
                             CityRunManifestV8,
+                            CityRunManifestV9,
                         ),
                     )
                     and manifest.place_schema_version is not None
@@ -321,9 +462,12 @@ class CityRunStore:
             response_summary_bytes: bytes | None = None
             response_state_bytes: bytes | None = None
             workbench_input_bytes: bytes | None = None
+            cognition_input_bytes: bytes | None = None
+            cognition_summary_bytes: bytes | None = None
             verified_evaluation: SpatialOpportunityEvaluation | None = None
             verified_attention: SpatialAttentionEvaluation | None = None
             verified_response: SpatialResponseEvaluation | None = None
+            verified_cognition: CityCognitionEvaluationV1 | None = None
             if isinstance(
                 manifest,
                 (
@@ -332,6 +476,7 @@ class CityRunStore:
                     CityRunManifestV6,
                     CityRunManifestV7,
                     CityRunManifestV8,
+                    CityRunManifestV9,
                 ),
             ):
                 if spatial_scenario is None or opportunity_evaluation is None:
@@ -365,7 +510,13 @@ class CityRunStore:
                     )
                 if isinstance(
                     manifest,
-                    (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8),
+                    (
+                        CityRunManifestV5,
+                        CityRunManifestV6,
+                        CityRunManifestV7,
+                        CityRunManifestV8,
+                        CityRunManifestV9,
+                    ),
                 ):
                     if not isinstance(attention_evaluation, SpatialAttentionEvaluation):
                         raise CorruptRunArtifact("spatial attention evaluation is incomplete")
@@ -394,7 +545,13 @@ class CityRunStore:
                             "city run manifest does not match spatial attention inputs"
                         )
                     if isinstance(
-                        manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+                        manifest,
+                        (
+                            CityRunManifestV6,
+                            CityRunManifestV7,
+                            CityRunManifestV8,
+                            CityRunManifestV9,
+                        ),
                     ):
                         if not isinstance(response_input, SpatialResponseInput) or not isinstance(
                             response_evaluation,
@@ -460,7 +617,7 @@ class CityRunStore:
                 or response_evaluation is not None
             ):
                 raise CorruptRunArtifact("legacy city run cannot contain spatial inputs")
-            if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)):
+            if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)):
                 if workbench_input is None:
                     raise CorruptRunArtifact("city run requires a workbench input")
                 bound_input = validate_workbench_execution_binding(
@@ -483,6 +640,50 @@ class CityRunStore:
                 workbench_input_bytes = _canonical_bytes(workbench_input)
             elif workbench_input is not None:
                 raise CorruptRunArtifact("legacy city run cannot contain a workbench input")
+            if isinstance(manifest, CityRunManifestV9):
+                if (
+                    not isinstance(workbench_input, WorkbenchRunInputV3)
+                    or not isinstance(pack, CityPackV2)
+                    or verified_response is None
+                    or spatial_scenario is None
+                    or response_input is None
+                    or type(cognition_input) is not CityCognitionInputV1
+                    or type(cognition_evaluation) is not CityCognitionEvaluationV1
+                ):
+                    raise CorruptRunArtifact("schema-9 city run cognition inputs are incomplete")
+                cognition_input = _parse_cognition_input(_canonical_bytes(cognition_input))
+                _validate_cognition_workbench_binding(cognition_input, workbench_input)
+                cognition_context = build_city_cognition_run_context(
+                    workbench_input,
+                    pack=pack,
+                    spatial_scenario=spatial_scenario,
+                    response_input=response_input,
+                    response_evaluation=verified_response,
+                )
+                cognition_requests = build_city_cognition_requests(
+                    cognition_context,
+                    mobility,
+                    verified_response,
+                )
+                verified_cognition = validate_city_cognition_evaluation(
+                    cognition_input,
+                    cognition_requests,
+                    cognition_evaluation.records,
+                )
+                if verified_cognition != cognition_evaluation:
+                    raise CorruptRunArtifact(
+                        "city cognition evaluation does not match frozen scientific inputs"
+                    )
+                expected_receipt = build_city_cognition_manifest_receipt(
+                    cognition_input,
+                    verified_cognition,
+                )
+                if manifest.cognition != expected_receipt:
+                    raise CorruptRunArtifact("city run manifest does not match cognition evidence")
+                cognition_input_bytes = _canonical_bytes(cognition_input)
+                cognition_summary_bytes = _canonical_bytes(verified_cognition.summary)
+            elif cognition_input is not None or cognition_evaluation is not None:
+                raise CorruptRunArtifact("legacy city run cannot contain cognition evidence")
             if (
                 pack.fingerprint != manifest.city_sha256
                 or mobility.agents != agents
@@ -511,7 +712,8 @@ class CityRunStore:
             or (
                 workbench_input_bytes is not None
                 and len(workbench_input_bytes)
-                > MAX_WORKBENCH_INPUT_BYTES + (1 if isinstance(manifest, CityRunManifestV8) else 0)
+                > MAX_WORKBENCH_INPUT_BYTES
+                + (1 if isinstance(manifest, (CityRunManifestV8, CityRunManifestV9)) else 0)
             )
             or (
                 spatial_scenario_bytes is not None
@@ -540,6 +742,14 @@ class CityRunStore:
             or (
                 assignments_bytes is not None
                 and len(assignments_bytes) > MAX_CITY_PLACE_ASSIGNMENTS_BYTES
+            )
+            or (
+                cognition_input_bytes is not None
+                and len(cognition_input_bytes) > MAX_CITY_COGNITION_INPUT_BYTES
+            )
+            or (
+                cognition_summary_bytes is not None
+                and len(cognition_summary_bytes) > MAX_CITY_COGNITION_SUMMARY_BYTES
             )
         ):
             raise CorruptRunArtifact("city run document exceeds its size limit")
@@ -592,6 +802,14 @@ class CityRunStore:
                         inputs / "workbench.json",
                         workbench_input_bytes,
                         "workbench input",
+                    )
+                )
+            if cognition_input_bytes is not None:
+                documents.append(
+                    (
+                        inputs / "cognition.json",
+                        cognition_input_bytes,
+                        "cognition input",
                     )
                 )
             for path, contents, label in documents:
@@ -684,6 +902,29 @@ class CityRunStore:
                 except CorruptRunArtifact:
                     raise StorageError(
                         "city run staged response stream did not match expected bytes"
+                    ) from None
+            if cognition_summary_bytes is not None and verified_cognition is not None:
+                outputs = directory / "outputs"
+                summary_path = outputs / "cognition-summary.json"
+                stream_path = outputs / "cognition.jsonl"
+                _write_new(summary_path, cognition_summary_bytes)
+                if (
+                    self._read_document(
+                        summary_path,
+                        limit=len(cognition_summary_bytes),
+                        label="cognition summary",
+                    )
+                    != cognition_summary_bytes
+                ):
+                    raise StorageError(
+                        "city run staged cognition summary did not match expected bytes"
+                    )
+                _write_cognition_stream(stream_path, verified_cognition)
+                try:
+                    self._verify_cognition_stream(stream_path, verified_cognition)
+                except CorruptRunArtifact:
+                    raise StorageError(
+                        "city run staged cognition stream did not match expected bytes"
                     ) from None
             temporary = directory / ".run.json.tmp"
             try:
@@ -804,6 +1045,23 @@ class CityRunStore:
         except OSError:
             raise CorruptRunArtifact("city run response stream is unreadable") from None
 
+    def _verify_cognition_stream(
+        self,
+        path: Path,
+        evaluation: CityCognitionEvaluationV1,
+    ) -> None:
+        document = self._read_document(
+            path,
+            limit=MAX_CITY_COGNITION_STREAM_BYTES,
+            label="cognition stream",
+        )
+        try:
+            records = _parse_cognition_stream(document)
+        except (ValidationError, ValueError, TypeError):
+            raise CorruptRunArtifact("city run cognition stream failed validation") from None
+        if records != evaluation.records:
+            raise CorruptRunArtifact("city run cognition stream does not match frozen inputs")
+
     def load(self, run_id: str) -> StoredCityRun:
         """Refuse any missing, damaged, incompatible or partial city artifact."""
         directory = self.run_directory(run_id)
@@ -830,12 +1088,12 @@ class CityRunStore:
         )
         workbench_input_bytes: bytes | None = None
         workbench_input_path = directory / "inputs" / "workbench.json"
-        if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)):
+        if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)):
             workbench_input_bytes = self._read_document(
                 workbench_input_path,
                 # Schema 2 bounds canonical JSON; the sidecar adds exactly one newline.
                 limit=MAX_WORKBENCH_INPUT_BYTES
-                + (1 if isinstance(manifest, CityRunManifestV8) else 0),
+                + (1 if isinstance(manifest, (CityRunManifestV8, CityRunManifestV9)) else 0),
                 label="workbench input",
             )
         elif workbench_input_path.is_symlink() or workbench_input_path.exists():
@@ -854,6 +1112,7 @@ class CityRunStore:
                         CityRunManifestV6,
                         CityRunManifestV7,
                         CityRunManifestV8,
+                        CityRunManifestV9,
                     ),
                 )
                 and manifest.place_schema_version is not None
@@ -877,6 +1136,9 @@ class CityRunStore:
         response_input_bytes: bytes | None = None
         response_summary_bytes: bytes | None = None
         response_state_bytes: bytes | None = None
+        cognition_input_bytes: bytes | None = None
+        cognition_stream_bytes: bytes | None = None
+        cognition_summary_bytes: bytes | None = None
         if isinstance(
             manifest,
             (
@@ -885,6 +1147,7 @@ class CityRunStore:
                 CityRunManifestV6,
                 CityRunManifestV7,
                 CityRunManifestV8,
+                CityRunManifestV9,
             ),
         ):
             outputs = directory / "outputs"
@@ -904,14 +1167,23 @@ class CityRunStore:
             )
             if isinstance(
                 manifest,
-                (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8),
+                (
+                    CityRunManifestV5,
+                    CityRunManifestV6,
+                    CityRunManifestV7,
+                    CityRunManifestV8,
+                    CityRunManifestV9,
+                ),
             ):
                 attention_summary_bytes = self._read_document(
                     outputs / "attention-summary.json",
                     limit=MAX_CITY_ATTENTION_SUMMARY_BYTES,
                     label="attention summary",
                 )
-            if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)):
+            if isinstance(
+                manifest,
+                (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8, CityRunManifestV9),
+            ):
                 response_input_bytes = self._read_document(
                     directory / "inputs" / "spatial-response.json",
                     limit=MAX_SPATIAL_RESPONSE_INPUT_BYTES,
@@ -927,6 +1199,29 @@ class CityRunStore:
                     limit=MAX_SPATIAL_RESPONSE_STATE_BYTES,
                     label="response state",
                 )
+        cognition_paths = (
+            directory / "inputs" / "cognition.json",
+            directory / "outputs" / "cognition.jsonl",
+            directory / "outputs" / "cognition-summary.json",
+        )
+        if isinstance(manifest, CityRunManifestV9):
+            cognition_input_bytes = self._read_document(
+                cognition_paths[0],
+                limit=MAX_CITY_COGNITION_INPUT_BYTES,
+                label="cognition input",
+            )
+            cognition_stream_bytes = self._read_document(
+                cognition_paths[1],
+                limit=MAX_CITY_COGNITION_STREAM_BYTES,
+                label="cognition stream",
+            )
+            cognition_summary_bytes = self._read_document(
+                cognition_paths[2],
+                limit=MAX_CITY_COGNITION_SUMMARY_BYTES,
+                label="cognition summary",
+            )
+        elif any(path.is_symlink() or path.exists() for path in cognition_paths):
+            raise CorruptRunArtifact("legacy city run has undeclared cognition evidence")
         try:
             pack = parse_city_pack_json(city_bytes)
             places = None if places_bytes is None else parse_city_place_set_json(places_bytes)
@@ -935,10 +1230,28 @@ class CityRunStore:
                 if workbench_input_bytes is None
                 else parse_workbench_run_input_json(
                     workbench_input_bytes.removesuffix(b"\n")
-                    if isinstance(manifest, CityRunManifestV8)
+                    if isinstance(manifest, (CityRunManifestV8, CityRunManifestV9))
                     else workbench_input_bytes
                 )
             )
+            cognition_input: CityCognitionInputV1 | None = None
+            cognition_records: tuple[CityCognitionTerminalRecordV1, ...] | None = None
+            cognition_summary: CityCognitionSummaryV1 | None = None
+            cognition_evaluation: CityCognitionEvaluationV1 | None = None
+            if isinstance(manifest, CityRunManifestV9):
+                if (
+                    cognition_input_bytes is None
+                    or cognition_stream_bytes is None
+                    or cognition_summary_bytes is None
+                ):
+                    raise CorruptRunArtifact("city run cognition artifacts are missing")
+                cognition_input = _parse_cognition_input(cognition_input_bytes)
+                cognition_records = _parse_cognition_stream(cognition_stream_bytes)
+                cognition_summary = _parse_cognition_summary(cognition_summary_bytes)
+                if cognition_input_bytes != _canonical_bytes(
+                    cognition_input
+                ) or cognition_summary_bytes != _canonical_bytes(cognition_summary):
+                    raise CorruptRunArtifact("city run cognition artifacts are not canonical")
             _validate_schema_pair(manifest, pack, places)
             if (
                 manifest.run_id != run_id
@@ -949,7 +1262,7 @@ class CityRunStore:
                 or city_bytes != _canonical_bytes(pack)
             ):
                 raise CorruptRunArtifact("city run manifest or city input does not match")
-            if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)) and (
+            if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)) and (
                 workbench_input is None
                 or workbench_input_bytes != _canonical_bytes(workbench_input)
                 or manifest.workbench_input_schema_version != workbench_input.schema_version
@@ -993,6 +1306,7 @@ class CityRunStore:
                     CityRunManifestV6,
                     CityRunManifestV7,
                     CityRunManifestV8,
+                    CityRunManifestV9,
                 ),
             ):
                 if spatial_scenario_bytes is None or opportunity_summary_bytes is None:
@@ -1021,7 +1335,13 @@ class CityRunStore:
                 )
                 if isinstance(
                     manifest,
-                    (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8),
+                    (
+                        CityRunManifestV5,
+                        CityRunManifestV6,
+                        CityRunManifestV7,
+                        CityRunManifestV8,
+                        CityRunManifestV9,
+                    ),
                 ):
                     if attention_summary_bytes is None:
                         raise CorruptRunArtifact("city run attention inputs are missing")
@@ -1051,7 +1371,13 @@ class CityRunStore:
                         attention_evaluation,
                     )
                     if isinstance(
-                        manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+                        manifest,
+                        (
+                            CityRunManifestV6,
+                            CityRunManifestV7,
+                            CityRunManifestV8,
+                            CityRunManifestV9,
+                        ),
                     ):
                         if (
                             response_input_bytes is None
@@ -1100,7 +1426,7 @@ class CityRunStore:
                             directory / "outputs" / "spatial-responses.jsonl",
                             response_evaluation,
                         )
-            if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)):
+            if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)):
                 if workbench_input is None:
                     raise CorruptRunArtifact("city run workbench input is missing")
                 try:
@@ -1120,6 +1446,48 @@ class CityRunStore:
                     raise CorruptRunArtifact(
                         "city run workbench input does not match frozen evidence"
                     ) from None
+            if isinstance(manifest, CityRunManifestV9):
+                if (
+                    not isinstance(workbench_input, WorkbenchRunInputV3)
+                    or not isinstance(pack, CityPackV2)
+                    or spatial_scenario is None
+                    or response_input is None
+                    or response_evaluation is None
+                    or cognition_input is None
+                    or cognition_records is None
+                    or cognition_summary is None
+                ):
+                    raise CorruptRunArtifact("city run cognition evidence is incomplete")
+                _validate_cognition_workbench_binding(cognition_input, workbench_input)
+                cognition_context = build_city_cognition_run_context(
+                    workbench_input,
+                    pack=pack,
+                    spatial_scenario=spatial_scenario,
+                    response_input=response_input,
+                    response_evaluation=response_evaluation,
+                )
+                cognition_requests = build_city_cognition_requests(
+                    cognition_context,
+                    mobility,
+                    response_evaluation,
+                )
+                cognition_evaluation = validate_city_cognition_evaluation(
+                    cognition_input,
+                    cognition_requests,
+                    cognition_records,
+                )
+                if cognition_summary != cognition_evaluation.summary:
+                    raise CorruptRunArtifact(
+                        "city run cognition summary does not match terminal evidence"
+                    )
+                expected_cognition_receipt = build_city_cognition_manifest_receipt(
+                    cognition_input,
+                    cognition_evaluation,
+                )
+                if manifest.cognition != expected_cognition_receipt:
+                    raise CorruptRunArtifact(
+                        "city run cognition receipt does not match frozen evidence"
+                    )
             summary = summarize_city_trace(mobility)
             if (
                 summary.agents_sha256 != manifest.agents_sha256
@@ -1141,6 +1509,8 @@ class CityRunStore:
             response_input=response_input,
             response_evaluation=response_evaluation,
             workbench_input=workbench_input,
+            cognition_input=cognition_input,
+            cognition_evaluation=cognition_evaluation,
         )
 
 

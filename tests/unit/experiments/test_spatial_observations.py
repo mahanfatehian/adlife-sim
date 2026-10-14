@@ -122,7 +122,7 @@ def test_observations_never_attribute_committed_state_to_a_channel() -> None:
     )
 
 
-@pytest.mark.parametrize("version", [7, 8])
+@pytest.mark.parametrize("version", [7, 8, 9])
 def test_observations_accept_matched_provenance_and_refuse_mixed_versions(version: int) -> None:
     attention, response = _response_metric_pair()
     v7_attention = SpatialMetrics.model_validate(
@@ -135,7 +135,7 @@ def test_observations_accept_matched_provenance_and_refuse_mixed_versions(versio
     assert spatial_metric_observations(v7_attention, v7_response)
     with pytest.raises(ValueError, match="schema"):
         spatial_metric_observations(attention, v7_response)
-    if version == 8:
+    if version in {8, 9}:
         v7 = SpatialMetrics.model_validate(
             attention.model_dump(mode="python") | {"source_run_schema_version": 7}
         )

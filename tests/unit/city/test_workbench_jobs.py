@@ -94,6 +94,67 @@ class _GatedRepository:
         return self.real.verified_summary(run_id)
 
 
+class _GatedCognitionRepository:
+    def __init__(self, real: Any) -> None:
+        self.real = real
+        self.simulate_entered = threading.Event()
+        self.select_entered = threading.Event()
+        self.request_entered = threading.Event()
+        self.persist_entered = threading.Event()
+        self.verify_entered = threading.Event()
+        self.allow_simulate = threading.Event()
+        self.allow_select = threading.Event()
+        self.allow_request = threading.Event()
+        self.allow_persist = threading.Event()
+        self.allow_verify = threading.Event()
+
+    def preflight_cognition(self, validated: Any):
+        return self.real.preflight_cognition(validated)
+
+    def ensure_available(self, run_id: str) -> None:
+        self.real.ensure_available(run_id)
+
+    def prepare_scientific(self, validated: Any, operation: Any):
+        self.simulate_entered.set()
+        if not self.allow_simulate.wait(10):
+            raise RuntimeError("simulation gate timed out")
+        return self.real.prepare_scientific(validated, operation)
+
+    def select_explanations(self, prepared: Any, operation: Any) -> None:
+        self.select_entered.set()
+        if not self.allow_select.wait(10):
+            raise RuntimeError("selection gate timed out")
+        self.real.select_explanations(prepared, operation)
+
+    def resolve_cognition(self, prepared: Any, operation: Any, cancellation: Any):
+        self.request_entered.set()
+        if not self.allow_request.wait(10):
+            raise RuntimeError("cognition gate timed out")
+        return self.real.resolve_cognition(prepared, operation, cancellation)
+
+    def publish(self, prepared: Any):
+        self.persist_entered.set()
+        if not self.allow_persist.wait(10):
+            raise RuntimeError("persistence gate timed out")
+        return self.real.publish(prepared)
+
+    def verified_summary(self, run_id: str):
+        self.verify_entered.set()
+        if not self.allow_verify.wait(10):
+            raise RuntimeError("verification gate timed out")
+        return self.real.verified_summary(run_id)
+
+
+def _schema3_validated(*, run_id: str, mode: str = "rules"):
+    from adlife.city.workbench_input import WorkbenchRunDraftV3
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_input import draft_v3_data
+
+    payload = draft_v3_data(mode=mode, aggregate_output_token_ceiling=0)
+    payload["settings"]["run_id"] = run_id
+    return construct_workbench_run(WorkbenchRunDraftV3.model_validate_json(json.dumps(payload)))
+
+
 def test_accepted_job_keeps_the_exact_city_after_registry_mutation(tmp_path: Path) -> None:
     from adlife.city.workbench_city_registry import WorkspaceCityRegistry
     from adlife.city.workbench_input import WorkbenchRunDraft
@@ -166,7 +227,7 @@ class _DeferredExecutor:
         self.shutdown_called = True
 
 
-def test_schema3_job_refuses_before_run_reservation_or_worker_mutation(
+def test_schema3_job_preflights_before_run_location_check_and_cleans_up_on_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from adlife.city.workbench_validation import construct_workbench_run
@@ -176,12 +237,28 @@ def test_schema3_job_refuses_before_run_reservation_or_worker_mutation(
     deferred = _DeferredExecutor()
     monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
 
+    events: list[str] = []
+
+    class Operation:
+        cleared = False
+
+        def clear(self) -> None:
+            self.cleared = True
+            events.append("clear")
+
+    operation = Operation()
+
     class RefusingRepository:
         ensure_calls = 0
 
+        def preflight_cognition(self, validated: Any) -> Operation:
+            events.append("preflight")
+            return operation
+
         def ensure_available(self, run_id: str) -> None:
             self.ensure_calls += 1
-            raise AssertionError("schema-3 input reached run reservation")
+            events.append("ensure")
+            raise RuntimeError("existing run location")
 
         def prepare(self, validated: Any) -> object:
             raise AssertionError("schema-3 input reached evaluation")
@@ -195,12 +272,148 @@ def test_schema3_job_refuses_before_run_reservation_or_worker_mutation(
     repository = RefusingRepository()
     manager = jobs.CityJobManager(repository)
     try:
-        with pytest.raises(jobs.WorkbenchJobSubmissionError, match=r"schema 3.*schema 9"):
+        with pytest.raises(RuntimeError, match="existing run location"):
             manager.submit(construct_workbench_run(cognition_draft()))
-        assert repository.ensure_calls == 0
+        assert repository.ensure_calls == 1
+        assert events == ["preflight", "ensure", "clear"]
+        assert operation.cleared is True
         assert deferred.call is None
         assert manager.active_job() is None
         assert manager.recent_jobs() == ()
+    finally:
+        manager.close()
+
+
+def test_schema3_job_clears_preflight_credential_when_job_id_allocation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs, _ = _modules()
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+
+    class Operation:
+        cleared = False
+
+        def clear(self) -> None:
+            self.cleared = True
+
+    operation = Operation()
+
+    class Repository:
+        def preflight_cognition(self, validated: Any) -> Operation:
+            return operation
+
+        def ensure_available(self, run_id: str) -> None:
+            return None
+
+    manager = jobs.CityJobManager(Repository())
+    monkeypatch.setattr(
+        manager,
+        "_new_job_id_locked",
+        lambda: (_ for _ in ()).throw(RuntimeError("job id allocation failed")),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="job id allocation failed"):
+            manager.submit(_schema3_validated(run_id="allocation-failure"))
+        assert operation.cleared is True
+        assert deferred.call is None
+        assert manager.active_job() is None
+        assert manager.recent_jobs() == ()
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("hard_failure_stage", ["simulation", "selection"])
+def test_schema3_job_clears_credential_and_terminates_after_hard_worker_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    hard_failure_stage: str,
+) -> None:
+    jobs, _ = _modules()
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+
+    class Operation:
+        cleared = False
+
+        def clear(self) -> None:
+            self.cleared = True
+
+    operation = Operation()
+
+    class Repository:
+        def preflight_cognition(self, validated: Any) -> Operation:
+            return operation
+
+        def ensure_available(self, run_id: str) -> None:
+            return None
+
+        def prepare_scientific(self, validated: Any, accepted: Operation) -> object:
+            if hard_failure_stage == "simulation":
+                raise KeyboardInterrupt("hard simulation interruption")
+            return object()
+
+        def select_explanations(self, prepared: object, accepted: Operation) -> None:
+            raise KeyboardInterrupt("hard selection interruption")
+
+    manager = jobs.CityJobManager(Repository())
+    try:
+        submitted = manager.submit(_schema3_validated(run_id=f"hard-{hard_failure_stage}"))
+        deferred.run()
+        assert deferred.future is not None
+        assert isinstance(deferred.future.exception(), KeyboardInterrupt)
+        terminal = manager.get(submitted.job_id)
+        assert terminal.phase == "failed"
+        assert terminal.error is not None
+        assert terminal.error.code == "evaluation-failed"
+        assert "interruption" not in terminal.error.message.lower()
+        assert operation.cleared is True
+        assert manager.active_job() is None
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock"])
+def test_schema3_offline_job_publishes_verified_v9_with_frozen_cognition_settings(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_input import draft_v3_data
+
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / mode)
+    repository = runs.WorkbenchRunRepository(workspace)
+    payload = draft_v3_data(mode=mode, aggregate_output_token_ceiling=0)
+    payload["settings"]["run_id"] = f"{mode}-v9"
+    validated = construct_workbench_run(
+        importlib.import_module(
+            "adlife.city.workbench_input"
+        ).WorkbenchRunDraftV3.model_validate_json(json.dumps(payload))
+    )
+    manager = jobs.CityJobManager(repository)
+    try:
+        submitted = manager.submit(validated)
+        assert submitted.accepted_settings.workbench_input_schema_version == 3
+        assert submitted.accepted_settings.run_schema_version == 9
+        assert submitted.accepted_settings.cognition_mode == mode
+        assert submitted.accepted_settings.provider_profile_id is None
+        assert submitted.accepted_settings.provider_revision_sha256 is None
+        assert submitted.accepted_settings.aggregate_output_token_ceiling == 0
+
+        terminal = _await_terminal(manager, submitted.job_id)
+        assert terminal.phase == "completed"
+        assert terminal.result is not None
+        assert terminal.result.run_schema_version == 9
+        assert terminal.result.cognition_mode == mode
+        assert terminal.result.provider_profile_id is None
+        assert terminal.result.provider_revision_sha256 is None
+        assert terminal.result.aggregate_output_token_ceiling == 0
+        stored = repository.load(submitted.run_id)
+        assert stored.manifest.schema_version == 9
+        assert stored.cognition_input is not None
+        assert stored.cognition_input.mode == mode
+        assert stored.cognition_evaluation is not None
+        assert len(stored.cognition_evaluation.records) == len(stored.cognition_input.reservations)
     finally:
         manager.close()
 
@@ -244,7 +457,10 @@ def test_schema2_jobs_retain_and_verify_the_exact_accepted_schema_pair(
         manager.close()
 
 
-@pytest.mark.parametrize("input_version,run_version", [(1, 8), (2, 7), (True, 7), (2.0, 8)])
+@pytest.mark.parametrize(
+    "input_version,run_version",
+    [(1, 8), (2, 7), (3, 8), (2, 9), (True, 7), (2.0, 8), (3, 9.0)],
+)
 def test_accepted_settings_refuse_crossed_or_coerced_schema_pairs(
     input_version, run_version
 ) -> None:
@@ -292,6 +508,10 @@ def test_every_job_view_carries_the_exact_frozen_accepted_settings(
             "agent_count": 30,
             "days": 7,
             "response_mode": "deterministic-rules",
+            "cognition_mode": None,
+            "provider_profile_id": None,
+            "provider_revision_sha256": None,
+            "aggregate_output_token_ceiling": None,
         }
         assert submitted.model_dump(mode="json")["accepted_settings"] == expected
         assert (
@@ -340,6 +560,80 @@ def test_success_exposes_each_truthful_phase_and_only_verified_result(tmp_path: 
         assert runs.WorkbenchRunRepository(workspace).load("phase-run").manifest.schema_version == 7
     finally:
         gated.allow_evaluate.set()
+        gated.allow_persist.set()
+        gated.allow_verify.set()
+        manager.close()
+
+
+def test_schema3_success_exposes_simulation_selection_cognition_and_publication_phases(
+    tmp_path: Path,
+) -> None:
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    gated = _GatedCognitionRepository(runs.WorkbenchRunRepository(workspace))
+    manager = jobs.CityJobManager(gated)
+    validated = _schema3_validated(run_id="phase-v9", mode="rules")
+    try:
+        queued = manager.submit(validated)
+        assert queued.phase == "queued"
+        assert gated.simulate_entered.wait(5)
+        assert manager.get(queued.job_id).phase == "simulating"
+
+        gated.allow_simulate.set()
+        assert gated.select_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "selecting-explanations"
+
+        gated.allow_select.set()
+        assert gated.request_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "requesting-explanations"
+
+        gated.allow_request.set()
+        assert gated.persist_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "persisting"
+
+        gated.allow_persist.set()
+        assert gated.verify_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "verifying"
+
+        gated.allow_verify.set()
+        completed = _await_terminal(manager, queued.job_id)
+        assert completed.phase == "completed"
+        assert completed.result is not None
+        assert completed.result.run_schema_version == 9
+    finally:
+        gated.allow_simulate.set()
+        gated.allow_select.set()
+        gated.allow_request.set()
+        gated.allow_persist.set()
+        gated.allow_verify.set()
+        manager.close()
+
+
+def test_schema3_cancellation_interrupts_cognition_and_publishes_nothing(
+    tmp_path: Path,
+) -> None:
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    gated = _GatedCognitionRepository(runs.WorkbenchRunRepository(workspace))
+    manager = jobs.CityJobManager(gated)
+    submitted = manager.submit(_schema3_validated(run_id="cancel-v9", mode="rules"))
+    try:
+        gated.allow_simulate.set()
+        gated.allow_select.set()
+        assert gated.request_entered.wait(10)
+        requested = manager.cancel(submitted.job_id)
+        assert requested.phase == "requesting-explanations"
+        assert requested.cancellation_requested is True
+        gated.allow_request.set()
+        terminal = _await_terminal(manager, submitted.job_id)
+        assert terminal.phase == "cancelled"
+        assert terminal.error is None
+        assert not (workspace.root / "city-runs" / "cancel-v9").exists()
+        assert not gated.persist_entered.is_set()
+    finally:
+        gated.allow_simulate.set()
+        gated.allow_select.set()
+        gated.allow_request.set()
         gated.allow_persist.set()
         gated.allow_verify.set()
         manager.close()
@@ -728,3 +1022,37 @@ def test_close_drains_an_active_job_then_refuses_new_submissions(tmp_path: Path)
     assert manager.get(submitted.job_id).phase == "completed"
     with pytest.raises(jobs.WorkbenchJobManagerClosed):
         manager.submit(_validated(run_id="refused-run", agents=1, days=2))
+
+
+def test_close_cancels_an_active_schema3_provider_phase_before_executor_drain(
+    tmp_path: Path,
+) -> None:
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    gated = _GatedCognitionRepository(runs.WorkbenchRunRepository(workspace))
+    manager = jobs.CityJobManager(gated)
+    submitted = manager.submit(_schema3_validated(run_id="shutdown-v9", mode="rules"))
+    gated.allow_simulate.set()
+    gated.allow_select.set()
+    assert gated.request_entered.wait(10)
+
+    closed = threading.Event()
+
+    def close() -> None:
+        manager.close()
+        closed.set()
+
+    closer = threading.Thread(target=close)
+    closer.start()
+    try:
+        assert not closed.wait(0.05)
+        gated.allow_request.set()
+        closer.join(10)
+        assert closed.is_set()
+        terminal = manager.get(submitted.job_id)
+        assert terminal.phase == "cancelled"
+        assert terminal.cancellation_requested is True
+        assert not (workspace.root / "city-runs" / "shutdown-v9").exists()
+    finally:
+        gated.allow_request.set()
+        closer.join(10)

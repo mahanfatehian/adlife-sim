@@ -39,7 +39,7 @@ def test_native_v8_result_round_trips_exact_manifest_and_population_receipts(per
     assert pair.control.response.response_population_sha256 is not None
 
 
-@pytest.mark.parametrize("version", [9, True, 8.0, "8"])
+@pytest.mark.parametrize("version", [10, True, 9.0, "9"])
 def test_native_v8_result_refuses_future_and_noninteger_versions(persona_result, version):
     document = persona_result.model_dump(mode="python")
     document["source_run_schema_version"] = version

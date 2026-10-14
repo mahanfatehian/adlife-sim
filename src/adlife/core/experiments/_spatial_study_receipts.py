@@ -11,6 +11,7 @@ from adlife.core.domain.city import (
     _validate_public_metadata,
     _validate_public_url,
 )
+from adlife.core.domain.city_run import CityCognitionManifestReceiptV1
 from adlife.core.domain.identifiers import validate_portable_run_identifier
 from adlife.core.domain.person import DomainModel, contains_secret_or_email_text
 from adlife.core.experiments.spatial_observations import SpatialMetricObservation
@@ -80,8 +81,14 @@ class _StudyReceipt(DomainModel):
     model_config = ConfigDict(hide_input_in_errors=True)
 
 
+class CityCognitionStudyReceiptV1(CityCognitionManifestReceiptV1):
+    """Complete bounded V9 cognition provenance without narrative or credentials."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+
 class SpatialStudyResponseReceipt(_StudyReceipt):
-    """Schema-v6/v7/v8 response evidence, retained for attention-only A/A checks."""
+    """Schema-v6-v9 response evidence, retained for attention-only A/A checks."""
 
     response_input_sha256: StudyHash
     response_stream_sha256: StudyHash
@@ -131,11 +138,15 @@ class SpatialStudyArmReceipt(_StudyReceipt):
     opportunity_structure_sha256: StudyHash
     attention_metrics_sha256: StudyHash
     response: SpatialStudyResponseReceipt | None = None
-    workbench_input_schema_version: Literal[1, 2] | None = Field(
+    workbench_input_schema_version: Literal[1, 2, 3] | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
     workbench_input_sha256: StudyHash | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    cognition: CityCognitionStudyReceiptV1 | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
@@ -148,14 +159,18 @@ class SpatialStudyArmReceipt(_StudyReceipt):
     @field_validator("workbench_input_schema_version", mode="before")
     @classmethod
     def exact_optional_workbench_version(cls, value: object) -> object:
-        if value is not None and (type(value) is not int or value not in {1, 2}):
-            raise ValueError("workbench input schema version must be integer 1 or 2 when present")
+        if value is not None and (type(value) is not int or value not in {1, 2, 3}):
+            raise ValueError(
+                "workbench input schema version must be integer 1, 2 or 3 when present"
+            )
         return value
 
     @model_validator(mode="after")
     def complete_workbench_binding(self) -> Self:
         if (self.workbench_input_schema_version is None) != (self.workbench_input_sha256 is None):
             raise ValueError("study arm workbench input binding is incomplete")
+        if (self.workbench_input_schema_version == 3) != (self.cognition is not None):
+            raise ValueError("study arm V9 cognition binding is incomplete or misplaced")
         return self
 
 

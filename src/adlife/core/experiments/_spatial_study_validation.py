@@ -11,6 +11,7 @@ from adlife.core.domain.city_run import (
     CityRunManifestV6,
     CityRunManifestV7,
     CityRunManifestV8,
+    CityRunManifestV9,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition
@@ -76,7 +77,13 @@ def reconstruct_manifest(
     result: SpatialStudyResult,
     pair: SpatialStudyPairReceipt,
     arm: SpatialStudyArmReceipt,
-) -> CityRunManifestV5 | CityRunManifestV6 | CityRunManifestV7 | CityRunManifestV8:
+) -> (
+    CityRunManifestV5
+    | CityRunManifestV6
+    | CityRunManifestV7
+    | CityRunManifestV8
+    | CityRunManifestV9
+):
     data: dict[str, object] = {
         "schema_version": result.source_run_schema_version,
         "run_id": arm.run_id,
@@ -114,6 +121,10 @@ def reconstruct_manifest(
         "noticed_count",
     ):
         data[name] = getattr(arm, name)
+    if result.source_run_schema_version != 9 and arm.cognition is not None:
+        raise ValueError("legacy study cannot carry V9 cognition provenance")
+    if result.source_run_schema_version == 9 and arm.cognition is None:
+        raise ValueError("v9 study requires complete cognition provenance")
     if result.source_run_schema_version == 5:
         if (
             arm.response is not None
@@ -125,11 +136,11 @@ def reconstruct_manifest(
         return CityRunManifestV5.model_validate(data)
     if arm.response is None or result.response_model_id != "spatial-response-v1":
         raise ValueError("response study requires response artifact receipts and model identity")
-    if result.source_run_schema_version == 8:
+    if result.source_run_schema_version in {8, 9}:
         if arm.response.response_population_sha256 is None:
-            raise ValueError("v8 study requires complete response population provenance")
+            raise ValueError("v8/v9 study requires complete response population provenance")
     elif arm.response.response_population_sha256 is not None:
-        raise ValueError("legacy study cannot carry v8 response population provenance")
+        raise ValueError("legacy study cannot carry v8/v9 response population provenance")
     data.update(
         {
             "spatial_response_schema_version": 1,
@@ -153,7 +164,7 @@ def reconstruct_manifest(
             raise ValueError("v6 study cannot carry workbench input provenance")
         return CityRunManifestV6.model_validate(data)
     if arm.workbench_input_schema_version is None or arm.workbench_input_sha256 is None:
-        raise ValueError("v7/v8 study requires complete workbench input provenance")
+        raise ValueError("v7-v9 study requires complete workbench input provenance")
     data.update(
         {
             "workbench_input_schema_version": arm.workbench_input_schema_version,
@@ -164,6 +175,10 @@ def reconstruct_manifest(
         return CityRunManifestV7.model_validate(data)
     if result.source_run_schema_version == 8:
         return CityRunManifestV8.model_validate(data)
+    if result.source_run_schema_version == 9:
+        assert arm.cognition is not None
+        data["cognition"] = arm.cognition.model_dump(mode="python", warnings="none")
+        return CityRunManifestV9.model_validate(data)
     raise ValueError("unsupported study source run schema version")
 
 
@@ -422,7 +437,7 @@ def validate_study_result(result: SpatialStudyResult) -> None:
     )
     if response_scope:
         if (
-            result.source_run_schema_version not in {6, 7, 8}
+            result.source_run_schema_version not in {6, 7, 8, 9}
             or not result.campaign_ids
             or any(value is None for value in response_identities)
         ):
@@ -475,7 +490,7 @@ def validate_study_result(result: SpatialStudyResult) -> None:
                     "study arm response assumptions vary across seeds"
                 )
             manifest = reconstruct_manifest(result, pair, arm)
-            if result.source_run_schema_version == 8:
+            if result.source_run_schema_version in {8, 9}:
                 assert arm.response is not None  # reconstruct_manifest requires this
                 current_population = arm.response.response_population_sha256
                 if population_sha256 is not None and population_sha256 != current_population:
@@ -513,6 +528,7 @@ def validate_study_result(result: SpatialStudyResult) -> None:
                 "manifest_sha256",
                 "workbench_input_schema_version",
                 "workbench_input_sha256",
+                "cognition",
             }
             control = pair.control.model_dump(exclude=excluded)
             treatment = pair.treatment.model_dump(exclude=excluded)

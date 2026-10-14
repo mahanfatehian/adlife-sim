@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from collections import deque
 from concurrent.futures import Executor, ThreadPoolExecutor
@@ -12,10 +13,11 @@ from typing import Literal, Protocol, Self
 
 from pydantic import Field, field_validator, model_validator
 
+from adlife.adapters.cognition.city_service import CityCognitionCancellation
 from adlife.city.run_store import StoredCityRun
-from adlife.city.runs import PreparedCityRun
+from adlife.city.runs import PreparedCityRun, PreparedCityScientificRun
 from adlife.city.workbench_input import WorkbenchRunInputV3
-from adlife.city.workbench_runs import WorkbenchRunSummary
+from adlife.city.workbench_runs import WorkbenchCognitionOperation, WorkbenchRunSummary
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.core.domain.person import DomainModel
 from adlife.core.ports.run_store import ISO_UTC_PATTERN
@@ -25,6 +27,9 @@ MAX_TERMINAL_JOBS = 32
 WorkbenchJobPhase = Literal[
     "queued",
     "evaluating",
+    "simulating",
+    "selecting-explanations",
+    "requesting-explanations",
     "persisting",
     "verifying",
     "completed",
@@ -33,7 +38,15 @@ WorkbenchJobPhase = Literal[
 ]
 
 _TERMINAL_PHASES = frozenset({"completed", "failed", "cancelled"})
-_CANCELLABLE_PHASES = frozenset({"queued", "evaluating"})
+_CANCELLABLE_PHASES = frozenset(
+    {
+        "queued",
+        "evaluating",
+        "simulating",
+        "selecting-explanations",
+        "requesting-explanations",
+    }
+)
 _SEED_PATTERN = r"^(?:0|[1-9][0-9]{0,18})$"
 
 
@@ -83,8 +96,8 @@ class WorkbenchAcceptedSettings(DomainModel):
     """Bounded immutable scientific settings retained through every job phase."""
 
     schema_version: Literal[1] = 1
-    workbench_input_schema_version: Literal[1, 2]
-    run_schema_version: Literal[7, 8]
+    workbench_input_schema_version: Literal[1, 2, 3]
+    run_schema_version: Literal[7, 8, 9]
     city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     campaign_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
@@ -92,6 +105,16 @@ class WorkbenchAcceptedSettings(DomainModel):
     agent_count: int = Field(ge=1, le=30)
     days: int = Field(ge=1, le=7)
     response_mode: Literal["deterministic-rules"]
+    cognition_mode: Literal["rules", "mock", "local", "remote"] | None = None
+    provider_profile_id: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9-]{0,63}$",
+    )
+    provider_revision_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    aggregate_output_token_ceiling: int | None = Field(default=None, ge=0, le=92_160)
 
     @field_validator("workbench_input_schema_version", "run_schema_version", mode="before")
     @classmethod
@@ -102,8 +125,31 @@ class WorkbenchAcceptedSettings(DomainModel):
 
     @model_validator(mode="after")
     def legal_schema_pair(self) -> Self:
-        if (self.workbench_input_schema_version, self.run_schema_version) not in ((1, 7), (2, 8)):
+        if (self.workbench_input_schema_version, self.run_schema_version) not in (
+            (1, 7),
+            (2, 8),
+            (3, 9),
+        ):
             raise ValueError("accepted workbench input and run schema versions do not match")
+        cognition_fields = (
+            self.cognition_mode,
+            self.provider_profile_id,
+            self.provider_revision_sha256,
+            self.aggregate_output_token_ceiling,
+        )
+        if self.workbench_input_schema_version != 3:
+            if any(value is not None for value in cognition_fields):
+                raise ValueError("pre-schema-3 settings cannot carry cognition configuration")
+            return self
+        if self.cognition_mode is None or self.aggregate_output_token_ceiling is None:
+            raise ValueError("schema-3 settings require cognition configuration")
+        provider_mode = self.cognition_mode in {"local", "remote"}
+        if provider_mode != (
+            self.provider_profile_id is not None and self.provider_revision_sha256 is not None
+        ):
+            raise ValueError("schema-3 provider binding is incomplete or misplaced")
+        if not provider_mode and self.aggregate_output_token_ceiling != 0:
+            raise ValueError("offline cognition cannot reserve provider tokens")
         return self
 
     @field_validator("seed")
@@ -126,6 +172,10 @@ def _summary_matches_accepted_settings(
         and summary.seed == settings.seed
         and summary.agent_count == settings.agent_count
         and summary.days == settings.days
+        and summary.cognition_mode == settings.cognition_mode
+        and summary.provider_profile_id == settings.provider_profile_id
+        and summary.provider_revision_sha256 == settings.provider_revision_sha256
+        and summary.aggregate_output_token_ceiling == settings.aggregate_output_token_ceiling
     )
 
 
@@ -174,9 +224,32 @@ class WorkbenchJobView(DomainModel):
 
 
 class _RunOperations(Protocol):
+    def preflight_cognition(
+        self, validated: ValidatedWorkbenchRun
+    ) -> WorkbenchCognitionOperation: ...
+
     def ensure_available(self, run_id: str) -> None: ...
 
     def prepare(self, validated: ValidatedWorkbenchRun) -> PreparedCityRun: ...
+
+    def prepare_scientific(
+        self,
+        validated: ValidatedWorkbenchRun,
+        operation: WorkbenchCognitionOperation,
+    ) -> PreparedCityScientificRun: ...
+
+    def select_explanations(
+        self,
+        prepared: PreparedCityScientificRun,
+        operation: WorkbenchCognitionOperation,
+    ) -> None: ...
+
+    def resolve_cognition(
+        self,
+        prepared: PreparedCityScientificRun,
+        operation: WorkbenchCognitionOperation,
+        cancellation: CityCognitionCancellation,
+    ) -> PreparedCityRun: ...
 
     def publish(self, prepared: PreparedCityRun) -> StoredCityRun: ...
 
@@ -205,8 +278,22 @@ def _new_worker_executor() -> Executor:
     return ThreadPoolExecutor(max_workers=1, thread_name_prefix="adlife-city-job")
 
 
-def _failure(phase: Literal["evaluating", "persisting", "verifying"]) -> WorkbenchJobFailure:
-    if phase == "evaluating":
+def _failure(
+    phase: Literal[
+        "evaluating",
+        "simulating",
+        "selecting-explanations",
+        "requesting-explanations",
+        "persisting",
+        "verifying",
+    ],
+) -> WorkbenchJobFailure:
+    if phase in {
+        "evaluating",
+        "simulating",
+        "selecting-explanations",
+        "requesting-explanations",
+    }:
         return WorkbenchJobFailure(
             code="evaluation-failed",
             message="The deterministic city evaluation failed.",
@@ -233,6 +320,8 @@ class CityJobManager:
         self._records: dict[str, _JobRecord] = {}
         self._terminal_ids: deque[str] = deque()
         self._active_job_id: str | None = None
+        self._cognition_operations: dict[str, WorkbenchCognitionOperation] = {}
+        self._cancellations: dict[str, CityCognitionCancellation] = {}
         self._closed = False
 
     def _new_job_id_locked(self) -> str:
@@ -279,24 +368,53 @@ class CityJobManager:
         self._transition_locked(record, phase)
         if self._active_job_id == record.job_id:
             self._active_job_id = None
+        operation = self._cognition_operations.pop(record.job_id, None)
+        if operation is not None:
+            operation.clear()
+        self._cancellations.pop(record.job_id, None)
         self._terminal_ids.append(record.job_id)
         while len(self._terminal_ids) > MAX_TERMINAL_JOBS:
             expired = self._terminal_ids.popleft()
             self._records.pop(expired, None)
 
+    def _rollback_submission_locked(
+        self,
+        job_id: str | None,
+        operation: WorkbenchCognitionOperation | None,
+    ) -> None:
+        mapped_operation: WorkbenchCognitionOperation | None = None
+        if job_id is not None:
+            self._records.pop(job_id, None)
+            mapped_operation = self._cognition_operations.pop(job_id, None)
+            self._cancellations.pop(job_id, None)
+            if self._active_job_id == job_id:
+                self._active_job_id = None
+        credential_owner = mapped_operation if mapped_operation is not None else operation
+        if credential_owner is not None:
+            credential_owner.clear()
+
     def submit(self, validated: ValidatedWorkbenchRun) -> WorkbenchJobView:
         """Preflight and schedule one frozen request without waiting for evaluation."""
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
-        if isinstance(validated.workbench_input, WorkbenchRunInputV3):
-            raise WorkbenchJobSubmissionError(
-                "Workbench input schema 3 requires city run manifest schema 9."
-            )
         run_id = validated.workbench_input.draft.settings.run_id
         draft = validated.workbench_input.draft
+        cognition = (
+            validated.workbench_input.draft.cognition
+            if isinstance(validated.workbench_input, WorkbenchRunInputV3)
+            else None
+        )
+        input_schema_version = validated.workbench_input.schema_version
+        run_schema_version: Literal[7, 8, 9]
+        if input_schema_version == 1:
+            run_schema_version = 7
+        elif input_schema_version == 2:
+            run_schema_version = 8
+        else:
+            run_schema_version = 9
         accepted_settings = WorkbenchAcceptedSettings(
-            workbench_input_schema_version=validated.workbench_input.schema_version,
-            run_schema_version=7 if validated.workbench_input.schema_version == 1 else 8,
+            workbench_input_schema_version=input_schema_version,
+            run_schema_version=run_schema_version,
             city_id=draft.city_id,
             scenario_id=draft.scenario.scenario_id,
             campaign_id=draft.scenario.campaign.campaign_id,
@@ -304,35 +422,55 @@ class CityJobManager:
             agent_count=draft.settings.agent_count,
             days=draft.settings.days,
             response_mode=draft.settings.response_mode,
+            cognition_mode=None if cognition is None else cognition.mode,
+            provider_profile_id=None if cognition is None else cognition.provider_profile_id,
+            provider_revision_sha256=(
+                None if cognition is None else cognition.provider_revision_sha256
+            ),
+            aggregate_output_token_ceiling=(
+                None if cognition is None else cognition.aggregate_output_token_ceiling
+            ),
         )
         with self._lock:
             if self._closed:
                 raise WorkbenchJobManagerClosed("The workbench worker is closed.")
             if self._active_job_id is not None:
                 raise WorkbenchJobBusy("Another workbench run is already active.")
-            self._repository.ensure_available(run_id)
-            job_id = self._new_job_id_locked()
-            created_at = _utc_now()
-            record = _JobRecord(
-                job_id=job_id,
-                run_id=run_id,
-                accepted_settings=accepted_settings,
-                validated=validated,
-                phase="queued",
-                created_at=created_at,
-                updated_at=created_at,
-            )
-            self._records[job_id] = record
-            self._active_job_id = job_id
-            queued = self._view(record)
+            operation: WorkbenchCognitionOperation | None = None
+            job_id: str | None = None
+            try:
+                if isinstance(validated.workbench_input, WorkbenchRunInputV3):
+                    operation = self._repository.preflight_cognition(validated)
+                self._repository.ensure_available(run_id)
+                job_id = self._new_job_id_locked()
+                created_at = _utc_now()
+                record = _JobRecord(
+                    job_id=job_id,
+                    run_id=run_id,
+                    accepted_settings=accepted_settings,
+                    validated=validated,
+                    phase="queued",
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+                self._records[job_id] = record
+                if operation is not None:
+                    self._cognition_operations[job_id] = operation
+                    self._cancellations[job_id] = CityCognitionCancellation()
+                self._active_job_id = job_id
+                queued = self._view(record)
+            except BaseException:
+                self._rollback_submission_locked(job_id, operation)
+                raise
             try:
                 self._executor.submit(self._run_job, job_id)
-            except Exception:
-                self._records.pop(job_id, None)
-                self._active_job_id = None
-                raise WorkbenchJobSubmissionError(
-                    "The workbench worker could not accept the job."
-                ) from None
+            except BaseException as error:
+                self._rollback_submission_locked(job_id, operation)
+                if isinstance(error, Exception):
+                    raise WorkbenchJobSubmissionError(
+                        "The workbench worker could not accept the job."
+                    ) from None
+                raise
             return queued
 
     def _cancel_before_publication_locked(self, record: _JobRecord) -> bool:
@@ -341,29 +479,148 @@ class CityJobManager:
         self._terminal_locked(record, "cancelled")
         return True
 
-    def _fail(self, job_id: str, phase: Literal["evaluating", "persisting", "verifying"]) -> None:
+    def _fail(
+        self,
+        job_id: str,
+        phase: Literal[
+            "evaluating",
+            "simulating",
+            "selecting-explanations",
+            "requesting-explanations",
+            "persisting",
+            "verifying",
+        ],
+    ) -> None:
         with self._lock:
             record = self._records.get(job_id)
             if record is None or record.phase in _TERMINAL_PHASES:
                 return
-            if phase == "evaluating" and record.cancellation_requested:
+            if phase in _CANCELLABLE_PHASES and record.cancellation_requested:
                 self._terminal_locked(record, "cancelled")
                 return
             self._terminal_locked(record, "failed", error=_failure(phase))
 
     def _run_job(self, job_id: str) -> None:
+        try:
+            self._run_job_checked(job_id)
+        except BaseException:
+            self._fail_after_hard_worker_interruption(job_id)
+            raise
+
+    def _fail_after_hard_worker_interruption(self, job_id: str) -> None:
+        with self._lock:
+            record = self._records.get(job_id)
+            if record is None or record.phase in _TERMINAL_PHASES:
+                return
+            if record.phase in _CANCELLABLE_PHASES and record.cancellation_requested:
+                self._terminal_locked(record, "cancelled")
+                return
+            phase: Literal[
+                "evaluating",
+                "simulating",
+                "selecting-explanations",
+                "requesting-explanations",
+                "persisting",
+                "verifying",
+            ]
+            match record.phase:
+                case "queued":
+                    phase = "simulating" if job_id in self._cognition_operations else "evaluating"
+                case "evaluating":
+                    phase = "evaluating"
+                case "simulating":
+                    phase = "simulating"
+                case "selecting-explanations":
+                    phase = "selecting-explanations"
+                case "requesting-explanations":
+                    phase = "requesting-explanations"
+                case "persisting":
+                    phase = "persisting"
+                case "verifying":
+                    phase = "verifying"
+                case _:
+                    return
+            self._terminal_locked(record, "failed", error=_failure(phase))
+
+    def _run_job_checked(self, job_id: str) -> None:
         with self._lock:
             record = self._records[job_id]
             if self._cancel_before_publication_locked(record):
                 return
-            self._transition_locked(record, "evaluating")
             validated = record.validated
+            operation = self._cognition_operations.get(job_id)
+            cancellation = self._cancellations.get(job_id)
+            self._transition_locked(
+                record,
+                "simulating" if operation is not None else "evaluating",
+            )
 
-        try:
-            prepared = self._repository.prepare(validated)
-        except Exception:
-            self._fail(job_id, "evaluating")
-            return
+        if operation is None:
+            try:
+                prepared = self._repository.prepare(validated)
+            except Exception:
+                self._fail(job_id, "evaluating")
+                return
+        else:
+            assert cancellation is not None
+            try:
+                scientific = self._repository.prepare_scientific(validated, operation)
+            except Exception:
+                operation.clear()
+                self._fail(job_id, "simulating")
+                return
+
+            with self._lock:
+                record = self._records[job_id]
+                if self._cancel_before_publication_locked(record):
+                    operation.clear()
+                    self._cognition_operations.pop(job_id, None)
+                    self._cancellations.pop(job_id, None)
+                    return
+                self._transition_locked(record, "selecting-explanations")
+            try:
+                self._repository.select_explanations(scientific, operation)
+            except Exception:
+                operation.clear()
+                self._fail(job_id, "selecting-explanations")
+                return
+
+            with self._lock:
+                record = self._records[job_id]
+                if self._cancel_before_publication_locked(record):
+                    operation.clear()
+                    self._cognition_operations.pop(job_id, None)
+                    self._cancellations.pop(job_id, None)
+                    return
+                self._transition_locked(record, "requesting-explanations")
+            try:
+                prepared = self._repository.resolve_cognition(
+                    scientific,
+                    operation,
+                    cancellation,
+                )
+            except asyncio.CancelledError:
+                operation.clear()
+                with self._lock:
+                    record = self._records[job_id]
+                    if record.cancellation_requested:
+                        self._terminal_locked(record, "cancelled")
+                    else:
+                        self._terminal_locked(
+                            record,
+                            "failed",
+                            error=_failure("requesting-explanations"),
+                        )
+                return
+            except Exception:
+                operation.clear()
+                self._fail(job_id, "requesting-explanations")
+                return
+            finally:
+                operation.clear()
+                with self._lock:
+                    self._cognition_operations.pop(job_id, None)
+                    self._cancellations.pop(job_id, None)
 
         with self._lock:
             record = self._records[job_id]
@@ -436,13 +693,26 @@ class CityJobManager:
             if not record.cancellation_requested:
                 record.cancellation_requested = True
                 self._touch(record)
-            return self._view(record)
+            cancellation = self._cancellations.get(record.job_id)
+            view = self._view(record)
+        if cancellation is not None:
+            cancellation.cancel()
+        return view
 
     def close(self) -> None:
-        """Stop acceptance and drain the owned worker; safe to call repeatedly."""
+        """Stop acceptance, cancel active cognition, and drain the owned worker."""
         with self._close_lock:
+            cancellation: CityCognitionCancellation | None = None
             with self._lock:
                 self._closed = True
+                if self._active_job_id is not None:
+                    record = self._records[self._active_job_id]
+                    cancellation = self._cancellations.get(record.job_id)
+                    if cancellation is not None and record.phase in _CANCELLABLE_PHASES:
+                        record.cancellation_requested = True
+                        self._touch(record)
+            if cancellation is not None:
+                cancellation.cancel()
             self._executor.shutdown(wait=True, cancel_futures=False)
 
 

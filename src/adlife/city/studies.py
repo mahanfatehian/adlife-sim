@@ -16,6 +16,7 @@ from adlife.core.domain.city_run import (
     CityRunManifestV6,
     CityRunManifestV7,
     CityRunManifestV8,
+    CityRunManifestV9,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition
@@ -28,6 +29,7 @@ from adlife.core.experiments.spatial_response_metrics import (
     spatial_response_assumption_structure_sha256,
 )
 from adlife.core.experiments.spatial_study import (
+    CityCognitionStudyReceiptV1,
     SpatialStudyAAInvariantError,
     SpatialStudyArmReceipt,
     SpatialStudyCityProvenance,
@@ -56,14 +58,21 @@ class _RunProjection:
 def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
     manifest = stored.manifest
     if not isinstance(
-        manifest, (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+        manifest,
+        (
+            CityRunManifestV5,
+            CityRunManifestV6,
+            CityRunManifestV7,
+            CityRunManifestV8,
+            CityRunManifestV9,
+        ),
     ):
-        raise SchemaVersionMismatch("spatial study requires a schema-v5, v6, v7 or v8 city run")
+        raise SchemaVersionMismatch("spatial study requires a schema-v5, v6, v7, v8 or v9 city run")
     if response_scope and not isinstance(
-        manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)
+        manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)
     ):
         raise SchemaVersionMismatch(
-            "spatial response study requires a schema-v6, v7 or v8 city run"
+            "spatial response study requires a schema-v6, v7, v8 or v9 city run"
         )
     pack = stored.pack
     if isinstance(pack, CityPackV2):
@@ -98,13 +107,17 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
         "place_schema_version": manifest.place_schema_version,
         "place_set_sha256": manifest.place_set_sha256,
         "response_model_id": "spatial-response-v1"
-        if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8))
+        if isinstance(
+            manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)
+        )
         else None,
     }
     attention = metrics_for_stored_city_run(stored)
     response_metrics = response_metrics_for_stored_city_run(stored) if response_scope else None
     response_receipt = None
-    if isinstance(manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)):
+    if isinstance(
+        manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)
+    ):
         if stored.response_input is None or stored.spatial_scenario is None:
             raise CorruptRunArtifact("response city run has incomplete response inputs")
         response_fields: dict[str, object] = {
@@ -138,7 +151,7 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
                 ),
             }
         )
-        if isinstance(manifest, CityRunManifestV8):
+        if isinstance(manifest, (CityRunManifestV8, CityRunManifestV9)):
             # Only materialized causal population values belong in compatibility.
             # Workbench provenance includes descriptive identity; response assumptions
             # additionally include legitimate campaign/placement treatment contrasts.
@@ -199,12 +212,19 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
             "response": response_receipt,
             "workbench_input_schema_version": (
                 manifest.workbench_input_schema_version
-                if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8))
+                if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9))
                 else None
             ),
             "workbench_input_sha256": (
                 manifest.workbench_input_sha256
-                if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8))
+                if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9))
+                else None
+            ),
+            "cognition": (
+                CityCognitionStudyReceiptV1.model_validate(
+                    manifest.cognition.model_dump(mode="python", warnings="none")
+                )
+                if isinstance(manifest, CityRunManifestV9)
                 else None
             ),
         }
@@ -260,7 +280,7 @@ def analyze_stored_spatial_study(
             control.place_assignments_sha256,
         ) != (treatment.agents_sha256, treatment.trace_sha256, treatment.place_assignments_sha256):
             raise SpatialStudyCompatibilityError("study arms do not share matched provenance")
-        if control.shared["source_run_schema_version"] == 8:
+        if control.shared["source_run_schema_version"] in {8, 9}:
             assert control.arm.response is not None and treatment.arm.response is not None
             current_population = control.arm.response.response_population_sha256
             if current_population != treatment.arm.response.response_population_sha256:
@@ -326,6 +346,7 @@ def analyze_stored_spatial_study(
                     "manifest_sha256",
                     "workbench_input_schema_version",
                     "workbench_input_sha256",
+                    "cognition",
                 }
             ) != treatment.arm.model_dump(
                 exclude={
@@ -333,6 +354,7 @@ def analyze_stored_spatial_study(
                     "manifest_sha256",
                     "workbench_input_schema_version",
                     "workbench_input_sha256",
+                    "cognition",
                 }
             ) or any(row.control != row.treatment or row.delta != 0.0 for row in scalars):
                 raise CorruptRunArtifact("verified spatial study A/A invariant failed")

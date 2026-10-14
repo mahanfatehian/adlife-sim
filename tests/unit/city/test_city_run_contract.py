@@ -112,6 +112,60 @@ def valid_manifest_v7() -> dict[str, object]:
     }
 
 
+def valid_manifest_v8() -> dict[str, object]:
+    return {
+        **valid_manifest_v7(),
+        "schema_version": 8,
+        "workbench_input_schema_version": 2,
+    }
+
+
+def valid_cognition_receipt() -> dict[str, object]:
+    return {
+        "cognition_input_sha256": "8" * 64,
+        "cognition_input_bytes": 12_345,
+        "request_schema_version": 1,
+        "result_schema_version": 1,
+        "explainer_id": "city-rules-explainer-v1",
+        "prompt_contract_version": 1,
+        "prompt_contract_sha256": "9" * 64,
+        "result_schema_contract_version": 1,
+        "result_schema_contract_sha256": "a" * 64,
+        "selection_policy_version": 1,
+        "selection_policy_sha256": "b" * 64,
+        "fallback_policy_version": 1,
+        "fallback_policy_sha256": "c" * 64,
+        "provider_profile_snapshot_sha256": None,
+        "provider_revision_sha256": None,
+        "effective_settings_sha256": "d" * 64,
+        "budget_allocation_sha256": "e" * 64,
+        "selected_request_count": 3,
+        "outcome_counts": {
+            "schema_version": 1,
+            "rules": 3,
+            "mock": 0,
+            "provider": 0,
+            "cache": 0,
+            "fallback": 0,
+            "budget_skipped": 0,
+        },
+        "terminal_stream_sha256": "f" * 64,
+        "terminal_stream_bytes": 2_048,
+        "terminal_record_count": 3,
+        "summary_sha256": "0" * 64,
+    }
+
+
+def valid_manifest_v9() -> dict[str, object]:
+    return {
+        **valid_manifest_v6(),
+        "schema_version": 9,
+        "workbench_input_schema_version": 3,
+        "workbench_input_sha256": "7" * 64,
+        "cognition": valid_cognition_receipt(),
+    }
+
+
 @pytest.mark.parametrize(
     "factory",
     [
@@ -122,6 +176,8 @@ def valid_manifest_v7() -> dict[str, object]:
         valid_manifest_v5,
         valid_manifest_v6,
         valid_manifest_v7,
+        valid_manifest_v8,
+        valid_manifest_v9,
     ],
 )
 @pytest.mark.parametrize(
@@ -152,6 +208,8 @@ def test_all_manifest_versions_refuse_unsafe_package_version_text(factory, versi
         valid_manifest_v5,
         valid_manifest_v6,
         valid_manifest_v7,
+        valid_manifest_v8,
+        valid_manifest_v9,
     ],
 )
 @pytest.mark.parametrize(
@@ -483,17 +541,17 @@ def test_v7_manifest_refuses_invalid_workbench_bindings(field: str, value: objec
         model.model_validate({**valid_manifest_v7(), field: value})
 
 
-def test_manifest_parser_refuses_unknown_version_after_v8() -> None:
+def test_manifest_parser_refuses_unknown_version_after_v9() -> None:
     with pytest.raises(ValueError, match="unsupported"):
         city_run.parse_city_run_manifest_json(
-            json.dumps({**valid_manifest_v7(), "schema_version": 9})
+            json.dumps({**valid_manifest_v9(), "schema_version": 10})
         )
 
 
 def test_v8_manifest_dispatch_is_a_sibling_of_v7() -> None:
     model = getattr(city_run, "CityRunManifestV8", None)
     assert model is not None, "CityRunManifestV8 is not implemented"
-    document = {**valid_manifest_v7(), "schema_version": 8, "workbench_input_schema_version": 2}
+    document = valid_manifest_v8()
     manifest = city_run.parse_city_run_manifest_json(json.dumps(document))
     assert isinstance(manifest, model)
     assert not isinstance(manifest, city_run.CityRunManifestV7)
@@ -533,9 +591,146 @@ def test_v8_manifest_preserves_strict_versions_receipts_and_counts(
 ) -> None:
     model = getattr(city_run, "CityRunManifestV8", None)
     assert model is not None, "CityRunManifestV8 is not implemented"
-    document = {**valid_manifest_v7(), "schema_version": 8, "workbench_input_schema_version": 2}
+    document = valid_manifest_v8()
     with pytest.raises(ValidationError):
         model.model_validate({**document, field: value})
+
+
+def test_v9_manifest_dispatches_with_a_complete_nested_cognition_receipt() -> None:
+    model = getattr(city_run, "CityRunManifestV9", None)
+    assert model is not None, "CityRunManifestV9 is not implemented"
+
+    manifest = city_run.parse_city_run_manifest_json(json.dumps(valid_manifest_v9()))
+
+    assert isinstance(manifest, model)
+    assert manifest.schema_version == 9
+    assert manifest.workbench_input_schema_version == 3
+    assert manifest.cognition.selected_request_count == 3
+    assert manifest.cognition.outcome_counts.rules == 3
+    assert city_run.parse_city_run_manifest_json(canonical_json(manifest)) == manifest
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", True),
+        ("schema_version", 9.0),
+        ("schema_version", "9"),
+        ("schema_version", 8),
+        ("schema_version", 10),
+        ("workbench_input_schema_version", 2),
+        ("workbench_input_schema_version", True),
+        ("workbench_input_schema_version", 3.0),
+        ("workbench_input_schema_version", "3"),
+        ("workbench_input_sha256", "short"),
+        ("cognition", None),
+        ("unknown_member", "unexpected"),
+    ],
+)
+def test_v9_manifest_requires_exact_schema3_and_cognition_receipt(
+    field: str,
+    value: object,
+) -> None:
+    model = getattr(city_run, "CityRunManifestV9", None)
+    assert model is not None, "CityRunManifestV9 is not implemented"
+    with pytest.raises(ValidationError):
+        model.model_validate({**valid_manifest_v9(), field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cognition_input_bytes", 0),
+        ("cognition_input_bytes", 65_537),
+        ("request_schema_version", True),
+        ("request_schema_version", 2),
+        ("result_schema_version", 1.0),
+        ("explainer_id", "city-sk-live-abcdefghij-explainer-v1"),
+        ("prompt_contract_version", "1"),
+        ("result_schema_contract_version", 2),
+        ("selection_policy_version", True),
+        ("fallback_policy_version", 0),
+        ("selected_request_count", 61),
+        ("terminal_stream_bytes", 1_048_577),
+        ("terminal_record_count", 61),
+        ("provider_profile_snapshot_sha256", "A" * 64),
+        ("provider_revision_sha256", "short"),
+        ("unknown_member", "unexpected"),
+    ],
+)
+def test_v9_cognition_receipt_refuses_inexact_or_unbounded_members(
+    field: str,
+    value: object,
+) -> None:
+    receipt = {**valid_cognition_receipt(), field: value}
+    with pytest.raises(ValidationError):
+        city_run.CityCognitionManifestReceiptV1.model_validate(receipt)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"selected_request_count": 2},
+        {"terminal_record_count": 2},
+        {
+            "outcome_counts": {
+                "schema_version": 1,
+                "rules": 2,
+                "mock": 0,
+                "provider": 0,
+                "cache": 0,
+                "fallback": 0,
+                "budget_skipped": 0,
+            }
+        },
+        {"provider_profile_snapshot_sha256": "1" * 64},
+        {"provider_revision_sha256": "2" * 64},
+    ],
+)
+def test_v9_cognition_receipt_cross_checks_counts_and_profile_binding(
+    mutation: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        city_run.CityCognitionManifestReceiptV1.model_validate(
+            {**valid_cognition_receipt(), **mutation}
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {
+            "explainer_id": "city-rules-explainer-v1",
+            "provider_profile_snapshot_sha256": "1" * 64,
+            "provider_revision_sha256": "2" * 64,
+        },
+        {
+            "explainer_id": "city-mock-explainer-v1",
+            "outcome_counts": {
+                "schema_version": 1,
+                "rules": 3,
+                "mock": 0,
+                "provider": 0,
+                "cache": 0,
+                "fallback": 0,
+                "budget_skipped": 0,
+            },
+        },
+        {"explainer_id": "city-provider-explainer-v1"},
+        {
+            "explainer_id": "city-provider-explainer-v1",
+            "provider_profile_snapshot_sha256": "1" * 64,
+            "provider_revision_sha256": "2" * 64,
+        },
+    ],
+)
+def test_v9_cognition_receipt_enforces_explainer_profile_and_outcome_coherence(
+    mutation: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        city_run.CityCognitionManifestReceiptV1.model_validate(
+            {**valid_cognition_receipt(), **mutation}
+        )
 
 
 @pytest.mark.parametrize(

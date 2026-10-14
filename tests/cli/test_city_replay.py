@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from adlife.city.runs import create_city_run
 from adlife.cli.app import app
+from tests.integration.test_city_run_replay import _create_v9_run
 from tests.unit.city.test_city_pack import load_pack, pack_data
 from tests.unit.city.test_spatial_opportunity import _phone, _scenario
 from tests.unit.city.test_spatial_response import _response_input
@@ -59,6 +60,23 @@ def _create_response_run(root: Path, *, run_id: str = "response-study"):
             agent_ids=("person-001", "person-002"),
         ),
     )
+
+
+def test_city_replay_accepts_v9_offline_and_preserves_source_bytes(tmp_path: Path) -> None:
+    stored = _create_v9_run(tmp_path)
+    before = _artifact_bytes(stored.directory)
+
+    result = CliRunner().invoke(
+        app,
+        ["--format", "json", "city-replay", str(tmp_path), "v9-study"],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["identical"] is True
+    assert document["response_stream_sha256"] == stored.manifest.response_stream_sha256
+    assert document["response_state_sha256"] == stored.manifest.response_state_sha256
+    assert _artifact_bytes(stored.directory) == before
 
 
 def test_city_replay_reports_verified_trace_in_json(tmp_path: Path) -> None:

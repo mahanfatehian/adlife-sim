@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -10,23 +12,168 @@ from fastapi.testclient import TestClient
 
 from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
-from adlife.city.runs import CityReplayResult, create_city_run, replay_city_run
+from adlife.city.runs import (
+    CityReplayResult,
+    create_city_run,
+    finalize_city_run,
+    prepare_city_scientific_run,
+    publish_city_run,
+    replay_city_run,
+)
 from adlife.city.workbench_catalog import (
     UnknownWorkbenchCity,
     WorkbenchCityRegistryUnavailable,
     WorkbenchCityResolver,
 )
+from adlife.city.workbench_input import WorkbenchRunDraftV3
+from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city import CityPackV2, parse_city_pack_json
-from adlife.core.domain.city_run import CityRunManifestV5
+from adlife.core.domain.city_cognition import (
+    CITY_COGNITION_DISCLOSURE,
+    CityCognitionResultV1,
+    CityCognitionSource,
+)
+from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV9
 from adlife.core.domain.serialization import canonical_json
-from adlife.core.ports.run_store import CorruptRunArtifact
+from adlife.core.ports.run_store import CorruptRunArtifact, DuplicateRun
+from adlife.core.simulation.city_cognition import (
+    build_city_budget_skipped_result,
+    build_city_cognition_terminal_record,
+    build_city_fallback_result,
+    build_city_rules_result,
+    validate_city_cognition_evaluation,
+)
 from tests.integration.test_city_workbench_artifacts import _create_uploaded_workbench_run
 from tests.unit.city.test_city_catalog_contract import write_catalog_root
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
+from tests.unit.city.test_city_run_preparation import _provider_revision
 from tests.unit.city.test_spatial_opportunity import _phone, _scenario
+from tests.unit.city.test_workbench_input import draft_v3_data
+
+
+def _create_v9_run(root: Path, *, run_id: str = "v9-study"):
+    document = draft_v3_data(mode="rules")
+    document["settings"]["run_id"] = run_id
+    compiled = construct_workbench_run(
+        WorkbenchRunDraftV3.model_validate_json(json.dumps(document))
+    )
+    settings = compiled.workbench_input.draft.settings
+    scientific = prepare_city_scientific_run(
+        compiled.pack,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=compiled.scenario,
+        spatial_response=compiled.response_input,
+        workbench_input=compiled.workbench_input,
+    )
+    records = tuple(
+        build_city_cognition_terminal_record(
+            request,
+            selection_index=index,
+            source="rules",
+            result=build_city_rules_result(request),
+        )
+        for index, request in enumerate(scientific.cognition_requests)
+    )
+    evaluation = validate_city_cognition_evaluation(
+        scientific.cognition_input,
+        scientific.cognition_requests,
+        records,
+    )
+    prepared = finalize_city_run(
+        scientific,
+        cognition_input=scientific.cognition_input,
+        cognition_evaluation=evaluation,
+    )
+    return publish_city_run(prepared, root=root)
+
+
+def _create_provider_v9_run(
+    root: Path,
+    *,
+    source: CityCognitionSource,
+):
+    profile = _provider_revision(root / "profile-registry")
+    budget = 0 if source == "budget-skipped" else 92_160
+    document = draft_v3_data(
+        mode="local",
+        aggregate_output_token_ceiling=budget,
+    )
+    document["settings"]["run_id"] = f"{source}-v9"
+    document["cognition"]["provider_profile_id"] = profile.profile_id
+    document["cognition"]["provider_revision_sha256"] = profile.revision_sha256
+    compiled = construct_workbench_run(
+        WorkbenchRunDraftV3.model_validate_json(json.dumps(document))
+    )
+    settings = compiled.workbench_input.draft.settings
+    scientific = prepare_city_scientific_run(
+        compiled.pack,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=compiled.scenario,
+        spatial_response=compiled.response_input,
+        workbench_input=compiled.workbench_input,
+        provider_profile=profile,
+    )
+    snapshot = scientific.cognition_input.provider_profile
+    assert snapshot is not None
+    records = []
+    for index, request in enumerate(scientific.cognition_requests):
+        if source in {"provider", "cache"}:
+            result = CityCognitionResultV1(
+                schema_version=1,
+                request_id=request.request_id,
+                interpretation=f"Frozen {source} explanation {index}.",
+                decision_factors=("Frozen deterministic response evidence",),
+                safety_flags=(),
+                disclosure=CITY_COGNITION_DISCLOSURE,
+            )
+            attempt_count = 1 if source == "provider" else 0
+            reason = None
+        elif source == "fallback":
+            result = build_city_fallback_result(
+                request,
+                reason="timeout-exhausted",
+                policy=scientific.cognition_input.fallback_policy,
+            )
+            attempt_count = 2
+            reason = "timeout-exhausted"
+        else:
+            result = build_city_budget_skipped_result(
+                request,
+                policy=scientific.cognition_input.fallback_policy,
+            )
+            attempt_count = 0
+            reason = "budget-skipped"
+        records.append(
+            build_city_cognition_terminal_record(
+                request,
+                selection_index=index,
+                source=source,
+                result=result,
+                attempt_count=attempt_count,
+                reason=reason,
+                provider_profile=snapshot,
+            )
+        )
+    evaluation = validate_city_cognition_evaluation(
+        scientific.cognition_input,
+        scientific.cognition_requests,
+        tuple(records),
+    )
+    prepared = finalize_city_run(
+        scientific,
+        cognition_input=scientific.cognition_input,
+        cognition_evaluation=evaluation,
+    )
+    return publish_city_run(prepared, root=root / "runs")
 
 
 @pytest.mark.parametrize("catalog_change", ["removed", "modified"])
@@ -420,3 +567,142 @@ def test_uploaded_run_refuses_misbound_frozen_city_without_registry_repair(
     assert registered.pack.fingerprint != changed_pack.fingerprint
     assert sidecar.read_bytes() == changed_bytes
     assert _file_hashes(stored.directory) == tampered_hashes
+
+
+def test_v9_finalization_publishes_complete_cognition_and_replays_read_only(
+    tmp_path: Path,
+) -> None:
+    stored = _create_v9_run(tmp_path)
+    before = _file_hashes(stored.directory)
+
+    result = replay_city_run(CityRunStore(tmp_path).load("v9-study"))
+
+    assert isinstance(stored.manifest, CityRunManifestV9)
+    assert stored.cognition_input is not None
+    assert stored.cognition_evaluation is not None
+    assert result.identical is True
+    assert result.cognition_evaluation == stored.cognition_evaluation
+    assert tuple(record.request_id for record in result.cognition_evaluation.records) == tuple(
+        record.request_id for record in stored.cognition_evaluation.records
+    )
+    assert result.cognition_evaluation.summary.terminal_stream_sha256 == (
+        stored.manifest.cognition.terminal_stream_sha256
+    )
+    assert _file_hashes(stored.directory) == before
+
+
+def test_v9_replay_uses_only_frozen_evidence_without_runtime_services(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.adapters.cognition.city_cache import CityCognitionCache
+    from adlife.adapters.cognition.city_credentials import OSKeyringCityCredentialStore
+    from adlife.city import runs as runs_module
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+
+    stored = _create_v9_run(tmp_path)
+    loaded = CityRunStore(tmp_path).load("v9-study")
+    before = _file_hashes(stored.directory)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("offline replay consulted a live runtime service")
+
+    monkeypatch.setattr(ProviderProfileRegistry, "load", forbidden)
+    monkeypatch.setattr(OSKeyringCityCredentialStore, "resolve", forbidden)
+    monkeypatch.setattr(CityCognitionCache, "get", forbidden)
+    monkeypatch.setattr(WorkbenchCityResolver, "resolve_city", forbidden)
+    monkeypatch.setattr("socket.getaddrinfo", forbidden)
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_PROMPT_CONTRACT_TEXT", "removed")
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_RESULT_SCHEMA_DOCUMENT", "removed")
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_DEFAULT_SELECTION_POLICY", object())
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_DEFAULT_FALLBACK_POLICY", object())
+
+    first = replay_city_run(loaded)
+    second = replay_city_run(loaded)
+
+    assert first == second
+    assert first.cognition_evaluation == loaded.cognition_evaluation
+    assert _file_hashes(stored.directory) == before
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["provider", "cache", "fallback", "budget-skipped"],
+)
+def test_v9_replay_preserves_every_provider_terminal_outcome_offline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: CityCognitionSource,
+) -> None:
+    from adlife.adapters.cognition.city_cache import CityCognitionCache
+    from adlife.adapters.cognition.city_credentials import OSKeyringCityCredentialStore
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+
+    stored = _create_provider_v9_run(tmp_path / source, source=source)
+    loaded = CityRunStore(tmp_path / source / "runs").load(f"{source}-v9")
+    before = _file_hashes(stored.directory)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("replay consulted live provider state")
+
+    monkeypatch.setattr(ProviderProfileRegistry, "load", forbidden)
+    monkeypatch.setattr(OSKeyringCityCredentialStore, "resolve", forbidden)
+    monkeypatch.setattr(CityCognitionCache, "get", forbidden)
+    monkeypatch.setattr("socket.getaddrinfo", forbidden)
+
+    replayed = replay_city_run(loaded)
+
+    assert replayed.cognition_evaluation is not None
+    assert loaded.cognition_evaluation is not None
+    assert replayed.cognition_evaluation == loaded.cognition_evaluation
+    assert {record.source for record in replayed.cognition_evaluation.records} == {source}
+    assert _file_hashes(stored.directory) == before
+
+
+def test_v9_replay_refuses_cross_run_cognition_without_repair(
+    tmp_path: Path,
+) -> None:
+    first = _create_v9_run(tmp_path / "first", run_id="first-v9")
+    second = _create_v9_run(tmp_path / "second", run_id="second-v9")
+    first_before = _file_hashes(first.directory)
+    second_before = _file_hashes(second.directory)
+    assert second.cognition_evaluation is not None
+    crossed = replace(first, cognition_evaluation=second.cognition_evaluation)
+
+    with pytest.raises(CorruptRunArtifact, match="cognition"):
+        replay_city_run(crossed)
+
+    assert _file_hashes(first.directory) == first_before
+    assert _file_hashes(second.directory) == second_before
+
+
+def test_v9_replay_does_not_disguise_an_implementation_type_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.city import runs as runs_module
+
+    _create_v9_run(tmp_path)
+    loaded = CityRunStore(tmp_path).load("v9-study")
+
+    def fail_validation(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("injected cognition implementation defect")
+
+    monkeypatch.setattr(
+        runs_module,
+        "validate_city_cognition_evaluation",
+        fail_validation,
+    )
+
+    with pytest.raises(TypeError, match="injected cognition implementation defect"):
+        replay_city_run(loaded)
+
+
+def test_v9_publication_refuses_an_existing_destination(tmp_path: Path) -> None:
+    stored = _create_v9_run(tmp_path)
+    before = _file_hashes(stored.directory)
+
+    with pytest.raises(DuplicateRun):
+        _create_v9_run(tmp_path)
+
+    assert _file_hashes(stored.directory) == before

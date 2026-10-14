@@ -27,6 +27,7 @@ from adlife.city.catalog import (
     CityCatalogError,
     UnknownCatalogCity,
 )
+from adlife.city.provider_runtime import ProviderRuntimePolicy, build_provider_runtime_policy
 from adlife.city.run_store import StoredCityRun
 from adlife.city.web import (
     CityViewContext,
@@ -95,7 +96,7 @@ from adlife.city.workbench_workspace import (
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
-from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8
+from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8, CityRunManifestV9
 from adlife.core.ports.run_store import (
     DuplicateRun,
     RunNotFound,
@@ -411,11 +412,13 @@ def create_city_workbench_app(
     workspace: WorkbenchWorkspace,
     *,
     csrf_token: str | None = None,
+    provider_runtime: ProviderRuntimePolicy | None = None,
 ) -> FastAPI:
     """Build one process-local control app after rechecking its pinned workspace."""
     verify_workbench_workspace(workspace)
     token = new_csrf_token() if csrf_token is None else csrf_token
-    repository = WorkbenchRunRepository(workspace)
+    runtime = build_provider_runtime_policy() if provider_runtime is None else provider_runtime
+    repository = WorkbenchRunRepository(workspace, provider_runtime=runtime)
     jobs = CityJobManager(repository)
     city_resolver = WorkbenchCityResolver(workspace)
     inspector_snapshots = _InspectorSnapshots()
@@ -438,9 +441,13 @@ def create_city_workbench_app(
     def city_view_from_stored(stored: StoredCityRun) -> CityViewContext:
         schema_version = stored.manifest.schema_version
         try:
-            spatial_metrics = metrics_for_stored_city_run(stored) if schema_version >= 5 else None
+            spatial_metrics = (
+                metrics_for_stored_city_run(stored) if schema_version in {5, 6, 7, 8, 9} else None
+            )
             response_metrics = (
-                response_metrics_for_stored_city_run(stored) if schema_version >= 6 else None
+                response_metrics_for_stored_city_run(stored)
+                if schema_version in {6, 7, 8, 9}
+                else None
             )
             return create_city_view_context(
                 stored.mobility,
@@ -455,7 +462,10 @@ def create_city_workbench_app(
                 spatial_response_metrics=response_metrics,
                 workbench_input_sha256=(
                     stored.manifest.workbench_input_sha256
-                    if isinstance(stored.manifest, (CityRunManifestV7, CityRunManifestV8))
+                    if isinstance(
+                        stored.manifest,
+                        (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9),
+                    )
                     else None
                 ),
             )
@@ -514,6 +524,7 @@ def create_city_workbench_app(
         openapi_url=None,
         lifespan=lifespan,
     )
+    app.state.provider_runtime = runtime
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=list(_LOOPBACK_HOSTS),

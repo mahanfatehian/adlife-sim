@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -11,7 +12,7 @@ from adlife.core.domain.city_run import CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_study import SpatialStudyDefinition, SpatialStudyPair
 from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatch
-from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run, _spatial_run
+from tests.unit.city.test_city_analysis import _artifact_bytes, _as_v9, _persona_run, _spatial_run
 
 
 def persona_runs(root, *, change=None, changed_run_ids=None, treatment_change=None):
@@ -182,7 +183,8 @@ def test_v8_study_preserves_legitimate_treatment_contrasts(tmp_path, kind):
 
 
 @pytest.mark.parametrize(
-    "mutation", ["missing", "hash", "cross-pair", "future", "boolean", "float", "population"]
+    "mutation",
+    ["missing", "hash", "cross-pair", "future", "boolean", "float", "population", "cognition"],
 )
 def test_v8_receipt_graph_refuses_incomplete_or_modified_evidence(tmp_path, mutation):
     from adlife.core.experiments.spatial_study import SpatialStudyResult
@@ -199,8 +201,12 @@ def test_v8_receipt_graph_refuses_incomplete_or_modified_evidence(tmp_path, muta
         arm["workbench_input_schema_version"] = 1
     elif mutation == "population":
         arm["response"]["response_population_sha256"] = "0" * 64
+    elif mutation == "cognition":
+        from tests.unit.city.test_city_analysis import _cognition_receipt
+
+        arm["cognition"] = _cognition_receipt("rules", salt="legacy-extra")
     else:
-        document["source_run_schema_version"] = {"future": 9, "boolean": True, "float": 8.0}[
+        document["source_run_schema_version"] = {"future": 10, "boolean": True, "float": 9.0}[
             mutation
         ]
     with pytest.raises(ValueError):
@@ -272,6 +278,98 @@ def _analyze_v7(root: Path):
         ),
         stored,
     )
+
+
+def _analyze_v9(
+    root: Path,
+    control_source: str,
+    treatment_source: str,
+    *,
+    contrast: bool = False,
+):
+    stored = {}
+    for seed in range(2):
+        for arm, source in (("control", control_source), ("treatment", treatment_source)):
+            run_id = f"{arm}-{seed}"
+            stored[run_id] = _as_v9(
+                _persona_run(root, run_id, seed=seed),
+                source=source,
+                salt=f"{source}-{seed}-{arm}",
+            )
+
+    class InMemoryStore:
+        def load(self, run_id):
+            return stored[run_id]
+
+    from adlife.city.studies import analyze_stored_spatial_study
+
+    before = _artifact_bytes(root)
+    return (
+        analyze_stored_spatial_study(
+            InMemoryStore(),
+            definition(response=True, contrast=contrast, same=False),
+        ),
+        stored,
+        before,
+    )
+
+
+@pytest.mark.parametrize(
+    ("control_source", "treatment_source"),
+    (("rules", "mock"), ("provider", "cache"), ("fallback", "budget_skipped")),
+)
+def test_v9_study_preserves_complete_cognition_provenance_but_compares_only_science(
+    tmp_path, control_source, treatment_source
+):
+    from adlife.core.experiments._spatial_study_validation import reconstruct_manifest
+    from adlife.core.experiments.spatial_study import SpatialStudyResult
+
+    result, stored, before = _analyze_v9(tmp_path, control_source, treatment_source)
+
+    assert result.source_run_schema_version == 9
+    assert result.a_a_status == "exact-zero-verified"
+    for pair in result.pairs:
+        assert pair.control.cognition != pair.treatment.cognition
+        assert pair.control.workbench_input_schema_version == 3
+        assert pair.treatment.workbench_input_schema_version == 3
+        assert all(row.control == row.treatment and row.delta == 0.0 for row in pair.scalars)
+        for arm in (pair.control, pair.treatment):
+            assert arm.cognition is not None
+            assert arm.response is not None
+            assert arm.response.response_population_sha256 is not None
+            assert reconstruct_manifest(result, pair, arm) == stored[arm.run_id].manifest
+    assert SpatialStudyResult.model_validate_json(canonical_json(result)) == result
+    assert _artifact_bytes(tmp_path) == before
+    public = canonical_json(result)
+    for forbidden in ("prompt_text", "provider_configuration", "base_url", "api_key"):
+        assert forbidden not in public
+
+
+def test_v9_study_receipt_graph_refuses_missing_modified_and_future_evidence(tmp_path):
+    from adlife.core.experiments.spatial_study import SpatialStudyResult
+
+    result, _, _ = _analyze_v9(tmp_path, "rules", "provider")
+    for mutation in ("missing", "hash", "future", "boolean", "float"):
+        document = copy.deepcopy(result.model_dump(mode="python"))
+        if mutation == "missing":
+            del document["pairs"][0]["control"]["cognition"]
+        elif mutation == "hash":
+            document["pairs"][0]["control"]["cognition"]["summary_sha256"] = "0" * 64
+        else:
+            document["source_run_schema_version"] = {
+                "future": 10,
+                "boolean": True,
+                "float": 9.0,
+            }[mutation]
+        with pytest.raises(ValueError):
+            SpatialStudyResult.model_validate(document)
+
+
+def test_v9_cognition_only_difference_cannot_be_presented_as_a_treatment(tmp_path):
+    from adlife.core.experiments.spatial_study import SpatialStudyCompatibilityError
+
+    with pytest.raises(SpatialStudyCompatibilityError, match="must change scenario or response"):
+        _analyze_v9(tmp_path, "rules", "provider", contrast=True)
 
 
 @pytest.mark.parametrize(

@@ -67,8 +67,10 @@ def command(
     try:
         pinned = prepare_workbench_workspace(workspace)
         verify_workbench_workspace(pinned)
-        application = create_city_workbench_app(pinned)
-        application.state.provider_runtime = provider_runtime
+        application = create_city_workbench_app(
+            pinned,
+            provider_runtime=provider_runtime,
+        )
     except UnsafeWorkbenchWorkspace:
         raise CommandError("workbench workspace is unsafe or unavailable") from None
 

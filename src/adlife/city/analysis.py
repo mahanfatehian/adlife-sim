@@ -8,6 +8,7 @@ from adlife.core.domain.city_run import (
     CityRunManifestV6,
     CityRunManifestV7,
     CityRunManifestV8,
+    CityRunManifestV9,
 )
 from adlife.core.experiments.spatial_comparison import (
     SpatialMetricsComparison,
@@ -26,14 +27,22 @@ from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatc
 
 
 def metrics_for_stored_city_run(stored: StoredCityRun) -> SpatialMetrics:
-    """Project attention-only metrics from one verified v5/v6/v7/v8 run without writing."""
+    """Project attention-only metrics from one verified v5-v9 run without writing."""
     if not isinstance(stored, StoredCityRun):
         raise TypeError("stored must be a StoredCityRun")
     if not isinstance(
         stored.manifest,
-        (CityRunManifestV5, CityRunManifestV6, CityRunManifestV7, CityRunManifestV8),
+        (
+            CityRunManifestV5,
+            CityRunManifestV6,
+            CityRunManifestV7,
+            CityRunManifestV8,
+            CityRunManifestV9,
+        ),
     ):
-        raise SchemaVersionMismatch("spatial metrics require a schema-v5, v6, v7 or v8 city run")
+        raise SchemaVersionMismatch(
+            "spatial metrics require a schema-v5, v6, v7, v8 or v9 city run"
+        )
     if stored.opportunity_evaluation is None or stored.attention_evaluation is None:
         raise CorruptRunArtifact("spatial metrics city run has incomplete evidence")
     return derive_spatial_metrics(
@@ -63,12 +72,15 @@ def compare_stored_city_runs(
 
 
 def response_metrics_for_stored_city_run(stored: StoredCityRun) -> SpatialResponseMetrics:
-    """Project response metrics from one verified schema-v6/v7/v8 run without writing."""
+    """Project response metrics from one verified schema-v6-v9 run without writing."""
     if not isinstance(stored, StoredCityRun):
         raise TypeError("stored must be a StoredCityRun")
-    if not isinstance(stored.manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8)):
+    if not isinstance(
+        stored.manifest,
+        (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8, CityRunManifestV9),
+    ):
         raise SchemaVersionMismatch(
-            "spatial response metrics require a schema-v6, v7 or v8 city run"
+            "spatial response metrics require a schema-v6, v7, v8 or v9 city run"
         )
     if (
         stored.spatial_scenario is None
@@ -94,7 +106,7 @@ def compare_stored_city_response_runs(
     control: StoredCityRun,
     treatment: StoredCityRun,
 ) -> SpatialResponseMetricsComparison:
-    """Compare response metrics from two verified schema-v6/v7/v8 runs without writing."""
+    """Compare response metrics from two verified schema-v6-v9 runs without writing."""
     control_metrics = response_metrics_for_stored_city_run(control)
     treatment_metrics = response_metrics_for_stored_city_run(treatment)
     return compare_spatial_response_metrics(

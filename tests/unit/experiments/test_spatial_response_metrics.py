@@ -670,7 +670,7 @@ def test_metrics_refuse_public_identity_tampering(field: str) -> None:
         SpatialResponseMetrics.model_validate(document)
 
 
-@pytest.mark.parametrize("version", [7, 8])
+@pytest.mark.parametrize("version", [7, 8, 9])
 def test_response_metrics_preserve_exact_source_provenance(version: int) -> None:
     scenario, opportunities, attention, response_input, response, _ = _billboard_bundle(
         attention_seed=0
@@ -694,7 +694,7 @@ def test_response_metrics_preserve_exact_source_provenance(version: int) -> None
     assert result.source_run_schema_version == version
 
 
-@pytest.mark.parametrize("version", [9, True, 8.0, "8"])
+@pytest.mark.parametrize("version", [10, True, 9.0, "9"])
 def test_response_metrics_refuse_future_or_noninteger_source_versions(version: object) -> None:
     scenario, opportunities, attention, response_input, response, metrics = _billboard_bundle(
         attention_seed=0

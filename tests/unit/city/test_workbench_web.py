@@ -1605,7 +1605,7 @@ def test_worker_submission_refusal_is_constant_and_value_free(
     assert not (root / "city-runs").exists()
 
 
-def test_schema3_job_is_safely_refused_until_manifest_v9_without_reserving_a_run(
+def test_schema3_offline_job_publishes_one_verified_manifest_v9_run(
     tmp_path: Path,
 ) -> None:
     client, root = _client(tmp_path)
@@ -1614,18 +1614,20 @@ def test_schema3_job_is_safely_refused_until_manifest_v9_without_reserving_a_run
 
     with client:
         response = _secure_post(client, "/api/jobs", payload)
+        assert response.status_code == 202
+        terminal = _await_job(client, response.json()["status_url"])
         capabilities = client.get("/api/workbench")
         runs = client.get("/api/runs")
 
-    assert response.status_code == 409
-    assert response.json()["error"] == {
-        "code": "worker-unavailable",
-        "message": "The workbench worker is not accepting jobs.",
-        "fields": {},
-    }
+    assert terminal["phase"] == "completed"
+    assert terminal["accepted_settings"]["workbench_input_schema_version"] == 3
+    assert terminal["accepted_settings"]["run_schema_version"] == 9
+    assert terminal["accepted_settings"]["cognition_mode"] == "rules"
+    assert terminal["result"]["run_schema_version"] == 9
+    assert terminal["result"]["cognition_mode"] == "rules"
     assert capabilities.json()["active_job"] is None
-    assert runs.json()["verified_total"] == 0
-    assert not (root / "city-runs").exists()
+    assert runs.json()["verified_total"] == 1
+    assert (root / "city-runs" / payload["settings"]["run_id"] / "run.json").is_file()
 
 
 @pytest.mark.parametrize("phase", ["prepare", "publish", "verified_summary"])

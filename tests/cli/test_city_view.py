@@ -14,10 +14,47 @@ from adlife.city.runs import create_city_run
 from adlife.cli.app import app
 from adlife.core.domain.city_run import CityRunManifestV6, CityRunManifestV7
 from adlife.core.simulation.spatial_response import summarize_spatial_response_artifact
+from tests.integration.test_city_run_replay import _create_v9_run
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 from tests.unit.city.test_spatial_opportunity import _phone, _scenario
 from tests.unit.city.test_spatial_response import _response_input
+
+
+def test_city_view_dispatches_v9_metrics_before_loopback_bind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = _create_v9_run(tmp_path)
+    before = {
+        path.relative_to(stored.directory): path.read_bytes()
+        for path in stored.directory.rglob("*")
+        if path.is_file()
+    }
+    captured: list[dict[str, object]] = []
+
+    def fake_create_city_app(*_args: object, **kwargs: object) -> FastAPI:
+        captured.append(kwargs)
+        return FastAPI()
+
+    monkeypatch.setattr(
+        "adlife.cli.commands.city_view.create_city_app",
+        fake_create_city_app,
+    )
+    monkeypatch.setattr("uvicorn.run", lambda *_args, **_kwargs: None)
+
+    result = CliRunner().invoke(app, ["city-view", str(tmp_path), "v9-study"])
+
+    assert result.exit_code == 0, result.output
+    assert len(captured) == 1
+    assert captured[0]["run_schema_version"] == 9
+    assert captured[0]["spatial_metrics"] is not None
+    assert captured[0]["spatial_response_metrics"] is not None
+    assert before == {
+        path.relative_to(stored.directory): path.read_bytes()
+        for path in stored.directory.rglob("*")
+        if path.is_file()
+    }
 
 
 @pytest.mark.asyncio
