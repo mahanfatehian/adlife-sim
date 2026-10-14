@@ -444,3 +444,25 @@ def test_json_request_limit_counts_four_byte_unicode() -> None:
     assert module.strict_json_object(exact)["text"].startswith("😀")
     with pytest.raises(ValueError, match="size"):
         module.strict_json_object(exact + b" ")
+
+
+def test_strict_json_object_accepts_an_explicit_larger_limit_without_changing_default() -> None:
+    module = _module()
+    document = b'{"padding":"' + b"x" * module.MAX_WORKBENCH_BODY_BYTES + b'"}'
+
+    with pytest.raises(module.WorkbenchJsonError, match="size"):
+        module.strict_json_object(document)
+
+    assert (
+        module.strict_json_object(
+            document,
+            max_body_bytes=len(document),
+        )["padding"]
+        == "x" * module.MAX_WORKBENCH_BODY_BYTES
+    )
+
+
+@pytest.mark.parametrize("limit", [True, 0, -1, 1.5, "4194304"])
+def test_strict_json_object_refuses_invalid_explicit_limits(limit: object) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        _module().strict_json_object(b"{}", max_body_bytes=limit)  # type: ignore[arg-type]

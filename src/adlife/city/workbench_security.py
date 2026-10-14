@@ -111,11 +111,17 @@ def _reject_constant(_value: str) -> None:
     raise WorkbenchJsonError("JSON request is invalid")
 
 
-def strict_json_object(data: bytes) -> dict[str, object]:
+def strict_json_object(
+    data: bytes,
+    *,
+    max_body_bytes: int = MAX_WORKBENCH_BODY_BYTES,
+) -> dict[str, object]:
     """Decode one bounded, duplicate-free, finite JSON object with bounded depth."""
     if not isinstance(data, bytes):
         raise TypeError("JSON request body must be bytes")
-    if len(data) > MAX_WORKBENCH_BODY_BYTES:
+    if type(max_body_bytes) is not int or max_body_bytes < 1:
+        raise ValueError("JSON request size limit is invalid")
+    if len(data) > max_body_bytes:
         raise WorkbenchJsonError("JSON request exceeds its size limit")
     try:
         text = data.decode("utf-8", errors="strict")

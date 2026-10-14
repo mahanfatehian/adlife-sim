@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+_CHILD_DIRECTORY_NAME = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
 class UnsafeWorkbenchWorkspace(ValueError):
@@ -19,6 +21,17 @@ class WorkbenchWorkspace:
     """One resolved workspace and its filesystem identity when available."""
 
     root: Path
+    device: int | None
+    inode: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkbenchSubdirectory:
+    """One direct, real child directory pinned to its observed identity."""
+
+    workspace: WorkbenchWorkspace
+    name: str
+    path: Path
     device: int | None
     inode: int | None
 
@@ -172,9 +185,112 @@ def verify_workbench_workspace(workspace: WorkbenchWorkspace) -> Path:
     return resolved
 
 
+def _direct_child_path(workspace: WorkbenchWorkspace, name: str) -> Path:
+    if not isinstance(workspace, WorkbenchWorkspace):
+        raise TypeError("workspace must be a WorkbenchWorkspace")
+    if not isinstance(name, str) or _CHILD_DIRECTORY_NAME.fullmatch(name) is None:
+        raise UnsafeWorkbenchWorkspace("workbench child directory name is invalid")
+    return verify_workbench_workspace(workspace) / name
+
+
+def prepare_workbench_subdirectory(
+    workspace: WorkbenchWorkspace,
+    name: str,
+) -> WorkbenchSubdirectory:
+    """Create and pin one direct child without following a link or reparse point."""
+    path = _direct_child_path(workspace, name)
+    try:
+        status = _lstat(path)
+    except FileNotFoundError:
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            pass
+        except OSError:
+            raise UnsafeWorkbenchWorkspace(
+                "workbench child directory could not be created safely"
+            ) from None
+        try:
+            status = _lstat(path)
+        except OSError:
+            raise UnsafeWorkbenchWorkspace(
+                "workbench child directory changed during creation"
+            ) from None
+    except OSError:
+        raise UnsafeWorkbenchWorkspace(
+            "workbench child directory cannot be inspected safely"
+        ) from None
+    _validate_directory_status(status)
+    verify_workbench_workspace(workspace)
+    device, inode = _identity(status)
+    pinned = WorkbenchSubdirectory(
+        workspace=workspace,
+        name=name,
+        path=path,
+        device=device,
+        inode=inode,
+    )
+    verify_workbench_subdirectory(pinned)
+    return pinned
+
+
+def find_workbench_subdirectory(
+    workspace: WorkbenchWorkspace,
+    name: str,
+) -> WorkbenchSubdirectory | None:
+    """Return a pinned direct child, or ``None`` only when it is truly absent."""
+    path = _direct_child_path(workspace, name)
+    try:
+        status = _lstat(path)
+    except FileNotFoundError:
+        verify_workbench_workspace(workspace)
+        return None
+    except OSError:
+        raise UnsafeWorkbenchWorkspace(
+            "workbench child directory cannot be inspected safely"
+        ) from None
+    _validate_directory_status(status)
+    device, inode = _identity(status)
+    pinned = WorkbenchSubdirectory(
+        workspace=workspace,
+        name=name,
+        path=path,
+        device=device,
+        inode=inode,
+    )
+    verify_workbench_subdirectory(pinned)
+    return pinned
+
+
+def verify_workbench_subdirectory(subdirectory: WorkbenchSubdirectory) -> Path:
+    """Recheck a pinned direct child and its pinned workspace identity."""
+    if not isinstance(subdirectory, WorkbenchSubdirectory):
+        raise TypeError("subdirectory must be a WorkbenchSubdirectory")
+    expected = _direct_child_path(subdirectory.workspace, subdirectory.name)
+    if expected != subdirectory.path:
+        raise UnsafeWorkbenchWorkspace("workbench child directory identity is invalid")
+    try:
+        status = _lstat(expected)
+    except OSError:
+        raise UnsafeWorkbenchWorkspace(
+            "workbench child directory disappeared during verification"
+        ) from None
+    _validate_directory_status(status)
+    device, inode = _identity(status)
+    if subdirectory.device is not None and device != subdirectory.device:
+        raise UnsafeWorkbenchWorkspace("workbench child directory identity changed")
+    if subdirectory.inode is not None and inode != subdirectory.inode:
+        raise UnsafeWorkbenchWorkspace("workbench child directory identity changed")
+    return expected
+
+
 __all__ = [
     "UnsafeWorkbenchWorkspace",
+    "WorkbenchSubdirectory",
     "WorkbenchWorkspace",
+    "find_workbench_subdirectory",
+    "prepare_workbench_subdirectory",
     "prepare_workbench_workspace",
+    "verify_workbench_subdirectory",
     "verify_workbench_workspace",
 ]

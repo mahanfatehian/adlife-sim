@@ -157,6 +157,51 @@ def test_prepare_workspace_refuses_simulated_windows_reparse_attribute(
         module.prepare_workbench_workspace(target)
 
 
+def test_direct_subdirectory_is_created_pinned_and_reverified(tmp_path: Path) -> None:
+    module = _module()
+    workspace = module.prepare_workbench_workspace(tmp_path / "workspace")
+
+    child = module.prepare_workbench_subdirectory(workspace, "city-packs")
+
+    assert child.path == workspace.root / "city-packs"
+    assert child.path.is_dir()
+    assert module.find_workbench_subdirectory(workspace, "city-packs") == child
+    assert module.verify_workbench_subdirectory(child) == child.path
+    name_attribute = "name"
+    with pytest.raises(FrozenInstanceError):
+        setattr(child, name_attribute, "replacement")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["", ".", "..", "../escape", "nested/child", "C:\\escape", "city_packs"],
+)
+def test_direct_subdirectory_refuses_nonportable_or_indirect_names(
+    tmp_path: Path, name: str
+) -> None:
+    module = _module()
+    workspace = module.prepare_workbench_workspace(tmp_path / "workspace")
+
+    with pytest.raises(module.UnsafeWorkbenchWorkspace):
+        module.prepare_workbench_subdirectory(workspace, name)
+
+    assert list(workspace.root.iterdir()) == []
+
+
+def test_direct_subdirectory_detects_replacement(tmp_path: Path) -> None:
+    module = _module()
+    workspace = module.prepare_workbench_workspace(tmp_path / "workspace")
+    child = module.prepare_workbench_subdirectory(workspace, "city-packs")
+    if child.device is None and child.inode is None:
+        pytest.skip("this filesystem does not expose stable directory identity")
+    original = workspace.root / "original-city-packs"
+    child.path.rename(original)
+    child.path.mkdir()
+
+    with pytest.raises(module.UnsafeWorkbenchWorkspace):
+        module.verify_workbench_subdirectory(child)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")
 def test_prepare_workspace_refuses_real_windows_junction_without_writing_through_it(
     tmp_path: Path,
