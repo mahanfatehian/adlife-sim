@@ -13,6 +13,11 @@ from adlife.city.catalog import (
     VerifiedCatalogCity,
     load_verified_catalog_cities,
 )
+from adlife.city.workbench_city_registry import (
+    WorkspaceCityRegistry,
+    WorkspaceCityRegistryError,
+)
+from adlife.city.workbench_workspace import WorkbenchWorkspace
 from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.person import contains_secret_or_email_text
 
@@ -148,12 +153,73 @@ def select_packaged_workbench_city(city_id: str) -> ResolvedWorkbenchCity:
     return selected
 
 
+def _resolve_workspace_city(pack: CityPackV2) -> ResolvedWorkbenchCity:
+    return ResolvedWorkbenchCity(
+        pack=pack,
+        storage_origin="workspace-upload",
+        data_origin="operator-supplied",
+        qualification="operator-supplied-unreviewed",
+        reviewer_role=None,
+        reviewed_on=None,
+    )
+
+
+class WorkbenchCityResolver:
+    """Compose one packaged snapshot with one fresh, fully verified registry view."""
+
+    def __init__(self, workspace: WorkbenchWorkspace) -> None:
+        self.workspace = workspace
+        self._registry = WorkspaceCityRegistry(workspace)
+
+    def list_cities(self) -> tuple[ResolvedWorkbenchCity, ...]:
+        """Return one complete deterministic view or refuse the registry as a whole."""
+        packaged = load_packaged_workbench_cities()
+        try:
+            local_packs = self._registry.discover()
+        except WorkspaceCityRegistryError:
+            raise WorkbenchCityRegistryUnavailable(
+                "the workspace city registry is unavailable"
+            ) from None
+
+        packaged_ids = {city.pack.city_id for city in packaged}
+        if any(pack.city_id in packaged_ids for pack in local_packs):
+            raise WorkbenchCityRegistryUnavailable("the workspace city registry is unavailable")
+        combined = (*packaged, *(_resolve_workspace_city(pack) for pack in local_packs))
+        return tuple(sorted(combined, key=lambda city: city.pack.city_id))
+
+    def resolve_city(self, city_id: str) -> ResolvedWorkbenchCity:
+        """Resolve only after the complete packaged and workspace view is trustworthy."""
+        selected = next(
+            (city for city in self.list_cities() if city.pack.city_id == city_id),
+            None,
+        )
+        if selected is None:
+            raise UnknownWorkbenchCity("workbench city identifier is unknown")
+        return selected
+
+    def register_city(self, document: bytes) -> ResolvedWorkbenchCity:
+        """Register against one verified packaged snapshot and preserve upload failures."""
+        packaged = load_packaged_workbench_cities()
+        forbidden_city_ids = frozenset(city.pack.city_id for city in packaged)
+        try:
+            pack = self._registry.register(
+                document,
+                forbidden_city_ids=forbidden_city_ids,
+            )
+        except WorkspaceCityRegistryError:
+            raise WorkbenchCityRegistryUnavailable(
+                "the workspace city registry is unavailable"
+            ) from None
+        return _resolve_workspace_city(pack)
+
+
 __all__ = [
     "PackagedCityCatalogUnavailable",
     "ResolvedWorkbenchCity",
     "StorageOrigin",
     "UnknownWorkbenchCity",
     "WorkbenchCityRegistryUnavailable",
+    "WorkbenchCityResolver",
     "WorkbenchDataOrigin",
     "WorkbenchQualification",
     "load_packaged_workbench_cities",

@@ -220,14 +220,29 @@ def _roadside_coordinate(
         ) from None
 
 
-def construct_workbench_run(draft: WorkbenchRunDraftDocument) -> ValidatedWorkbenchRun:
+def construct_workbench_run(
+    draft: WorkbenchRunDraftDocument,
+    *,
+    selected_pack: CityPackV2 | None = None,
+) -> ValidatedWorkbenchRun:
     """Construct complete deterministic inputs without network or filesystem writes."""
     if not isinstance(draft, (WorkbenchRunDraft, WorkbenchRunDraftV2)):
         raise TypeError("draft must be a supported WorkbenchRunDraft")
+    if selected_pack is not None and not isinstance(selected_pack, CityPackV2):
+        raise TypeError("selected_pack must be a CityPackV2")
     draft = type(draft).model_validate_json(canonical_json(draft))
 
     normalized = _normalize_draft(draft)
-    pack = _load_pack(normalized.city_id)
+    if selected_pack is None:
+        pack = _load_pack(normalized.city_id)
+    elif selected_pack.city_id != normalized.city_id:
+        raise WorkbenchValidationError(
+            "unknown-city",
+            "city_id",
+            "The selected city is unavailable.",
+        )
+    else:
+        pack = selected_pack
     creative = _load_creative(normalized.scenario.campaign.creative_template_id)
     workbench_input: WorkbenchRunInputDocument
     assumptions: dict[str, WorkbenchCohortDraft]

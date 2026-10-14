@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import re
 import threading
 import time
@@ -91,6 +92,54 @@ class _GatedRepository:
         if not self.allow_verify.wait(10):
             raise RuntimeError("verification gate timed out")
         return self.real.verified_summary(run_id)
+
+
+def test_accepted_job_keeps_the_exact_city_after_registry_mutation(tmp_path: Path) -> None:
+    from adlife.city.workbench_city_registry import WorkspaceCityRegistry
+    from adlife.city.workbench_input import WorkbenchRunDraft
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_city_registry import _document
+    from tests.unit.city.test_workbench_input import draft_data
+
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    registry = WorkspaceCityRegistry(workspace)
+    selected_pack = registry.register(
+        _document("operator-city"),
+        forbidden_city_ids=frozenset({"fictional-grid-v2"}),
+    )
+    payload = draft_data()
+    payload["city_id"] = selected_pack.city_id
+    payload["settings"].update({"run_id": "frozen-city-job", "agent_count": 1, "days": 1})
+    payload["scenario"]["phone"]["active_windows"] = [
+        {"day": 1, "start_minute": 480, "end_minute": 540}
+    ]
+    draft = WorkbenchRunDraft.model_validate_json(json.dumps(payload))
+    validated = construct_workbench_run(draft, selected_pack=selected_pack)
+    real_repository = runs.WorkbenchRunRepository(workspace)
+    gated = _GatedRepository(real_repository)
+    manager = jobs.CityJobManager(gated)
+    try:
+        submitted = manager.submit(validated)
+        assert gated.evaluate_entered.wait(5)
+        (workspace.root / "city-packs" / "operator-city.json").write_bytes(b"corrupt\n")
+
+        gated.allow_evaluate.set()
+        assert gated.persist_entered.wait(5)
+        gated.allow_persist.set()
+        assert gated.verify_entered.wait(5)
+        gated.allow_verify.set()
+
+        terminal = _await_terminal(manager, submitted.job_id)
+        assert terminal.phase == "completed"
+        stored = real_repository.load(submitted.run_id)
+        assert stored.mobility.pack == selected_pack
+        assert stored.mobility.pack.fingerprint == selected_pack.fingerprint
+    finally:
+        gated.allow_evaluate.set()
+        gated.allow_persist.set()
+        gated.allow_verify.set()
+        manager.close()
 
 
 class _DeferredExecutor:

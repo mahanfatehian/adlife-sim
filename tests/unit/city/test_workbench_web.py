@@ -288,6 +288,11 @@ def _snapshot(root: Path) -> tuple[tuple[str, str, str], ...]:
     return tuple(entries)
 
 
+def _artifact_snapshot(root: Path) -> tuple[tuple[str, str, str], ...]:
+    """Exclude the registry's advisory coordination file from artifact assertions."""
+    return tuple(entry for entry in _snapshot(root) if entry[0] != ".city-pack-registry.lock")
+
+
 def _saved_workbench_run(
     root: Path,
     *,
@@ -1613,7 +1618,8 @@ def test_catalog_routes_are_lazy_and_load_one_verified_snapshot_per_operation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _module()
-    original = module.load_packaged_workbench_cities
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    original = catalog_module.load_packaged_workbench_cities
     calls = 0
 
     def counted_snapshot():
@@ -1621,7 +1627,7 @@ def test_catalog_routes_are_lazy_and_load_one_verified_snapshot_per_operation(
         calls += 1
         return original()
 
-    monkeypatch.setattr(module, "load_packaged_workbench_cities", counted_snapshot)
+    monkeypatch.setattr(catalog_module, "load_packaged_workbench_cities", counted_snapshot)
     root = tmp_path / "lazy-workspace"
     workspace = prepare_workbench_workspace(root)
     app = module.create_city_workbench_app(workspace, csrf_token=TOKEN)
@@ -1647,13 +1653,13 @@ def test_catalog_routes_screen_packaged_snapshot_failures(
     caplog: pytest.LogCaptureFixture,
     path: str,
 ) -> None:
-    module = _module()
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
     secret = "sk-packaged-city-catalog-secret-1234567890"
 
     def unavailable() -> None:
         raise PackagedCityCatalogUnavailable(secret)
 
-    monkeypatch.setattr(module, "load_packaged_workbench_cities", unavailable)
+    monkeypatch.setattr(catalog_module, "load_packaged_workbench_cities", unavailable)
     client, _ = _client(tmp_path, raise_server_exceptions=False)
     with caplog.at_level(logging.ERROR), client:
         response = client.get(path)
@@ -1665,6 +1671,182 @@ def test_catalog_routes_screen_packaged_snapshot_failures(
         "fields": {},
     }
     assert secret not in response.text + caplog.text
+
+
+def test_app_owns_one_lazy_resolver_and_resolves_each_accepted_draft_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.city.workbench_catalog import ResolvedWorkbenchCity
+
+    module = _module()
+    selected_pack = select_catalog_city("fictional-grid-v2")
+    resolved = ResolvedWorkbenchCity(
+        pack=selected_pack,
+        storage_origin="package",
+        data_origin="fictional",
+        qualification="fictional-fixture",
+        reviewer_role=None,
+        reviewed_on=None,
+    )
+    instances: list[Any] = []
+
+    class RecordingResolver:
+        def __init__(self, workspace: Any) -> None:
+            self.workspace = workspace
+            self.list_calls = 0
+            self.resolve_calls: list[str] = []
+            instances.append(self)
+
+        def list_cities(self):
+            self.list_calls += 1
+            return (resolved,)
+
+        def resolve_city(self, city_id: str):
+            self.resolve_calls.append(city_id)
+            return resolved
+
+    parse_calls = 0
+    construct_calls = 0
+    real_parse = module.parse_workbench_http_draft
+    real_construct = module.construct_workbench_run
+
+    def counted_parse(payload: Any):
+        nonlocal parse_calls
+        parse_calls += 1
+        return real_parse(payload)
+
+    def counted_construct(draft: Any, *, selected_pack: Any = None):
+        nonlocal construct_calls
+        construct_calls += 1
+        assert selected_pack is selected_pack_reference
+        return real_construct(draft, selected_pack=selected_pack)
+
+    selected_pack_reference = selected_pack
+    monkeypatch.setattr(module, "WorkbenchCityResolver", RecordingResolver)
+    monkeypatch.setattr(module, "parse_workbench_http_draft", counted_parse)
+    monkeypatch.setattr(module, "construct_workbench_run", counted_construct)
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    app = module.create_city_workbench_app(workspace, csrf_token=TOKEN)
+
+    assert len(instances) == 1
+    assert instances[0].list_calls == 0
+    assert instances[0].resolve_calls == []
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        listed = client.get("/api/catalog/cities")
+        detailed = client.get("/api/catalog/cities/fictional-grid-v2")
+        validated = _secure_post(client, "/api/scenarios/validate", _tiny_draft())
+        submitted = _secure_post(
+            client,
+            "/api/jobs",
+            _tiny_draft(run_id="one-resolve-job"),
+        )
+        if submitted.status_code == 202:
+            _await_job(client, submitted.json()["status_url"])
+
+    assert listed.status_code == 200
+    assert detailed.status_code == 200
+    assert validated.status_code == 200
+    assert submitted.status_code == 202
+    assert len(instances) == 1
+    assert instances[0].list_calls == 1
+    assert instances[0].resolve_calls == [
+        "fictional-grid-v2",
+        "fictional-grid-v2",
+        "fictional-grid-v2",
+    ]
+    assert parse_calls == 2
+    assert construct_calls == 2
+
+
+def test_corrupt_registry_blocks_new_city_operations_but_not_frozen_runs(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    _saved_workbench_run(root, run_id="frozen-run", schema_version=7)
+    records = root / "city-packs"
+    records.mkdir()
+    (records / "unexpected.txt").write_bytes(b"corrupt registry state")
+
+    app = module.create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+    with TestClient(app, base_url=ORIGIN, raise_server_exceptions=False) as client:
+        listing = client.get("/api/runs")
+        inspector = client.get("/runs/frozen-run")
+        metadata = client.get("/api/runs/frozen-run/meta")
+        replay_frame = client.get("/api/runs/frozen-run/frame?minute=0")
+        blocked = [
+            client.get("/api/catalog/cities"),
+            client.get("/api/catalog/cities/fictional-grid-v2"),
+            client.get("/api/catalog/cities/unknown-city"),
+            _secure_post(client, "/api/scenarios/validate", _tiny_draft()),
+            _secure_post(client, "/api/jobs", _tiny_draft(run_id="blocked-new-run")),
+        ]
+
+    assert listing.status_code == 200
+    assert listing.json()["runs"][0]["run_id"] == "frozen-run"
+    assert inspector.status_code == 200
+    assert metadata.status_code == 200
+    assert metadata.json()["run_id"] == "frozen-run"
+    assert replay_frame.status_code == 200
+    assert all(response.status_code == 409 for response in blocked)
+    assert all(
+        response.json()["error"]
+        == {
+            "code": "city-registry-unavailable",
+            "message": "The workspace city registry is unavailable.",
+            "fields": {},
+        }
+        for response in blocked
+    )
+    assert not (root / "city-runs" / "blocked-new-run").exists()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["list", "detail", "validate", "submit"],
+)
+def test_packaged_catalog_corruption_blocks_only_new_city_operations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    module = _module()
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+
+    def unavailable() -> None:
+        raise PackagedCityCatalogUnavailable("private provider detail")
+
+    monkeypatch.setattr(catalog_module, "load_packaged_workbench_cities", unavailable)
+    app = module.create_city_workbench_app(
+        prepare_workbench_workspace(tmp_path / "workspace"),
+        csrf_token=TOKEN,
+    )
+    with TestClient(app, base_url=ORIGIN, raise_server_exceptions=False) as client:
+        if operation == "list":
+            response = client.get("/api/catalog/cities")
+        elif operation == "detail":
+            response = client.get("/api/catalog/cities/fictional-grid-v2")
+        elif operation == "validate":
+            response = _secure_post(client, "/api/scenarios/validate", _tiny_draft())
+        else:
+            response = _secure_post(
+                client,
+                "/api/jobs",
+                _tiny_draft(run_id="catalog-blocked-run"),
+            )
+
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "catalog-unavailable",
+        "message": "The verified city catalog is unavailable.",
+        "fields": {},
+    }
 
 
 @pytest.mark.parametrize("city_id", ["unknown-city", "INVALID", "..%2Fprivate"])
@@ -1767,7 +1949,7 @@ def test_validation_endpoint_returns_only_bound_summaries_and_stable_hashes(
         "hashes",
         "disclosure",
     }
-    assert _snapshot(root) == before == ()
+    assert _artifact_snapshot(root) == before == ()
 
 
 @pytest.mark.parametrize("path", ["/api/scenarios/validate", "/api/jobs"])
@@ -1866,7 +2048,7 @@ def test_validation_maps_known_domain_refusals_without_echoing_values(
     assert response.json()["error"]["code"] == code
     assert set(response.json()["error"]["fields"]) == {field}
     assert "missing" not in response.text
-    assert _snapshot(root) == before == ()
+    assert _artifact_snapshot(root) == before == ()
 
 
 def test_validation_maps_strict_json_and_pydantic_failures_without_input_echo(
@@ -1996,7 +2178,8 @@ def test_request_validation_and_unexpected_failures_are_screened(
     absolute_path = r"C:\private\workspace\run.json"
     before = _snapshot(root)
 
-    def request_failure(_draft: object) -> None:
+    def request_failure(_draft: object, *, selected_pack: object) -> None:
+        del selected_pack
         raise RequestValidationError(
             [
                 {
@@ -2017,7 +2200,8 @@ def test_request_validation_and_unexpected_failures_are_screened(
     }
     assert secret not in request_response.text
 
-    def unexpected_failure(_draft: object) -> None:
+    def unexpected_failure(_draft: object, *, selected_pack: object) -> None:
+        del selected_pack
         try:
             raise ValueError(secret)
         except ValueError as cause:
@@ -2036,7 +2220,7 @@ def test_request_validation_and_unexpected_failures_are_screened(
     assert secret not in combined
     assert absolute_path not in combined
     assert "Traceback" not in combined
-    assert _snapshot(root) == before == ()
+    assert _artifact_snapshot(root) == before == ()
 
 
 def test_validation_reaches_no_network_store_worker_or_artifact(
@@ -2054,7 +2238,7 @@ def test_validation_reaches_no_network_store_worker_or_artifact(
         response = _post(client, _valid_draft(phone=True, roadside=True))
 
     assert response.status_code == 200
-    assert _snapshot(root) == before == ()
+    assert _artifact_snapshot(root) == before == ()
     assert client.app.router.on_startup == []
     assert client.app.router.on_shutdown == []
     assert not (root / "city-runs").exists()

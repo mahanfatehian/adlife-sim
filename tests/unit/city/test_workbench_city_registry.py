@@ -69,6 +69,205 @@ def _assert_no_live_stage_bytes(registry: object) -> None:
         assert paths == []
 
 
+def test_workbench_city_resolver_is_lazy_and_constructs_without_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    registry_module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+
+    def refuse_packaged_catalog() -> None:
+        raise AssertionError("resolver construction read the packaged catalog")
+
+    def refuse_registry(_self: object) -> tuple[object, ...]:
+        raise AssertionError("resolver construction read the workspace registry")
+
+    monkeypatch.setattr(
+        catalog_module,
+        "load_packaged_workbench_cities",
+        refuse_packaged_catalog,
+    )
+    monkeypatch.setattr(registry_module.WorkspaceCityRegistry, "discover", refuse_registry)
+
+    resolver = catalog_module.WorkbenchCityResolver(workspace)
+
+    assert resolver.workspace is workspace
+
+
+def test_workbench_city_resolver_combines_one_fresh_snapshot_in_stable_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    registry_module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    registry = registry_module.WorkspaceCityRegistry(workspace)
+    packaged = catalog_module.load_packaged_workbench_cities()
+    packaged_ids = frozenset(city.pack.city_id for city in packaged)
+    first_local = registry.register(
+        _document("operator-zeta"),
+        forbidden_city_ids=packaged_ids,
+    )
+    packaged_calls = 0
+    registry_calls = 0
+    real_packaged = catalog_module.load_packaged_workbench_cities
+    real_discover = registry_module.WorkspaceCityRegistry.discover
+
+    def counted_packaged():
+        nonlocal packaged_calls
+        packaged_calls += 1
+        return real_packaged()
+
+    def counted_discover(self: object):
+        nonlocal registry_calls
+        registry_calls += 1
+        return real_discover(self)
+
+    monkeypatch.setattr(catalog_module, "load_packaged_workbench_cities", counted_packaged)
+    monkeypatch.setattr(registry_module.WorkspaceCityRegistry, "discover", counted_discover)
+    resolver = catalog_module.WorkbenchCityResolver(workspace)
+
+    first = resolver.list_cities()
+
+    assert packaged_calls == 1
+    assert registry_calls == 1
+    assert tuple(city.pack.city_id for city in first) == tuple(
+        sorted((*packaged_ids, first_local.city_id))
+    )
+    local = next(city for city in first if city.pack.city_id == first_local.city_id)
+    assert local.storage_origin == "workspace-upload"
+    assert local.data_origin == "operator-supplied"
+    assert local.qualification == "operator-supplied-unreviewed"
+    assert local.reviewer_role is None
+    assert local.reviewed_on is None
+
+    registry.register(_document("operator-alpha"), forbidden_city_ids=packaged_ids)
+    second = resolver.list_cities()
+
+    assert packaged_calls == 2
+    assert registry_calls == 2
+    assert tuple(city.pack.city_id for city in second) == tuple(
+        sorted((*packaged_ids, "operator-alpha", "operator-zeta"))
+    )
+
+
+def test_workbench_city_resolver_checks_complete_registry_before_unknown(
+    tmp_path: Path,
+) -> None:
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    records = workspace.root / "city-packs"
+    records.mkdir()
+    (records / "unexpected.txt").write_bytes(b"not a city record")
+    resolver = catalog_module.WorkbenchCityResolver(workspace)
+
+    with pytest.raises(catalog_module.WorkbenchCityRegistryUnavailable):
+        resolver.resolve_city("unknown-city")
+
+
+def test_workbench_city_resolver_refuses_packaged_local_collisions(
+    tmp_path: Path,
+) -> None:
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    registry_module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    registry_module.WorkspaceCityRegistry(workspace).register(
+        _document("fictional-grid-v2"),
+        forbidden_city_ids=frozenset(),
+    )
+
+    with pytest.raises(catalog_module.WorkbenchCityRegistryUnavailable):
+        catalog_module.WorkbenchCityResolver(workspace).list_cities()
+
+
+def test_register_refuses_an_existing_local_collision_with_packaged_ids(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    registry = _registry(tmp_path)
+    registry.register(_document("fictional-grid-v2"), forbidden_city_ids=frozenset())
+    original = _stored_bytes(registry, "fictional-grid-v2")
+
+    with pytest.raises(module.WorkspaceCityRegistryError):
+        registry.register(
+            _document("operator-new"),
+            forbidden_city_ids=frozenset({"fictional-grid-v2", "operator-new"}),
+        )
+
+    assert _stored_bytes(registry, "fictional-grid-v2") == original
+    assert not (registry.workspace.root / "city-packs" / "operator-new.json").exists()
+
+
+def test_resolver_registration_preserves_upload_errors_and_returns_exact_pack(
+    tmp_path: Path,
+) -> None:
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    registry_module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    resolver = catalog_module.WorkbenchCityResolver(workspace)
+
+    with pytest.raises(registry_module.MalformedCityPackUpload):
+        resolver.register_city(b"{")
+
+    resolved = resolver.register_city(_document("operator-city"))
+
+    assert resolved.pack.city_id == "operator-city"
+    assert resolved.storage_origin == "workspace-upload"
+    assert resolved.data_origin == "operator-supplied"
+    assert resolved.qualification == "operator-supplied-unreviewed"
+    assert resolver.resolve_city("operator-city").pack == resolved.pack
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(_module().MalformedCityPackUpload(), id="malformed"),
+        pytest.param(_module().InvalidCityPackUpload(), id="invalid"),
+        pytest.param(_module().CityPackUploadTooLarge(), id="too-large"),
+        pytest.param(_module().CityPackRegistrationConflict(), id="conflict"),
+        pytest.param(_module().CityPackPublicationError(False), id="publication"),
+    ],
+)
+def test_resolver_registration_preserves_each_typed_upload_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    resolver = catalog_module.WorkbenchCityResolver(
+        prepare_workbench_workspace(tmp_path / "workspace")
+    )
+
+    def refuse_registration(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(resolver._registry, "register", refuse_registration)
+
+    with pytest.raises(type(error)) as captured:
+        resolver.register_city(_document())
+    assert captured.value is error
+
+
+def test_resolver_registration_wraps_only_registry_unavailability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_module = importlib.import_module("adlife.city.workbench_catalog")
+    registry_module = _module()
+    resolver = catalog_module.WorkbenchCityResolver(
+        prepare_workbench_workspace(tmp_path / "workspace")
+    )
+
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        raise registry_module.WorkspaceCityRegistryError("private detail")
+
+    monkeypatch.setattr(resolver._registry, "register", unavailable)
+
+    with pytest.raises(catalog_module.WorkbenchCityRegistryUnavailable) as captured:
+        resolver.register_city(_document())
+    assert str(captured.value) == "the workspace city registry is unavailable"
+    assert "private" not in str(captured.value)
+
+
 def test_register_is_canonical_immutable_and_restart_discoverable(tmp_path: Path) -> None:
     module = _module()
     workspace = prepare_workbench_workspace(tmp_path / "workspace")

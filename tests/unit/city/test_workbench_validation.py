@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
 from adlife.city.workbench_input import (
     WorkbenchRunDraft,
@@ -131,6 +132,46 @@ def _draft(*, phone: bool = True, roadside: bool = False, agents: int = 3):
     if roadside:
         data["scenario"]["roadside"]["road_id"] = "middle-west"
     return WorkbenchRunDraft.model_validate_json(json.dumps(data))
+
+
+def test_construct_workbench_run_uses_the_exact_pre_resolved_pack_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    selected_pack = select_catalog_city("fictional-grid-v2")
+
+    def refuse_reload(_city_id: str):
+        raise AssertionError("pre-resolved city was looked up again")
+
+    monkeypatch.setattr(module, "_load_pack", refuse_reload)
+
+    result = module.construct_workbench_run(_draft(), selected_pack=selected_pack)
+
+    assert result.pack is selected_pack
+    assert result.mobility.pack is selected_pack
+    assert result.scenario.city_sha256 == selected_pack.fingerprint
+    assert result.response_input.city_sha256 == selected_pack.fingerprint
+
+
+def test_construct_workbench_run_refuses_a_pre_resolved_pack_for_another_city() -> None:
+    module = _module()
+    selected_pack = select_catalog_city("fictional-grid-v2")
+    data = draft_data()
+    data["city_id"] = "operator-city"
+    draft = WorkbenchRunDraft.model_validate_json(json.dumps(data))
+
+    with pytest.raises(module.WorkbenchValidationError) as captured:
+        module.construct_workbench_run(draft, selected_pack=selected_pack)
+
+    assert captured.value.code == "unknown-city"
+    assert captured.value.field == "city_id"
+
+
+def test_construct_workbench_run_keeps_packaged_only_default_behavior() -> None:
+    result = _module().construct_workbench_run(_draft())
+
+    assert result.pack.city_id == "fictional-grid-v2"
+    assert result.pack == select_catalog_city("fictional-grid-v2")
 
 
 @pytest.mark.parametrize(

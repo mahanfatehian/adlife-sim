@@ -2047,8 +2047,6 @@ class WorkspaceCityRegistry:
             raise MalformedCityPackUpload() from None
         pack = _validate_city_payload(payload)
         canonical = _canonical_pack_bytes(pack)
-        if pack.city_id in forbidden_city_ids:
-            raise CityPackRegistrationConflict()
 
         operation = _PublicationState()
         try:
@@ -2067,7 +2065,12 @@ class WorkspaceCityRegistry:
                 records = stack.enter_context(_hold_directory(root, records_pin))
                 staging = stack.enter_context(_hold_directory(root, staging_pin))
                 existing = _discover_records_locked(records)
-                if pack.city_id in {item.pack.city_id for item in existing}:
+                existing_ids = {item.pack.city_id for item in existing}
+                if existing_ids & forbidden_city_ids:
+                    raise WorkspaceCityRegistryError()
+                if pack.city_id in forbidden_city_ids:
+                    raise CityPackRegistrationConflict()
+                if pack.city_id in existing_ids:
                     raise CityPackRegistrationConflict()
                 if len(existing) >= MAX_WORKSPACE_CITY_PACKS:
                     raise CityPackRegistrationConflict()

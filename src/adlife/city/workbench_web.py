@@ -40,7 +40,7 @@ from adlife.city.workbench_catalog import (
     PackagedCityCatalogUnavailable,
     UnknownWorkbenchCity,
     WorkbenchCityRegistryUnavailable,
-    load_packaged_workbench_cities,
+    WorkbenchCityResolver,
 )
 from adlife.city.workbench_creatives import load_creative_template_catalog
 from adlife.city.workbench_jobs import (
@@ -345,8 +345,20 @@ def _validation_summary(result: ValidatedWorkbenchRun) -> dict[str, object]:
     }
 
 
-def _construct_validated_run(payload: dict[str, object]) -> ValidatedWorkbenchRun:
-    return construct_workbench_run(parse_workbench_http_draft(payload))
+def _construct_validated_run(
+    payload: dict[str, object],
+    resolver: WorkbenchCityResolver,
+) -> ValidatedWorkbenchRun:
+    draft = parse_workbench_http_draft(payload)
+    try:
+        selected = resolver.resolve_city(draft.city_id)
+    except UnknownWorkbenchCity:
+        raise WorkbenchValidationError(
+            "unknown-city",
+            "city_id",
+            "The selected city is unavailable.",
+        ) from None
+    return construct_workbench_run(draft, selected_pack=selected.pack)
 
 
 def _pagination(request: Request) -> tuple[int, int]:
@@ -397,6 +409,7 @@ def create_city_workbench_app(
     token = new_csrf_token() if csrf_token is None else csrf_token
     repository = WorkbenchRunRepository(workspace)
     jobs = CityJobManager(repository)
+    city_resolver = WorkbenchCityResolver(workspace)
     inspector_snapshots = _InspectorSnapshots()
 
     def verified_stored_run(run_id: object) -> StoredCityRun:
@@ -871,7 +884,7 @@ def create_city_workbench_app(
     @app.get("/api/catalog/cities")
     def cities(request: Request) -> dict[str, object]:
         _require_empty_query(request)
-        resolved = load_packaged_workbench_cities()
+        resolved = city_resolver.list_cities()
         return {
             "schema_version": 1,
             "cities": [
@@ -882,12 +895,7 @@ def create_city_workbench_app(
     @app.get("/api/catalog/cities/{city_id}")
     def city_detail(city_id: str, request: Request) -> dict[str, object]:
         _require_empty_query(request)
-        resolved = next(
-            (city for city in load_packaged_workbench_cities() if city.pack.city_id == city_id),
-            None,
-        )
-        if resolved is None:
-            raise UnknownWorkbenchCity("workbench city identifier is unknown")
+        resolved = city_resolver.resolve_city(city_id)
         return build_workbench_city_detail(resolved).model_dump(mode="json")
 
     @app.get("/api/creative-templates")
@@ -907,7 +915,7 @@ def create_city_workbench_app(
     async def validate_scenario(request: Request) -> dict[str, object]:
         _require_empty_query(request)
         payload = strict_json_object(await request.body())
-        result = _construct_validated_run(payload)
+        result = _construct_validated_run(payload, city_resolver)
         return _validation_summary(result)
 
     @app.get("/api/persona-templates")
@@ -929,7 +937,7 @@ def create_city_workbench_app(
     async def submit_job(request: Request) -> JSONResponse:
         _require_empty_query(request)
         payload = strict_json_object(await request.body())
-        validated = _construct_validated_run(payload)
+        validated = _construct_validated_run(payload, city_resolver)
         job = jobs.submit(validated)
         return JSONResponse(
             status_code=202,
