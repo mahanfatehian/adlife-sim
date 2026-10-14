@@ -44,6 +44,7 @@ FORBIDDEN_ROOTS: frozenset[str] = frozenset(
         "plotly",
         "matplotlib",
         "httpx",
+        "httpcore",
         "requests",
         "aiohttp",
         "urllib.request",
@@ -53,6 +54,7 @@ FORBIDDEN_ROOTS: frozenset[str] = frozenset(
         "fastapi",
         "starlette",
         "uvicorn",
+        "keyring",
         # Model-provider SDKs.
         "openai",
         "anthropic",
@@ -100,6 +102,7 @@ def _is_forbidden(module: str) -> bool:
         ("from adlife.city import web", "adlife.city"),
         ("from importlib import import_module as load", "importlib.import_module"),
         ("from fastapi import FastAPI", "fastapi"),
+        ("import keyring", "keyring"),
         ("import uvicorn", "uvicorn"),
     ],
 )
@@ -119,6 +122,18 @@ def test_the_core_package_is_present_and_non_trivial() -> None:
     modules = _core_modules()
     assert CORE.is_dir()
     assert len(modules) >= 10
+
+
+def test_city_cognition_domain_contract_does_not_import_simulation_models() -> None:
+    """Domain evidence owns its snapshots instead of depending on engine internals."""
+    module_path = CORE / "domain" / "city_cognition.py"
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+    imported = {
+        name
+        for name, _ in _imported_names(tree, package="adlife.core.domain")
+        if name == "adlife.core.simulation" or name.startswith("adlife.core.simulation.")
+    }
+    assert not imported
 
 
 @pytest.mark.parametrize("module_path", _core_modules(), ids=lambda path: path.name)
