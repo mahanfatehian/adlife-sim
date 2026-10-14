@@ -84,8 +84,7 @@ def test_ci_runs_performance_gates_on_an_isolated_fresh_runner_matrix() -> None:
     rules = by_name["Maximum rules performance"]
     assert rules["run"] == "uv run pytest -q -s tests/integration/test_maximum_run.py"
     ceiling = rules["env"]["ADLIFE_PERF_CEILING_SECONDS"]
-    assert "runner.os == 'Windows'" in ceiling
-    assert "'60'" in ceiling
+    assert ceiling == "${{ runner.os == 'Windows' && '120' || '' }}"
 
 
 def test_ci_runs_spatial_performance_with_its_existing_platform_thresholds() -> None:
