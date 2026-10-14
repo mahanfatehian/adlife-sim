@@ -113,6 +113,11 @@ class SecretBuffer:
         self._data.clear()
 
 
+def _new_local_dummy_credential() -> SecretBuffer:
+    """Return the module-owned non-secret credential used only for loopback calls."""
+    return SecretBuffer(_LOCAL_DUMMY_CREDENTIAL)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class ResolvedCredential:
     """One operation-local secret plus non-secret source and binding metadata."""
@@ -286,7 +291,7 @@ class OSKeyringCityCredentialStore:
         if approval.trust_class == "local":
             return ResolvedCredential(
                 source=LOCAL_PROVIDER_CREDENTIAL_SOURCE,
-                secret=SecretBuffer(_LOCAL_DUMMY_CREDENTIAL),
+                secret=_new_local_dummy_credential(),
                 origin_approval_id=profile.origin_approval_id,
                 credential_slot_id=profile.credential_slot_id,
             )
