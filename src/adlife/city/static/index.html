@@ -44,7 +44,7 @@
           <p id="map-text-summary">Loading the committed frame&hellip;</p>
           <p id="map-evidence-scope">Evidence markers are page-scoped.</p>
         </section>
-        <div class="map-footer"><div class="map-copyright"><span id="attribution">Loading data attribution…</span><span aria-hidden="true"> · </span><span id="license-label"></span></div><a id="source-link" target="_blank" rel="noopener noreferrer">Data source ↗</a></div>
+        <div class="map-footer"><div class="map-copyright"><bdi id="attribution" dir="auto">Loading data attribution…</bdi><span aria-hidden="true"> · </span><bdi id="license-label" dir="auto"></bdi></div><span class="source-note">Source details in sidebar</span></div>
       </section>
 
       <aside class="sidebar" aria-label="Simulation details">
@@ -141,6 +141,27 @@
                   <div class="assumptions-wide"><dt>Creative</dt><dd><bdi id="assumptions-creative-sha256">&mdash;</bdi></dd></div>
                 </dl>
               </section>
+            </div>
+          </details>
+        </section>
+        <section class="city-source-panel" id="city-source-panel" aria-labelledby="city-source-title" hidden>
+          <details id="city-source-drawer">
+            <summary><span><span class="eyebrow" id="city-source-label">Frozen city input</span><strong id="city-source-title">Source record</strong></span><span id="city-source-status">Operator-declared</span></summary>
+            <div class="city-source-content">
+              <p id="city-source-disclosure">Copied from this run's frozen, validated city input. Source and license fields are operator-declared; this does not assert current registry status or rights review.</p>
+              <dl class="city-source-grid">
+                <div><dt>Provider</dt><dd><bdi id="city-source-provider" dir="auto"></bdi></dd></div>
+                <div><dt>Dataset</dt><dd><bdi id="city-source-dataset" dir="auto"></bdi></dd></div>
+                <div><dt>Version</dt><dd><bdi id="city-source-version" dir="auto"></bdi></dd></div>
+                <div><dt>Published</dt><dd><bdi id="city-source-published-on" dir="auto"></bdi></dd></div>
+                <div><dt>License</dt><dd><bdi id="city-source-license" dir="auto"></bdi></dd></div>
+                <div><dt>Time zone</dt><dd><bdi id="city-source-time-zone" dir="auto"></bdi></dd></div>
+                <div class="city-source-wide"><dt>Attribution</dt><dd><bdi id="city-source-attribution" dir="auto"></bdi></dd></div>
+                <div class="city-source-wide"><dt>Source URL (text only)</dt><dd><bdi id="city-source-source-url" dir="auto"></bdi></dd></div>
+                <div class="city-source-wide"><dt>Bounds</dt><dd><bdi id="city-source-bounds" dir="auto"></bdi></dd></div>
+                <div class="city-source-wide"><dt>Known omissions</dt><dd><bdi id="city-source-omissions" dir="auto"></bdi></dd></div>
+                <div class="city-source-wide city-source-hash"><dt>Pack SHA-256</dt><dd><bdi id="city-source-sha256" dir="auto"></bdi></dd></div>
+              </dl>
             </div>
           </details>
         </section>

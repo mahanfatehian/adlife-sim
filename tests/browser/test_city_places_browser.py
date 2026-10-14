@@ -418,6 +418,59 @@ def _workbench_assumptions_viewer(
         yield base_url, root, expected
 
 
+@contextmanager
+def _frozen_city_source_viewer(
+    tmp_path: Path,
+) -> Iterator[tuple[str, dict[str, object]]]:
+    workspace = prepare_workbench_workspace(tmp_path / "frozen-city-source")
+    document = pack_v2_data()
+    source = document["source"]
+    assert isinstance(source, dict)
+    source.update(
+        {
+            "provider": "آزمایشگاه خیالی",
+            "dataset": "<img src=x onerror=alert(1)> شبکه آزمایشی",
+            "version": "نسخه-۲",
+            "published_on": "2026-09-29",
+            "source_url": "https://example.org/frozen-source",
+            "attribution": "نقشه خیالی <script>alert(1)</script>",
+        }
+    )
+    document["known_omissions"] = [
+        "بدون داده ترافیک",
+        "<svg onload=alert(1)> فقط آزمایش",
+    ]
+    pack = load_pack_v2(document)
+    stored = create_city_run(
+        pack,
+        root=workspace.root,
+        run_id="frozen-city-source",
+        seed=42,
+        agent_count=2,
+        days=1,
+    )
+    registry = workspace.root / "city-packs"
+    registry.mkdir()
+    (registry / "broken.json").write_text("not-json", encoding="utf-8")
+    application = create_city_workbench_app(workspace, csrf_token="frozen-source-token")
+    expected: dict[str, object] = {
+        "run_id": stored.manifest.run_id,
+        "city_sha256": pack.fingerprint,
+        "provider": source["provider"],
+        "dataset": source["dataset"],
+        "version": source["version"],
+        "published_on": source["published_on"],
+        "source_url": source["source_url"],
+        "license": source["license"],
+        "attribution": source["attribution"],
+        "time_zone": document["time_zone"],
+        "bounds": "W 0 · S 0 · E 0.01 · N 0.01",
+        "omissions": tuple(sorted(document["known_omissions"])),
+    }
+    with _serve(application) as base_url:
+        yield base_url, expected
+
+
 def test_viewer_default_document_uses_one_legacy_same_origin_api_base() -> None:
     browser_path = _installed_browser()
     api_requests: list[str] = []
@@ -1213,6 +1266,85 @@ def test_place_viewer_renders_provenance_and_scrubs_without_external_requests(
         assert not external_requests
         assert not console_errors
         assert not page_errors
+        browser.close()
+
+
+def test_saved_inspector_renders_only_frozen_city_source_as_inert_bidi_safe_text(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    external_requests: list[str] = []
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    with (
+        _frozen_city_source_viewer(tmp_path) as (base_url, expected),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+
+        def route_request(route: Route) -> None:
+            if route.request.url.startswith(base_url):
+                route.continue_()
+            else:
+                external_requests.append(route.request.url)
+                route.abort()
+
+        page.route("**/*", route_request)
+        page.on(
+            "console",
+            lambda message: (
+                console_errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+        catalog = page.request.get(f"{base_url}/api/catalog/cities")
+        assert catalog.status == 409
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+
+        expect(page.locator("#city-source-panel")).to_be_visible()
+        expect(page.locator("#city-source-status")).to_have_text("Operator-declared")
+        page.locator("#city-source-drawer summary").click()
+        expect(page.locator("#city-source-drawer")).to_have_attribute("open", "")
+        assert "frozen" in page.locator("#city-source-disclosure").inner_text().lower()
+        assert "rights review" in page.locator("#city-source-disclosure").inner_text().lower()
+
+        field_values = {
+            "provider": expected["provider"],
+            "dataset": expected["dataset"],
+            "version": expected["version"],
+            "published-on": expected["published_on"],
+            "license": expected["license"],
+            "attribution": expected["attribution"],
+            "source-url": expected["source_url"],
+            "bounds": expected["bounds"],
+            "time-zone": expected["time_zone"],
+            "omissions": " · ".join(expected["omissions"]),
+            "sha256": expected["city_sha256"],
+        }
+        for field, value in field_values.items():
+            element = page.locator(f"#city-source-{field}")
+            assert element.inner_text() == value
+            assert element.get_attribute("dir") == "auto"
+            assert element.evaluate("node => getComputedStyle(node).unicodeBidi") == "isolate"
+
+        assert page.locator("#source-link").count() == 0
+        assert page.locator("#city-source-panel a").count() == 0
+        assert page.locator("#city-source-panel img").count() == 0
+        assert page.locator("#city-source-panel script").count() == 0
+        assert page.locator("#city-source-panel svg").count() == 0
+        assert page.locator("#city-source-panel").evaluate(
+            "element => element.scrollWidth <= element.clientWidth"
+        )
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        assert external_requests == []
+        assert console_errors == []
+        assert page_errors == []
         browser.close()
 
 

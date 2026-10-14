@@ -3141,6 +3141,64 @@ function attachMapControls() {
   new ResizeObserver(renderMap).observe(stage);
 }
 
+function citySourceText(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function setCitySourceField(name, value) {
+  const element = byId(`city-source-${name}`);
+  const row = element.closest("div");
+  if (value === null) {
+    element.textContent = "";
+    if (row) row.hidden = true;
+    return;
+  }
+  element.textContent = value;
+  if (row) row.hidden = false;
+}
+
+function renderCitySource(meta) {
+  const source = meta.source && typeof meta.source === "object" && !Array.isArray(meta.source)
+    ? meta.source
+    : {};
+  const bounds = meta.bounds && typeof meta.bounds === "object" && !Array.isArray(meta.bounds)
+    ? meta.bounds
+    : null;
+  const boundValues = bounds
+    ? [bounds.west, bounds.south, bounds.east, bounds.north]
+    : [];
+  const boundsText = boundValues.length === 4 && boundValues.every(Number.isFinite)
+    ? `W ${boundValues[0]} · S ${boundValues[1]} · E ${boundValues[2]} · N ${boundValues[3]}`
+    : null;
+  const omissions = Array.isArray(meta.known_omissions)
+    && meta.known_omissions.length > 0
+    && meta.known_omissions.every((item) => typeof item === "string" && item.length > 0)
+    ? meta.known_omissions.join(" · ")
+    : null;
+  const fields = {
+    provider: citySourceText(source.provider),
+    dataset: citySourceText(source.dataset),
+    version: citySourceText(source.version),
+    "published-on": citySourceText(source.published_on),
+    license: citySourceText(source.license) || citySourceText(meta.license),
+    attribution: citySourceText(source.attribution) || citySourceText(meta.attribution),
+    "source-url": citySourceText(source.source_url) || citySourceText(meta.source_url),
+    bounds: boundsText,
+    "time-zone": citySourceText(meta.time_zone),
+    omissions,
+    sha256: citySourceText(meta.city_sha256),
+  };
+  for (const [name, value] of Object.entries(fields)) setCitySourceField(name, value);
+  const frozen = meta.saved === true;
+  byId("city-source-label").textContent = frozen ? "Frozen city input" : "City input";
+  byId("city-source-disclosure").textContent = frozen
+    ? "Copied from this run's frozen, validated city input. Source and license fields are operator-declared; this does not assert current registry status or rights review."
+    : "Copied from the active validated city input. Source and license fields are operator-declared; this does not assert rights review.";
+  byId("city-source-status").textContent = "Operator-declared";
+  byId("city-source-drawer").open = false;
+  byId("city-source-panel").hidden = false;
+}
+
 async function boot() {
   try {
     const [metaResponse, city, agents] = await Promise.all([
@@ -3239,7 +3297,7 @@ async function boot() {
     byId("people-total").textContent = `${agents.length} total`;
     byId("attribution").textContent = meta.attribution;
     byId("license-label").textContent = meta.license;
-    byId("source-link").href = meta.source_url;
+    renderCitySource(meta);
     byId("timeline-duration").textContent = `${meta.days} ${meta.days === 1 ? "DAY" : "DAYS"}`;
     byId("time-slider").max = String(meta.days * 1440 - 1);
     if (state.workbenchInput) {
