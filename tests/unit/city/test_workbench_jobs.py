@@ -166,6 +166,45 @@ class _DeferredExecutor:
         self.shutdown_called = True
 
 
+def test_schema3_job_refuses_before_run_reservation_or_worker_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_validation import cognition_draft
+
+    jobs, _ = _modules()
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+
+    class RefusingRepository:
+        ensure_calls = 0
+
+        def ensure_available(self, run_id: str) -> None:
+            self.ensure_calls += 1
+            raise AssertionError("schema-3 input reached run reservation")
+
+        def prepare(self, validated: Any) -> object:
+            raise AssertionError("schema-3 input reached evaluation")
+
+        def publish(self, prepared: object) -> object:
+            raise AssertionError("schema-3 input reached publication")
+
+        def verified_summary(self, run_id: str) -> object:
+            raise AssertionError("schema-3 input reached verification")
+
+    repository = RefusingRepository()
+    manager = jobs.CityJobManager(repository)
+    try:
+        with pytest.raises(jobs.WorkbenchJobSubmissionError, match=r"schema 3.*schema 9"):
+            manager.submit(construct_workbench_run(cognition_draft()))
+        assert repository.ensure_calls == 0
+        assert deferred.call is None
+        assert manager.active_job() is None
+        assert manager.recent_jobs() == ()
+    finally:
+        manager.close()
+
+
 @pytest.mark.parametrize("wrong_version", [False, True])
 def test_schema2_jobs_retain_and_verify_the_exact_accepted_schema_pair(
     tmp_path: Path,

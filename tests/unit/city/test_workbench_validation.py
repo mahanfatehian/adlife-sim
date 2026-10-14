@@ -15,8 +15,10 @@ from adlife.city.run_store import CityRunStore
 from adlife.city.workbench_input import (
     WorkbenchRunDraft,
     WorkbenchRunDraftV2,
+    WorkbenchRunDraftV3,
     WorkbenchRunInput,
     WorkbenchRunInputV2,
+    WorkbenchRunInputV3,
 )
 from adlife.core.domain.spatial_campaign import (
     PhoneOpportunityPlacement,
@@ -24,7 +26,12 @@ from adlife.core.domain.spatial_campaign import (
 )
 from adlife.core.domain.spatial_response import validate_spatial_response_input
 from tests.unit.city.test_city_pack import load_pack_v2, pack_v2_data
-from tests.unit.city.test_workbench_input import draft_data, draft_v2_data, persona_data
+from tests.unit.city.test_workbench_input import (
+    draft_data,
+    draft_v2_data,
+    draft_v3_data,
+    persona_data,
+)
 
 
 def persona_draft() -> WorkbenchRunDraftV2:
@@ -41,6 +48,17 @@ def persona_draft() -> WorkbenchRunDraftV2:
     }
     data["population"]["personas"] = [second, first]
     return WorkbenchRunDraftV2.model_validate_json(json.dumps(data))
+
+
+def cognition_draft(*, mode: str = "rules", budget: int = 0) -> WorkbenchRunDraftV3:
+    return WorkbenchRunDraftV3.model_validate_json(
+        json.dumps(
+            draft_v3_data(
+                mode=mode,
+                aggregate_output_token_ceiling=budget,
+            )
+        )
+    )
 
 
 def test_schema2_compiles_each_assignment_with_its_explicit_causal_values() -> None:
@@ -82,6 +100,32 @@ def test_schema2_compiles_each_assignment_with_its_explicit_causal_values() -> N
         "interests",
         "traits",
     }
+
+
+@pytest.mark.parametrize(
+    ("mode", "budget"),
+    [("rules", 0), ("mock", 0), ("local", 3_072), ("remote", 92_160)],
+)
+def test_schema3_compilation_freezes_cognition_without_changing_schema2_science(
+    mode: str,
+    budget: int,
+) -> None:
+    schema2 = _module().construct_workbench_run(
+        WorkbenchRunDraftV2.model_validate_json(json.dumps(draft_v2_data()))
+    )
+    schema3 = _module().construct_workbench_run(cognition_draft(mode=mode, budget=budget))
+
+    assert isinstance(schema3.workbench_input, WorkbenchRunInputV3)
+    assert schema3.workbench_input.draft.population == schema2.workbench_input.draft.population
+    assert schema3.workbench_input.draft.cognition.mode == mode
+    assert schema3.workbench_input.draft.cognition.aggregate_output_token_ceiling == budget
+    assert schema3.workbench_input.fingerprint != schema2.workbench_input.fingerprint
+    assert schema3.pack == schema2.pack
+    assert schema3.mobility.agents == schema2.mobility.agents
+    assert schema3.mobility.frame(0) == schema2.mobility.frame(0)
+    assert schema3.mobility.frame(2_879) == schema2.mobility.frame(2_879)
+    assert schema3.scenario == schema2.scenario
+    assert schema3.response_input == schema2.response_input
 
 
 @pytest.mark.parametrize("count", [1, 30])

@@ -44,7 +44,12 @@ from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import UnsafeRunLocation
-from tests.unit.city.test_workbench_input import draft_data, draft_v2_data, persona_data
+from tests.unit.city.test_workbench_input import (
+    draft_data,
+    draft_v2_data,
+    draft_v3_data,
+    persona_data,
+)
 
 TOKEN = "fixed-workbench-web-token"
 ORIGIN = "http://127.0.0.1:8765"
@@ -1462,8 +1467,7 @@ def test_structurally_invalid_job_draft_is_screened_and_never_registered(
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid-fields"
     assert response.json()["error"]["fields"] == {
-        "request": "Unknown field.",
-        "settings.agent_count": "This field is invalid.",
+        "request": "Request data cannot contain credential fields.",
     }
     assert secret not in response.text + caplog.text
     assert capabilities.json()["active_job"] is None
@@ -1488,6 +1492,54 @@ def test_well_formed_structural_secret_is_a_semantic_refusal_without_job_or_file
     assert "opaque-private-marker" not in response.text
     assert "api_key" not in response.text
     assert capabilities.json()["active_job"] is None
+    assert _snapshot(root) == before
+
+
+@pytest.mark.parametrize("path", ["/api/scenarios/validate", "/api/jobs"])
+@pytest.mark.parametrize(
+    ("case", "field", "message"),
+    [
+        ("secret", "request", "Request data cannot contain credential fields."),
+        ("future-version", "schema_version", "Use workbench schema version 1, 2, or 3."),
+        ("malformed-version", "schema_version", "Use workbench schema version 1, 2, or 3."),
+    ],
+)
+def test_write_endpoints_return_value_free_typed_transport_refusals_before_mutation(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    case: str,
+    field: str,
+    message: str,
+) -> None:
+    client, root = _client(tmp_path)
+    marker = "opaque-private-transport-marker"
+    payload = draft_v3_data()
+    payload["settings"]["seed"] = "42"
+    if case == "secret":
+        payload["credentials"] = {"api_key": marker}
+    elif case == "future-version":
+        payload["schema_version"] = 4
+    else:
+        payload["schema_version"] = marker
+    before = _snapshot(root)
+
+    with caplog.at_level(logging.ERROR), client:
+        response = _secure_post(client, path, payload)
+        capabilities = client.get("/api/workbench")
+        runs = client.get("/api/runs")
+
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "invalid-fields",
+        "message": "One or more request fields are invalid.",
+        "fields": {field: message},
+    }
+    assert marker not in response.text
+    assert caplog.text == ""
+    assert "internal-error" not in response.text
+    assert capabilities.json()["active_job"] is None
+    assert runs.json()["verified_total"] == 0
     assert _snapshot(root) == before
 
 
@@ -1531,6 +1583,29 @@ def test_worker_submission_refusal_is_constant_and_value_free(
     assert secret not in response.text + caplog.text
     assert absolute_path not in response.text + caplog.text
     assert capabilities.json()["active_job"] is None
+    assert not (root / "city-runs").exists()
+
+
+def test_schema3_job_is_safely_refused_until_manifest_v9_without_reserving_a_run(
+    tmp_path: Path,
+) -> None:
+    client, root = _client(tmp_path)
+    payload = draft_v3_data()
+    payload["settings"]["seed"] = "42"
+
+    with client:
+        response = _secure_post(client, "/api/jobs", payload)
+        capabilities = client.get("/api/workbench")
+        runs = client.get("/api/runs")
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "worker-unavailable",
+        "message": "The workbench worker is not accepting jobs.",
+        "fields": {},
+    }
+    assert capabilities.json()["active_job"] is None
+    assert runs.json()["verified_total"] == 0
     assert not (root / "city-runs").exists()
 
 
@@ -2554,7 +2629,7 @@ def test_validation_maps_strict_json_and_pydantic_failures_without_input_echo(
     assert oversized.json()["error"]["code"] == "request-too-large"
     assert invalid.status_code == 422
     fields = invalid.json()["error"]["fields"]
-    assert set(fields) == {"request", "settings.agent_count"}
+    assert fields == {"request": "Request data cannot contain credential fields."}
     assert secret not in invalid.text
     assert absolute_path not in invalid.text
     assert unknown.status_code == 404

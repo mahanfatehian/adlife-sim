@@ -14,17 +14,21 @@ from adlife.city.workbench_input import (
     CreativeTemplate,
     NormalizedPhonePlacementDraft,
     NormalizedRoadsidePlacementDraft,
+    NormalizedWorkbenchCognitionV3,
     NormalizedWorkbenchRunDraft,
     NormalizedWorkbenchRunDraftV2,
+    NormalizedWorkbenchRunDraftV3,
     NormalizedWorkbenchScenarioDraft,
     WorkbenchCohortDraft,
     WorkbenchDailyWindow,
     WorkbenchRunDraft,
     WorkbenchRunDraftDocument,
     WorkbenchRunDraftV2,
+    WorkbenchRunDraftV3,
     WorkbenchRunInput,
     WorkbenchRunInputDocument,
     WorkbenchRunInputV2,
+    WorkbenchRunInputV3,
     materialize_workbench_population,
 )
 from adlife.core.domain.city import CityPackV2
@@ -95,7 +99,7 @@ def _absolute_windows(
 
 def _normalize_draft(
     draft: WorkbenchRunDraftDocument,
-) -> NormalizedWorkbenchRunDraft | NormalizedWorkbenchRunDraftV2:
+) -> NormalizedWorkbenchRunDraft | NormalizedWorkbenchRunDraftV2 | NormalizedWorkbenchRunDraftV3:
     phone = draft.scenario.phone
     normalized_phone = (
         None
@@ -137,6 +141,38 @@ def _normalize_draft(
         phone=normalized_phone,
         roadside=normalized_roadside,
     )
+    if isinstance(draft, WorkbenchRunDraftV3):
+        cognition = draft.cognition
+        return NormalizedWorkbenchRunDraftV3(
+            city_id=draft.city_id,
+            scenario=scenario,
+            population=materialize_workbench_population(
+                draft.population, agent_count=draft.settings.agent_count
+            ),
+            settings=draft.settings,
+            cognition=NormalizedWorkbenchCognitionV3(
+                mode=cognition.mode,
+                provider_profile_id=cognition.provider_profile_id,
+                provider_revision_sha256=cognition.provider_revision_sha256,
+                aggregate_output_token_ceiling=cognition.aggregate_output_token_ceiling,
+                prompt_contract_version=1,
+                result_schema_version=1,
+                selection_policy_version=1,
+                fallback_policy_version=1,
+                selected_requests_per_agent=4,
+                selected_requests_per_run=60,
+                concurrency_limit=4,
+                max_request_bytes=8_192,
+                max_wire_response_bytes=1_048_576,
+                max_output_tokens_per_attempt=384,
+                reservation_tokens_per_request=1_536,
+                initial_attempts=1,
+                transient_retries=2,
+                repair_attempts=1,
+                attempt_timeout_seconds=30,
+                aggregate_deadline_seconds=180,
+            ),
+        )
     if isinstance(draft, WorkbenchRunDraftV2):
         return NormalizedWorkbenchRunDraftV2(
             city_id=draft.city_id,
@@ -226,7 +262,7 @@ def construct_workbench_run(
     selected_pack: CityPackV2 | None = None,
 ) -> ValidatedWorkbenchRun:
     """Construct complete deterministic inputs without network or filesystem writes."""
-    if not isinstance(draft, (WorkbenchRunDraft, WorkbenchRunDraftV2)):
+    if not isinstance(draft, (WorkbenchRunDraft, WorkbenchRunDraftV2, WorkbenchRunDraftV3)):
         raise TypeError("draft must be a supported WorkbenchRunDraft")
     if selected_pack is not None and not isinstance(selected_pack, CityPackV2):
         raise TypeError("selected_pack must be a CityPackV2")
@@ -246,8 +282,14 @@ def construct_workbench_run(
     creative = _load_creative(normalized.scenario.campaign.creative_template_id)
     workbench_input: WorkbenchRunInputDocument
     assumptions: dict[str, WorkbenchCohortDraft]
-    if isinstance(normalized, NormalizedWorkbenchRunDraftV2):
-        workbench_input = WorkbenchRunInputV2(draft=normalized, creative_template=creative)
+    if isinstance(
+        normalized,
+        (NormalizedWorkbenchRunDraftV2, NormalizedWorkbenchRunDraftV3),
+    ):
+        if isinstance(normalized, NormalizedWorkbenchRunDraftV3):
+            workbench_input = WorkbenchRunInputV3(draft=normalized, creative_template=creative)
+        else:
+            workbench_input = WorkbenchRunInputV2(draft=normalized, creative_template=creative)
         personas = {persona.persona_id: persona for persona in normalized.population.personas}
         assumptions = {
             assignment.agent_id: personas[assignment.persona_id]

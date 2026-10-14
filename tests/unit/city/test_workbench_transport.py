@@ -24,7 +24,7 @@ from adlife.city.workbench_transport import (
 from adlife.core.domain.serialization import canonical_json
 from tests.integration.test_city_workbench_artifacts import _schema2_copy
 from tests.unit.city.test_city_run_preparation import _validated
-from tests.unit.city.test_workbench_input import draft_data, draft_v2_data
+from tests.unit.city.test_workbench_input import draft_data, draft_v2_data, draft_v3_data
 
 
 @pytest.mark.parametrize(
@@ -357,9 +357,9 @@ def test_run_input_view_refuses_incomplete_or_mismatched_bindings(
         _build_run_input_view(candidate)
 
 
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("version", [1, 2, 3])
 def test_http_dispatch_preserves_exact_version_and_maximum_seed(version: int) -> None:
-    payload = draft_data() if version == 1 else draft_v2_data()
+    payload = draft_data() if version == 1 else draft_v2_data() if version == 2 else draft_v3_data()
     payload["settings"]["seed"] = "9223372036854775807"
     original = deepcopy(payload)
     result = parse_workbench_http_draft(payload)
@@ -368,13 +368,50 @@ def test_http_dispatch_preserves_exact_version_and_maximum_seed(version: int) ->
     assert payload == original
 
 
-@pytest.mark.parametrize("version", [True, False, 1.0, 2.0, "2", None, 0, 3])
+@pytest.mark.parametrize("version", [True, False, 1.0, 2.0, 3.0, "3", None, 0, 4])
 def test_http_dispatch_refuses_noninteger_and_future_versions(version: object) -> None:
-    payload = draft_v2_data()
+    payload = draft_v3_data()
     payload["schema_version"] = version
     payload["settings"]["seed"] = "42"
-    with pytest.raises(ValidationError):
+
+    with pytest.raises(WorkbenchDraftTransportError) as caught:
         parse_workbench_http_draft(payload)
+
+    assert caught.value.field == "schema_version"
+    assert caught.value.message == "Use workbench schema version 1, 2, or 3."
+    assert str(caught.value) == caught.value.message
+
+
+def test_http_schema3_dispatch_preserves_cognition_without_mutating_browser_payload() -> None:
+    payload = draft_v3_data(mode="remote", aggregate_output_token_ceiling=3_072)
+    payload["settings"]["seed"] = "42"
+    original = deepcopy(payload)
+
+    result = parse_workbench_http_draft(payload)
+
+    assert type(result).__name__ == "WorkbenchRunDraftV3"
+    assert result.cognition.mode == "remote"
+    assert result.cognition.provider_profile_id == "provider-main"
+    assert result.cognition.provider_revision_sha256 == "a" * 64
+    assert result.cognition.aggregate_output_token_ceiling == 3_072
+    assert payload == original
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_http_dispatch_screens_structural_secrets_in_every_version_before_field_errors(
+    version: int,
+) -> None:
+    payload = draft_data() if version == 1 else draft_v2_data() if version == 2 else draft_v3_data()
+    payload["settings"]["seed"] = "not-a-seed"
+    payload["credential"] = {"api_key": "opaque-private-marker"}
+
+    with pytest.raises(WorkbenchDraftTransportError) as captured:
+        parse_workbench_http_draft(payload)
+
+    assert captured.value.field == "request"
+    assert captured.value.message == "Request data cannot contain credential fields."
+    assert "opaque-private-marker" not in str(captured.value)
+    assert "api_key" not in str(captured.value)
 
 
 def _stored_persona_run(root: Path):

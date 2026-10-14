@@ -14,6 +14,7 @@ from pydantic import Field, field_validator, model_validator
 
 from adlife.city.run_store import StoredCityRun
 from adlife.city.runs import PreparedCityRun
+from adlife.city.workbench_input import WorkbenchRunInputV3
 from adlife.city.workbench_runs import WorkbenchRunSummary
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.core.domain.person import DomainModel
@@ -287,6 +288,10 @@ class CityJobManager:
         """Preflight and schedule one frozen request without waiting for evaluation."""
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
+        if isinstance(validated.workbench_input, WorkbenchRunInputV3):
+            raise WorkbenchJobSubmissionError(
+                "Workbench input schema 3 requires city run manifest schema 9."
+            )
         run_id = validated.workbench_input.draft.settings.run_id
         draft = validated.workbench_input.draft
         accepted_settings = WorkbenchAcceptedSettings(

@@ -27,8 +27,10 @@ from adlife.city.workbench_input import (
     WorkbenchRunDraft,
     WorkbenchRunDraftDocument,
     WorkbenchRunDraftV2,
+    WorkbenchRunDraftV3,
     WorkbenchRunInput,
     WorkbenchRunInputV2,
+    _reject_structural_secrets,
 )
 from adlife.core.domain.city import CityBounds, CityPackV2, CitySource
 from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8
@@ -50,15 +52,30 @@ def _exact_pack_schema_version(value: object) -> object:
 class WorkbenchDraftTransportError(ValueError):
     """A value-free browser transport refusal safe to expose to a client."""
 
-    field: ClassVar[Literal["settings.seed"]] = "settings.seed"
-    message: ClassVar[str] = "Enter a whole-number seed from 0 through 9223372036854775807."
+    _MESSAGES: ClassVar[dict[Literal["request", "schema_version", "settings.seed"], str]] = {
+        "request": "Request data cannot contain credential fields.",
+        "schema_version": "Use workbench schema version 1, 2, or 3.",
+        "settings.seed": "Enter a whole-number seed from 0 through 9223372036854775807.",
+    }
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        field: Literal["request", "schema_version", "settings.seed"] = "settings.seed",
+    ) -> None:
+        self.field = field
+        self.message = self._MESSAGES[field]
         super().__init__(self.message)
 
 
 def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDraftDocument:
     """Translate the browser's exact decimal seed into the strict internal draft."""
+    try:
+        _reject_structural_secrets(payload)
+    except ValueError:
+        raise WorkbenchDraftTransportError("request") from None
+    version = payload.get("schema_version", 1)
+    if type(version) is not int or version not in (1, 2, 3):
+        raise WorkbenchDraftTransportError("schema_version")
     settings = payload.get("settings")
     if not isinstance(settings, Mapping) or "seed" not in settings:
         raise WorkbenchDraftTransportError
@@ -79,11 +96,10 @@ def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDra
         allow_nan=False,
         separators=(",", ":"),
     )
-    version = payload.get("schema_version", 1)
-    if type(version) is int and version == 2:
+    if version == 2:
         return WorkbenchRunDraftV2.model_validate_json(encoded)
-    # The schema-1 validator also gives value-free adjacent version diagnostics
-    # for noninteger and unsupported versions, without trying a permissive union.
+    if version == 3:
+        return WorkbenchRunDraftV3.model_validate_json(encoded)
     return WorkbenchRunDraft.model_validate_json(encoded)
 
 

@@ -6,9 +6,16 @@ from adlife.city.workbench_input import (
     WorkbenchCohortDraft,
     WorkbenchRunInputDocument,
     WorkbenchRunInputV2,
+    WorkbenchRunInputV3,
     parse_workbench_run_input_json,
 )
 from adlife.core.domain.city import CityPackDocument, CityPackV2
+from adlife.core.domain.city_cognition import (
+    CityCognitionAgentContextV1,
+    CityCognitionCampaignContextV1,
+    CityCognitionCreativeSnapshotV1,
+    CityCognitionRunContextV1,
+)
 from adlife.core.domain.city_places import CityPlaceSet
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
@@ -17,7 +24,18 @@ from adlife.core.domain.spatial_campaign import (
     SpatialCampaignScenario,
     road_coordinate,
 )
-from adlife.core.domain.spatial_response import SpatialResponseInput
+from adlife.core.domain.spatial_response import (
+    SpatialCampaignResponseInput,
+    SpatialResponseInitialState,
+    SpatialResponseInput,
+    SpatialResponseProfile,
+)
+from adlife.core.simulation._validation import revalidate_model
+from adlife.core.simulation.spatial_response import (
+    SpatialResponseEvaluation,
+    SpatialResponseState,
+    SpatialStateUpdated,
+)
 
 
 def validate_workbench_execution_binding(
@@ -129,7 +147,7 @@ def validate_workbench_execution_binding(
         raise ValueError("workbench response input does not match execution")
     expected_agent_ids = tuple(f"person-{index:03d}" for index in range(1, agent_count + 1))
     assumptions: dict[str, WorkbenchCohortDraft]
-    if isinstance(workbench_input, WorkbenchRunInputV2):
+    if isinstance(workbench_input, (WorkbenchRunInputV2, WorkbenchRunInputV3)):
         population = workbench_input.draft.population
         personas = {persona.persona_id: persona for persona in population.personas}
         assumptions = {
@@ -160,4 +178,197 @@ def validate_workbench_execution_binding(
     return workbench_input
 
 
-__all__ = ["validate_workbench_execution_binding"]
+def build_city_cognition_run_context(
+    workbench_input: WorkbenchRunInputV3,
+    *,
+    pack: CityPackV2,
+    spatial_scenario: SpatialCampaignScenario,
+    response_input: SpatialResponseInput,
+    response_evaluation: SpatialResponseEvaluation,
+) -> CityCognitionRunContextV1:
+    """Build narrative context only from one fully cross-bound scientific execution."""
+    if not isinstance(workbench_input, WorkbenchRunInputV3):
+        raise TypeError("city cognition run context requires a schema-3 workbench input")
+    if not isinstance(pack, CityPackV2):
+        raise TypeError("city cognition run context requires a version 2 city pack")
+    if not isinstance(spatial_scenario, SpatialCampaignScenario):
+        raise TypeError("city cognition run context requires a spatial scenario")
+    if not isinstance(response_input, SpatialResponseInput):
+        raise TypeError("city cognition run context requires a spatial response input")
+    checked_input = parse_workbench_run_input_json(canonical_json(workbench_input))
+    if not isinstance(checked_input, WorkbenchRunInputV3):
+        raise TypeError("city cognition run context requires a schema-3 workbench input")
+    try:
+        checked_pack = revalidate_model(
+            pack,
+            CityPackV2,
+            label="city cognition city pack",
+        )
+        checked_scenario = revalidate_model(
+            spatial_scenario,
+            SpatialCampaignScenario,
+            label="city cognition spatial scenario",
+        )
+        checked_response_input = revalidate_model(
+            response_input,
+            SpatialResponseInput,
+            label="city cognition spatial response input",
+        )
+        checked_evaluation = revalidate_model(
+            response_evaluation,
+            SpatialResponseEvaluation,
+            label="city cognition response evaluation",
+        )
+    except (TypeError, ValueError):
+        raise ValueError("city cognition scientific execution is invalid") from None
+
+    settings = checked_input.draft.settings
+    bound_input = validate_workbench_execution_binding(
+        checked_input,
+        pack=checked_pack,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        places=None,
+        spatial_scenario=checked_scenario,
+        spatial_response=checked_response_input,
+    )
+    if not isinstance(bound_input, WorkbenchRunInputV3):
+        raise TypeError("city cognition run context requires a schema-3 workbench input")
+    checked_input = bound_input
+    if (
+        checked_evaluation.city_sha256 != checked_pack.fingerprint
+        or checked_evaluation.scenario_sha256 != checked_scenario.fingerprint
+        or checked_evaluation.response_input_sha256 != checked_response_input.fingerprint
+    ):
+        raise ValueError("city cognition response evaluation does not match execution artifacts")
+
+    draft = checked_input.draft
+    population = draft.population
+    personas = {persona.persona_id: persona for persona in population.personas}
+    profiles = tuple(
+        SpatialResponseProfile(
+            agent_id=assignment.agent_id,
+            fictional=True,
+            interests=personas[assignment.persona_id].interests,
+            traits=personas[assignment.persona_id].traits,
+        )
+        for assignment in population.assignments
+    )
+    campaign_draft = draft.scenario.campaign
+    creative = checked_input.creative_template
+    response_campaigns = (
+        SpatialCampaignResponseInput(
+            campaign_id=campaign_draft.campaign_id,
+            creative_sha256=creative.fingerprint,
+            target_interests=campaign_draft.target_interests,
+            relative_price=campaign_draft.relative_price,
+        ),
+    )
+    initial_states = tuple(
+        SpatialResponseInitialState(
+            agent_id=assignment.agent_id,
+            campaign_id=campaign.campaign_id,
+            brand_sentiment=personas[assignment.persona_id].initial_state.brand_sentiment,
+            recall_strength=personas[assignment.persona_id].initial_state.recall_strength,
+            purchase_intention=personas[assignment.persona_id].initial_state.purchase_intention,
+        )
+        for assignment in population.assignments
+        for campaign in response_campaigns
+    )
+    reconstructed_response_input = SpatialResponseInput(
+        city_sha256=checked_pack.fingerprint,
+        scenario_sha256=checked_scenario.fingerprint,
+        profiles=profiles,
+        campaigns=response_campaigns,
+        initial_states=initial_states,
+    )
+    expected_state_keys = {
+        (state.agent_id, state.campaign_id) for state in reconstructed_response_input.initial_states
+    }
+    actual_state_keys = {
+        (state.agent_id, state.campaign_id) for state in checked_evaluation.final_states
+    }
+    if (
+        reconstructed_response_input != checked_response_input
+        or actual_state_keys != expected_state_keys
+    ):
+        raise ValueError("city cognition response input does not match schema-3 workbench input")
+    if checked_evaluation.attention_seed != draft.settings.seed:
+        raise ValueError("city cognition response seed does not match schema-3 workbench input")
+    first_updates: dict[tuple[str, str], SpatialStateUpdated] = {}
+    for record in checked_evaluation.records:
+        if isinstance(record, SpatialStateUpdated):
+            first_updates.setdefault((record.agent_id, record.campaign_id), record)
+    final_states = {
+        (state.agent_id, state.campaign_id): state for state in checked_evaluation.final_states
+    }
+    for initial_state in reconstructed_response_input.initial_states:
+        state_key = (initial_state.agent_id, initial_state.campaign_id)
+        expected_initial = SpatialResponseState(
+            agent_id=initial_state.agent_id,
+            campaign_id=initial_state.campaign_id,
+            brand_sentiment=initial_state.brand_sentiment,
+            recall_strength=initial_state.recall_strength,
+            purchase_intention=initial_state.purchase_intention,
+            response_count=0,
+            last_response_minute=None,
+        )
+        first_update = first_updates.get(state_key)
+        observed_initial = (
+            final_states[state_key] if first_update is None else first_update.previous_state
+        )
+        if observed_initial != expected_initial:
+            raise ValueError(
+                "city cognition initial response state does not match schema-3 workbench input"
+            )
+
+    agents = tuple(
+        CityCognitionAgentContextV1(
+            schema_version=1,
+            agent_id=assignment.agent_id,
+            persona_id=assignment.persona_id,
+            fictional=True,
+            display_name=personas[assignment.persona_id].display_name,
+            age=personas[assignment.persona_id].age,
+            occupation=personas[assignment.persona_id].occupation,
+            background=personas[assignment.persona_id].background,
+            mbti=personas[assignment.persona_id].mbti,
+            interests=tuple(sorted(personas[assignment.persona_id].interests)),
+            traits=personas[assignment.persona_id].traits,
+        )
+        for assignment in population.assignments
+    )
+    creative_snapshot = CityCognitionCreativeSnapshotV1(
+        template_id=creative.template_id,
+        template_version=creative.template_version,
+        product_name=creative.product_name,
+        product_category=creative.product_category,
+        message=creative.message,
+        call_to_action=creative.call_to_action,
+        disclosure=creative.disclosure,
+    )
+    campaigns = (
+        CityCognitionCampaignContextV1(
+            schema_version=1,
+            campaign_id=campaign_draft.campaign_id,
+            name=campaign_draft.name,
+            creative_sha256=creative.fingerprint,
+            creative=creative_snapshot,
+            target_interests=tuple(sorted(campaign_draft.target_interests)),
+            relative_price=campaign_draft.relative_price,
+        ),
+    )
+    return CityCognitionRunContextV1(
+        schema_version=1,
+        run_input_sha256=checked_input.fingerprint,
+        response_input_sha256=checked_response_input.fingerprint,
+        scenario_sha256=checked_scenario.fingerprint,
+        city_sha256=checked_pack.fingerprint,
+        agents=agents,
+        campaigns=campaigns,
+    )
+
+
+__all__ = ["build_city_cognition_run_context", "validate_workbench_execution_binding"]

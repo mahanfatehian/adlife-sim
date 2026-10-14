@@ -11,7 +11,12 @@ from pathlib import Path
 from adlife import __version__
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.workbench_binding import validate_workbench_execution_binding
-from adlife.city.workbench_input import WorkbenchRunInputDocument
+from adlife.city.workbench_input import (
+    WorkbenchRunInput,
+    WorkbenchRunInputDocument,
+    WorkbenchRunInputV2,
+    WorkbenchRunInputV3,
+)
 from adlife.core.domain.city import CityPackDocument, CityPackV2
 from adlife.core.domain.city_places import CityPlaceSet
 from adlife.core.domain.city_run import (
@@ -162,6 +167,8 @@ def prepare_city_run(
         raise ValueError("saved city runs require 1 to 7 days")
     if spatial_response is not None and spatial_scenario is None:
         raise ValueError("spatial response input requires a spatial campaign scenario")
+    if isinstance(workbench_input, WorkbenchRunInputV3):
+        raise ValueError("workbench input schema 3 requires city run manifest schema 9")
     if spatial_response is not None:
         spatial_response = parse_spatial_response_input_json(canonical_json(spatial_response))
     workbench_input = _validated_workbench_input(
@@ -260,9 +267,13 @@ def prepare_city_run(
             if workbench_input is None:
                 manifest = CityRunManifestV6.model_validate(response_receipt)
             else:
-                manifest_model = (
-                    CityRunManifestV7 if workbench_input.schema_version == 1 else CityRunManifestV8
-                )
+                manifest_model: type[CityRunManifestV7] | type[CityRunManifestV8]
+                if isinstance(workbench_input, WorkbenchRunInput):
+                    manifest_model = CityRunManifestV7
+                elif isinstance(workbench_input, WorkbenchRunInputV2):
+                    manifest_model = CityRunManifestV8
+                else:
+                    raise ValueError("unsupported workbench input schema version")
                 manifest = manifest_model.model_validate(
                     {
                         **response_receipt,

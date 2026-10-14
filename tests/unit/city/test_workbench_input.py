@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from adlife.core.domain.identifiers import WINDOWS_RESERVED_RUN_IDS
 from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialActiveWindow
@@ -549,6 +550,25 @@ def draft_v2_data(*, agent_count: int = 3) -> dict[str, Any]:
     return data
 
 
+def draft_v3_data(
+    *,
+    agent_count: int = 3,
+    mode: str = "rules",
+    aggregate_output_token_ceiling: int = 0,
+) -> dict[str, Any]:
+    """Schema-3 keeps the schema-2 population and adds narrative selection only."""
+    data = draft_v2_data(agent_count=agent_count)
+    data["schema_version"] = 3
+    provider = mode in {"local", "remote"}
+    data["cognition"] = {
+        "mode": mode,
+        "provider_profile_id": "provider-main" if provider else None,
+        "provider_revision_sha256": "a" * 64 if provider else None,
+        "aggregate_output_token_ceiling": aggregate_output_token_ceiling,
+    }
+    return data
+
+
 def normalized_v2_input():
     models = _models()
     wire = models.WorkbenchRunDraftV2.model_validate_json(json.dumps(draft_v2_data()))
@@ -563,6 +583,45 @@ def normalized_v2_input():
     return models.WorkbenchRunInputV2(
         draft=normalized,
         creative_template=_creatives().select_creative_template("fictional-device-launch-v1"),
+    )
+
+
+def normalized_v3_input(*, mode: str = "rules", budget: int = 0):
+    models = _models()
+    source = normalized_v2_input()
+    provider = mode in {"local", "remote"}
+    cognition = models.NormalizedWorkbenchCognitionV3(
+        mode=mode,
+        provider_profile_id="provider-main" if provider else None,
+        provider_revision_sha256="a" * 64 if provider else None,
+        aggregate_output_token_ceiling=budget,
+        prompt_contract_version=1,
+        result_schema_version=1,
+        selection_policy_version=1,
+        fallback_policy_version=1,
+        selected_requests_per_agent=4,
+        selected_requests_per_run=60,
+        concurrency_limit=4,
+        max_request_bytes=8_192,
+        max_wire_response_bytes=1_048_576,
+        max_output_tokens_per_attempt=384,
+        reservation_tokens_per_request=1_536,
+        initial_attempts=1,
+        transient_retries=2,
+        repair_attempts=1,
+        attempt_timeout_seconds=30,
+        aggregate_deadline_seconds=180,
+    )
+    normalized = models.NormalizedWorkbenchRunDraftV3(
+        city_id=source.draft.city_id,
+        scenario=source.draft.scenario,
+        population=source.draft.population,
+        settings=source.draft.settings,
+        cognition=cognition,
+    )
+    return models.WorkbenchRunInputV3(
+        draft=normalized,
+        creative_template=source.creative_template,
     )
 
 
@@ -1025,3 +1084,217 @@ def test_schema1_cohort_interest_screening_keeps_its_existing_contract() -> None
     data["cohort"]["interests"] = ["opaque-private-marker", "x-api-key"]
     draft = _parse_draft(data)
     assert draft.cohort.interests == frozenset({"opaque-private-marker", "x-api-key"})
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
+def test_schema3_cognition_accepts_only_coherent_mode_profile_and_budget(mode: str) -> None:
+    models = _models()
+    budget = 3_072 if mode in {"local", "remote"} else 0
+    draft = models.WorkbenchRunDraftV3.model_validate_json(
+        json.dumps(draft_v3_data(mode=mode, aggregate_output_token_ceiling=budget))
+    )
+
+    assert draft.schema_version == 3
+    assert (
+        draft.population
+        == models.WorkbenchRunDraftV2.model_validate_json(json.dumps(draft_v2_data())).population
+    )
+    assert draft.settings.response_mode == "deterministic-rules"
+    assert draft.cognition.mode == mode
+    assert draft.cognition.aggregate_output_token_ceiling == budget
+    assert (draft.cognition.provider_profile_id is not None) is (mode in {"local", "remote"})
+
+
+@pytest.mark.parametrize(
+    ("mode", "profile_id", "revision", "budget"),
+    [
+        ("rules", "provider-main", "a" * 64, 0),
+        ("mock", None, None, 1_536),
+        ("local", None, None, 0),
+        ("remote", "provider-main", None, 1_536),
+        ("remote", None, "a" * 64, 1_536),
+        ("local", "provider-main", "g" * 64, 1_536),
+        ("local", "Provider_Main", "a" * 64, 1_536),
+        ("remote", "provider-main", "a" * 64, -1),
+        ("remote", "provider-main", "a" * 64, 1_535),
+        ("remote", "provider-main", "a" * 64, 92_161),
+    ],
+)
+def test_schema3_cognition_refuses_incoherent_or_unbounded_selection(
+    mode: str,
+    profile_id: str | None,
+    revision: str | None,
+    budget: int,
+) -> None:
+    models = _models()
+    data = draft_v3_data(mode=mode, aggregate_output_token_ceiling=budget)
+    data["cognition"].update(
+        {
+            "provider_profile_id": profile_id,
+            "provider_revision_sha256": revision,
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        models.WorkbenchRunDraftV3.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("profile_id", sorted(WINDOWS_RESERVED_RUN_IDS))
+def test_schema3_cognition_refuses_windows_reserved_profile_ids_in_both_layers(
+    profile_id: str,
+) -> None:
+    models = _models()
+    draft = draft_v3_data(mode="remote", aggregate_output_token_ceiling=1_536)
+    draft["cognition"]["provider_profile_id"] = profile_id
+    with pytest.raises(ValidationError, match="reserved on Windows"):
+        models.WorkbenchRunDraftV3.model_validate_json(json.dumps(draft))
+
+    normalized = normalized_v3_input(mode="remote", budget=1_536).model_dump(mode="json")
+    normalized["draft"]["cognition"]["provider_profile_id"] = profile_id
+    with pytest.raises(ValidationError, match="reserved on Windows"):
+        models.WorkbenchRunInputV3.model_validate_json(json.dumps(normalized))
+
+
+@pytest.mark.parametrize("value", [True, 1_536.0, "1536"])
+def test_schema3_cognition_refuses_coerced_budget_in_draft_and_normalized_input(
+    value: object,
+) -> None:
+    models = _models()
+    draft = draft_v3_data(mode="remote", aggregate_output_token_ceiling=1_536)
+    draft["cognition"]["aggregate_output_token_ceiling"] = value
+    with pytest.raises(ValidationError):
+        models.WorkbenchRunDraftV3.model_validate_json(json.dumps(draft))
+
+    normalized = normalized_v3_input(mode="remote", budget=1_536).model_dump(mode="json")
+    normalized["draft"]["cognition"]["aggregate_output_token_ceiling"] = value
+    with pytest.raises(ValidationError):
+        models.WorkbenchRunInputV3.model_validate_json(json.dumps(normalized))
+
+
+def test_schema3_normalized_cognition_freezes_every_policy_and_resource_ceiling() -> None:
+    cognition = normalized_v3_input(mode="remote", budget=92_160).draft.cognition
+
+    assert cognition.model_dump(mode="json") == {
+        "mode": "remote",
+        "provider_profile_id": "provider-main",
+        "provider_revision_sha256": "a" * 64,
+        "aggregate_output_token_ceiling": 92_160,
+        "prompt_contract_version": 1,
+        "result_schema_version": 1,
+        "selection_policy_version": 1,
+        "fallback_policy_version": 1,
+        "selected_requests_per_agent": 4,
+        "selected_requests_per_run": 60,
+        "concurrency_limit": 4,
+        "max_request_bytes": 8_192,
+        "max_wire_response_bytes": 1_048_576,
+        "max_output_tokens_per_attempt": 384,
+        "reservation_tokens_per_request": 1_536,
+        "initial_attempts": 1,
+        "transient_retries": 2,
+        "repair_attempts": 1,
+        "attempt_timeout_seconds": 30,
+        "aggregate_deadline_seconds": 180,
+    }
+
+    for field, _value in cognition.model_dump(mode="json").items():
+        if field in {
+            "mode",
+            "provider_profile_id",
+            "provider_revision_sha256",
+            "aggregate_output_token_ceiling",
+        }:
+            continue
+        document = cognition.model_dump(mode="json")
+        document[field] = True
+        with pytest.raises(ValidationError):
+            type(cognition).model_validate_json(json.dumps(document))
+
+
+@pytest.mark.parametrize("field", ["provider_profile_id", "provider_revision_sha256"])
+def test_schema3_draft_requires_explicit_nullable_provider_selection(field: str) -> None:
+    models = _models()
+    document = draft_v3_data()
+    document["cognition"].pop(field)
+
+    with pytest.raises(ValidationError):
+        models.WorkbenchRunDraftV3.model_validate_json(json.dumps(document))
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "provider_profile_id",
+        "provider_revision_sha256",
+        "prompt_contract_version",
+        "result_schema_version",
+        "selection_policy_version",
+        "fallback_policy_version",
+        "selected_requests_per_agent",
+        "selected_requests_per_run",
+        "concurrency_limit",
+        "max_request_bytes",
+        "max_wire_response_bytes",
+        "max_output_tokens_per_attempt",
+        "reservation_tokens_per_request",
+        "initial_attempts",
+        "transient_retries",
+        "repair_attempts",
+        "attempt_timeout_seconds",
+        "aggregate_deadline_seconds",
+    ],
+)
+def test_schema3_normalized_cognition_requires_every_frozen_contract_field(field: str) -> None:
+    models = _models()
+    document = normalized_v3_input().model_dump(mode="json")
+    document["draft"]["cognition"].pop(field)
+
+    with pytest.raises(ValidationError):
+        models.WorkbenchRunInputV3.model_validate_json(json.dumps(document))
+
+
+def test_schema3_input_round_trips_dispatches_exactly_and_has_its_own_fingerprint() -> None:
+    models = _models()
+    value = normalized_v3_input(mode="rules")
+    restored = models.parse_workbench_run_input_json(canonical_json(value))
+
+    assert type(restored) is models.WorkbenchRunInputV3
+    assert restored == value
+    assert restored.fingerprint == value.fingerprint
+    assert restored.fingerprint != normalized_v2_input().fingerprint
+    assert len(restored.fingerprint) == 64
+    for version in (True, 3.0, "3", 4, None):
+        document = value.model_dump(mode="json")
+        document["schema_version"] = version
+        with pytest.raises(ValueError):
+            models.parse_workbench_run_input_json(json.dumps(document))
+
+
+def test_schema3_parser_applies_structural_secret_screen_before_model_errors() -> None:
+    models = _models()
+    document = normalized_v3_input().model_dump(mode="json")
+    document["credential"] = {"api_key": "opaque-private-marker"}
+
+    with pytest.raises(ValueError, match="labelled secret") as captured:
+        models.parse_workbench_run_input_json(json.dumps(document))
+    assert "opaque-private-marker" not in str(captured.value)
+
+
+def test_schema3_draft_model_hides_secret_values_in_validation_errors() -> None:
+    models = _models()
+    document = draft_v3_data()
+    document["credential"] = {"api_key": "opaque-private-marker"}
+
+    with pytest.raises(ValidationError, match="Extra inputs") as captured:
+        models.WorkbenchRunDraftV3.model_validate_json(json.dumps(document))
+    assert "opaque-private-marker" not in str(captured.value)
+
+
+def test_schema3_input_model_hides_secret_values_in_validation_errors() -> None:
+    models = _models()
+    document = normalized_v3_input().model_dump(mode="json")
+    document["credential"] = {"api_key": "opaque-private-marker"}
+
+    with pytest.raises(ValidationError, match="Extra inputs") as captured:
+        models.WorkbenchRunInputV3.model_validate_json(json.dumps(document))
+    assert "opaque-private-marker" not in str(captured.value)

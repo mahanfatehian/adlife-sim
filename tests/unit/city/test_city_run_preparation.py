@@ -16,7 +16,7 @@ from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import DuplicateRun
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_workbench_input import draft_data
-from tests.unit.city.test_workbench_validation import persona_draft
+from tests.unit.city.test_workbench_validation import cognition_draft, persona_draft
 
 
 def _validated(*, run_id: str = "launch-run", seed: int = 42, agents: int = 2, days: int = 2):
@@ -66,6 +66,35 @@ def test_schema2_preparation_selects_v8_without_touching_the_filesystem(tmp_path
     assert prepared.manifest.workbench_input_schema_version == 2
     assert prepared.workbench_input == validated.workbench_input
     assert prepared.response_input == validated.response_input
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_schema3_preparation_refuses_before_v9_evaluation_or_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validated = construct_workbench_run(cognition_draft())
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("schema-3 refusal happened after deterministic evaluation started")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    monkeypatch.setattr(runs, "evaluate_spatial_opportunities", forbidden)
+    monkeypatch.setattr(runs, "evaluate_spatial_attention", forbidden)
+    monkeypatch.setattr(runs, "evaluate_spatial_responses", forbidden)
+
+    with pytest.raises(ValueError, match=r"schema 3.*schema 9"):
+        runs.prepare_city_run(
+            validated.pack,
+            run_id="launch-run",
+            seed=42,
+            agent_count=3,
+            days=2,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+        )
+
     assert list(tmp_path.iterdir()) == []
 
 

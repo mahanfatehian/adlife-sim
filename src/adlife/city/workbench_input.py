@@ -8,10 +8,21 @@ from hashlib import sha256
 from itertools import pairwise
 from typing import Annotated, Final, Literal, Self, TypeAlias
 
-from pydantic import Field, ValidationInfo, field_serializer, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    ModelWrapValidatorHandler,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from adlife.core.domain.city import TravelDirection, _validate_public_metadata
-from adlife.core.domain.identifiers import validate_portable_run_identifier
+from adlife.core.domain.identifiers import (
+    WINDOWS_RESERVED_RUN_IDS,
+    validate_portable_run_identifier,
+)
 from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.person import (
     DomainModel,
@@ -28,6 +39,8 @@ from adlife.core.domain.spatial_campaign import (
 from adlife.core.domain.spatial_response import SpatialResponseTraits
 
 _ID_PATTERN = r"^[a-z0-9][a-z0-9-]{0,79}$"
+_PROVIDER_PROFILE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]{0,63}$"
+_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _ACTIVITY_ORDER = {"home": 0, "commute": 1, "work": 2, "leisure": 3}
 CREATIVE_DISCLOSURE: Final = "Fictional creative for synthetic simulation only."
 PublicText = Annotated[str, Field(min_length=1, max_length=80)]
@@ -66,6 +79,15 @@ def _safe_identifier(value: str) -> str:
     if contains_provider_secret_text(value):
         raise ValueError("workbench identifier contains credential-shaped content")
     return value
+
+
+def _safe_provider_profile_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    checked = _safe_identifier(value)
+    if checked in WINDOWS_RESERVED_RUN_IDS:
+        raise ValueError("provider profile identifier is reserved on Windows")
+    return checked
 
 
 def _unique_text_members(value: object, *, label: str) -> object:
@@ -421,6 +443,149 @@ class WorkbenchRunSettings(DomainModel):
         return _safe_identifier(validate_portable_run_identifier(value))
 
 
+def _validate_cognition_selection(
+    *,
+    mode: str,
+    provider_profile_id: str | None,
+    provider_revision_sha256: str | None,
+    aggregate_output_token_ceiling: int,
+) -> None:
+    offline = mode in {"rules", "mock"}
+    if offline:
+        if (
+            provider_profile_id is not None
+            or provider_revision_sha256 is not None
+            or aggregate_output_token_ceiling != 0
+        ):
+            raise ValueError("rules and mock cognition cannot carry provider configuration")
+        return
+    if provider_profile_id is None or provider_revision_sha256 is None:
+        raise ValueError("local and remote cognition require one exact provider revision")
+    if aggregate_output_token_ceiling % 1_536 != 0:
+        raise ValueError("provider cognition token ceiling must reserve whole requests")
+
+
+class WorkbenchCognitionDraftV3(DomainModel):
+    """One non-secret narrative mode selection submitted by the local browser."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    mode: Literal["rules", "mock", "local", "remote"]
+    provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
+    provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
+    aggregate_output_token_ceiling: int = Field(ge=0, le=92_160)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def no_structural_secrets(
+        cls,
+        value: object,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        _reject_structural_secrets(value)
+        return handler(value)
+
+    @field_validator("provider_profile_id")
+    @classmethod
+    def safe_provider_profile_id(cls, value: str | None) -> str | None:
+        return _safe_provider_profile_id(value)
+
+    @field_validator("aggregate_output_token_ceiling", mode="before")
+    @classmethod
+    def exact_aggregate_output_token_ceiling(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("aggregate_output_token_ceiling must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_selection(self) -> Self:
+        _validate_cognition_selection(
+            mode=self.mode,
+            provider_profile_id=self.provider_profile_id,
+            provider_revision_sha256=self.provider_revision_sha256,
+            aggregate_output_token_ceiling=self.aggregate_output_token_ceiling,
+        )
+        return self
+
+
+class NormalizedWorkbenchCognitionV3(DomainModel):
+    """Frozen schema-3 policy ceilings; provider profiles may only narrow them later."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    mode: Literal["rules", "mock", "local", "remote"]
+    provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
+    provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
+    aggregate_output_token_ceiling: int = Field(ge=0, le=92_160)
+    prompt_contract_version: Literal[1]
+    result_schema_version: Literal[1]
+    selection_policy_version: Literal[1]
+    fallback_policy_version: Literal[1]
+    selected_requests_per_agent: Literal[4]
+    selected_requests_per_run: Literal[60]
+    concurrency_limit: Literal[4]
+    max_request_bytes: Literal[8192]
+    max_wire_response_bytes: Literal[1048576]
+    max_output_tokens_per_attempt: Literal[384]
+    reservation_tokens_per_request: Literal[1536]
+    initial_attempts: Literal[1]
+    transient_retries: Literal[2]
+    repair_attempts: Literal[1]
+    attempt_timeout_seconds: Literal[30]
+    aggregate_deadline_seconds: Literal[180]
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def no_structural_secrets(
+        cls,
+        value: object,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        _reject_structural_secrets(value)
+        return handler(value)
+
+    @field_validator("provider_profile_id")
+    @classmethod
+    def safe_provider_profile_id(cls, value: str | None) -> str | None:
+        return _safe_provider_profile_id(value)
+
+    @field_validator(
+        "aggregate_output_token_ceiling",
+        "prompt_contract_version",
+        "result_schema_version",
+        "selection_policy_version",
+        "fallback_policy_version",
+        "selected_requests_per_agent",
+        "selected_requests_per_run",
+        "concurrency_limit",
+        "max_request_bytes",
+        "max_wire_response_bytes",
+        "max_output_tokens_per_attempt",
+        "reservation_tokens_per_request",
+        "initial_attempts",
+        "transient_retries",
+        "repair_attempts",
+        "attempt_timeout_seconds",
+        "aggregate_deadline_seconds",
+        mode="before",
+    )
+    @classmethod
+    def exact_integer_fields(cls, value: object, info: ValidationInfo) -> object:
+        if type(value) is not int:
+            raise ValueError(f"{info.field_name} must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_selection(self) -> Self:
+        _validate_cognition_selection(
+            mode=self.mode,
+            provider_profile_id=self.provider_profile_id,
+            provider_revision_sha256=self.provider_revision_sha256,
+            aggregate_output_token_ceiling=self.aggregate_output_token_ceiling,
+        )
+        return self
+
+
 class WorkbenchRunDraft(DomainModel):
     schema_version: Literal[1] = 1
     city_id: str = Field(pattern=_ID_PATTERN)
@@ -440,6 +605,30 @@ class WorkbenchRunDraftV2(DomainModel):
     scenario: WorkbenchScenarioDraft
     population: WorkbenchPopulationDraftV2
     settings: WorkbenchRunSettings
+
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
+    @model_validator(mode="after")
+    def exact_population_count(self) -> Self:
+        if sum(item.count for item in self.population.personas) != self.settings.agent_count:
+            raise ValueError("workbench persona count total must equal settings agent count")
+        return self
+
+
+class WorkbenchRunDraftV3(DomainModel):
+    """Schema-2 fictional population plus an explicit narrative-only mode selection."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    schema_version: Literal[3] = 3
+    city_id: str = Field(pattern=_ID_PATTERN)
+    scenario: WorkbenchScenarioDraft
+    population: WorkbenchPopulationDraftV2
+    settings: WorkbenchRunSettings
+    cognition: WorkbenchCognitionDraftV3
 
     @field_validator("city_id")
     @classmethod
@@ -551,6 +740,30 @@ class NormalizedWorkbenchRunDraftV2(DomainModel):
         return self
 
 
+class NormalizedWorkbenchRunDraftV3(DomainModel):
+    """Canonical schema-3 scientific draft and frozen narrative policy ceilings."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    schema_version: Literal[3] = 3
+    city_id: str = Field(pattern=_ID_PATTERN)
+    scenario: NormalizedWorkbenchScenarioDraft
+    population: NormalizedWorkbenchPopulationV2
+    settings: WorkbenchRunSettings
+    cognition: NormalizedWorkbenchCognitionV3
+
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
+    @model_validator(mode="after")
+    def exact_population_count(self) -> Self:
+        if len(self.population.assignments) != self.settings.agent_count:
+            raise ValueError("workbench assignment count must equal settings agent count")
+        return self
+
+
 class CreativeTemplate(DomainModel):
     template_id: str = Field(pattern=_ID_PATTERN)
     template_version: Literal[1] = 1
@@ -636,8 +849,30 @@ class WorkbenchRunInputV2(DomainModel):
         return sha256(canonical_json(self).encode("utf-8")).hexdigest()
 
 
-WorkbenchRunDraftDocument: TypeAlias = WorkbenchRunDraft | WorkbenchRunDraftV2
-WorkbenchRunInputDocument: TypeAlias = WorkbenchRunInput | WorkbenchRunInputV2
+class WorkbenchRunInputV3(DomainModel):
+    """Frozen schema-3 input; cognition configuration has no scientific authority."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    schema_version: Literal[3] = 3
+    draft: NormalizedWorkbenchRunDraftV3
+    creative_template: CreativeTemplate
+
+    @model_validator(mode="after")
+    def creative_matches_draft(self) -> Self:
+        if self.creative_template.template_id != self.draft.scenario.campaign.creative_template_id:
+            raise ValueError("creative template does not match workbench campaign")
+        if len(canonical_json(self).encode("utf-8")) > MAX_WORKBENCH_INPUT_BYTES:
+            raise ValueError("workbench input exceeds its canonical size limit")
+        return self
+
+    @property
+    def fingerprint(self) -> str:
+        return sha256(canonical_json(self).encode("utf-8")).hexdigest()
+
+
+WorkbenchRunDraftDocument: TypeAlias = WorkbenchRunDraft | WorkbenchRunDraftV2 | WorkbenchRunDraftV3
+WorkbenchRunInputDocument: TypeAlias = WorkbenchRunInput | WorkbenchRunInputV2 | WorkbenchRunInputV3
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -669,9 +904,9 @@ def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInputDo
     if not isinstance(payload, dict):
         raise ValueError("workbench input must be a JSON object")
     version = payload.get("schema_version")
-    if type(version) is not int or version not in (1, 2):
+    if type(version) is not int or version not in (1, 2, 3):
         raise ValueError("unsupported workbench input schema version")
-    if version == 2:
+    if version in (2, 3):
         _reject_structural_secrets(payload)
     normalized = json.dumps(
         payload,
@@ -681,7 +916,9 @@ def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInputDo
     )
     if version == 1:
         return WorkbenchRunInput.model_validate_json(normalized)
-    return WorkbenchRunInputV2.model_validate_json(normalized)
+    if version == 2:
+        return WorkbenchRunInputV2.model_validate_json(normalized)
+    return WorkbenchRunInputV3.model_validate_json(normalized)
 
 
 __all__ = [
@@ -690,11 +927,14 @@ __all__ = [
     "CreativeTemplateCatalog",
     "NormalizedPhonePlacementDraft",
     "NormalizedRoadsidePlacementDraft",
+    "NormalizedWorkbenchCognitionV3",
     "NormalizedWorkbenchPopulationV2",
     "NormalizedWorkbenchRunDraft",
     "NormalizedWorkbenchRunDraftV2",
+    "NormalizedWorkbenchRunDraftV3",
     "NormalizedWorkbenchScenarioDraft",
     "WorkbenchCampaignDraft",
+    "WorkbenchCognitionDraftV3",
     "WorkbenchCohortDraft",
     "WorkbenchDailyWindow",
     "WorkbenchInitialState",
@@ -706,9 +946,11 @@ __all__ = [
     "WorkbenchRunDraft",
     "WorkbenchRunDraftDocument",
     "WorkbenchRunDraftV2",
+    "WorkbenchRunDraftV3",
     "WorkbenchRunInput",
     "WorkbenchRunInputDocument",
     "WorkbenchRunInputV2",
+    "WorkbenchRunInputV3",
     "WorkbenchRunSettings",
     "WorkbenchScenarioDraft",
     "materialize_workbench_population",
