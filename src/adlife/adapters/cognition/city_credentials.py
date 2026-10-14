@@ -184,7 +184,9 @@ class OSKeyringCityCredentialStore:
         try:
             if not isinstance(profile, ProviderProfileRevisionV1):
                 raise TypeError
-            checked = ProviderProfileRevisionV1.model_validate(profile.model_dump(mode="json"))
+            checked = ProviderProfileRevisionV1.model_validate(
+                profile.model_dump(mode="json", warnings="none")
+            )
             approval = self._policy.validate_profile(checked)
         except (
             AttributeError,

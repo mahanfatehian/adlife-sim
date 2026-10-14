@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import traceback
+import warnings
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from hashlib import sha256
@@ -307,6 +308,28 @@ def test_constructed_profile_cannot_borrow_a_different_credential_slot() -> None
     assert caught.value.__context__ is None
     assert backend.get_calls == []
     assert environment.reads == []
+
+
+def test_constructed_profile_cannot_leak_hostile_values_through_warnings() -> None:
+    backend = FakeBackend()
+    store = OSKeyringCityCredentialStore(
+        _policy(),
+        backend=backend,
+        approved_backend_types=(FakeBackend,),
+        environ=TrackingEnvironment({}),
+    )
+    secret = "api_key=opaquevalue1234567890"
+    document = _profile().model_dump(mode="python")
+    document["origin_approval_id"] = {"secret": secret}
+    tampered = ProviderProfileRevisionV1.model_construct(**document)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(CityCredentialStoreError):
+            store.resolve(tampered)
+
+    assert all(secret not in str(item.message) for item in caught)
+    assert backend.get_calls == []
 
 
 def test_store_and_availability_use_exact_revision_username_without_exposing_value() -> None:

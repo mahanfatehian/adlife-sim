@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import sys
+import warnings
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from hashlib import sha256
 from pathlib import Path
@@ -301,6 +302,22 @@ def test_create_revalidates_constructed_draft_before_any_write(tmp_path: Path) -
     with pytest.raises(InvalidProviderProfile):
         registry.create(invalid)
 
+    assert not (registry.workspace.root / "provider-profiles").exists()
+
+
+def test_create_does_not_warn_with_hostile_constructed_draft_values(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    secret = "api_key=opaquevalue1234567890"
+    document = _draft().model_dump(mode="python")
+    document["top_p"] = {"secret": secret}
+    invalid = ProviderProfileDraftV1.model_construct(**document)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(InvalidProviderProfile):
+            registry.create(invalid)
+
+    assert all(secret not in str(item.message) for item in caught)
     assert not (registry.workspace.root / "provider-profiles").exists()
 
 

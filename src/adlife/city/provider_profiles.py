@@ -309,7 +309,9 @@ class ProviderProfileRegistry:
         if not isinstance(draft, ProviderProfileDraftV1):
             raise TypeError("provider profile draft must be a ProviderProfileDraftV1")
         try:
-            checked = ProviderProfileDraftV1.model_validate(draft.model_dump(mode="json"))
+            checked = ProviderProfileDraftV1.model_validate(
+                draft.model_dump(mode="json", warnings="none")
+            )
             revision = _build_revision(checked)
             canonical = _canonical_revision_bytes(revision)
         except (InvalidProviderProfile, ValidationError, ValueError):
