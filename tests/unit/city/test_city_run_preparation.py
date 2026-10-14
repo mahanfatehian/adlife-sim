@@ -3,19 +3,34 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
 
 from adlife.city import runs
+from adlife.city.provider_profiles import (
+    ProviderProfileDraftV1,
+    ProviderProfileRegistry,
+    ProviderProfileRevisionV1,
+)
 from adlife.city.run_store import CityRunStore
-from adlife.city.workbench_input import WorkbenchRunDraft
+from adlife.city.workbench_input import (
+    WorkbenchRunDraft,
+    WorkbenchRunDraftV2,
+    WorkbenchRunDraftV3,
+)
 from adlife.city.workbench_validation import construct_workbench_run
+from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.domain.city_cognition import (
+    CITY_COGNITION_PROMPT_CONTRACT_SHA256,
+    CITY_COGNITION_RESULT_SCHEMA_SHA256,
+)
 from adlife.core.domain.city_run import CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import DuplicateRun
 from tests.unit.city.test_city_mobility import mobility_place_set
-from tests.unit.city.test_workbench_input import draft_data
+from tests.unit.city.test_workbench_input import draft_data, draft_v3_data
 from tests.unit.city.test_workbench_validation import cognition_draft, persona_draft
 
 
@@ -26,6 +41,56 @@ def _validated(*, run_id: str = "launch-run", seed: int = 42, agents: int = 2, d
         {"run_id": run_id, "seed": seed, "agent_count": agents, "days": days}
     )
     return construct_workbench_run(WorkbenchRunDraft.model_validate_json(json.dumps(document)))
+
+
+def _provider_revision(
+    tmp_path: Path,
+    *,
+    mode: str = "local",
+    **updates: object,
+) -> ProviderProfileRevisionV1:
+    document: dict[str, object] = {
+        "schema_version": 1,
+        "profile_id": "provider-main",
+        "display_label": "Bound provider",
+        "mode": mode,
+        "base_url": (
+            "http://127.0.0.1:11434/v1" if mode == "local" else "https://provider.example/v1"
+        ),
+        "model_id": "fictional-explainer",
+        "protocol": "openai-chat-completions-json-schema-v1",
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "seed_policy": "fixed",
+        "seed": 42,
+        "max_output_tokens": 96,
+        "attempt_timeout_seconds": 7,
+        "transient_retries": 1,
+        "repair_attempts": 0,
+        "origin_approval_id": "local-ollama" if mode == "local" else "provider-main",
+    }
+    document.update(updates)
+    registry = ProviderProfileRegistry(
+        prepare_workbench_workspace(tmp_path / f"{mode}-provider-workspace")
+    )
+    return registry.create(ProviderProfileDraftV1.model_validate(document))
+
+
+def _validated_v3(
+    *,
+    mode: str = "rules",
+    budget: int = 0,
+    provider_profile: ProviderProfileRevisionV1 | None = None,
+):
+    document = draft_v3_data(
+        mode=mode,
+        aggregate_output_token_ceiling=budget,
+    )
+    if provider_profile is not None:
+        document["cognition"]["provider_profile_id"] = provider_profile.profile_id
+        document["cognition"]["provider_revision_sha256"] = provider_profile.revision_sha256
+    draft = WorkbenchRunDraftV3.model_validate_json(json.dumps(document))
+    return construct_workbench_run(draft)
 
 
 def test_prepare_city_run_evaluates_without_touching_the_filesystem(tmp_path: Path) -> None:
@@ -96,6 +161,279 @@ def test_schema3_preparation_refuses_before_v9_evaluation_or_publication(
         )
 
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock"])
+def test_scientific_preparation_freezes_offline_requests_without_a_manifest_or_writes(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    validated = _validated_v3(mode=mode)
+    settings = validated.workbench_input.draft.settings
+
+    prepared = runs.prepare_city_scientific_run(
+        validated.pack,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+
+    assert isinstance(prepared, runs.PreparedCityScientificRun)
+    assert not hasattr(prepared, "manifest")
+    assert prepared.pack == validated.pack
+    assert prepared.workbench_input == validated.workbench_input
+    assert prepared.mobility.agents == validated.mobility.agents
+    assert prepared.response_evaluation is not None
+    assert prepared.cognition_requests
+    assert prepared.cognition_input.mode == mode
+    assert prepared.cognition_input.run_input_sha256 == validated.workbench_input.fingerprint
+    assert prepared.cognition_input.provider_profile is None
+    assert prepared.cognition_input.effective_settings is None
+    assert prepared.cognition_input.prompt_contract_sha256 == (
+        CITY_COGNITION_PROMPT_CONTRACT_SHA256
+    )
+    assert prepared.cognition_input.result_schema_contract_sha256 == (
+        CITY_COGNITION_RESULT_SCHEMA_SHA256
+    )
+    assert tuple(
+        reservation.request_id for reservation in prepared.cognition_input.reservations
+    ) == tuple(request.request_id for request in prepared.cognition_requests)
+    assert all(
+        reservation.reserved_output_tokens == 0
+        for reservation in prepared.cognition_input.reservations
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_scientific_preparation_freezes_exact_provider_revision_and_budget(
+    tmp_path: Path,
+) -> None:
+    profile = _provider_revision(tmp_path)
+    validated = _validated_v3(
+        mode="local",
+        budget=1_536,
+        provider_profile=profile,
+    )
+    settings = validated.workbench_input.draft.settings
+    untouched = tmp_path / "published-runs"
+
+    prepared = runs.prepare_city_scientific_run(
+        validated.pack,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+        provider_profile=profile,
+    )
+
+    snapshot = prepared.cognition_input.provider_profile
+    effective = prepared.cognition_input.effective_settings
+    assert snapshot is not None
+    assert effective is not None
+    assert snapshot.profile_id == profile.profile_id
+    assert snapshot.revision_sha256 == profile.revision_sha256
+    assert snapshot.credential_slot_id == profile.credential_slot_id
+    assert effective.max_output_tokens == 96
+    assert effective.attempt_timeout_seconds == 7
+    assert effective.transient_retries == 1
+    assert effective.repair_attempts == 0
+    assert prepared.cognition_input.reservation_tokens_per_request == 1_536
+    assert prepared.cognition_input.max_output_tokens_per_attempt == 384
+    assert [
+        reservation.reserved_output_tokens for reservation in prepared.cognition_input.reservations
+    ] == [1_536, *([0] * (len(prepared.cognition_requests) - 1))]
+    assert not untouched.exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-profile",
+        "offline-profile",
+        "wrong-mode",
+        "wrong-revision",
+    ],
+)
+def test_scientific_preparation_refuses_incompatible_profile_before_simulation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    local_profile = _provider_revision(tmp_path)
+    provider_profile: ProviderProfileRevisionV1 | None
+    if case == "missing-profile":
+        validated = _validated_v3(mode="local", budget=1_536)
+        provider_profile = None
+    elif case == "offline-profile":
+        validated = _validated_v3(mode="rules")
+        provider_profile = local_profile
+    elif case == "wrong-mode":
+        validated = _validated_v3(
+            mode="remote",
+            budget=1_536,
+            provider_profile=local_profile,
+        )
+        provider_profile = local_profile
+    else:
+        validated = _validated_v3(mode="local", budget=1_536)
+        provider_profile = local_profile
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("profile refusal happened after deterministic evaluation started")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    settings = validated.workbench_input.draft.settings
+    with pytest.raises(ValueError, match="provider profile"):
+        runs.prepare_city_scientific_run(
+            validated.pack,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+            provider_profile=provider_profile,
+        )
+
+
+def test_scientific_preparation_requires_schema3_before_simulation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validated = construct_workbench_run(persona_draft())
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("schema refusal happened after deterministic evaluation started")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    settings = validated.workbench_input.draft.settings
+    with pytest.raises(TypeError, match="schema-3"):
+        runs.prepare_city_scientific_run(
+            validated.pack,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+        )
+
+
+def test_scientific_preparation_preserves_schema2_numeric_science() -> None:
+    schema3_document = draft_v3_data(mode="rules")
+    schema2_document = json.loads(json.dumps(schema3_document))
+    schema2_document["schema_version"] = 2
+    schema2_document.pop("cognition")
+    schema2 = construct_workbench_run(
+        WorkbenchRunDraftV2.model_validate_json(json.dumps(schema2_document))
+    )
+    schema3 = construct_workbench_run(
+        WorkbenchRunDraftV3.model_validate_json(json.dumps(schema3_document))
+    )
+    settings = schema3.workbench_input.draft.settings
+
+    scientific = runs.prepare_city_scientific_run(
+        schema3.pack,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=schema3.scenario,
+        spatial_response=schema3.response_input,
+        workbench_input=schema3.workbench_input,
+    )
+    legacy = runs.prepare_city_run(
+        schema2.pack,
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=schema2.scenario,
+        spatial_response=schema2.response_input,
+        workbench_input=schema2.workbench_input,
+    )
+
+    assert scientific.mobility.agents == legacy.mobility.agents
+    assert scientific.mobility.frame(0) == legacy.mobility.frame(0)
+    assert scientific.mobility.frame(settings.days * 1_440 - 1) == legacy.mobility.frame(
+        settings.days * 1_440 - 1
+    )
+    assert scientific.opportunity_evaluation == legacy.opportunity_evaluation
+    assert scientific.attention_evaluation == legacy.attention_evaluation
+    assert scientific.response_input == legacy.response_input
+    assert scientific.response_evaluation == legacy.response_evaluation
+
+
+def test_scientific_preparation_refuses_bypass_input_without_warning_or_value_leak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validated = _validated_v3()
+    secret = "Authorization: Bearer opaquevalue1234567890"
+    invalid_response = type(validated.response_input).model_construct(
+        **{
+            **{
+                name: getattr(validated.response_input, name)
+                for name in type(validated.response_input).model_fields
+            },
+            "profiles": (secret,),
+        }
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("input refusal happened after deterministic evaluation started")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    settings = validated.workbench_input.draft.settings
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError, match="response input failed validation") as caught:
+            runs.prepare_city_scientific_run(
+                validated.pack,
+                run_id=settings.run_id,
+                seed=settings.seed,
+                agent_count=settings.agent_count,
+                days=settings.days,
+                spatial_scenario=validated.scenario,
+                spatial_response=invalid_response,
+                workbench_input=validated.workbench_input,
+            )
+
+    assert captured == []
+    assert secret not in str(caught.value)
+    assert secret not in repr(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_scientific_preparation_does_not_disguise_revalidation_defects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validated = _validated_v3()
+
+    def broken_revalidation(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("implementation defect")
+
+    monkeypatch.setattr(runs, "revalidate_model", broken_revalidation)
+    settings = validated.workbench_input.draft.settings
+    with pytest.raises(TypeError, match="implementation defect"):
+        runs.prepare_city_scientific_run(
+            validated.pack,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+        )
 
 
 def test_explicit_prepare_publish_matches_the_compatibility_wrapper(tmp_path: Path) -> None:

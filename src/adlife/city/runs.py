@@ -7,10 +7,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from adlife import __version__
+from adlife.city.provider_profiles import ProviderProfileRevisionV1
 from adlife.city.run_store import CityRunStore, StoredCityRun
-from adlife.city.workbench_binding import validate_workbench_execution_binding
+from adlife.city.workbench_binding import (
+    build_city_cognition_run_context,
+    validate_workbench_execution_binding,
+)
 from adlife.city.workbench_input import (
     WorkbenchRunInput,
     WorkbenchRunInputDocument,
@@ -18,6 +25,20 @@ from adlife.city.workbench_input import (
     WorkbenchRunInputV3,
 )
 from adlife.core.domain.city import CityPackDocument, CityPackV2
+from adlife.core.domain.city_cognition import (
+    CITY_COGNITION_DEFAULT_FALLBACK_POLICY,
+    CITY_COGNITION_DEFAULT_SELECTION_POLICY,
+    CITY_COGNITION_FALLBACK_POLICY_SHA256,
+    CITY_COGNITION_PROMPT_CONTRACT_SHA256,
+    CITY_COGNITION_PROMPT_CONTRACT_TEXT,
+    CITY_COGNITION_RESULT_SCHEMA_DOCUMENT,
+    CITY_COGNITION_RESULT_SCHEMA_SHA256,
+    CITY_COGNITION_SELECTION_POLICY_SHA256,
+    CityCognitionEffectiveSettingsV1,
+    CityCognitionInputV1,
+    CityCognitionProviderProfileSnapshotV1,
+    CityCognitionRequestV1,
+)
 from adlife.core.domain.city_places import CityPlaceSet
 from adlife.core.domain.city_run import (
     CityRunManifest,
@@ -37,6 +58,11 @@ from adlife.core.domain.spatial_response import (
     parse_spatial_response_input_json,
 )
 from adlife.core.ports.run_store import CorruptRunArtifact
+from adlife.core.simulation._validation import revalidate_model
+from adlife.core.simulation.city_cognition import (
+    allocate_city_cognition_reservations,
+    build_city_cognition_requests,
+)
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
 from adlife.core.simulation.spatial_attention import (
@@ -57,6 +83,8 @@ from adlife.core.simulation.spatial_response import (
     evaluate_spatial_responses,
     summarize_spatial_response_artifact,
 )
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,8 +142,47 @@ class PreparedCityRun:
     workbench_input: WorkbenchRunInputDocument | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedCityScientificRun:
+    """Rule-owned city evidence plus frozen, noncausal explanation requests.
+
+    This staging value intentionally has no manifest, storage path, provider result, or
+    publication method. Finalization can occur only after the cognition service returns
+    one validated terminal record for every selected request.
+    """
+
+    pack: CityPackV2
+    mobility: CityMobility
+    spatial_scenario: SpatialCampaignScenario
+    opportunity_evaluation: SpatialOpportunityEvaluation
+    attention_evaluation: SpatialAttentionEvaluation
+    response_input: SpatialResponseInput
+    response_evaluation: SpatialResponseEvaluation
+    workbench_input: WorkbenchRunInputV3
+    cognition_input: CityCognitionInputV1
+    cognition_requests: tuple[CityCognitionRequestV1, ...]
+
+
 def _document_sha256(value: Mapping[str, object]) -> str:
     return sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _value_free_revalidate(
+    value: object,
+    model_type: type[_ModelT],
+    *,
+    label: str,
+    refusal: str,
+) -> _ModelT:
+    checked: _ModelT | None = None
+    invalid = False
+    try:
+        checked = revalidate_model(value, model_type, label=label)
+    except ValueError:
+        invalid = True
+    if invalid or checked is None:
+        raise ValueError(refusal) from None
+    return checked
 
 
 def _validated_workbench_input(
@@ -144,6 +211,229 @@ def _validated_workbench_input(
         spatial_response=spatial_response,
     )
     return bound_input
+
+
+def _freeze_city_provider_profile(
+    workbench_input: WorkbenchRunInputV3,
+    provider_profile: ProviderProfileRevisionV1 | None,
+) -> tuple[
+    CityCognitionProviderProfileSnapshotV1 | None,
+    CityCognitionEffectiveSettingsV1 | None,
+]:
+    """Cross-bind and copy one immutable non-secret profile into core evidence."""
+    cognition = workbench_input.draft.cognition
+    if cognition.mode in {"rules", "mock"}:
+        if provider_profile is not None:
+            raise ValueError("offline cognition cannot carry a provider profile")
+        return None, None
+    if provider_profile is None:
+        raise ValueError("provider cognition requires the selected provider profile")
+    if type(provider_profile) is not ProviderProfileRevisionV1:
+        raise TypeError("provider_profile must be a ProviderProfileRevisionV1")
+    checked_profile: ProviderProfileRevisionV1 | None = None
+    profile_snapshot: CityCognitionProviderProfileSnapshotV1 | None = None
+    invalid_profile = False
+    try:
+        checked_profile = revalidate_model(
+            provider_profile, ProviderProfileRevisionV1, label="provider profile"
+        )
+        profile_snapshot = CityCognitionProviderProfileSnapshotV1.model_validate(
+            checked_profile.model_dump(mode="json", warnings="none")
+        )
+    except ValueError:
+        invalid_profile = True
+    if invalid_profile or checked_profile is None or profile_snapshot is None:
+        raise ValueError("provider profile failed validation") from None
+    if (
+        profile_snapshot.mode != cognition.mode
+        or profile_snapshot.profile_id != cognition.provider_profile_id
+        or profile_snapshot.revision_sha256 != cognition.provider_revision_sha256
+    ):
+        raise ValueError("provider profile does not match the schema-3 run input")
+    effective_settings = CityCognitionEffectiveSettingsV1(
+        schema_version=1,
+        protocol=profile_snapshot.protocol,
+        temperature=profile_snapshot.temperature,
+        top_p=profile_snapshot.top_p,
+        seed_policy=profile_snapshot.seed_policy,
+        seed=profile_snapshot.seed,
+        max_output_tokens=profile_snapshot.max_output_tokens,
+        attempt_timeout_seconds=profile_snapshot.attempt_timeout_seconds,
+        transient_retries=profile_snapshot.transient_retries,
+        repair_attempts=profile_snapshot.repair_attempts,
+    )
+    return profile_snapshot, effective_settings
+
+
+def _freeze_city_cognition_input(
+    workbench_input: WorkbenchRunInputV3,
+    requests: tuple[CityCognitionRequestV1, ...],
+    *,
+    provider_profile: CityCognitionProviderProfileSnapshotV1 | None,
+    effective_settings: CityCognitionEffectiveSettingsV1 | None,
+) -> CityCognitionInputV1:
+    cognition = workbench_input.draft.cognition
+    reservations = allocate_city_cognition_reservations(
+        requests,
+        aggregate_output_token_ceiling=cognition.aggregate_output_token_ceiling,
+    )
+    return CityCognitionInputV1(
+        schema_version=1,
+        mode=cognition.mode,
+        run_input_sha256=workbench_input.fingerprint,
+        explainer_id=(
+            f"city-{cognition.mode}-explainer-v1"
+            if cognition.mode in {"rules", "mock"}
+            else "city-provider-explainer-v1"
+        ),
+        provider_profile=provider_profile,
+        effective_settings=effective_settings,
+        prompt_contract_version=cognition.prompt_contract_version,
+        prompt_contract_text=CITY_COGNITION_PROMPT_CONTRACT_TEXT,
+        prompt_contract_sha256=CITY_COGNITION_PROMPT_CONTRACT_SHA256,
+        result_schema_version=cognition.result_schema_version,
+        result_schema_document=CITY_COGNITION_RESULT_SCHEMA_DOCUMENT,
+        result_schema_contract_sha256=CITY_COGNITION_RESULT_SCHEMA_SHA256,
+        selection_policy_version=cognition.selection_policy_version,
+        selection_policy=CITY_COGNITION_DEFAULT_SELECTION_POLICY,
+        selection_policy_sha256=CITY_COGNITION_SELECTION_POLICY_SHA256,
+        fallback_policy_version=cognition.fallback_policy_version,
+        fallback_policy=CITY_COGNITION_DEFAULT_FALLBACK_POLICY,
+        fallback_policy_sha256=CITY_COGNITION_FALLBACK_POLICY_SHA256,
+        selected_requests_per_agent=cognition.selected_requests_per_agent,
+        selected_requests_per_run=cognition.selected_requests_per_run,
+        concurrency_limit=cognition.concurrency_limit,
+        max_request_bytes=cognition.max_request_bytes,
+        max_wire_response_bytes=cognition.max_wire_response_bytes,
+        max_output_tokens_per_attempt=cognition.max_output_tokens_per_attempt,
+        reservation_tokens_per_request=cognition.reservation_tokens_per_request,
+        initial_attempts=cognition.initial_attempts,
+        transient_retries_ceiling=cognition.transient_retries,
+        repair_attempts_ceiling=cognition.repair_attempts,
+        attempt_timeout_seconds_ceiling=cognition.attempt_timeout_seconds,
+        aggregate_deadline_seconds=cognition.aggregate_deadline_seconds,
+        aggregate_output_token_ceiling=cognition.aggregate_output_token_ceiling,
+        reservations=reservations,
+    )
+
+
+def prepare_city_scientific_run(
+    pack: CityPackDocument,
+    *,
+    run_id: str,
+    seed: int,
+    agent_count: int,
+    days: int,
+    spatial_scenario: SpatialCampaignScenario,
+    spatial_response: SpatialResponseInput,
+    workbench_input: WorkbenchRunInputV3,
+    places: CityPlaceSet | None = None,
+    provider_profile: ProviderProfileRevisionV1 | None = None,
+) -> PreparedCityScientificRun:
+    """Compute rule-owned schema-3 science and freeze explanation requests only."""
+    if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
+        raise ValueError("city run seed must be between 0 and 2^63-1")
+    if type(agent_count) is not int or not 1 <= agent_count <= 30:
+        raise ValueError("saved city runs require 1 to 30 agents")
+    if type(days) is not int or not 1 <= days <= 7:
+        raise ValueError("saved city runs require 1 to 7 days")
+    if not isinstance(workbench_input, WorkbenchRunInputV3):
+        raise TypeError("scientific city preparation requires a schema-3 workbench input")
+    if not isinstance(pack, CityPackV2):
+        raise TypeError("scientific city preparation requires a version 2 city pack")
+    if not isinstance(spatial_scenario, SpatialCampaignScenario):
+        raise TypeError("scientific city preparation requires a spatial scenario")
+    if not isinstance(spatial_response, SpatialResponseInput):
+        raise TypeError("scientific city preparation requires a spatial response input")
+
+    checked_pack = _value_free_revalidate(
+        pack,
+        CityPackV2,
+        label="scientific city pack",
+        refusal="scientific city pack failed validation",
+    )
+    checked_scenario = _value_free_revalidate(
+        spatial_scenario,
+        SpatialCampaignScenario,
+        label="scientific city scenario",
+        refusal="scientific city scenario failed validation",
+    )
+    checked_response = _value_free_revalidate(
+        spatial_response,
+        SpatialResponseInput,
+        label="scientific city response input",
+        refusal="scientific city response input failed validation",
+    )
+    checked_workbench_source = _value_free_revalidate(
+        workbench_input,
+        WorkbenchRunInputV3,
+        label="scientific workbench input",
+        refusal="scientific workbench input failed validation",
+    )
+    checked_workbench = _validated_workbench_input(
+        checked_workbench_source,
+        pack=checked_pack,
+        run_id=run_id,
+        seed=seed,
+        agent_count=agent_count,
+        days=days,
+        places=places,
+        spatial_scenario=checked_scenario,
+        spatial_response=checked_response,
+    )
+    if not isinstance(checked_workbench, WorkbenchRunInputV3):
+        raise TypeError("scientific city preparation requires a schema-3 workbench input")
+    profile_snapshot, effective_settings = _freeze_city_provider_profile(
+        checked_workbench,
+        provider_profile,
+    )
+
+    mobility = CityMobility(
+        checked_pack,
+        seed=seed,
+        agent_count=agent_count,
+        days=days,
+        places=places,
+    )
+    opportunity_evaluation = evaluate_spatial_opportunities(mobility, checked_scenario)
+    attention_evaluation = evaluate_spatial_attention(opportunity_evaluation, seed=seed)
+    response_evaluation = evaluate_spatial_responses(
+        checked_response,
+        checked_scenario,
+        opportunity_evaluation,
+        attention_evaluation,
+        agent_ids=tuple(agent.agent_id for agent in mobility.agents),
+    )
+    cognition_context = build_city_cognition_run_context(
+        checked_workbench,
+        pack=checked_pack,
+        spatial_scenario=checked_scenario,
+        response_input=checked_response,
+        response_evaluation=response_evaluation,
+    )
+    cognition_requests = build_city_cognition_requests(
+        cognition_context,
+        mobility,
+        response_evaluation,
+    )
+    cognition_input = _freeze_city_cognition_input(
+        checked_workbench,
+        cognition_requests,
+        provider_profile=profile_snapshot,
+        effective_settings=effective_settings,
+    )
+    return PreparedCityScientificRun(
+        pack=checked_pack,
+        mobility=mobility,
+        spatial_scenario=checked_scenario,
+        opportunity_evaluation=opportunity_evaluation,
+        attention_evaluation=attention_evaluation,
+        response_input=checked_response,
+        response_evaluation=response_evaluation,
+        workbench_input=checked_workbench,
+        cognition_input=cognition_input,
+        cognition_requests=cognition_requests,
+    )
 
 
 def prepare_city_run(
@@ -664,8 +954,10 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
 __all__ = [
     "CityReplayResult",
     "PreparedCityRun",
+    "PreparedCityScientificRun",
     "create_city_run",
     "prepare_city_run",
+    "prepare_city_scientific_run",
     "publish_city_run",
     "replay_city_run",
 ]
