@@ -1410,6 +1410,7 @@ def test_the_rule_fallback_does_not_chain_the_value_it_rejected(
 
 COGNITION_BOUNDARY_MODULES: tuple[Path, ...] = (
     *sorted((Path(adlife.__file__).resolve().parent / "adapters" / "cognition").glob("*.py")),
+    Path(adlife.__file__).resolve().parent / "city" / "provider_runtime.py",
     Path(adlife.__file__).resolve().parent / "core" / "ports" / "cognition.py",
 )
 """Every module that handles provider, header, URL or credential material."""

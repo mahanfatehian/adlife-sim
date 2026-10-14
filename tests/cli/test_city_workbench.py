@@ -11,6 +11,10 @@ from click.utils import strip_ansi
 from fastapi import FastAPI
 from typer.testing import CliRunner
 
+from adlife.city.provider_runtime import (
+    DEFAULT_LOCAL_PROVIDER_APPROVAL_ID,
+    DEFAULT_LOCAL_PROVIDER_BASE_URL,
+)
 from adlife.cli.app import app
 
 
@@ -34,12 +38,15 @@ def test_city_workbench_is_registered_with_required_workspace_and_honest_help() 
     assert "--workspace" in command_output
     assert "[required]" in command_output
     assert "--port" in command_output
+    assert "--provider-origin" in command_output
+    assert "--provider-key-env" in command_output
     assert "city -> campaign -> run -> inspect" in normalized_command_output
     assert "process-local" in normalized_command_output
     assert "bounded worker" in normalized_command_output
     assert "verified artifacts" in normalized_command_output
     assert "no authentication" in normalized_command_output
-    assert "provider configuration" in normalized_command_output
+    assert "startup-approved" in normalized_command_output
+    assert "provider" in normalized_command_output
     assert "oauth" in normalized_command_output
     assert "workspace city-pack upload" in normalized_command_output
     assert "rights" in normalized_command_output
@@ -90,6 +97,11 @@ def test_city_workbench_prepares_app_and_binds_one_hidden_safe_server(
     assert len(calls) == 1
     application, options = calls[0]
     assert isinstance(application, FastAPI)
+    runtime = application.state.provider_runtime
+    assert tuple((item.approval_id, item.base_url) for item in runtime.origins) == (
+        (DEFAULT_LOCAL_PROVIDER_APPROVAL_ID, DEFAULT_LOCAL_PROVIDER_BASE_URL),
+    )
+    assert runtime.key_environments == ()
     assert options == {
         "host": "127.0.0.1",
         "port": 8877,
@@ -179,3 +191,108 @@ def test_city_workbench_has_no_browser_launch_path() -> None:
     assert "webbrowser" not in source
     assert "startfile" not in source
     assert "Start-Process" not in source
+
+
+def test_city_workbench_accepts_repeatable_non_secret_provider_startup_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    applications: list[FastAPI] = []
+    monkeypatch.setattr(
+        "uvicorn.run",
+        lambda application, **_options: applications.append(application),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "city-workbench",
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "--provider-origin",
+            "local-alt=http://[::1]:11434/v1/",
+            "--provider-origin",
+            "remote=https://API.EXAMPLE.INVALID:443/v1/",
+            "--provider-key-env",
+            "remote=REMOTE_API_KEY",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(applications) == 1
+    runtime = applications[0].state.provider_runtime
+    assert tuple((item.approval_id, item.base_url) for item in runtime.origins) == (
+        ("local-alt", "http://[::1]:11434/v1"),
+        ("local-ollama", "http://127.0.0.1:11434/v1"),
+        ("remote", "https://api.example.invalid/v1"),
+    )
+    assert tuple(
+        (item.origin_approval_id, item.environment_variable) for item in runtime.key_environments
+    ) == (("remote", "REMOTE_API_KEY"),)
+    assert "REMOTE_API_KEY" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("option", "binding", "message"),
+    [
+        (
+            "--provider-origin",
+            "remote=http://api.example.invalid/v1",
+            "provider origin configuration is invalid",
+        ),
+        (
+            "--provider-key-env",
+            "unknown=UNKNOWN_API_KEY",
+            "provider environment configuration is invalid",
+        ),
+        (
+            "--provider-origin",
+            "sk-test-abcdefghijklmnopqrst=https://api.example.invalid/v1",
+            "provider origin configuration is invalid",
+        ),
+    ],
+)
+def test_city_workbench_refuses_bad_provider_policy_before_creating_workspace(
+    option: str,
+    binding: str,
+    message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "must-not-exist"
+    server_calls: list[object] = []
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: server_calls.append(args))
+
+    result = CliRunner().invoke(
+        app,
+        ["city-workbench", "--workspace", str(workspace), option, binding],
+    )
+
+    assert result.exit_code == 2
+    assert message in result.output
+    assert binding not in result.output
+    assert "Traceback" not in result.output
+    assert server_calls == []
+    assert not workspace.exists()
+
+
+def test_city_workbench_has_no_command_line_credential_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "sk-test-000000000000000000000000"
+    calls: list[object] = []
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: calls.append(args))
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "city-workbench",
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "--provider-api-key",
+            secret,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert secret not in result.output
+    assert calls == []
