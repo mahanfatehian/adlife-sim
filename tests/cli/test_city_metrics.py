@@ -6,6 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from adlife.city import analysis as city_analysis
@@ -20,7 +21,7 @@ from tests.unit.city.test_city_pack import load_pack, pack_data
 def test_city_metrics_help_lists_v8_with_legacy_schemas():
     result = CliRunner().invoke(app, ["city-metrics", "--help"], terminal_width=200)
     assert result.exit_code == 0, result.output
-    help_text = " ".join(result.output.replace("│", " ").split())
+    help_text = " ".join(strip_ansi(result.output).replace("│", " ").split())
     assert "Saved schema-v5, schema-v6, schema-v7 or schema-v8 run ID." in help_text
 
 
