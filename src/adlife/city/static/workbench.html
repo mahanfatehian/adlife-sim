@@ -9,6 +9,7 @@
   <link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/workbench.css">
   <link rel="stylesheet" href="/assets/workbench-personas.css">
+  <script defer src="/assets/workbench-city-packs.js"></script>
   <script defer src="/assets/workbench-personas.js"></script>
   <script defer src="/assets/workbench.js"></script>
 </head>
@@ -62,21 +63,40 @@
             <p id="city-select-error" class="field-error" role="status"></p>
           </div>
 
+          <section id="city-pack-intake" class="city-pack-intake" aria-labelledby="city-pack-title" aria-busy="false">
+            <div class="city-pack-intake-row">
+              <div>
+                <h2 id="city-pack-title">Add a city pack</h2>
+                <p>CityPack V2 JSON, up to 4 MiB.</p>
+              </div>
+              <button id="city-pack-choose" class="button quiet compact" type="button" disabled>Choose city pack</button>
+              <input id="city-pack-file" type="file" accept=".json,application/json" aria-describedby="city-pack-note city-upload-status city-upload-error" hidden>
+            </div>
+            <p id="city-pack-note" class="city-pack-note">Stored in this workspace. Source rights are not reviewed on upload.</p>
+            <p id="city-upload-status" class="city-upload-status" role="status" aria-live="polite"></p>
+            <p id="city-upload-error" class="field-error" role="alert"></p>
+          </section>
+
           <article class="city-receipt" aria-labelledby="city-receipt-title">
-            <div class="receipt-heading"><p class="eyebrow">Selected city</p><span id="city-qualification">Checking</span></div>
+            <div class="receipt-heading"><p class="eyebrow">Selected city</p><span id="city-qualification"></span></div>
             <h2 id="city-receipt-title"><bdi id="city-name">Loading city…</bdi></h2>
             <dl class="compact-facts">
-              <div><dt>Model clock</dt><dd id="city-time-zone">—</dd></div>
+              <div><dt>Model clock</dt><dd id="city-time-zone" dir="auto">—</dd></div>
             </dl>
             <details id="city-details" class="technical-details">
               <summary>Data &amp; integrity</summary>
               <div class="technical-details-content">
                 <dl class="compact-facts">
+                  <div><dt>Provider</dt><dd id="city-provider" dir="auto">—</dd></div>
+                  <div><dt>Dataset</dt><dd id="city-dataset" dir="auto">—</dd></div>
+                  <div><dt>Version</dt><dd id="city-version" dir="auto">—</dd></div>
+                  <div><dt>Published</dt><dd id="city-published-on" dir="auto">—</dd></div>
+                  <div><dt>Bounds</dt><dd id="city-bounds" dir="auto">—</dd></div>
                   <div><dt>Pack schema</dt><dd id="city-schema">—</dd></div>
                   <div><dt>City hash</dt><dd><code id="city-hash">—</code></dd></div>
-                  <div><dt>License</dt><dd id="city-license">—</dd></div>
+                  <div><dt>License</dt><dd id="city-license" dir="auto">—</dd></div>
                 </dl>
-                <p id="city-attribution" class="attribution">Verification pending.</p>
+                <p id="city-attribution" class="attribution" dir="auto">Verification pending.</p>
                 <div class="omissions">
                   <h3>Known omissions</h3>
                   <ul id="city-omissions"><li>Loading disclosed limitations…</li></ul>
@@ -333,7 +353,7 @@
           <div><p class="eyebrow">Street network</p><h2 id="map-title">Map preview</h2></div>
           <span id="map-status">Waiting for city</span>
         </div>
-        <canvas id="city-map" width="960" height="680" role="img" aria-label="Verified fictional city road map"></canvas>
+        <canvas id="city-map" width="960" height="680" role="img" aria-label="Verified city-pack road map"></canvas>
         <div class="map-legend" aria-label="Map legend">
           <span><i class="legend-road"></i> road</span>
           <span><i class="legend-route"></i> selected roadside placement</span>

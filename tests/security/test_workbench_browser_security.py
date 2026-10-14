@@ -195,15 +195,22 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         shell = client.get("/")
         stylesheet = client.get("/assets/workbench.css")
         script = client.get("/assets/workbench.js")
+        city_pack_script = client.get("/assets/workbench-city-packs.js")
         persona_script = client.get("/assets/workbench-personas.js")
         persona_style = client.get("/assets/workbench-personas.css")
         icon = client.get("/assets/workbench-icon.svg")
         capabilities = client.get("/api/workbench")
 
-    assert shell.status_code == stylesheet.status_code == script.status_code == 200
+    assert (
+        shell.status_code
+        == stylesheet.status_code
+        == script.status_code
+        == city_pack_script.status_code
+        == 200
+    )
     assert icon.status_code == capabilities.status_code == 200
     assert persona_script.status_code == persona_style.status_code == 200
-    for asset in (persona_script, persona_style):
+    for asset in (city_pack_script, persona_script, persona_style):
         assert asset.headers["cache-control"] == "no-store"
         assert asset.headers["x-content-type-options"] == "nosniff"
         assert asset.headers["content-security-policy"] == shell.headers["content-security-policy"]
@@ -225,6 +232,7 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         "#main-content",
         "/",
         "/",
+        "/assets/workbench-city-packs.js",
         "/assets/workbench-icon.svg",
         "/assets/workbench-personas.css",
         "/assets/workbench-personas.js",
@@ -255,7 +263,7 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         "https://",
         "//outside",
     ):
-        assert forbidden not in script.text + persona_script.text
+        assert forbidden not in script.text + city_pack_script.text + persona_script.text
     lowered_css = stylesheet.text.lower() + persona_style.text.lower()
     for forbidden in ("@import", "@font-face", "url(", "expression("):
         assert forbidden not in lowered_css
@@ -269,6 +277,20 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         assert response.headers["x-content-type-options"] == "nosniff"
         assert "access-control-allow-origin" not in response.headers
         assert "server" not in response.headers
+
+
+def test_workbench_city_disclosure_covers_uploaded_sources_without_claiming_review(
+    tmp_path: Path,
+) -> None:
+    client, _root = web_helpers._client(tmp_path)
+    with client:
+        response = client.get("/api/workbench")
+
+    assert response.status_code == 200
+    assert response.json()["disclosure"]["city"] == (
+        "City-pack geometry; no live map or traffic feed. "
+        "Uploaded sources are operator-declared and unreviewed."
+    )
 
 
 def test_same_origin_write_boundary_refuses_credential_bearing_bad_requests_without_artifacts(

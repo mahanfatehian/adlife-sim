@@ -878,6 +878,14 @@ def create_city_workbench_app(
             headers={"X-Content-Type-Options": "nosniff"},
         )
 
+    @app.get("/assets/workbench-city-packs.js", include_in_schema=False)
+    def city_pack_script() -> Response:
+        return Response(
+            _read_packaged_text("workbench-city-packs.js"),
+            media_type="text/javascript",
+            headers=_SHELL_HEADERS,
+        )
+
     @app.get("/assets/workbench-personas.js", include_in_schema=False)
     def persona_script() -> Response:
         return Response(
@@ -949,7 +957,10 @@ def create_city_workbench_app(
             },
             "disclosure": {
                 "population": "Synthetic cohort assumptions; not real residents.",
-                "city": "Bundled fictional city geometry; not a live city or traffic feed.",
+                "city": (
+                    "City-pack geometry; no live map or traffic feed. "
+                    "Uploaded sources are operator-declared and unreviewed."
+                ),
                 "outcomes": "Modeled responses are not observed behavior, sales, or forecasts.",
             },
         }

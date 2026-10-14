@@ -15,10 +15,10 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 import uvicorn
-from playwright.sync_api import Route, expect, sync_playwright
+from playwright.sync_api import APIResponse, Route, expect, sync_playwright
 
 import adlife.city.workbench_web as workbench_web
-from adlife.city.catalog import CityCatalogError
+from adlife.city.catalog import CityCatalogError, select_catalog_city
 from adlife.city.workbench_runs import WorkbenchRunPage, WorkbenchRunSummary
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
@@ -146,6 +146,78 @@ def _artifact_hashes(directory: Path) -> dict[str, str]:
         for path in sorted(directory.rglob("*"))
         if path.is_file()
     }
+
+
+def _city_pack_upload(
+    city_id: str,
+    *,
+    name: str | None = None,
+    attribution: str | None = None,
+    source_url: str = "https://outside.invalid/city-source",
+) -> bytes:
+    """Build one valid operator-supplied V2 pack without test-only server hooks."""
+
+    payload = select_catalog_city("fictional-grid-v2").model_dump(mode="json")
+    payload["city_id"] = city_id
+    payload["name"] = name or f"Operator City {city_id}"
+    payload["source"].update(
+        {
+            "provider": "Operator mapping team",
+            "dataset": "Prepared street extract",
+            "version": "2026.10",
+            "published_on": "2026-10-01",
+            "source_url": source_url,
+            "license": "Operator declared",
+            "attribution": attribution or "Operator supplied street geometry",
+        }
+    )
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _near_limit_city_pack_upload(city_id: str) -> bytes:
+    payload = json.loads(_city_pack_upload(city_id))
+    shape = [
+        {
+            "longitude": longitude,
+            "latitude": latitude,
+        }
+        for _index in range(32)
+        for longitude, latitude in ((0, 0), (0, 0.06))
+    ]
+    shaped_roads = [
+        {
+            "road_id": f"shape-{index:04d}",
+            "source_node": "center-center",
+            "target_node": "center-north",
+            "kind": "residential",
+            "directions": ["forward", "backward"],
+            "shape": shape,
+        }
+        for index in range(1_562)
+    ]
+    empty_roads = [
+        {
+            "road_id": f"empty-{index:04d}",
+            "source_node": "center-center",
+            "target_node": "center-north",
+            "kind": "residential",
+            "directions": ["forward", "backward"],
+            "shape": [],
+        }
+        for index in range(3_989)
+    ]
+    payload["roads"] = [*payload["roads"], *shaped_roads, *empty_roads]
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def _persona_population(page):
@@ -737,6 +809,433 @@ def test_city_stage_boots_from_verified_local_catalog_without_external_requests(
             playwright.stop()
 
 
+def test_city_pack_upload_is_authoritative_preserves_draft_and_runs_from_new_city(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    source_url_prefix = "https://outside.invalid/"
+    source_url = source_url_prefix + "s" * (2060 - len(source_url_prefix))
+    attribution = (
+        "\u0646\u0642\u0634\u0647 \u0622\u0632\u0645\u0627\u06cc\u0634\u06cc "
+        '<img src="https://outside.invalid/pixel" onerror="window.cityExecuted=true">'
+    )
+    document = _city_pack_upload(
+        "operator-harbor",
+        name="\u0634\u0647\u0631 \u0622\u0632\u0645\u0627\u06cc\u0634\u06cc",
+        attribution=attribution,
+        source_url=source_url,
+    )
+
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        external_requests: list[str] = []
+        local_requests: list[str] = []
+        try:
+            page.on(
+                "request",
+                lambda request: (
+                    external_requests.append(request.url)
+                    if not request.url.startswith(base_url)
+                    else local_requests.append(urlparse(request.url).path)
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            local_requests.clear()
+            expect(page.locator("#city-qualification")).to_have_text("Bundled fictional fixture")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-name").fill("Draft that must survive a city change")
+            page.locator("#phone-probability").fill("0.17")
+            page.locator("#roadside-enabled").check()
+            page.locator("#road-fraction").fill("0.33")
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill("operator-harbor-run")
+            page.locator("#validate-run").click()
+            expect(page.locator("#validation-review")).to_be_visible(timeout=15_000)
+            page.locator("#stage-city").click()
+            local_requests.clear()
+
+            with page.expect_response("**/api/catalog/cities/upload") as uploaded:
+                page.locator("#city-pack-file").set_input_files(
+                    {
+                        "name": "private-customer-map.json",
+                        "mimeType": "application/json",
+                        "buffer": document,
+                    }
+                )
+            response = uploaded.value
+            assert response.status == 201
+            assert response.request.post_data_buffer == document
+            assert response.request.headers["content-type"] == "application/json"
+            assert response.request.headers["x-adlife-csrf"] == "browser-workbench-token"
+            accepted = response.json()
+
+            expect(page.locator("#city-upload-status")).to_have_text(
+                "City pack ready.", timeout=15_000
+            )
+            expect(page.locator("#city-upload-error")).to_be_empty()
+            expect(page.locator("#city-select")).to_have_value("operator-harbor")
+            expect(page.locator("#city-name")).to_have_text(
+                "\u0634\u0647\u0631 \u0622\u0632\u0645\u0627\u06cc\u0634\u06cc"
+            )
+            expect(page.locator("#city-qualification")).to_have_text(
+                "Operator supplied - rights not reviewed"
+            )
+            expect(page.locator("#map-summary")).to_contain_text(
+                "City-pack geometry only; no live map or traffic feed."
+            )
+            expect(page.locator("#map-summary")).not_to_contain_text("fictional")
+            expect(page.locator("#city-map")).to_have_attribute(
+                "aria-label", "Verified city-pack road map"
+            )
+            expect(page.locator("#city-pack-file")).to_have_value("")
+            expect(page.locator("#validation-review")).to_be_hidden()
+            expect(page.locator("#start-run")).to_be_disabled()
+            expect(page.locator("#campaign-name")).to_have_value(
+                "Draft that must survive a city change"
+            )
+            expect(page.locator("#phone-probability")).to_have_value("0.17")
+            expect(page.locator("#road-fraction")).to_have_value("0.33")
+            expect(page.locator("#run-id")).to_have_value("operator-harbor-run")
+            expect(page.locator("#roadside-enabled")).not_to_be_checked()
+
+            page.locator("#city-details summary").click()
+            for selector, value in (
+                ("#city-provider", "Operator mapping team"),
+                ("#city-dataset", "Prepared street extract"),
+                ("#city-version", "2026.10"),
+                ("#city-published-on", "2026-10-01"),
+                ("#city-license", "Operator declared"),
+                ("#city-time-zone", "Etc/UTC"),
+                ("#city-hash", accepted["pack_sha256"]),
+            ):
+                expect(page.locator(selector)).to_have_text(value)
+            expect(page.locator("#city-bounds")).to_contain_text("0.08")
+            expect(page.locator("#city-attribution")).to_have_text(attribution)
+            expect(page.locator("#city-attribution")).to_have_attribute("dir", "auto")
+            assert page.locator("#city-details img, #city-details script").count() == 0
+            assert page.evaluate("window.cityExecuted === undefined")
+            assert source_url not in page.locator("body").inner_text()
+            assert "private-customer-map.json" not in page.locator("body").inner_text()
+            assert page.locator("#city-source-url").count() == 0
+            assert external_requests == []
+            assert local_requests[:3] == [
+                "/api/catalog/cities/upload",
+                "/api/catalog/cities",
+                "/api/catalog/cities/operator-harbor",
+            ]
+
+            page.locator("#city-continue").click()
+            page.locator("#roadside-enabled").check()
+            page.locator("#persona-count").fill("1")
+            page.locator("#campaign-continue").click()
+            page.locator("#persona-use-total").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#start-run").click()
+            expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
+            expect(page.locator("#job-inspect-link")).to_have_attribute(
+                "href", "/runs/operator-harbor-run"
+            )
+            page.locator("#job-inspect-link").click()
+            page.wait_for_url("**/runs/operator-harbor-run")
+            expect(page.locator("#saved-run-label")).to_contain_text("operator-harbor-run")
+            assert (root / "city-packs" / "operator-harbor.json").is_file()
+            assert (root / "city-runs" / "operator-harbor-run" / "run.json").is_file()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_failed_city_pack_upload_preserves_selected_city_and_validated_draft(
+    tmp_path: Path,
+) -> None:
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-name").fill("Keep this complete draft")
+            page.locator("#roadside-enabled").check()
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill("preserved-after-refusal")
+            page.locator("#validate-run").click()
+            expect(page.locator("#validation-review")).to_be_visible(timeout=15_000)
+            population_before = _persona_population(page)
+            page.locator("#stage-city").click()
+
+            with page.expect_response("**/api/catalog/cities/upload") as refused:
+                page.locator("#city-pack-file").set_input_files(
+                    {
+                        "name": r"C:\private\customer-secret.json",
+                        "mimeType": "application/json",
+                        "buffer": b"{}",
+                    }
+                )
+            assert refused.value.status == 422
+            expect(page.locator("#city-upload-error")).to_contain_text(
+                "not a valid CityPack V2 document"
+            )
+            expect(page.locator("#city-upload-status")).to_be_empty()
+            expect(page.locator("#city-pack-file")).to_have_value("")
+            expect(page.locator("#city-pack-choose")).to_be_focused()
+            expect(page.locator("#city-select")).to_have_value("fictional-grid-v2")
+            page.locator("#stage-run").click()
+            expect(page.locator("#validation-review")).to_be_visible()
+            expect(page.locator("#start-run")).to_be_enabled()
+            expect(page.locator("#campaign-name")).to_have_value("Keep this complete draft")
+            expect(page.locator("#roadside-enabled")).to_be_checked()
+            expect(page.locator("#run-id")).to_have_value("preserved-after-refusal")
+            assert _persona_population(page) == population_before
+            body = page.locator("body").inner_text()
+            assert "customer-secret.json" not in body
+            assert r"C:\private" not in body
+            assert not (root / "city-packs").exists()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_city_pack_upload_survives_server_restart_and_fits_keyboard_small_screen(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    workspace = prepare_workbench_workspace(root)
+    document = _city_pack_upload("restart-harbor")
+
+    first_app = create_city_workbench_app(workspace, csrf_token="first-upload-token")
+    with _serve(first_app) as base_url:
+        playwright, browser, page = _open_page(_installed_browser(), base_url, width=390)
+        try:
+            page.emulate_media(reduced_motion="reduce")
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-pack-choose").focus()
+            expect(page.locator("#city-pack-choose")).to_be_focused()
+            page.locator("#city-pack-file").set_input_files(
+                {
+                    "name": "restart.json",
+                    "mimeType": "application/json",
+                    "buffer": document,
+                }
+            )
+            expect(page.locator("#city-upload-status")).to_have_text(
+                "City pack ready.", timeout=15_000
+            )
+            assert page.locator("#city-pack-intake").evaluate(
+                "element => element.scrollWidth <= element.clientWidth"
+            )
+            assert (
+                page.locator("#city-pack-choose").evaluate(
+                    "element => getComputedStyle(element).animationName"
+                )
+                == "none"
+            )
+        finally:
+            browser.close()
+            playwright.stop()
+
+    second_app = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="second-upload-token",
+    )
+    with _serve(second_app) as base_url:
+        playwright, browser, page = _open_page(_installed_browser(), base_url, width=390)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            expect(page.locator('#city-select option[value="restart-harbor"]')).to_have_count(1)
+            page.locator("#city-select").select_option("restart-harbor")
+            expect(page.locator("#city-name")).to_have_text("Operator City restart-harbor")
+            expect(page.locator("#city-qualification")).to_have_text(
+                "Operator supplied - rights not reviewed"
+            )
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_near_limit_city_pack_completes_bounded_authoritative_detail_confirmation(
+    tmp_path: Path,
+) -> None:
+    document = _near_limit_city_pack_upload("near-limit-operator-city")
+    assert 3_800_000 < len(document) <= 4_194_304
+
+    with _workbench(tmp_path) as (base_url, root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            with (
+                page.expect_response(
+                    "**/api/catalog/cities/near-limit-operator-city"
+                ) as detail_response,
+                page.expect_response("**/api/catalog/cities/upload") as uploaded,
+            ):
+                page.locator("#city-pack-file").set_input_files(
+                    {
+                        "name": "near-limit-city.json",
+                        "mimeType": "application/json",
+                        "buffer": document,
+                    }
+                )
+            assert uploaded.value.status == 201
+            assert detail_response.value.status == 200
+            expect(page.locator("#city-upload-status")).to_have_text(
+                "City pack ready.", timeout=30_000
+            )
+            expect(page.locator("#city-upload-error")).to_be_empty()
+            expect(page.locator("#city-select")).to_have_value("near-limit-operator-city")
+            expect(page.locator("#city-name")).to_have_text(
+                "Operator City near-limit-operator-city"
+            )
+            persisted_size = (root / "city-packs" / "near-limit-operator-city.json").stat().st_size
+            assert 4_190_000 < persisted_size <= 4_194_304
+            assert persisted_size > len(document)
+            assert len(detail_response.value.body()) <= 4_259_840
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_oversized_city_pack_is_refused_before_browser_file_read_or_post(
+    tmp_path: Path,
+) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        upload_requests: list[str] = []
+        try:
+            page.on(
+                "request",
+                lambda request: (
+                    upload_requests.append(request.url)
+                    if urlparse(request.url).path == "/api/catalog/cities/upload"
+                    else None
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.evaluate(
+                """() => {
+                  window.cityPackFileReads = 0;
+                  const original = File.prototype.arrayBuffer;
+                  File.prototype.arrayBuffer = function () {
+                    window.cityPackFileReads += 1;
+                    return original.call(this);
+                  };
+                }"""
+            )
+            page.locator("#city-pack-file").set_input_files(
+                {
+                    "name": "oversized.json",
+                    "mimeType": "application/json",
+                    "buffer": b"x" * 4_194_305,
+                }
+            )
+
+            expect(page.locator("#city-upload-error")).to_have_text(
+                "Choose a city pack no larger than 4 MiB."
+            )
+            expect(page.locator("#city-upload-status")).to_be_empty()
+            expect(page.locator("#city-pack-file")).to_have_value("")
+            expect(page.locator("#city-pack-choose")).to_be_focused()
+            assert page.evaluate("window.cityPackFileReads") == 0
+            assert upload_requests == []
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_rights_reviewed_city_uses_the_exact_reviewed_trust_label(tmp_path: Path) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+
+        def rights_reviewed(route: Route) -> None:
+            response = route.fetch()
+            document = response.json()
+            path = urlparse(route.request.url).path
+            if path == "/api/catalog/cities":
+                selected = next(
+                    city for city in document["cities"] if city["city_id"] == "fictional-grid-v2"
+                )
+            else:
+                selected = document
+            selected.update(
+                {
+                    "data_origin": "real-world",
+                    "qualification": "rights-reviewed",
+                    "reviewer_role": "Mapping rights reviewer",
+                    "reviewed_on": "2026-10-02",
+                }
+            )
+            route.fulfill(response=response, json=document)
+
+        try:
+            page.route("**/api/catalog/cities**", rights_reviewed)
+            page.goto(base_url, wait_until="networkidle")
+            expect(page.locator("#city-qualification")).to_have_text("Rights reviewed")
+            expect(page.locator("#error-banner")).to_be_hidden()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_stale_city_pack_upload_response_cannot_replace_the_newer_selection(
+    tmp_path: Path,
+) -> None:
+    first_document = _city_pack_upload("stale-upload-city")
+    second_document = _city_pack_upload("current-upload-city")
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        held: list[tuple[Route, APIResponse]] = []
+        calls = 0
+
+        def reorder_uploads(route: Route) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                held.append((route, route.fetch()))
+                return
+            route.continue_()
+
+        try:
+            page.route("**/api/catalog/cities/upload", reorder_uploads)
+            page.goto(base_url, wait_until="networkidle")
+            with page.expect_request("**/api/catalog/cities/upload"):
+                page.locator("#city-pack-file").set_input_files(
+                    {
+                        "name": "older.json",
+                        "mimeType": "application/json",
+                        "buffer": first_document,
+                    }
+                )
+            with page.expect_response("**/api/catalog/cities/upload") as current_upload:
+                page.locator("#city-pack-file").set_input_files(
+                    {
+                        "name": "current.json",
+                        "mimeType": "application/json",
+                        "buffer": second_document,
+                    }
+                )
+            assert len(held) == 1
+            accepted = current_upload.value.json()
+            assert accepted["city_id"] == "current-upload-city"
+            expect(page.locator("#city-upload-status")).to_have_text(
+                "City pack ready.", timeout=15_000
+            )
+            expect(page.locator("#city-select")).to_have_value("current-upload-city")
+
+            stale_route, stale_response = held.pop()
+            stale_route.fulfill(response=stale_response)
+            page.wait_for_timeout(300)
+
+            expect(page.locator("#city-select")).to_have_value("current-upload-city")
+            expect(page.locator("#city-name")).to_have_text("Operator City current-upload-city")
+            expect(page.locator("#city-upload-status")).to_have_text("City pack ready.")
+            expect(page.locator("#city-upload-error")).to_be_empty()
+        finally:
+            for route, _response in held:
+                route.abort()
+            browser.close()
+            playwright.stop()
+
+
 def test_maximum_seed_is_posted_as_exact_string_and_validation_writes_no_run(
     tmp_path: Path,
 ) -> None:
@@ -933,7 +1432,10 @@ def test_edit_during_validation_prevents_the_stale_receipt_from_committing(
     lock = threading.Lock()
     original = workbench_web._construct_validated_run
 
-    def block_first_validation(payload: dict[str, object]):
+    def block_first_validation(
+        payload: dict[str, object],
+        resolver: workbench_web.WorkbenchCityResolver,
+    ):
         nonlocal calls
         with lock:
             calls += 1
@@ -942,7 +1444,7 @@ def test_edit_during_validation_prevents_the_stale_receipt_from_committing(
             entered.set()
             if not release.wait(10):
                 raise RuntimeError("stale validation gate timed out")
-        return original(payload)
+        return original(payload, resolver)
 
     monkeypatch.setattr(workbench_web, "_construct_validated_run", block_first_validation)
     try:
@@ -983,14 +1485,14 @@ def test_persona_edit_during_job_acceptance_cannot_unlock_execution(
     original = workbench_web._construct_validated_run
     calls = 0
 
-    def block_submission(payload):
+    def block_submission(payload, resolver):
         nonlocal calls
         calls += 1
         if calls == 2:
             entered.set()
             if not release.wait(15):
                 raise RuntimeError("job acceptance gate timed out")
-        return original(payload)
+        return original(payload, resolver)
 
     monkeypatch.setattr(workbench_web, "_construct_validated_run", block_submission)
     with _workbench(tmp_path) as (base_url, _root):

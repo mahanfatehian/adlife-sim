@@ -409,7 +409,10 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
         },
         "disclosure": {
             "population": "Synthetic cohort assumptions; not real residents.",
-            "city": "Bundled fictional city geometry; not a live city or traffic feed.",
+            "city": (
+                "City-pack geometry; no live map or traffic feed. "
+                "Uploaded sources are operator-declared and unreviewed."
+            ),
             "outcomes": "Modeled responses are not observed behavior, sales, or forecasts.",
         },
     }

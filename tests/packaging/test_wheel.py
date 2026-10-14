@@ -194,12 +194,16 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         style = wheel.read("adlife/city/static/workbench.css").decode("utf-8")
         icon = wheel.read("adlife/city/static/workbench-icon.svg").decode("utf-8")
         javascript = wheel.read("adlife/city/static/workbench.js").decode("utf-8")
+        city_pack_javascript = wheel.read("adlife/city/static/workbench-city-packs.js").decode(
+            "utf-8"
+        )
     for resource in (
         "adlife/city/creative_templates.json",
         "adlife/city/static/workbench.html",
         "adlife/city/static/workbench.css",
         "adlife/city/static/workbench-icon.svg",
         "adlife/city/static/workbench.js",
+        "adlife/city/static/workbench-city-packs.js",
         "adlife/city/static/workbench-personas.js",
         "adlife/city/static/workbench-personas.css",
     ):
@@ -214,13 +218,15 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     assert "__ADLIFE_CSRF_TOKEN__" in shell
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell
     assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell
+    assert '<script defer src="/assets/workbench-city-packs.js"></script>' in shell
     assert '<script defer src="/assets/workbench.js"></script>' in shell
-    assert shell.lower().count("<script") == 2
+    assert shell.lower().count("<script") == 3
     assert re.search(r"\son[a-z]+\s*=", shell, flags=re.IGNORECASE) is None
     assert "http://" not in shell and "https://" not in shell
     assert "@import" not in style.lower() and "url(" not in style.lower()
     assert icon.startswith("<svg") and "<script" not in icon.lower()
     assert "http://" not in javascript and "https://" not in javascript
+    assert "http://" not in city_pack_javascript and "https://" not in city_pack_javascript
     for forbidden in (
         "innerHTML",
         "outerHTML",
@@ -232,7 +238,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "eval(",
         "new Function",
     ):
-        assert forbidden not in javascript
+        assert forbidden not in javascript + city_pack_javascript
 
     scratch = tmp_path / "workbench-clean-room"
     scratch.mkdir()
@@ -263,7 +269,8 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
             "    assert [p.persona_id for p in catalog.templates] == "
             "['persona-001', 'persona-002', 'persona-003', 'persona-004']\n"
             "    assert all(p.fictional is True for p in catalog.templates)\n"
-            "    for name, media in [('workbench-personas.js', 'text/javascript'), "
+            "    for name, media in [('workbench-city-packs.js', 'text/javascript'), "
+            "('workbench-personas.js', 'text/javascript'), "
             "('workbench-personas.css', 'text/css')]:\n"
             "        asset=client.get('/assets/'+name)\n"
             "        assert asset.status_code == 200 and len(asset.content) > 100\n"
@@ -279,6 +286,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     assert set(json.loads(probe.stdout)) == {
         "/",
         "/api/catalog/cities",
+        "/api/catalog/cities/upload",
         "/api/catalog/cities/{city_id}",
         "/api/creative-templates",
         "/api/jobs",
@@ -290,6 +298,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/scenarios/validate",
         "/api/workbench",
         "/assets/workbench-icon.svg",
+        "/assets/workbench-city-packs.js",
         "/assets/workbench.css",
         "/assets/workbench.js",
         "/assets/workbench-personas.js",

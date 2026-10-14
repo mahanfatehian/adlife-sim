@@ -2,11 +2,17 @@
 
 (() => {
   const MAX_JSON_BYTES = 1_048_576;
+  const MAX_CITY_PACK_BYTES = 4_194_304;
+  // A registrable canonical pack is at most 4 MiB. The detail DTO duplicates only
+  // bounded source, omission, bounds, and trust metadata, all within this 64 KiB envelope.
+  const MAX_CITY_DETAIL_BYTES = MAX_CITY_PACK_BYTES + 65_536;
+  const MAX_HTTP_URL_LENGTH = 2_083;
   const MAX_SEED = 9223372036854775807n;
   const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
   const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
   const JOB_ID_PATTERN = /^job-[0-9a-f]{32}$/;
   const HASH_PATTERN = /^[0-9a-f]{64}$/;
+  const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
   const SEED_PATTERN = /^(?:0|[1-9][0-9]{0,18})$/;
   const INSPECTOR_PATTERN = /^\/runs\/[a-z0-9][a-z0-9-]{0,39}$/;
   const STATUS_PATTERN = /^\/api\/jobs\/job-[0-9a-f]{32}$/;
@@ -27,6 +33,11 @@
   ]);
   const STAGES = ["city", "campaign", "run", "inspect"];
   const POLL_DELAYS = [250, 500, 1000, 2000];
+  const TRUST_LABELS = new Map([
+    ["fictional-fixture", "Bundled fictional fixture"],
+    ["rights-reviewed", "Rights reviewed"],
+    ["operator-supplied-unreviewed", "Operator supplied - rights not reviewed"],
+  ]);
 
   const byId = (id) => document.getElementById(id);
   const csrfMeta = document.querySelector('meta[name="adlife-csrf-token"]');
@@ -38,7 +49,9 @@
     templates: [],
     personaEditor: null,
     cityDetail: null,
+    catalogGeneration: 0,
     cityGeneration: 0,
+    cityPackUploader: null,
     validationGeneration: 0,
     validatedDraft: null,
     activeJob: null,
@@ -115,6 +128,23 @@
 
   function boundedText(value, maximum = 500) {
     return typeof value === "string" && value.length > 0 && value.length <= maximum;
+  }
+
+  function finiteNumber(value, minimum, maximum) {
+    return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum;
+  }
+
+  function sameJson(left, right) {
+    if (left === right) return true;
+    if (Array.isArray(left) || Array.isArray(right)) {
+      return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
+        left.every((item, index) => sameJson(item, right[index]));
+    }
+    if (!isObject(left) || !isObject(right)) return false;
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length &&
+      leftKeys.every((key, index) => key === rightKeys[index] && sameJson(left[key], right[key]));
   }
 
   function setText(id, value) {
@@ -256,6 +286,10 @@
     if (method !== "GET" && method !== "POST") {
       throw new RequestError("The workbench refused an unsupported request method.");
     }
+    const responseLimit = method === "GET" &&
+      /^\/api\/catalog\/cities\/[a-z0-9][a-z0-9-]{0,79}$/.test(safePath)
+      ? MAX_CITY_DETAIL_BYTES
+      : MAX_JSON_BYTES;
     const headers = { Accept: "application/json" };
     const request = {
       method,
@@ -284,7 +318,7 @@
       throw new RequestError("The local workbench returned an unexpected response type.");
     }
     const text = await response.text();
-    if (new TextEncoder().encode(text).length > MAX_JSON_BYTES) {
+    if (new TextEncoder().encode(text).length > responseLimit) {
       throw new RequestError("The local workbench response exceeded its browser limit.");
     }
     let documentValue;
@@ -646,26 +680,79 @@
     return documentValue;
   }
 
+  function assertBounds(bounds) {
+    if (
+      !isObject(bounds) ||
+      !finiteNumber(bounds.west, -180, 180) ||
+      !finiteNumber(bounds.south, -85, 85) ||
+      !finiteNumber(bounds.east, -180, 180) ||
+      !finiteNumber(bounds.north, -85, 85) ||
+      bounds.west >= bounds.east ||
+      bounds.south >= bounds.north
+    ) {
+      throw new RequestError("The verified city catalog contains invalid bounds.");
+    }
+    return bounds;
+  }
+
+  function assertSource(source) {
+    if (
+      !isObject(source) ||
+      !boundedText(source.provider, 120) ||
+      !boundedText(source.dataset, 120) ||
+      !boundedText(source.version, 80) ||
+      !DATE_PATTERN.test(source.published_on || "") ||
+      !HASH_PATTERN.test(source.source_sha256 || "") ||
+      !boundedText(source.source_url, MAX_HTTP_URL_LENGTH) ||
+      !boundedText(source.license, 80) ||
+      !boundedText(source.attribution, 240)
+    ) {
+      throw new RequestError("The verified city catalog contains invalid source metadata.");
+    }
+    return source;
+  }
+
+  function hasValidTrustClassification(city) {
+    const classification = [city.storage_origin, city.data_origin, city.qualification].join("|");
+    if (classification === "package|fictional|fictional-fixture") {
+      return city.reviewer_role === null && city.reviewed_on === null;
+    }
+    if (classification === "workspace-upload|operator-supplied|operator-supplied-unreviewed") {
+      return city.reviewer_role === null && city.reviewed_on === null;
+    }
+    return classification === "package|real-world|rights-reviewed" &&
+      boundedText(city.reviewer_role, 120) && DATE_PATTERN.test(city.reviewed_on || "");
+  }
+
+  function assertCatalogRow(city) {
+    if (
+      !isObject(city) ||
+      !ID_PATTERN.test(city.city_id || "") ||
+      !boundedText(city.display_name, 120) ||
+      city.pack_schema_version !== 2 ||
+      !HASH_PATTERN.test(city.pack_sha256 || "") ||
+      !hasValidTrustClassification(city) ||
+      !boundedText(city.time_zone, 64) ||
+      !Array.isArray(city.known_omissions) ||
+      city.known_omissions.length < 1 ||
+      city.known_omissions.length > 16 ||
+      city.known_omissions.some((item) => !boundedText(item, 200)) ||
+      Object.hasOwn(city, "resource_name")
+    ) {
+      throw new RequestError("The verified city catalog contains an invalid entry.");
+    }
+    assertBounds(city.coverage);
+    assertSource(city.source);
+    return city;
+  }
+
   function assertCatalog(documentValue) {
     if (!isObject(documentValue) || documentValue.schema_version !== 1 || !Array.isArray(documentValue.cities)) {
       throw new RequestError("The verified city catalog is incompatible.");
     }
-    const cities = documentValue.cities.map((city) => {
-      if (
-        !isObject(city) ||
-        !ID_PATTERN.test(city.city_id || "") ||
-        !boundedText(city.display_name, 120) ||
-        city.pack_schema_version !== 2 ||
-        !HASH_PATTERN.test(city.pack_sha256 || "") ||
-        city.data_origin !== "fictional" ||
-        city.qualification !== "fictional-fixture" ||
-        Object.hasOwn(city, "resource_name")
-      ) {
-        throw new RequestError("The verified city catalog contains an invalid entry.");
-      }
-      return city;
-    });
-    if (cities.length < 1 || cities.length > 100) {
+    const cities = documentValue.cities.map(assertCatalogRow);
+    const identifiers = new Set(cities.map((city) => city.city_id));
+    if (cities.length < 1 || cities.length > 100 || identifiers.size !== cities.length) {
       throw new RequestError("The verified city catalog has an unsupported size.");
     }
     return cities;
@@ -699,15 +786,10 @@
       documentValue.city_id !== expectedId ||
       !boundedText(documentValue.display_name, 120) ||
       documentValue.pack_schema_version !== 2 ||
-      documentValue.data_origin !== "fictional" ||
-      documentValue.qualification !== "fictional-fixture" ||
       !boundedText(documentValue.time_zone, 64) ||
       !HASH_PATTERN.test(documentValue.city_sha256 || "") ||
       !Array.isArray(documentValue.known_omissions) ||
       documentValue.known_omissions.length < 1 ||
-      !isObject(documentValue.source) ||
-      !boundedText(documentValue.source.attribution, 500) ||
-      !boundedText(documentValue.source.license, 80) ||
       !isObject(documentValue.pack) ||
       documentValue.pack.city_id !== expectedId ||
       documentValue.pack.schema_version !== 2 ||
@@ -718,6 +800,30 @@
       documentValue.pack.roads.length < 1
     ) {
       throw new RequestError("The selected city detail is incompatible.");
+    }
+    assertCatalogRow({
+      city_id: documentValue.city_id,
+      display_name: documentValue.display_name,
+      pack_schema_version: documentValue.pack_schema_version,
+      storage_origin: documentValue.storage_origin,
+      data_origin: documentValue.data_origin,
+      qualification: documentValue.qualification,
+      reviewer_role: documentValue.reviewer_role,
+      reviewed_on: documentValue.reviewed_on,
+      coverage: documentValue.coverage,
+      time_zone: documentValue.time_zone,
+      source: documentValue.source,
+      known_omissions: documentValue.known_omissions,
+      pack_sha256: documentValue.city_sha256,
+    });
+    if (
+      documentValue.pack.name !== documentValue.display_name ||
+      documentValue.pack.time_zone !== documentValue.time_zone ||
+      !sameJson(documentValue.pack.bounds, documentValue.coverage) ||
+      !sameJson(documentValue.pack.source, documentValue.source) ||
+      !sameJson(documentValue.pack.known_omissions, documentValue.known_omissions)
+    ) {
+      throw new RequestError("The selected city detail metadata does not match its pack.");
     }
     const nodeIds = new Set();
     for (const node of documentValue.pack.nodes) {
@@ -757,7 +863,7 @@
     return documentValue;
   }
 
-  function renderCatalog() {
+  function renderCatalog(preferredId = null) {
     const select = byId("city-select");
     const options = state.cities.map((city) => {
       const option = makeElement("option", city.display_name);
@@ -765,9 +871,12 @@
       return option;
     });
     select.replaceChildren(...options);
-    const preferred = state.cities.find((city) => city.city_id === "fictional-grid-v2") || state.cities[0];
+    const requested = preferredId || select.value;
+    const preferred = state.cities.find((city) => city.city_id === requested) ||
+      state.cities.find((city) => city.city_id === "fictional-grid-v2") || state.cities[0];
     select.value = preferred.city_id;
     select.disabled = false;
+    byId("city-pack-choose").disabled = false;
   }
 
   function renderTemplates() {
@@ -840,11 +949,19 @@
     const detail = state.cityDetail;
     setText("city-name", detail.display_name);
     setText("city-time-zone", detail.time_zone);
+    setText("city-provider", detail.source.provider);
+    setText("city-dataset", detail.source.dataset);
+    setText("city-version", detail.source.version);
+    setText("city-published-on", detail.source.published_on);
+    setText(
+      "city-bounds",
+      `W ${detail.coverage.west} · S ${detail.coverage.south} · E ${detail.coverage.east} · N ${detail.coverage.north}`,
+    );
     setText("city-schema", String(detail.pack_schema_version));
     setText("city-hash", detail.city_sha256);
     setText("city-license", detail.source.license);
     setText("city-attribution", detail.source.attribution);
-    setText("city-qualification", "Verified");
+    setText("city-qualification", TRUST_LABELS.get(detail.qualification));
     const omissions = detail.known_omissions.map((item) => makeElement("li", item));
     byId("city-omissions").replaceChildren(...omissions);
     byId("stage-campaign").disabled = false;
@@ -968,41 +1085,90 @@
       }
     }
     setText("map-status", "Verified pack");
-    setText("map-summary", `${state.cityDetail.display_name} contains ${pack.roads.length} roads and ${pack.nodes.length} nodes. Geometry is fictional and model-only.`);
+    setText(
+      "map-summary",
+      `${state.cityDetail.display_name} contains ${pack.roads.length} roads and ${pack.nodes.length} nodes. City-pack geometry only; no live map or traffic feed.`,
+    );
     const items = pack.roads.map((road) => makeElement("li", `${road.road_id}: ${road.kind}, ${road.directions.join(" / ")}`));
     byId("map-road-list").replaceChildren(...items);
+  }
+
+  function commitCityDetail(detail, previousId) {
+    const changed = previousId !== null && previousId !== detail.city_id;
+    state.cityDetail = detail;
+    if (changed) {
+      byId("roadside-enabled").checked = false;
+      byId("stage-run").disabled = true;
+      invalidateValidation("City changed. Validate the completed draft again.");
+      updatePlacementVisibility();
+    }
+    renderCityDetail();
   }
 
   async function loadCity(cityId) {
     if (!ID_PATTERN.test(cityId)) {
       showBanner("The selected city identifier is invalid.");
-      return;
+      return null;
     }
     const generation = ++state.cityGeneration;
-    state.cityDetail = null;
+    const previousId = state.cityDetail ? state.cityDetail.city_id : null;
     byId("city-continue").disabled = true;
     byId("stage-campaign").disabled = true;
-    byId("stage-run").disabled = true;
-    invalidateValidation("City changed. Validate the completed draft again.");
     setText("city-name", "Verifying city…");
     setText("map-status", "VERIFYING PACK");
     try {
       const documentValue = await fetchJson(`/api/catalog/cities/${cityId}`);
       const detail = assertCityDetail(documentValue, cityId);
       if (generation !== state.cityGeneration) {
-        return;
+        return null;
       }
-      state.cityDetail = detail;
-      renderCityDetail();
+      commitCityDetail(detail, previousId);
       announce(`${detail.display_name} verified.`);
+      return detail;
     } catch (error) {
       if (generation !== state.cityGeneration) {
-        return;
+        return null;
       }
       showBanner(error instanceof Error ? error.message : "The city could not be verified.");
-      setText("city-name", "City unavailable");
-      setText("map-status", "CITY UNAVAILABLE");
+      if (state.cityDetail && previousId === state.cityDetail.city_id) {
+        byId("city-select").value = previousId;
+        renderCityDetail();
+      } else {
+        setText("city-name", "City unavailable");
+        setText("map-status", "CITY UNAVAILABLE");
+      }
+      return null;
     }
+  }
+
+  async function confirmUploadedCity(uploadedRow) {
+    const catalogGeneration = ++state.catalogGeneration;
+    const cityGeneration = ++state.cityGeneration;
+    const previousId = state.cityDetail ? state.cityDetail.city_id : null;
+    const catalog = assertCatalog(await fetchJson("/api/catalog/cities"));
+    const authoritative = catalog.find((city) => city.city_id === uploadedRow.city_id);
+    if (!authoritative || !sameJson(authoritative, uploadedRow)) {
+      throw new RequestError("The registered city did not match the authoritative catalog.");
+    }
+    const detail = assertCityDetail(
+      await fetchJson(`/api/catalog/cities/${uploadedRow.city_id}`),
+      uploadedRow.city_id,
+    );
+    if (detail.city_sha256 !== uploadedRow.pack_sha256) {
+      throw new RequestError("The registered city hash did not match its verified detail.");
+    }
+    if (
+      catalogGeneration !== state.catalogGeneration ||
+      cityGeneration !== state.cityGeneration
+    ) {
+      return false;
+    }
+    state.cities = catalog;
+    renderCatalog(uploadedRow.city_id);
+    commitCityDetail(detail, previousId);
+    byId("city-select").focus();
+    announce(`${detail.display_name} registered and verified.`);
+    return true;
   }
 
   function assertValidation(documentValue, draft) {
@@ -1508,6 +1674,22 @@
     }
   }
 
+  function installCityPackUploader() {
+    if (typeof window.AdLifeCityPackUploader !== "function") {
+      throw new RequestError("The city pack controls are unavailable. Reload the page.");
+    }
+    state.cityPackUploader = new window.AdLifeCityPackUploader({
+      intake: byId("city-pack-intake"),
+      input: byId("city-pack-file"),
+      choose: byId("city-pack-choose"),
+      status: byId("city-upload-status"),
+      error: byId("city-upload-error"),
+      csrfToken,
+      validateRow: assertCatalogRow,
+      confirm: confirmUploadedCity,
+    });
+  }
+
   function installEvents() {
     for (const button of document.querySelectorAll("[data-stage]")) {
       button.addEventListener("click", () => showStage(button.dataset.stage));
@@ -1520,7 +1702,10 @@
       byId("stage-run").disabled = false;
       showStage("run");
     });
-    byId("city-select").addEventListener("change", () => loadCity(byId("city-select").value));
+    byId("city-select").addEventListener("change", () => {
+      state.cityPackUploader?.supersede();
+      void loadCity(byId("city-select").value);
+    });
     byId("creative-template").addEventListener("change", renderCreative);
     byId("road-id").addEventListener("change", () => {
       populateRoadDirections();
@@ -1579,6 +1764,7 @@
   }
 
   async function boot() {
+    installCityPackUploader();
     installEvents();
     resetSchedules();
     updatePlacementVisibility();
