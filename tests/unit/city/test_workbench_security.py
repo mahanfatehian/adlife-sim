@@ -175,6 +175,8 @@ async def _raw_request(
     body_messages: list[Message],
     extra_headers: list[tuple[bytes, bytes]] | None = None,
     method: str = "POST",
+    path: str = "/api/write",
+    query_string: bytes = b"",
 ) -> tuple[int, dict[str, str], bytes]:
     headers = [
         (b"host", HOST.encode("ascii")),
@@ -189,9 +191,9 @@ async def _raw_request(
         "http_version": "1.1",
         "method": method,
         "scheme": "http",
-        "path": "/api/write",
-        "raw_path": b"/api/write",
-        "query_string": b"",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": query_string,
         "headers": headers,
         "client": ("127.0.0.1", 40_000),
         "server": ("127.0.0.1", 8_765),
@@ -268,6 +270,128 @@ async def test_streaming_limit_accepts_exact_limit_and_rejects_limit_plus_one() 
     assert status == 413
     assert calls == []
     assert json.loads(body)["error"]["code"] == "request-too-large"
+
+
+@pytest.mark.asyncio
+async def test_route_specific_limit_is_exact_and_does_not_widen_nearby_routes() -> None:
+    module = _module()
+    calls: list[bytes] = []
+    upload_path = "/api/catalog/cities/upload"
+    upload_limit = 4_194_304
+    middleware = module.WorkbenchSecurityMiddleware(
+        _counting_raw_app(calls),
+        csrf_token=TOKEN,
+        route_body_limits={upload_path: upload_limit},
+    )
+    exact = b"u" * upload_limit
+
+    status, _, _ = await _raw_request(
+        middleware,
+        path=upload_path,
+        body_messages=[
+            {"type": "http.request", "body": exact[:2_000_000], "more_body": True},
+            {"type": "http.request", "body": exact[2_000_000:], "more_body": False},
+        ],
+    )
+    assert status == 200
+    assert calls == [exact]
+
+    calls.clear()
+    status, _, body = await _raw_request(
+        middleware,
+        path=upload_path,
+        body_messages=[
+            {
+                "type": "http.request",
+                "body": b"v" * (upload_limit + 1),
+                "more_body": False,
+            }
+        ],
+    )
+    assert status == 413
+    assert calls == []
+    assert json.loads(body)["error"]["code"] == "request-too-large"
+
+    for nearby_path in (
+        "/api/catalog/cities/upload/",
+        "/api/catalog/cities/uploaded",
+    ):
+        status, _, _ = await _raw_request(
+            middleware,
+            path=nearby_path,
+            body_messages=[
+                {
+                    "type": "http.request",
+                    "body": b"w" * (module.MAX_WORKBENCH_BODY_BYTES + 1),
+                    "more_body": False,
+                }
+            ],
+        )
+        assert status == 413
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_route_limit_is_copied_and_configuration_is_strict() -> None:
+    module = _module()
+    calls: list[bytes] = []
+    path = "/api/catalog/cities/upload"
+    limits = {path: 20}
+    middleware = module.WorkbenchSecurityMiddleware(
+        _counting_raw_app(calls),
+        csrf_token=TOKEN,
+        max_body_bytes=10,
+        route_body_limits=limits,
+    )
+    limits[path] = 30
+
+    status, _, _ = await _raw_request(
+        middleware,
+        path=path,
+        body_messages=[{"type": "http.request", "body": b"x" * 21, "more_body": False}],
+    )
+    assert status == 413
+    assert calls == []
+
+    for invalid in (
+        {"not-an-api-path": 20},
+        {"/api/catalog/cities/upload?query=true": 20},
+        {path: True},
+        {path: 0},
+        {path: 4_194_305},
+    ):
+        with pytest.raises(ValueError, match="route body limits"):
+            module.WorkbenchSecurityMiddleware(
+                _counting_raw_app([]),
+                csrf_token=TOKEN,
+                route_body_limits=invalid,
+            )
+
+
+@pytest.mark.asyncio
+async def test_content_length_is_bounded_lexically_before_integer_conversion() -> None:
+    calls: list[bytes] = []
+    middleware = _module().WorkbenchSecurityMiddleware(
+        _counting_raw_app(calls),
+        csrf_token=TOKEN,
+    )
+
+    status, _, body = await _raw_request(
+        middleware,
+        body_messages=[{"type": "http.request", "body": b"", "more_body": False}],
+        extra_headers=[(b"content-length", b"9" * 5_000)],
+    )
+    assert status == 413
+    assert json.loads(body)["error"]["code"] == "request-too-large"
+    assert calls == []
+
+    status, _, _ = await _raw_request(
+        middleware,
+        body_messages=[{"type": "http.request", "body": b"{}", "more_body": False}],
+        extra_headers=[(b"content-length", b"0" * 5_000 + b"2")],
+    )
+    assert status == 200
+    assert calls == [b"{}"]
 
 
 @pytest.mark.asyncio

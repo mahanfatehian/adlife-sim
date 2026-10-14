@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from starlette.types import Message, Scope
 
 from adlife.city.analysis import (
     metrics_for_stored_city_run,
@@ -24,15 +25,30 @@ from adlife.city.catalog import CityCatalogError, load_city_catalog, select_cata
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run
 from adlife.city.web import create_city_app
-from adlife.city.workbench_catalog import PackagedCityCatalogUnavailable
+from adlife.city.workbench_catalog import (
+    PackagedCityCatalogUnavailable,
+    WorkbenchCityRegistryUnavailable,
+    WorkbenchCityResolver,
+)
+from adlife.city.workbench_city_registry import (
+    MAX_CITY_PACK_UPLOAD_BYTES,
+    CityPackPublicationError,
+    CityPackRegistrationConflict,
+    CityPackUploadTooLarge,
+    InvalidCityPackUpload,
+    MalformedCityPackUpload,
+)
 from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.domain.city import CityPackV2
+from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import UnsafeRunLocation
 from tests.unit.city.test_workbench_input import draft_data, draft_v2_data, persona_data
 
 TOKEN = "fixed-workbench-web-token"
 ORIGIN = "http://127.0.0.1:8765"
+UPLOAD_PATH = "/api/catalog/cities/upload"
 
 
 def _module():
@@ -82,6 +98,38 @@ def _secure_post(client: TestClient, path: str, payload: dict[str, Any]):
         },
         content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
     )
+
+
+def _city_pack_payload(city_id: str = "operator-city") -> dict[str, Any]:
+    payload = select_catalog_city("fictional-grid-v2").model_dump(mode="json")
+    payload["city_id"] = city_id
+    payload["name"] = f"Operator City {city_id}"
+    return payload
+
+
+def _city_pack_document(city_id: str = "operator-city", *, indent: int | None = None) -> bytes:
+    return json.dumps(
+        _city_pack_payload(city_id),
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=indent,
+    ).encode("utf-8")
+
+
+def _secure_upload(
+    client: TestClient,
+    document: bytes,
+    *,
+    path: str = UPLOAD_PATH,
+    headers: dict[str, str] | None = None,
+):
+    request_headers = {
+        "Content-Type": "application/json",
+        "Origin": ORIGIN,
+        "X-AdLife-CSRF": TOKEN,
+    }
+    request_headers.update(headers or {})
+    return client.post(path, headers=request_headers, content=document)
 
 
 def _valid_draft(*, phone: bool = True, roadside: bool = False) -> dict[str, Any]:
@@ -1525,6 +1573,421 @@ def test_worker_failures_expose_only_screened_terminal_records(
             content = path.read_bytes()
             assert secret.encode() not in content
             assert absolute_path.encode() not in content
+
+
+def test_city_pack_upload_returns_one_exact_path_free_row_and_canonical_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    calls: list[bytes] = []
+    original = module.WorkbenchCityResolver.register_city
+
+    def counted_register(resolver: WorkbenchCityResolver, document: bytes):
+        calls.append(document)
+        return original(resolver, document)
+
+    monkeypatch.setattr(module.WorkbenchCityResolver, "register_city", counted_register)
+    client, root = _client(tmp_path)
+    document = _city_pack_document(indent=2)
+
+    with client:
+        response = _secure_upload(client, document)
+
+    assert response.status_code == 201
+    assert calls == [document]
+    workspace = prepare_workbench_workspace(root)
+    resolved = WorkbenchCityResolver(workspace).resolve_city("operator-city")
+    expected = module.build_workbench_city_catalog_row(resolved).model_dump(mode="json")
+    assert response.json() == expected
+    assert set(response.json()) == {
+        "city_id",
+        "display_name",
+        "pack_schema_version",
+        "storage_origin",
+        "data_origin",
+        "qualification",
+        "reviewer_role",
+        "reviewed_on",
+        "coverage",
+        "time_zone",
+        "source",
+        "known_omissions",
+        "pack_sha256",
+    }
+    assert response.json()["storage_origin"] == "workspace-upload"
+    assert response.json()["data_origin"] == "operator-supplied"
+    assert response.json()["qualification"] == "operator-supplied-unreviewed"
+    assert str(root) not in response.text
+    assert "resource_name" not in response.text
+    stored = root / "city-packs" / "operator-city.json"
+    assert stored.read_bytes() == canonical_json(resolved.pack).encode("utf-8") + b"\n"
+    assert list((root / "city-pack-staging").iterdir()) == []
+    assert not (root / "city-runs").exists()
+
+
+def test_upload_route_coexists_with_a_city_whose_identifier_is_upload(tmp_path: Path) -> None:
+    client, root = _client(tmp_path)
+    document = _city_pack_document("upload")
+
+    with client:
+        missing = client.get(UPLOAD_PATH)
+        registered = _secure_upload(client, document)
+        detail = client.get(UPLOAD_PATH)
+        duplicate = _secure_upload(client, document)
+
+    assert missing.status_code == 404
+    assert registered.status_code == 201
+    assert registered.json()["city_id"] == "upload"
+    assert detail.status_code == 200
+    assert detail.json()["city_id"] == "upload"
+    expected_pack = CityPackV2.model_validate_json(_city_pack_document("upload"))
+    assert detail.json()["pack"] == expected_pack.model_dump(mode="json")
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "city-pack-conflict"
+    assert (root / "city-packs" / "upload.json").read_bytes() == (
+        canonical_json(expected_pack).encode("utf-8") + b"\n"
+    )
+
+
+def test_city_pack_upload_rejects_query_and_security_failures_before_registration(
+    tmp_path: Path,
+) -> None:
+    client, root = _client(tmp_path)
+    document = _city_pack_document()
+    before = _snapshot(root)
+
+    with client:
+        responses = [
+            _secure_upload(
+                client,
+                document,
+                path=f"{UPLOAD_PATH}?api_key=sk-query-never-echo-1234567890",
+            ),
+            _secure_upload(client, document, headers={"Content-Type": "text/plain"}),
+            _secure_upload(client, document, headers={"Origin": "http://example.test"}),
+            _secure_upload(client, document, headers={"X-AdLife-CSRF": "wrong-token"}),
+            _secure_upload(
+                client,
+                document,
+                headers={"Host": "example.test", "Origin": "http://example.test"},
+            ),
+        ]
+        for method in ("PUT", "PATCH", "DELETE"):
+            responses.append(
+                client.request(
+                    method,
+                    UPLOAD_PATH,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Origin": ORIGIN,
+                        "X-AdLife-CSRF": TOKEN,
+                    },
+                    content=document,
+                )
+            )
+
+    assert [(response.status_code, response.json()["error"]["code"]) for response in responses] == [
+        (400, "invalid-upload-request"),
+        (400, "invalid-content-type"),
+        (403, "invalid-origin"),
+        (403, "invalid-csrf"),
+        (400, "invalid-host"),
+        (405, "method-not-allowed"),
+        (405, "method-not-allowed"),
+        (405, "method-not-allowed"),
+    ]
+    assert "sk-query-never-echo" not in "".join(response.text for response in responses)
+    assert _snapshot(root) == before
+    assert not (root / "city-packs").exists()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        b"\xff",
+        b"\xef\xbb\xbf{}",
+        "{}".encode("utf-16"),
+        b'{"schema_version":2,"schema_version":2}',
+        b'{"value":NaN}',
+        b'{"value":1e999}',
+        b"[]",
+        ('{"value":' + "[" * 40 + "0" + "]" * 40 + "}").encode(),
+    ],
+)
+def test_city_pack_upload_maps_malformed_or_ambiguous_json_to_400(
+    tmp_path: Path,
+    document: bytes,
+) -> None:
+    client, root = _client(tmp_path)
+    before = _snapshot(root)
+
+    with client:
+        response = _secure_upload(client, document)
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": "malformed-city-pack",
+        "message": "The city pack document is not valid JSON.",
+        "fields": {},
+    }
+    assert _snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"schema_version": 1},
+        {"schema_version": True},
+        {**_city_pack_payload(), "unexpected": "value-never-echoed"},
+    ],
+)
+def test_city_pack_upload_maps_well_formed_invalid_v2_to_422(
+    tmp_path: Path,
+    payload: dict[str, Any],
+) -> None:
+    client, root = _client(tmp_path)
+    before = _snapshot(root)
+    document = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+
+    with client:
+        response = _secure_upload(client, document)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "invalid-city-pack",
+        "message": "The city pack is not a valid CityPack V2 document.",
+        "fields": {},
+    }
+    assert "unexpected" not in response.text
+    assert "value-never-echoed" not in response.text
+    assert _snapshot(root) == before
+
+
+def test_city_pack_upload_has_an_inclusive_four_mib_raw_boundary(tmp_path: Path) -> None:
+    client, root = _client(tmp_path)
+    exact = b"{}" + b" " * (MAX_CITY_PACK_UPLOAD_BYTES - 2)
+
+    with client:
+        accepted_by_boundary = _secure_upload(client, exact)
+        oversized = _secure_upload(client, exact + b" ")
+
+    assert accepted_by_boundary.status_code == 422
+    assert accepted_by_boundary.json()["error"]["code"] == "invalid-city-pack"
+    assert oversized.status_code == 413
+    assert oversized.json()["error"]["code"] == "request-too-large"
+    assert not (root / "city-packs").exists()
+
+
+def test_canonical_city_pack_overflow_maps_to_413_before_registry_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry_module = importlib.import_module("adlife.city.workbench_city_registry")
+
+    def canonical_overflow(_pack: CityPackV2) -> bytes:
+        raise CityPackUploadTooLarge()
+
+    monkeypatch.setattr(registry_module, "_canonical_pack_bytes", canonical_overflow)
+    client, root = _client(tmp_path)
+    before = _snapshot(root)
+
+    with client:
+        response = _secure_upload(client, _city_pack_document())
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "city-pack-too-large"
+    assert _snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code", "message"),
+    [
+        (
+            MalformedCityPackUpload(),
+            400,
+            "malformed-city-pack",
+            "The city pack document is not valid JSON.",
+        ),
+        (
+            InvalidCityPackUpload(),
+            422,
+            "invalid-city-pack",
+            "The city pack is not a valid CityPack V2 document.",
+        ),
+        (
+            CityPackUploadTooLarge(),
+            413,
+            "city-pack-too-large",
+            "The city pack exceeds the upload size limit.",
+        ),
+        (
+            CityPackRegistrationConflict(),
+            409,
+            "city-pack-conflict",
+            "The city pack conflicts with the workspace catalog.",
+        ),
+        (
+            WorkbenchCityRegistryUnavailable("sk-registry-error-never-echo-1234567890"),
+            409,
+            "city-registry-unavailable",
+            "The workspace city registry is unavailable.",
+        ),
+        (
+            PackagedCityCatalogUnavailable("sk-catalog-error-never-echo-1234567890"),
+            500,
+            "catalog-unavailable",
+            "The verified city catalog is unavailable.",
+        ),
+        (
+            CityPackPublicationError(False),
+            500,
+            "city-pack-publication-failed",
+            "The city pack could not be published.",
+        ),
+        (
+            CityPackPublicationError(True),
+            500,
+            "city-pack-publication-uncertain",
+            "The city pack may already be registered. Reload the city catalog before retrying.",
+        ),
+    ],
+)
+def test_city_pack_upload_maps_typed_failures_without_exception_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    status: int,
+    code: str,
+    message: str,
+) -> None:
+    module = _module()
+
+    def refuse(_resolver: WorkbenchCityResolver, _document: bytes) -> None:
+        raise error
+
+    monkeypatch.setattr(module.WorkbenchCityResolver, "register_city", refuse)
+    client, root = _client(tmp_path, raise_server_exceptions=False)
+    before = _snapshot(root)
+
+    with caplog.at_level(logging.ERROR), client:
+        response = _secure_upload(client, _city_pack_document())
+
+    assert response.status_code == status
+    assert response.json()["error"] == {"code": code, "message": message, "fields": {}}
+    assert "sk-registry-error" not in response.text + caplog.text
+    assert "sk-catalog-error" not in response.text + caplog.text
+    assert _snapshot(root) == before
+
+
+def test_corrupt_registry_upload_refusal_preserves_existing_bytes_and_creates_no_record(
+    tmp_path: Path,
+) -> None:
+    client, root = _client(tmp_path)
+    records = root / "city-packs"
+    records.mkdir()
+    corrupt = records / "unexpected.txt"
+    corrupt.write_bytes(b"corrupt-registry-marker")
+
+    with client:
+        response = _secure_upload(client, _city_pack_document())
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "city-registry-unavailable"
+    assert corrupt.read_bytes() == b"corrupt-registry-marker"
+    assert not (records / "operator-city.json").exists()
+    staging = root / "city-pack-staging"
+    assert not staging.exists() or list(staging.iterdir()) == []
+
+
+def test_precommit_publication_failure_is_generic_and_leaves_no_live_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry_module = importlib.import_module("adlife.city.workbench_city_registry")
+
+    def fail_before_commit(*_args: object, **_kwargs: object) -> None:
+        raise OSError("private publication path")
+
+    monkeypatch.setattr(registry_module, "_link_stage", fail_before_commit)
+    client, root = _client(tmp_path)
+
+    with client:
+        response = _secure_upload(client, _city_pack_document())
+
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "city-pack-publication-failed",
+        "message": "The city pack could not be published.",
+        "fields": {},
+    }
+    assert "private publication path" not in response.text
+    assert not (root / "city-packs" / "operator-city.json").exists()
+    assert list((root / "city-pack-staging").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_response_send_failure_after_201_keeps_one_discoverable_immutable_record(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    app = module.create_city_workbench_app(workspace, csrf_token=TOKEN)
+    document = _city_pack_document("send-failure-city", indent=2)
+    pending: list[Message] = [{"type": "http.request", "body": document, "more_body": False}]
+    sent: list[Message] = []
+    secret = "sk-send-failure-never-echo-1234567890"
+    private_path = r"C:\private\response.json"
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": UPLOAD_PATH,
+        "raw_path": UPLOAD_PATH.encode("ascii"),
+        "query_string": b"",
+        "headers": [
+            (b"host", b"127.0.0.1:8765"),
+            (b"content-type", b"application/json"),
+            (b"origin", ORIGIN.encode("ascii")),
+            (b"x-adlife-csrf", TOKEN.encode("ascii")),
+        ],
+        "client": ("127.0.0.1", 40_000),
+        "server": ("127.0.0.1", 8_765),
+    }
+
+    async def receive() -> Message:
+        return pending.pop(0) if pending else {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+        if message["type"] == "http.response.body":
+            raise ConnectionError(f"{secret} at {private_path}")
+
+    with caplog.at_level(logging.ERROR):
+        async with app.router.lifespan_context(app):
+            await app(scope, receive, send)
+
+    starts = [message for message in sent if message["type"] == "http.response.start"]
+    assert [message["status"] for message in starts] == [201]
+    assert secret not in caplog.text
+    assert private_path not in caplog.text
+    resolved = WorkbenchCityResolver(workspace).resolve_city("send-failure-city")
+    assert resolved.pack == CityPackV2.model_validate_json(_city_pack_document("send-failure-city"))
+    stored = workspace.root / "city-packs" / "send-failure-city.json"
+    assert stored.read_bytes() == canonical_json(resolved.pack).encode("utf-8") + b"\n"
+    assert list((workspace.root / "city-pack-staging").iterdir()) == []
+
+    retry_app = module.create_city_workbench_app(workspace, csrf_token=TOKEN)
+    with TestClient(retry_app, base_url=ORIGIN) as client:
+        retry = _secure_upload(client, document)
+    assert retry.status_code == 409
+    assert retry.json()["error"]["code"] == "city-pack-conflict"
+    assert stored.read_bytes() == canonical_json(resolved.pack).encode("utf-8") + b"\n"
 
 
 def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(

@@ -42,6 +42,14 @@ from adlife.city.workbench_catalog import (
     WorkbenchCityRegistryUnavailable,
     WorkbenchCityResolver,
 )
+from adlife.city.workbench_city_registry import (
+    MAX_CITY_PACK_UPLOAD_BYTES,
+    CityPackPublicationError,
+    CityPackRegistrationConflict,
+    CityPackUploadTooLarge,
+    InvalidCityPackUpload,
+    MalformedCityPackUpload,
+)
 from adlife.city.workbench_creatives import load_creative_template_catalog
 from adlife.city.workbench_jobs import (
     CityJobManager,
@@ -511,7 +519,11 @@ def create_city_workbench_app(
         allowed_hosts=list(_LOOPBACK_HOSTS),
         www_redirect=False,
     )
-    app.add_middleware(WorkbenchSecurityMiddleware, csrf_token=token)
+    app.add_middleware(
+        WorkbenchSecurityMiddleware,
+        csrf_token=token,
+        route_body_limits={"/api/catalog/cities/upload": MAX_CITY_PACK_UPLOAD_BYTES},
+    )
 
     @app.exception_handler(WorkbenchJsonError)
     async def malformed_json_handler(
@@ -633,6 +645,67 @@ def create_city_workbench_app(
             409,
             "city-registry-unavailable",
             "The workspace city registry is unavailable.",
+        )
+
+    @app.exception_handler(MalformedCityPackUpload)
+    async def malformed_city_pack_handler(
+        _request: Request,
+        _error: MalformedCityPackUpload,
+    ) -> JSONResponse:
+        return workbench_error(
+            400,
+            "malformed-city-pack",
+            "The city pack document is not valid JSON.",
+        )
+
+    @app.exception_handler(InvalidCityPackUpload)
+    async def invalid_city_pack_handler(
+        _request: Request,
+        _error: InvalidCityPackUpload,
+    ) -> JSONResponse:
+        return workbench_error(
+            422,
+            "invalid-city-pack",
+            "The city pack is not a valid CityPack V2 document.",
+        )
+
+    @app.exception_handler(CityPackUploadTooLarge)
+    async def city_pack_too_large_handler(
+        _request: Request,
+        _error: CityPackUploadTooLarge,
+    ) -> JSONResponse:
+        return workbench_error(
+            413,
+            "city-pack-too-large",
+            "The city pack exceeds the upload size limit.",
+        )
+
+    @app.exception_handler(CityPackRegistrationConflict)
+    async def city_pack_conflict_handler(
+        _request: Request,
+        _error: CityPackRegistrationConflict,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "city-pack-conflict",
+            "The city pack conflicts with the workspace catalog.",
+        )
+
+    @app.exception_handler(CityPackPublicationError)
+    async def city_pack_publication_handler(
+        _request: Request,
+        error: CityPackPublicationError,
+    ) -> JSONResponse:
+        if error.potentially_committed:
+            return workbench_error(
+                500,
+                "city-pack-publication-uncertain",
+                "The city pack may already be registered. Reload the city catalog before retrying.",
+            )
+        return workbench_error(
+            500,
+            "city-pack-publication-failed",
+            "The city pack could not be published.",
         )
 
     @app.exception_handler(PersonaTemplateCatalogError)
@@ -891,6 +964,20 @@ def create_city_workbench_app(
                 build_workbench_city_catalog_row(city).model_dump(mode="json") for city in resolved
             ],
         }
+
+    @app.post("/api/catalog/cities/upload")
+    async def upload_city(request: Request) -> JSONResponse:
+        if request.query_params.multi_items():
+            return workbench_error(
+                400,
+                "invalid-upload-request",
+                "The city pack upload request is invalid.",
+            )
+        resolved = city_resolver.register_city(await request.body())
+        return JSONResponse(
+            status_code=201,
+            content=build_workbench_city_catalog_row(resolved).model_dump(mode="json"),
+        )
 
     @app.get("/api/catalog/cities/{city_id}")
     def city_detail(city_id: str, request: Request) -> dict[str, object]:

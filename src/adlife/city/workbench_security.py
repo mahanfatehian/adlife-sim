@@ -18,6 +18,7 @@ from adlife.core.domain.person import contains_labelled_secret_member, contains_
 from adlife.core.ports.cognition import redact_provider_body
 
 MAX_WORKBENCH_BODY_BYTES = 131_072
+MAX_WORKBENCH_ROUTE_BODY_BYTES = 4_194_304
 
 _ERROR_CODE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _FIELD_PATH = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,159}$")
@@ -187,14 +188,33 @@ class WorkbenchSecurityMiddleware:
         *,
         csrf_token: str,
         max_body_bytes: int = MAX_WORKBENCH_BODY_BYTES,
+        route_body_limits: Mapping[str, int] | None = None,
     ) -> None:
         if not isinstance(csrf_token, str) or not csrf_token:
             raise ValueError("CSRF token must be a nonempty string")
         if type(max_body_bytes) is not int or not 1 <= max_body_bytes <= MAX_WORKBENCH_BODY_BYTES:
             raise ValueError("request body limit is invalid")
+        if route_body_limits is None:
+            copied_route_limits: dict[str, int] = {}
+        else:
+            if not isinstance(route_body_limits, Mapping):
+                raise ValueError("route body limits are invalid")
+            copied_route_limits = {}
+            for path, limit in route_body_limits.items():
+                if (
+                    type(path) is not str
+                    or not path.startswith("/api/")
+                    or "?" in path
+                    or "#" in path
+                    or type(limit) is not int
+                    or not 1 <= limit <= MAX_WORKBENCH_ROUTE_BODY_BYTES
+                ):
+                    raise ValueError("route body limits are invalid")
+                copied_route_limits[path] = limit
         self.app = app
         self.csrf_token = csrf_token
         self.max_body_bytes = max_body_bytes
+        self.route_body_limits = copied_route_limits
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -235,6 +255,10 @@ class WorkbenchSecurityMiddleware:
                 "This write method is not supported.",
             )(scope, receive, secured_send)
             return
+
+        path = scope.get("path")
+        assert isinstance(path, str)
+        body_limit = self.route_body_limits.get(path, self.max_body_bytes)
 
         host = _one_ascii_header(scope, b"host")
         if host is None or _LOOPBACK_HOST.fullmatch(host) is None:
@@ -286,10 +310,14 @@ class WorkbenchSecurityMiddleware:
             if not length_text or not length_text.isascii() or not length_text.isdecimal():
                 await self._invalid_length(scope, receive, secured_send)
                 return
-            declared_length = int(length_text)
-            if declared_length > self.max_body_bytes:
+            normalized_length = length_text.lstrip("0") or "0"
+            limit_text = str(body_limit)
+            if len(normalized_length) > len(limit_text) or (
+                len(normalized_length) == len(limit_text) and normalized_length > limit_text
+            ):
                 await self._too_large(scope, receive, secured_send)
                 return
+            declared_length = int(normalized_length)
 
         body = bytearray()
         while True:
@@ -311,9 +339,9 @@ class WorkbenchSecurityMiddleware:
                     "The request body is invalid.",
                 )(scope, receive, secured_send)
                 return
-            remaining = self.max_body_bytes + 1 - len(body)
+            remaining = body_limit + 1 - len(body)
             body.extend(chunk[: max(0, remaining)])
-            if len(body) > self.max_body_bytes or len(chunk) > remaining:
+            if len(body) > body_limit or len(chunk) > remaining:
                 await self._too_large(scope, receive, secured_send)
                 return
             if not message.get("more_body", False):
@@ -352,6 +380,7 @@ class WorkbenchSecurityMiddleware:
 
 __all__ = [
     "MAX_WORKBENCH_BODY_BYTES",
+    "MAX_WORKBENCH_ROUTE_BODY_BYTES",
     "WorkbenchJsonContentError",
     "WorkbenchJsonError",
     "WorkbenchSecurityMiddleware",

@@ -110,7 +110,7 @@ def test_schema2_ordinary_persian_is_valid_and_overflow_precedes_json_parsing(
         }
     )
     persona["interests"] = ["هنر", "فناوری"]
-    before = web_helpers._snapshot(root)
+    before = web_helpers._artifact_snapshot(root)
     with client:
         assert web_helpers._post(client, payload).status_code == 200
         for path in ("/api/scenarios/validate", "/api/jobs"):
@@ -126,7 +126,7 @@ def test_schema2_ordinary_persian_is_valid_and_overflow_precedes_json_parsing(
                 )
                 assert response.status_code == status
         assert client.get("/api/workbench").json()["active_job"] is None
-    assert web_helpers._snapshot(root) == before
+    assert web_helpers._artifact_snapshot(root) == before
 
 
 class _AssetReferenceParser(HTMLParser):
@@ -335,6 +335,53 @@ def test_same_origin_write_boundary_refuses_credential_bearing_bad_requests_with
     assert not (root / "city-runs").exists()
 
 
+def test_city_pack_upload_never_reflects_secret_filename_path_or_raw_body(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, root = web_helpers._client(tmp_path)
+    secret = "Authorization: Bearer sk-city-upload-secret-1234567890"
+    client_filename = r"C:\private\customer-city-secret.json"
+    payload = web_helpers._city_pack_payload("credential-bearing-city")
+    payload["api_key"] = secret
+    payload["filename"] = client_filename
+    document = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+    before = web_helpers._snapshot(root)
+
+    with caplog.at_level(logging.DEBUG), client:
+        response = client.post(
+            web_helpers.UPLOAD_PATH,
+            headers={
+                "Content-Type": "application/json",
+                "Origin": web_helpers.ORIGIN,
+                "X-AdLife-CSRF": web_helpers.TOKEN,
+                "Authorization": secret,
+                "X-File-Name": client_filename,
+            },
+            content=document,
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "invalid-city-pack",
+        "message": "The city pack is not a valid CityPack V2 document.",
+        "fields": {},
+    }
+    exposed = response.text + caplog.text
+    for marker in (
+        secret,
+        client_filename,
+        str(root),
+        "credential-bearing-city",
+        "city-pack-staging",
+        ".city-pack-registry.lock",
+    ):
+        assert marker not in exposed
+    assert web_helpers._snapshot(root) == before
+    assert not (root / "city-packs").exists()
+    assert not (root / "city-runs").exists()
+
+
 @pytest.mark.parametrize(
     ("path", "expected_status"),
     [
@@ -356,7 +403,7 @@ def test_traversal_and_query_abuse_are_value_free_refusals(
     expected_status: int,
 ) -> None:
     client, root = web_helpers._client(tmp_path)
-    before = web_helpers._snapshot(root)
+    before = web_helpers._artifact_snapshot(root)
     with client:
         response = client.get(path)
 
@@ -364,7 +411,7 @@ def test_traversal_and_query_abuse_are_value_free_refusals(
     assert "sk-query-secret" not in response.text
     assert ".." not in response.text
     assert "workbench.html" not in response.text
-    assert web_helpers._snapshot(root) == before
+    assert web_helpers._artifact_snapshot(root) == before
 
 
 def test_credential_shaped_invalid_draft_is_not_echoed_into_browser_or_artifacts(
