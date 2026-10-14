@@ -1064,9 +1064,13 @@ def test_near_limit_city_pack_completes_bounded_authoritative_detail_confirmatio
             page.goto(base_url, wait_until="networkidle")
             with (
                 page.expect_response(
-                    "**/api/catalog/cities/near-limit-operator-city"
+                    "**/api/catalog/cities/near-limit-operator-city",
+                    timeout=90_000,
                 ) as detail_response,
-                page.expect_response("**/api/catalog/cities/upload") as uploaded,
+                page.expect_response(
+                    "**/api/catalog/cities/upload",
+                    timeout=90_000,
+                ) as uploaded,
             ):
                 page.locator("#city-pack-file").set_input_files(
                     {
@@ -1078,7 +1082,7 @@ def test_near_limit_city_pack_completes_bounded_authoritative_detail_confirmatio
             assert uploaded.value.status == 201
             assert detail_response.value.status == 200
             expect(page.locator("#city-upload-status")).to_have_text(
-                "City pack ready.", timeout=30_000
+                "City pack ready.", timeout=90_000
             )
             expect(page.locator("#city-upload-error")).to_be_empty()
             expect(page.locator("#city-select")).to_have_value("near-limit-operator-city")

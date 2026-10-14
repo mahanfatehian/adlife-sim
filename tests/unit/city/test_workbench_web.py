@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import json
 import logging
+import os
 import re
 import socket
 import threading
@@ -54,6 +55,24 @@ from tests.unit.city.test_workbench_input import (
 TOKEN = "fixed-workbench-web-token"
 ORIGIN = "http://127.0.0.1:8765"
 UPLOAD_PATH = "/api/catalog/cities/upload"
+
+
+def _assert_no_live_city_stage_bytes(root: Path) -> None:
+    """Allow only the safe POSIX tombstones documented by the registry contract."""
+    staging = root / "city-pack-staging"
+    paths = list(staging.iterdir()) if staging.exists() else []
+    if os.name == "nt":
+        assert paths == []
+        return
+    records = root / "city-packs"
+    record_paths = list(records.iterdir()) if records.exists() else []
+    for path in paths:
+        assert path.is_file() and not path.is_symlink()
+        if path.read_bytes() != b"":
+            assert any(
+                record.is_file() and not record.is_symlink() and os.path.samefile(path, record)
+                for record in record_paths
+            )
 
 
 def _module():
@@ -1700,7 +1719,7 @@ def test_city_pack_upload_returns_one_exact_path_free_row_and_canonical_record(
     assert "resource_name" not in response.text
     stored = root / "city-packs" / "operator-city.json"
     assert stored.read_bytes() == canonical_json(resolved.pack).encode("utf-8") + b"\n"
-    assert list((root / "city-pack-staging").iterdir()) == []
+    _assert_no_live_city_stage_bytes(root)
     assert not (root / "city-runs").exists()
 
 
@@ -1976,8 +1995,7 @@ def test_corrupt_registry_upload_refusal_preserves_existing_bytes_and_creates_no
     assert response.json()["error"]["code"] == "city-registry-unavailable"
     assert corrupt.read_bytes() == b"corrupt-registry-marker"
     assert not (records / "operator-city.json").exists()
-    staging = root / "city-pack-staging"
-    assert not staging.exists() or list(staging.iterdir()) == []
+    _assert_no_live_city_stage_bytes(root)
 
 
 def test_precommit_publication_failure_is_generic_and_leaves_no_live_stage(
@@ -2003,7 +2021,7 @@ def test_precommit_publication_failure_is_generic_and_leaves_no_live_stage(
     }
     assert "private publication path" not in response.text
     assert not (root / "city-packs" / "operator-city.json").exists()
-    assert list((root / "city-pack-staging").iterdir()) == []
+    _assert_no_live_city_stage_bytes(root)
 
 
 @pytest.mark.asyncio
@@ -2058,7 +2076,7 @@ async def test_response_send_failure_after_201_keeps_one_discoverable_immutable_
     assert resolved.pack == CityPackV2.model_validate_json(_city_pack_document("send-failure-city"))
     stored = workspace.root / "city-packs" / "send-failure-city.json"
     assert stored.read_bytes() == canonical_json(resolved.pack).encode("utf-8") + b"\n"
-    assert list((workspace.root / "city-pack-staging").iterdir()) == []
+    _assert_no_live_city_stage_bytes(workspace.root)
 
     retry_app = module.create_city_workbench_app(workspace, csrf_token=TOKEN)
     with TestClient(retry_app, base_url=ORIGIN) as client:

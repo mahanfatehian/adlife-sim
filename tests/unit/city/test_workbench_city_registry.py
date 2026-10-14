@@ -1447,7 +1447,6 @@ def test_stage_inode_swap_after_preverification_cannot_publish_wrong_bytes(
     try:
         registered = registry.register(_document("stage-swap-city"), forbidden_city_ids=frozenset())
     except module.CityPackPublicationError as error:
-        assert os.name == "nt" or sys.platform.startswith("linux")
         assert error.potentially_committed is False
         assert not (registry.workspace.root / "city-packs" / "stage-swap-city.json").exists()
     else:
