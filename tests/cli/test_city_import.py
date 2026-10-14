@@ -277,3 +277,29 @@ def test_city_import_v2_never_uses_the_network(
     result = CliRunner().invoke(app, _v2_args(source, output))
     assert result.exit_code == 0, result.output
     assert output.is_file()
+
+
+def test_city_import_v2_does_not_register_output_in_packaged_cli_catalog(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "overpass.json"
+    output = tmp_path / "city-v2.json"
+    source.write_text(json.dumps(extract()), encoding="utf-8")
+
+    imported = CliRunner().invoke(app, ["--format", "json", *_v2_args(source, output)])
+    listed = CliRunner().invoke(app, ["--format", "json", "city-catalog", "list"])
+    shown = CliRunner().invoke(
+        app,
+        ["--format", "json", "city-catalog", "show", "tehran-pilot"],
+    )
+
+    assert imported.exit_code == 0, imported.output
+    assert listed.exit_code == 0, listed.output
+    assert [item["city_id"] for item in json.loads(listed.stdout)["cities"]] == [
+        "fictional-grid-v2",
+        "fictional-harbor-loop-v2",
+        "fictional-river-junction-v2",
+    ]
+    assert shown.exit_code == 2
+    assert json.loads(shown.stdout)["error"]["exit_code"] == 2
+    assert output.is_file()

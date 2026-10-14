@@ -41,7 +41,9 @@ def test_city_workbench_is_registered_with_required_workspace_and_honest_help() 
     assert "no authentication" in normalized_command_output
     assert "provider configuration" in normalized_command_output
     assert "oauth" in normalized_command_output
-    assert "real-world city" in normalized_command_output
+    assert "workspace city-pack upload" in normalized_command_output
+    assert "rights" in normalized_command_output
+    assert "unreviewed" in normalized_command_output
     assert "run jobs are not enabled" not in normalized_command_output
     assert "future verified" not in normalized_command_output
 

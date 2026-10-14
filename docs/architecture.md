@@ -55,7 +55,7 @@ bounded:
 CITY -> CAMPAIGN -> RUN -> INSPECT (packaged vanilla browser)
         -> loopback schema-2 HTTP (schema-1 compatibility)
         -> same-origin, CSRF, size and strict-JSON boundary
-        -> packaged city + fictional creative resolution
+        -> packaged/workspace city + fictional creative resolution
         -> immutable CityMobility / SpatialCampaignScenario / SpatialResponseInput
         -> one process-local worker: prepare -> publish -> verify
         -> schema-v8 artifact (schema-v7 compatibility) + immutable run-scoped viewer
@@ -78,6 +78,17 @@ scientific state or hashes.
 Every job view also carries the same frozen `accepted_settings` receipt through every
 phase (city, scenario, campaign, exact decimal seed, agent count, days, and rules mode);
 completion is accepted only when the verified result matches that receipt.
+
+The same pinned workspace owns an immutable `city-packs/` registry. A dedicated upload
+route accepts one strict UTF-8 CityPack V2 document, with independent 4 MiB raw and
+canonical-storage ceilings while ordinary JSON writes retain their 128 KiB ceiling. A
+resolver combines those records with one verified snapshot of the packaged catalog;
+validation and job acceptance receive the exact resolved pack instance rather than looking
+it up again later. Workspace entries are always classified
+`operator-supplied-unreviewed`: structural validation cannot grant ownership, license, or
+redistribution rights. Source URL fields are inert text, are not dereferenced, and cause no
+outbound request; the only browser/API traffic is same-origin loopback. Registry corruption
+blocks catalog and new-run operations but not startup, saved-run inspection, or replay.
 
 The browser owns one unsaved draft and presentation state only. It retrieves verified city
 and creative choices, sends the seed as a canonical exact decimal string, and asks the
@@ -185,12 +196,14 @@ movement decision, or arbitrary identity.
 
 The city adapter owns file and package-resource loading. Its packaged catalog is an
 offline, content-addressed index: it verifies each v2 resource's canonical SHA-256 and
-matching ID/schema/metadata before selection. The only bundled entry is
-`fictional-grid-v2` with qualification `fictional-fixture`; no real city is represented
-as reviewed. The server binds to loopback, has no HTTP input for filesystem paths or
-secrets, and makes no network request. Catalog selection, import, simulation, replay and
-viewing do not contact a public tile service or geocoder and do not accept an arbitrary
-resource URL.
+matching ID/schema/metadata before selection. Exactly three bundled entries are
+`fictional-fixture` data and no real city is represented as rights-reviewed. The separate
+workspace registry accepts immutable local V2 uploads without adding them to the packaged
+CLI catalog. The server binds to loopback, has no HTTP input for filesystem paths or
+secrets, and makes no outbound network request. Catalog selection, import, simulation,
+replay and viewing do not contact a public tile service or geocoder and do not accept an
+arbitrary resource URL. A source URL inside a pack remains inert metadata, not a fetch
+target.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
 misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6/v7/v8
@@ -208,6 +221,9 @@ V7 retains the exact V6 scientific evidence and adds only the canonical, manifes
 workbench input sidecar described above.
 V8 freezes schema-2 persona definitions and assignments in that same sidecar while
 retaining V6 scientific evidence and the exact input-2/manifest-8 binding.
+For both packaged and workspace-selected runs, canonical `inputs/city.json` is the
+authoritative frozen city. Replay, metrics, reports, and run inspection read and verify the
+artifact and remain independent of later registry removal, replacement, or corruption.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute and each applicable evidence layer before reporting
 equality, and `city-view`

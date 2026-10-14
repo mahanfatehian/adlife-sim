@@ -24,7 +24,7 @@ or spend recommendations. Do not substitute invented traffic, demographic, or
 conversion rates for licensed measurements. No personal trajectories, real-person
 profiles, ad-network integrations, or live consumer targeting belong in this scope.
 
-## Implemented baseline, updated from code on 2026-10-05
+## Implemented baseline, updated from code on 2026-10-14
 
 - `src/adlife/core/simulation/runner.py` and `src/adlife/adapters/storage/sqlite_store.py`
   implement the zone-based advertising run/replay path with SQLite authority,
@@ -37,8 +37,13 @@ profiles, ad-network integrations, or live consumer targeting belong in this sco
 - `src/adlife/city/osm.py` and `adlife city-import` convert a **local** bounded
   Overpass JSON extract into an attributed ODbL pack without network access. They do
   not download or catalog worldwide cities; unsupported turn/access rules are refused.
-- The packaged, content-addressed catalog contains only the explicit
-  `fictional-grid-v2` fixture. No rights-reviewed real-city entry has shipped.
+- The packaged, content-addressed catalog contains three explicit fictional fixtures and
+  no rights-reviewed real-city entry. The loopback workbench also owns an immutable local
+  V2 registry. Uploaded packs are `operator-supplied-unreviewed`; technical validation does
+  not establish rights, and declared source URLs are inert rather than fetched.
+- The workbench freezes the exact selected packaged or workspace pack as
+  `inputs/city.json`. Replay, metrics, reports, and inspection use the verified artifact
+  without consulting current registry state.
 - `src/adlife/city/web.py` serves a read-only, loopback FastAPI viewer, and
   `src/adlife/city/static/` is vanilla browser code. It paints an illustrative road canvas
   and fixed 06:00/19:00 light/dark styling, **not** local sunrise. It can validate and view a
@@ -51,8 +56,10 @@ profiles, ad-network integrations, or live consumer targeting belong in this sco
   read-only opportunity/attention default; schema-v6 adds a separate response projection.
   Bounded C4b evidence is complete: `city-study` analyzes explicit verified seed pairs and
   `city-report` publishes a fixed-path zero-JavaScript evidence ledger. The broader C3 and
-  C4 gates remain open for spatial social/purchase mechanisms and other declared metrics;
-  job orchestration and the analyst workbench also remain open.
+  C4 gates remain open for spatial social/purchase mechanisms and other declared metrics.
+  A bounded single-operator analyst workbench and process-local orchestration exist; remote
+  durable orchestration, provider-backed city cognition, and enterprise deployment remain
+  open.
 - The city path does not join the existing zone campaign engine, provide authentication or
   protected provider settings, use calibrated traffic/population data, or establish
   external validity. The current model card and limitations govern every claim.

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Immutable workspace city registry (2026-10-14)** — the loopback workbench can now
+  register a bounded local CityPack V2 without exposing a client/server path, list it
+  beside three bundled fictional fixtures, select it, run it, inspect its frozen source
+  metadata, and replay from `inputs/city.json` without consulting current registry state.
+  Uploads are immutable, no-clobber, capped at 4 MiB for both raw and canonical bytes,
+  labelled `operator-supplied-unreviewed`, and never promoted to packaged
+  `rights-reviewed` status by technical validation. Source URLs remain inert metadata;
+  default operation performs no outbound request.
 - **Fictional persona authoring (2026-10-13)** — default browser schema-2 Audience
   authoring publishes schema-v8 with frozen `inputs/workbench.json`, deterministic persona
   assignments and verified saved identities. Schema-1/schema-v7 homogeneous cohort and
@@ -45,8 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can now preserve directed road geometry, exact bounds, IANA time-zone metadata,
   source provenance and known omissions; mobility-only v2 runs freeze those inputs and
   replay independently of later catalog changes. New `city-catalog list/show` and
-  `--city-id` selectors verify packaged resources by canonical hash. The sole catalog
-  entry is the explicit `fictional-grid-v2` fixture; no real city is claimed qualified.
+  `--city-id` selectors verify packaged resources by canonical hash. This initial
+  foundation began with the explicit `fictional-grid-v2` fixture; the current packaged
+  catalog has three fictional fixtures and no rights-reviewed real city.
 - **Bounded local OSM v2 ingestion** — explicit source date/version/time-zone inputs,
   deterministic source hashing and quality counts, stable segment identities, and
   refusal of access/turn semantics the model cannot represent. Import and catalog

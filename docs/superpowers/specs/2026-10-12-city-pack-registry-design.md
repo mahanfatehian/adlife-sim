@@ -1,12 +1,12 @@
 # Workspace City-Pack Registry Design
 
-**Status:** Approved for implementation planning on 2026-10-13
+**Status:** Implemented; publication details reconciled with the cross-platform code on 2026-10-14
 **Date:** 2026-10-12
 **Scope:** Safe, offline upload and selection of operator-supplied CityPack V2 files in the local workbench
 
 ## Intent
 
-The city workbench currently exposes only the packaged fictional grid even though the CLI can produce validated CityPack files from offline source data. This design lets an operator choose a local CityPack V2 JSON file in the browser, register it inside the pinned workbench workspace, inspect its provenance and geometry, and use it in the existing validate → run → inspect → replay flow.
+Before this slice, the city workbench exposed only packaged fictional geometry even though the CLI could produce validated CityPack files from offline source data. This design lets an operator choose a local CityPack V2 JSON file in the browser, register it inside the pinned workbench workspace, inspect its provenance and geometry, and use it in the existing validate → run → inspect → replay flow.
 
 Registration proves only that the document satisfies AdLife's technical CityPack contract. It does not prove ownership, redistribution rights, routing accuracy, source authenticity, population representativeness, or fitness for commercial decisions.
 
@@ -42,7 +42,7 @@ city-packs/<city_id>.json
 
 The file contains canonical CityPack JSON plus one trailing newline. No mutable index is stored. Temporary files live in a separate `<pinned-workbench-root>/city-pack-staging/` directory and can never be mistaken for registrations.
 
-Every registry operation takes one in-process mutex and one cooperating cross-process advisory lock rooted directly under the pinned workspace. Under that lock, discovery enumerates direct `city-packs` entries only until either the directory ends or a 51st entry is observed. A 51st entry is an overflow refusal. With 50 or fewer entries, every entry must be a regular, non-linked canonical `.json` file; unknown names or types make the registry corrupt. Entries are then sorted by filename, fully validated, checked for canonical bytes, and required to have `filename stem == parsed city_id`. Nothing is skipped or silently normalized.
+Every registry operation takes one in-process mutex and one cooperating cross-process advisory lock rooted directly under the pinned workspace. Under that lock, discovery enumerates direct `city-packs` entries only until either the directory ends or a 51st entry is observed. A 51st entry is an overflow refusal. With 50 or fewer entries, every entry must be a regular canonical `.json` file; symbolic links, reparse points, unknown names, or other types make the registry corrupt. Hard-link count alone is not a refusal because a successful Linux named-stage fallback may leave the staging name and final name attached to the same verified inode. Entries are sorted by filename, fully validated, checked for canonical bytes, and required to have `filename stem == parsed city_id`. Nothing is skipped or silently normalized.
 
 The following limits are fixed:
 
@@ -68,8 +68,15 @@ The server:
 6. computes the existing canonical pack fingerprint;
 7. derives the destination only from the validated `city_id`;
 8. rejects collisions against both packaged and workspace city IDs;
-9. writes, flushes, and `fsync`s a temporary file in the separate verified staging directory, then reopens and validates it;
-10. under the registry locks, rescans capacity/collisions and publishes the already-fsynced, preverified staging file as an exclusive final link; creation of that final link is the commit point, after which it reopens/revalidates and syncs the registry directory where supported before reporting success.
+9. writes, flushes, and `fsync`s descriptor-owned staging in the separate verified staging directory, then reopens and validates it;
+10. under the registry locks, rescans capacity/collisions and publishes the already-fsynced, preverified descriptor with the platform's exclusive no-clobber primitive; successful final-name creation is the commit point, after which it reopens/revalidates and syncs the registry directory where supported before reporting success.
+
+Publication is platform-specific rather than a universal path-based hard link. Linux prefers
+unnamed `O_TMPFILE` staging and links the pinned descriptor; only documented unsupported
+filesystem errors allow a random named fallback. macOS uses `fclonefileat` from the pinned
+descriptor into the pinned registry directory. Windows opens delete-on-close staging and
+uses descriptor-bound `NtSetInformationFile(FileLinkInformation)`. None of these paths uses
+`replace` or derives a stage name from submitted content.
 
 An identical second upload is still a `409` conflict. Registration never overwrites, updates, shadows, or silently repairs an existing record.
 
@@ -96,10 +103,10 @@ The existing pinned `WorkbenchWorkspace` guarantees are extended to the registry
 - recheck the pinned workspace device/inode when available before reading or publishing;
 - reject root replacement and path resolution changes;
 - reject separators, traversal, percent-encoded traversal, dot names, absolute/drive/UNC forms, and Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) when deriving filenames;
-- create staging only inside the verified staging directory, `fsync` and revalidate complete content before publication, publish exclusively without `replace`, and remove only the exact staging file before the final-link commit point;
+- create staging only inside the verified staging directory, `fsync` and revalidate complete content before publication, and publish exclusively without `replace`; descriptor ownership prevents cleanup from deleting an unrelated path replacement;
 - never repair or delete an unexpected existing destination.
 
-A final name is not selectable by a cooperating reader until the registry lock is released. Because the complete staging file is flushed, fsynced, canonically validated, and identity-checked before the exclusive final link is created, a successful link is the cross-process commit point and is never rolled back. A crash, directory-sync error, post-commit verification error, or response-delivery failure after that point may produce an ambiguous HTTP outcome, but any surviving final file is treated by every process as a committed candidate and must pass the normal full read verification before selection. Listing is the authoritative recovery check, and retry never overwrites it. Failure before the exclusive link removes only the operation's staging file and cannot create a final registration.
+A final name is not selectable by a cooperating reader until the registry lock is released. Because the complete stage is flushed, fsynced, canonically validated, and identity-checked before exclusive final-name creation, that creation is the cross-process commit point and is never rolled back. A crash, directory-sync error, post-commit verification error, or response-delivery failure after that point may produce an ambiguous HTTP outcome, but any surviving final file is treated by every process as a committed candidate and must pass the normal full read verification before selection. Listing is the authoritative recovery check, and retry never overwrites it. Pre-commit cleanup never touches an unrelated replacement. On a POSIX filesystem that cannot use unnamed staging, safe cleanup may retain a zero-byte random tombstone; after a successful Linux fallback it may retain the complete staging hard link. The separate staging directory is never enumerated as registrations.
 
 A failed short write, pre-commit verification, publication, or concurrent duplicate must expose no partial record and must preserve all pre-existing bytes. Post-commit failures may leave the complete committed record and are reported as potentially committed, never as rolled back. Capacity checking and publication occur under the same cross-process lock, including for two different city IDs.
 
@@ -195,7 +202,7 @@ Removing, changing, corrupting, or losing the registry after a run must not alte
 - Exact raw/canonical limits, limit plus one, malformed/deep JSON, duplicate keys, NaN/Infinity/overflow, invalid Unicode/BOM, unknown fields, boolean/float/string version, V1 refusal, and every V2 graph/provenance invariant.
 - Packaged/local ID collision, duplicate local upload, 50-entry capacity, and concurrent duplicate publication preserve original bytes.
 - Traversal, separators, absolute/drive/UNC paths, dot names, reserved Windows names, symlinks, dangling links, junctions/reparse points, root replacement, nonregular files, and corrupt existing records.
-- Short write, flush, pre-commit verification, publication, directory-sync, post-commit verification, response failure, and process-interruption fault injection proves that another reader observes either no final record before the commit point or one complete normally verified record after it—never a partial record.
+- Short write, flush, pre-commit verification, platform publication, directory-sync, post-commit verification, response failure, and process-interruption fault injection proves that another reader observes either no final record before the commit point or one complete normally verified record after it—never a partial record.
 
 ### API and browser
 

@@ -6,11 +6,13 @@ trusted. Read this before quoting any number the simulator produces.
 ## Intended use
 
 The opt-in city path is a separate product-track prototype alongside the zone campaign
-engine. Its packaged, content-addressed catalog currently contains only the
-`fictional-grid-v2` fixture; a rights-reviewed real city has not shipped. A street pack
-acquired under appropriate rights can provide real geography, but the agents, schedules and
-speeds remain synthetic and uncalibrated. Spatial campaign documents can be validated
-against roads, and the pure core can derive bounded synthetic opportunity records. A
+engine. Its packaged, content-addressed catalog contains three fictional fixtures and zero
+rights-reviewed real cities. The local workbench can store a V2 pack as
+`operator-supplied-unreviewed`; passing structural checks does not establish rights or
+license compliance. A street pack acquired under appropriate rights can provide real
+geography, but the agents, schedules and speeds remain synthetic and uncalibrated. Spatial
+campaign documents can be validated against roads, and the pure core can derive bounded
+synthetic opportunity records. A
 schema-v5 `city-run` freezes those records plus a separate attention evidence stream: one
 synthetic impression per opportunity and noticed when an independent keyed draw is below
 the fixed 0.5 probability. The records say
@@ -32,6 +34,9 @@ complete accepted draft and exact fictional creative-template snapshot, and the 
 `workbench_input_sha256` binds it to the other run inputs. Verified discovery, replay and
 run-scoped inspection refuse a missing, changed, noncanonical or inconsistent sidecar.
 Process-local job progress is operational metadata and has no effect on synthetic outcomes.
+The exact accepted city is frozen separately as canonical `inputs/city.json`; replay,
+metrics, reports, and run-scoped inspection use the verified artifact and never depend on
+the current workspace registry. Declared source URLs remain inert text and are not fetched.
 
 The packaged browser operates `CITY -> CAMPAIGN -> RUN -> INSPECT` for this local
 deterministic profile. Its Audience editor assigns explicitly displayed interests, traits,

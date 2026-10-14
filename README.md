@@ -93,8 +93,8 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Schema-v6 spatial rule responses and campaign-scoped state over persisted notices | C3c evidence complete; uncalibrated and not a purchase or sales model |
 | Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
 | Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
-| Verified offline, content-addressed city catalog with one `fictional-fixture` entry | Foundation complete; no real city is qualified |
-| Browser-operated local city workbench, immutable schema-v8 persona inputs, verified run library, and run-scoped inspection | Local deterministic slice complete; one process-local worker and fictional catalog only |
+| Verified offline, content-addressed city catalog with three `fictional-fixture` entries | Foundation complete; zero rights-reviewed real-city entries |
+| Browser-operated local city workbench, immutable schema-v8 persona inputs, workspace V2 city-pack upload, verified run library, and run-scoped inspection | Local deterministic slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated provider settings | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
@@ -176,12 +176,14 @@ direction, source provenance, exact bounds, an IANA time zone, and known omissio
 pack without network access; importing does not establish license or redistribution
 rights.
 
-`adlife city-catalog list` exposes a packaged, offline, content-addressed catalog. Its
-only shipped entry is `fictional-grid-v2`, explicitly classified as
-`fictional-fixture`; selection verifies the immutable pack hash and metadata before use.
-Use `--city-id fictional-grid-v2` with `city` or `city-run`. No command contacts a public
-tile server or geocoder, and a locally imported real-world pack is not automatically
-catalog-qualified. The
+`adlife city-catalog list` exposes a packaged, offline, content-addressed catalog. It
+contains exactly three bundled fictional fixtures and zero rights-reviewed real-city
+entries: `fictional-grid-v2`, `fictional-harbor-loop-v2`, and
+`fictional-river-junction-v2`. Selection verifies each immutable pack hash and its
+metadata before use. Use a packaged ID with `city` or `city-run`. `city-import` writes a
+local pack file but does not register it in this packaged CLI catalog. No command contacts
+a public tile server or geocoder, and a locally imported real-world pack is not
+automatically catalog-qualified. The
 [city-source qualification checklist](docs/data/city-source-qualification.md) defines
 the human rights review required before a real-world entry may ship.
 
@@ -193,12 +195,17 @@ uv run adlife city-workbench --workspace ./workbench
 
 Then open `http://127.0.0.1:8765` yourself; the command never opens a browser or visible
 terminal. The packaged, no-network UI implements `CITY -> CAMPAIGN -> RUN -> INSPECT`:
-choose the verified fictional catalog city, compose bounded phone/billboard assumptions
-from a packaged fictional creative, validate without writing an artifact, start and poll a
-deterministic run, then reopen it from the verified library in the immutable scoped
-inspector. The browser keeps only one unsaved in-memory draft. The server remains
-authoritative for geometry, validation, run-ID collisions, artifact integrity, and all
-scientific results.
+choose a verified bundled fixture or upload one local CityPack V2 into this workspace,
+compose bounded phone/billboard assumptions from a packaged fictional creative, validate
+without writing a run artifact, start and poll a deterministic run, then reopen it from the
+verified library in the immutable scoped inspector. Uploads are capped at 4 MiB for both
+raw request and canonical stored bytes; other JSON write routes remain capped at 128 KiB.
+Technical validation does not establish ownership, license compliance, redistribution
+rights, or real-city qualification, so uploaded entries are labelled
+`Operator supplied - rights not reviewed`. Source URLs are inert displayed metadata and
+are never dereferenced. The browser keeps only one unsaved in-memory draft. The server
+remains authoritative for geometry, validation, run-ID collisions, artifact integrity,
+and all scientific results.
 
 The CAMPAIGN stage includes an Audience editor: choose from four bundled templates,
 add/duplicate/remove personas, edit counts and explicit assumptions, then validate and run.
@@ -245,8 +252,10 @@ page load re-verifies current files and refuses inconsistent changes.
 
 This local deterministic slice does not configure providers or OAuth, authenticate users,
 qualify a real-city/worldwide catalog, download reports, operate comparisons or paired
-studies in the browser, calibrate traffic/population behavior, or predict sales. The model
-clock is illustrative and workbench runs remain capped at seven model days.
+studies in the browser, calibrate traffic/population behavior, or predict sales. A local
+upload can contain authorized real street geometry, but the upload is not rights review or
+catalog qualification. The model clock is illustrative and workbench runs remain capped at
+seven model days.
 
 An optional schema-v1 place-set JSON can bind fictional home, workplace and leisure
 points to exact road nodes and to the selected pack hash. Validate it before use, then

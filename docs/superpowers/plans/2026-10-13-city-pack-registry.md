@@ -4,7 +4,7 @@
 
 **Goal:** Let the local workbench safely register, select, run, and replay operator-supplied CityPack V2 files while expanding the offline demo with two additional fictional cities and two fictional campaign templates.
 
-**Architecture:** Add an immutable workspace registry with process/thread locking and canonical no-clobber publication, then compose it with one verified packaged-catalog snapshot through a resolver injected into validation and job creation. Add a route-specific 4 MiB upload boundary, preserve frozen-run replay independence, and provide a compact uploader with accurate trust labels.
+**Architecture:** Add an immutable workspace registry with process/thread locking and canonical descriptor-bound no-clobber publication, then compose it with one verified packaged-catalog snapshot through a resolver injected into validation and job creation. Add a route-specific 4 MiB upload boundary, preserve frozen-run replay independence, and provide a compact uploader with accurate trust labels.
 
 **Tech Stack:** Python 3.11+ standard library, Pydantic v2, FastAPI/Starlette, vanilla HTML/CSS/JavaScript, Playwright, pytest, uv/Hatch.
 
@@ -23,7 +23,7 @@
 
 ## Review Focus
 
-- A crash around the exclusive hard-link commit must leave another process seeing either no record or one complete canonical record.
+- A crash around the platform-specific exclusive final-name commit must leave another process seeing either no record or one complete canonical record.
 - A 51st, unknown, linked, reserved-name, or noncanonical entry must refuse the registry rather than be skipped.
 - Missing `Content-Length` remains valid under streamed bounds; duplicate, malformed, mismatched, and oversized lengths refuse.
 - Registry corruption blocks catalog and new-run operations, but not app startup, saved-run inspection, or replay.
@@ -135,13 +135,13 @@ Add distinct typed errors: `MalformedCityPackUpload`, `InvalidCityPackUpload`, `
 Use one parsing owner: `WorkspaceCityRegistry.register()` receives the raw bounded bytes and calls `strict_json_object(data, max_body_bytes=4_194_304)` exactly once before strict CityPack V2 validation. Exception messages are constant and value-free.
 
 - [ ] **Step 1: Write failing validation/discovery tests** for canonical-model V2 restart round trips, isolation, raw and stored byte bounds, V1/wrong types, duplicate keys, UTF-8 BOM, UTF-16/32, non-object roots, malformed/surrogate input, NaN/Infinity/`1e999`, deep JSON, semantically identical differently formatted input, graph/provenance errors, filename-stem/city-ID mismatch, packaged/local collisions, a 51st entry, reserved names, traversal/drive/UNC forms, links/reparse/nonregular entries, root replacement, and full refusal on unknown/noncanonical registry records.
-- [ ] **Step 2: Write failing fault/concurrency tests** for short/zero writes, flush/fsync, validation, hard link, directory sync, post-commit verification, `KeyboardInterrupt` before/after commit, duplicate and different-ID races at capacity across real processes/registry instances, a reader around the commit point, input-independent random staging names, pre-commit cleanup, and unchanged source/existing bytes. Inject a failure between final-link creation and staging unlink; discovery must accept the complete final record and ignore the orphan in the separate staging directory.
+- [ ] **Step 2: Write failing fault/concurrency tests** for short/zero writes, flush/fsync, validation, platform publication, directory sync, post-commit verification, `KeyboardInterrupt` before/after commit, duplicate and different-ID races at capacity across real processes/registry instances, a reader around the commit point, input-independent random staging names, pre-commit cleanup, and unchanged source/existing bytes. Inject a failure after final-name creation; discovery must accept the complete final record and ignore any orphan in the separate staging directory.
 - [ ] **Step 3: Run tests and confirm the registry is absent.**
 
   Run: `uv run pytest tests/unit/city/test_workbench_city_registry.py tests/integration/test_city_workbench_registry.py tests/unit/city/test_workbench_workspace.py tests/unit/city/test_workbench_security.py -q`
 
-- [ ] **Step 4: Implement immutable storage** at `city-packs/<city_id>.json` with separate `city-pack-staging/`, canonical JSON plus one newline, a process-global `RLock` shared by registry instances for the same workspace, and a `.city-pack-registry.lock` file opened and revalidated directly beneath the pinned workspace. Use `fcntl.flock` on POSIX and `msvcrt.locking` on Windows; verify workspace/lock/directory identity, regular type, and symbolic-link/reparse safety on every operation. Do not reject `st_nlink > 1`: a crash after commit may legitimately leave the stage and final names as two hard links.
-- [ ] **Step 5: Publish through a preverified flushed/fsynced random staging file and exclusive `os.link` commit.** Staging names contain no submitted ID/text/secret. Never use replace. After the link, revalidate and sync the registry directory where supported, unlink the exact staging name, and sync the staging directory where supported. Any crash, unlink, verification, or sync failure after link creation leaves the final file committed, never rolls it back, and raises `CityPackPublicationError(potentially_committed=True)`; every pre-commit failure removes only the exact staging file.
+- [ ] **Step 4: Implement immutable storage** at `city-packs/<city_id>.json` with separate `city-pack-staging/`, canonical JSON plus one newline, a process-global `RLock` shared by registry instances for the same workspace, and a `.city-pack-registry.lock` file opened and revalidated directly beneath the pinned workspace. Use `fcntl.flock` on POSIX and `msvcrt.locking` on Windows; verify workspace/lock/directory identity, regular type, and symbolic-link/reparse safety on every operation. Do not reject `st_nlink > 1`: Linux named-stage fallback may legitimately leave the stage and final names as two hard links.
+- [ ] **Step 5: Publish through preverified flushed/fsynced descriptor-owned staging and a platform-specific exclusive commit.** Linux prefers `O_TMPFILE` and uses a pinned descriptor link, macOS uses `fclonefileat`, and Windows uses delete-on-close staging plus descriptor-bound `NtSetInformationFile`. Staging names contain no submitted ID/text/secret. Never use replace. Revalidate and sync the registry directory where supported. Safe POSIX fallback cleanup may retain a zero-byte tombstone or, after commit, the complete extra hard link rather than risk deleting an unrelated path replacement. Any crash, verification, cleanup, or sync failure after final-name creation leaves the final file committed, never rolls it back, and raises `CityPackPublicationError(potentially_committed=True)`.
 - [ ] **Step 6: Re-run focused tests, Ruff, and mypy; commit.**
 
   Commit: `feat(city): add immutable workspace city registry`

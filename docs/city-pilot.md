@@ -14,11 +14,12 @@ uv run adlife city-catalog show fictional-grid-v2
 uv run adlife city --city-id fictional-grid-v2
 ```
 
-`fictional-grid-v2` is the only shipped catalog entry. Its origin is `fictional` and
-its qualification is `fictional-fixture`; it is not a real city or a rights-review
-claim. Catalog selection verifies the pack's canonical SHA-256 and public metadata
-before use. It reads packaged resources only, makes no network request, and accepts no
-arbitrary resource URL. Running `adlife city` without a selector retains the original
+The packaged catalog contains three entries: `fictional-grid-v2`,
+`fictional-harbor-loop-v2`, and `fictional-river-junction-v2`. All three have origin
+`fictional` and qualification `fictional-fixture`; none is a real city or rights-review
+claim. Catalog selection verifies each pack's canonical SHA-256 and public metadata before
+use. The CLI catalog reads packaged resources only, makes no network request, and accepts
+no arbitrary resource URL. Running `adlife city` without a selector retains the original
 bundled fictional v1 grid.
 
 ## Local browser city workbench
@@ -31,12 +32,21 @@ uv run adlife city-workbench --workspace ./workbench
 
 The command binds loopback only and never opens a browser automatically. Open
 `http://127.0.0.1:8765` yourself and operate `CITY -> CAMPAIGN -> RUN -> INSPECT`. CITY
-selects a re-verified packaged fictional city. CAMPAIGN chooses a complete packaged
-fictional creative and bounded phone/billboard assumptions; the server derives roadside
-coordinates. RUN validates without writing, then revalidates and submits one job. INSPECT
-lists only verified completed artifacts and opens the immutable run-scoped timeline. The
-browser holds one unsaved in-memory draft and never accepts a path, coordinate, creative
-copy, provider credential, or arbitrary URL.
+selects a re-verified packaged fictional city or registers one local CityPack V2 in the
+current workspace. The browser sends file bytes, never its filename or path. Raw upload
+and complete canonical stored content are each capped at 4 MiB; every other JSON write
+route keeps the 128 KiB ceiling. CAMPAIGN chooses a complete packaged fictional creative
+and bounded phone/billboard assumptions; the server derives roadside coordinates. RUN
+validates without writing, then revalidates and submits one job. INSPECT lists only verified
+completed artifacts and opens the immutable run-scoped timeline. The browser holds one
+unsaved in-memory draft and never accepts a path, coordinate, creative copy, provider
+credential, or arbitrary URL.
+
+Every workspace upload is labelled `operator-supplied-unreviewed`. Technical validation
+does not establish ownership, license compliance, redistribution rights, representative
+coverage, or fitness for use. Source URLs are displayed as inert text and are not
+dereferenced; default operation makes no outbound request. The operator must acquire and
+use the source lawfully.
 
 Seed input is an exact canonical decimal string from `0` through `9223372036854775807` and
 is never converted through JavaScript `Number`. Polling exposes truthful coarse phases
@@ -67,8 +77,9 @@ response, state, and metric semantics and add canonical `inputs/workbench.json`.
 manifest binds `workbench_input_schema_version: 2` (1 for V7) and `workbench_input_sha256`; the sidecar
 freezes the accepted city, settings, scenario, population assumptions, and exact fictional
 creative-template snapshot. Load and replay refuse any missing, noncanonical, changed, or
-inconsistent sidecar. Job IDs, phases, and timestamps are operational process-local state,
-not scientific inputs.
+inconsistent sidecar. The accepted pack is also frozen as canonical `inputs/city.json`;
+replay, metrics, reports, and inspection do not consult the current workspace registry.
+Job IDs, phases, and timestamps are operational process-local state, not scientific inputs.
 
 The Audience editor assigns explicit per-persona response assumptions to generated
 synthetic agents. The schema-1 compatibility path retains a homogeneous cohort.
@@ -81,7 +92,8 @@ behavior are not claimed.
 This local deterministic browser slice does not provide provider or OAuth configuration,
 authentication or multi-user authorization, report download, comparison/paired-study
 operation, a rights-reviewed real-city/worldwide catalog, calibrated traffic/population
-behavior, or sales prediction.
+behavior, or sales prediction. Operator-supplied packs remain unreviewed for rights even
+when they pass every technical check.
 
 To use a **local street extract you are authorized to use**, import a complete local
 OpenStreetMap Overpass JSON document and run:
@@ -105,7 +117,9 @@ uv run adlife city --pack city-v2.json --agents 30 --days 7 --seed 42
 
 The date, version, and IANA time-zone values are operator-supplied facts. The importer
 validates their shape but does not independently verify provenance, license rights, or
-fitness for a real-city catalog.
+fitness for a real-city catalog. `city-import` writes the requested local file; it does not
+register that pack in either the packaged CLI catalog or a workbench workspace. Use the
+workbench CITY upload control when a workspace-local immutable registration is intended.
 
 The importer makes no network request. Acquire the extract yourself under the
 [OpenStreetMap license and attribution requirements](https://www.openstreetmap.org/copyright).
@@ -648,6 +662,10 @@ inputs. Neither adds cognition, memory, social or purchase events, and neither i
 validated geographic advertising-outcome study. Descriptive, noncausal MBTI labels are
 allowed as optional fictional context. Using MBTI as a causal or predictive input is
 not implemented and is not scientifically validated by this simulator.
+
+Workspace CityPack V2 uploads broaden the selectable geometry, not the validity claim:
+they are operator-supplied, unreviewed for rights, and cannot turn synthetic agents or
+uncalibrated response equations into observations of a real population.
 
 ## Audience authoring and saved identities
 

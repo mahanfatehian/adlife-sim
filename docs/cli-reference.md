@@ -50,11 +50,15 @@ Print a JSON validation result and exit 0 when valid; exit 2 with a diagnostic o
 
 List the packaged, integrity-verified city catalog. Selection is offline and
 content-addressed: every entry pins a v2 resource by canonical SHA-256 and matching
-metadata. The only shipped entry is `fictional-grid-v2`, whose origin is `fictional`
-and whose qualification is `fictional-fixture`; no real city is qualified by this
-release. `--search` applies case-insensitive local token matching to ID, display name,
-provider and dataset. No matches is a successful empty result. JSON mode emits one
-`{"cities": [...]}` document; JSONL emits one entry per line.
+metadata. The three shipped entries are `fictional-grid-v2`,
+`fictional-harbor-loop-v2`, and `fictional-river-junction-v2`; all have origin
+`fictional` and qualification `fictional-fixture`, and this release contains zero
+rights-reviewed real cities. `--search` applies case-insensitive local token matching to
+ID, display name, provider and dataset. No matches is a successful empty result. JSON mode
+emits one `{"cities": [...]}` document; JSONL emits one entry per line. `city-import`
+writes a local file but does not register it in the packaged catalog, and CLI `--city-id`
+selection remains packaged-only; workspace uploads are available only inside
+`city-workbench --workspace PATH`.
 
 ## `adlife city-catalog show CITY_ID`
 
@@ -113,25 +117,36 @@ directory identity is pinned and rechecked before the server starts. `--port` ac
 worker with reload disabled, and never opens a browser automatically.
 
 Open the URL yourself and use `CITY -> CAMPAIGN -> RUN -> INSPECT`. The browser selects a
-verified packaged fictional city, composes a bounded phone/billboard scenario from a
-packaged fictional creative, validates it without side effects, runs it through the one
-local worker, and reopens verified artifacts from the bounded library. The browser owns an
-unsaved draft and presentation state only; the server derives coordinates and remains
-authoritative for validation, collisions, storage, and scientific evidence.
+verified packaged fictional city or uploads one local CityPack V2 into the immutable
+workspace registry, composes a bounded phone/billboard scenario from a packaged fictional
+creative, validates it without side effects, runs it through the one local worker, and
+reopens verified artifacts from the bounded library. The browser owns an unsaved draft and
+presentation state only; the server derives coordinates and remains authoritative for
+validation, collisions, storage, and scientific evidence.
 
 The bundled, no-network shell defaults to schema-2 requests, supports schema-1 compatibility,
-reports capabilities, lists the verified fictional city catalog and complete packaged
+reports capabilities, lists the combined verified city choices and complete packaged
 fictional creative snapshots, and validates a bounded scenario through
-`POST /api/scenarios/validate`. Writes require
-an exact same-origin request, exact `application/json`, a per-process CSRF header, and a
+`POST /api/scenarios/validate`. Writes require an exact same-origin request, exact
+`application/json`, and a per-process CSRF header. Only
+`POST /api/catalog/cities/upload` has a 4 MiB streamed request ceiling; its complete
+canonical stored CityPack V2 must also fit 4 MiB. Scenario and job JSON routes retain the
 128 KiB body limit. Validation derives roadside coordinates from verified geometry,
 constructs a complete synthetic persona response grid, and returns only identifiers,
 counts, channels, and canonical hashes. It creates no run directory and reserves no run
 identifier.
 
-The process-local control API exposes these bounded job and discovery routes:
+An upload returns one path-free catalog row and is immutable within that workspace. It is
+always `operator-supplied-unreviewed`: technical validation does not establish ownership,
+license compliance, redistribution rights, or packaged-catalog qualification. The server
+does not fetch a source URL; the UI displays it as inert text, never a link. Default
+workbench operation performs no outbound request.
 
-- `GET /api/catalog/cities/{city_id}` re-verifies and returns one path-free packaged city;
+The process-local control API exposes these bounded catalog, job, and discovery routes:
+
+- `GET /api/catalog/cities` returns packaged and workspace rows in stable order;
+- `GET /api/catalog/cities/{city_id}` re-verifies and returns one path-free city detail;
+- `POST /api/catalog/cities/upload` validates and immutably registers one local V2 pack;
 - `POST /api/scenarios/validate` validates the complete draft without reserving a run ID;
 - `POST /api/jobs` repeats validation and returns `202` with a server-generated job ID;
 - `GET /api/jobs/{job_id}` reports `queued`, `evaluating`, `persisting`, `verifying`, or a
@@ -175,7 +190,9 @@ Both have the same deterministic spatial evidence as
 schema-v6 plus canonical `inputs/workbench.json`. The final manifest binds
 `workbench_input_schema_version` and `workbench_input_sha256`; load, replay, discovery, and
 inspection refuse a missing, changed, noncanonical, or execution-inconsistent sidecar.
-Ordinary CLI `city-run --spatial-response` output remains schema-v6.
+The exact selected city is frozen in `inputs/city.json`; replay, metrics, reports, and
+inspection are independent of later workspace-registry removal, replacement, or
+corruption. Ordinary CLI `city-run --spatial-response` output remains schema-v6.
 
 Workbench `settings.seed` must be a canonical decimal JSON string from `"0"` through
 `"9223372036854775807"`; JSON numbers, signs, whitespace, exponents, decimals, and leading

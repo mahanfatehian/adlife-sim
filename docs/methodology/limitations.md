@@ -70,6 +70,11 @@ What this model cannot support. Read alongside the
   rights-reviewed real city/worldwide catalog. It remains loopback-only and makes no
   observed or calibrated population, traffic, attention, sales, or external-validity
   claim.
+- **Workspace upload is not data qualification.** A local V2 pack can be stored as
+  `operator-supplied-unreviewed`, but technical validity does not establish rights,
+  ownership, license compliance, legal routing, coverage quality, or fitness for a customer
+  use. Its declared source URL is inert and not dereferenced. The default workbench has no
+  outbound data request.
 - **The browser workflow does not make the city model more realistic.** Schema-2 assigns
   explicit interests, response traits and initial state per fictional persona; schema-1
   retains one homogeneous set for every synthetic agent. The model clock and day/night presentation are illustrative; fixed
@@ -81,9 +86,9 @@ What this model cannot support. Read alongside the
   does not create an advertising artifact. The bounded `city-run` path can persist a city
   artifact for up to 30 agents and seven days, optionally with spatial campaign evidence;
   `city-replay` verifies every normalized minute-frame/evidence digest, and `city-view`
-  observes the validated saved state. These are not zone campaign-engine run artifacts. The packaged,
-  offline, content-addressed catalog contains only the `fictional-grid-v2` fixture; no
-  real city is catalog-qualified. A local real street extract supplies geography, not
+  observes the validated saved state. These are not zone campaign-engine run artifacts. The
+  packaged, offline, content-addressed catalog contains three fictional fixtures and no
+  rights-reviewed real city. A local real street extract supplies geography, not
   real residents, measured traffic, legal navigation routes, or validated effects.
   Optional place sets constrain synthetic home, workplace and leisure nodes with stated
   provenance and deterministic assignment. They do not model land-use capacity, household

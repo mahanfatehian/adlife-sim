@@ -4,15 +4,22 @@ This is the release checklist for adding a **real-world** city pack to the packa
 catalog. It is a governance record template, not legal advice and not evidence that a
 city has already been approved.
 
-**Current status:** real-city qualification remains pending. The shipped catalog
-contains only `fictional-grid-v2`, whose origin is `fictional` and whose qualification
-is `fictional-fixture`. It is not a substitute for a reviewed real-city pack.
+**Current status:** real-city qualification remains pending. The shipped catalog has three
+`fictional-fixture` entries (`fictional-grid-v2`, `fictional-harbor-loop-v2`, and
+`fictional-river-junction-v2`) and zero `rights-reviewed` real-world entries. Fictional
+fixtures are not substitutes for a reviewed real-city pack.
 
 Passing city-pack validation proves only that a bounded graph is structurally usable.
 It does not prove ownership, license compliance, redistribution rights, routing
 safety, representative coverage, or fitness for commercial use. A catalog
 `rights-reviewed` value records a maintainer decision; the validator cannot discover
 whether that decision was legally correct.
+
+The workbench workspace may immutably store an operator-supplied CityPack V2, but technical
+validation does not establish ownership, rights, or license compliance. Every such entry is
+`operator-supplied-unreviewed`; only the separate packaged-catalog review can award
+`rights-reviewed`. A declared source URL is inert metadata: neither registration nor
+simulation dereferences it or makes an outbound request.
 
 ## Required decision record
 

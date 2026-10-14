@@ -117,13 +117,21 @@ existing path-boundary tests pass.
 
 **Foundation progress (2026-09-29):** City-pack v2, geometry-aware deterministic
 routing, v2 frozen-run replay, bounded local v2 OSM ingestion, and an offline
-content-addressed catalog are implemented. The catalog deliberately contains only the
-`fictional-grid-v2` fixture. B1–B4 remain unchecked because no real-city data-rights
+content-addressed catalog were implemented. At that dated checkpoint the catalog contained
+only the `fictional-grid-v2` fixture. B1–B4 remain unchecked because no real-city data-rights
 decision, rights-reviewed pack, or representative permitted-extract benchmark exists;
 the implemented technical foundation is not evidence that those human and empirical
 gates have passed. See the
 [focused implementation plan](2026-09-29-city-pack-v2-catalog-foundation.md) and
 [qualification checklist](../../data/city-source-qualification.md).
+
+**Registry progress (2026-10-14):** The current package catalog contains three distinct
+fictional fixtures and the loopback workbench can immutably register a bounded local CityPack V2.
+Workspace records are always `operator-supplied-unreviewed`; their source URLs are inert,
+the default path performs no outbound request, and the exact accepted pack is frozen for
+registry-independent replay. This closes a local operator workflow, not B1–B4: technical
+validation is neither rights review nor evidence of real-city scale, routing completeness,
+population calibration, or permitted commercial redistribution.
 
 - [ ] **B1 — Record the data-product decision.** Document intended jurisdictions,
   city selection criteria, data suppliers, permitted commercial use, ODbL obligations,
@@ -299,8 +307,9 @@ also depend on E. Keep existing CLI/TUI/report paths working.
   verify current disk state on every request. The exact installed wheel submits, polls,
   discovers and inspects a tiny offline run. D1b does not include report download.
 - [x] **D2 — Build the local deterministic timeline and map inspector.** The packaged
-  `CITY -> CAMPAIGN -> RUN -> INSPECT` browser operates a verified fictional catalog city,
-  bounded campaign editor, process-local job, verified library, and immutable scoped
+  `CITY -> CAMPAIGN -> RUN -> INSPECT` browser operates a verified bundled fixture or
+  immutable workspace V2 upload, bounded campaign editor, process-local job, verified
+  library, and immutable scoped
   inspector. The inspector shows the model clock, illustrative day/night state, routes,
   activity, persisted opportunity/attention/response evidence, bounded pages, and exact
   synthetic receipts. Selection, play/pause, timeline scrubbing, and map controls never
@@ -468,12 +477,14 @@ the focused plan or milestone evidence document.
    the next dependency-unblocked package and whether the branch is pushed. No plan
    itself authorizes a push, remote change, deployment or publication.
 
-Current ledger (2026-10-10, after the local browser-operation slice): **A1–A4, B6, C1,
+Current ledger (2026-10-14, after the workspace city-registry slice): **A1–A4, B6, C1,
 C2, D1a, D1b, and the local deterministic D2 profile are
 checked.** Technical foundations also include city-pack v2/import/catalog work, C3a
 opportunity storage, C3b attention evidence, C3c response/state evidence, C4a read-only
 metrics/comparison, C4b repeated-seed analysis/static reporting, and bounded local viewer
-slices. Those foundations do not close the
+slices. The packaged catalog now has three fictional fixtures; workspace-local immutable
+V2 uploads remain operator-supplied and rights-unreviewed, and saved artifacts replay
+independently of that registry. Those foundations do not close the
 unchecked parent gates: B1–B5 still require the relevant data-product, rights, qualification,
 scale, and basemap decisions; C3 still requires the broader cognition/memory/social/purchase
 integration described above; C4 remains open for spatial social/purchase integration and

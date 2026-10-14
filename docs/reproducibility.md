@@ -274,9 +274,12 @@ source revision and dependency lock separately when reporting a study.
 `adlife city-run --city-id fictional-grid-v2 ...` writes a distinct artifact at
 `ROOT/city-runs/ID/`. Catalog selection is offline and content-addressed: the packaged
 v2 resource's canonical SHA-256 and public metadata are checked before the run starts.
-The only bundled catalog pack is explicitly fictional. A selected pack is then frozen
-inside the run, so replay does not consult the current catalog and cannot drift when a
-catalog is later replaced.
+All three bundled catalog packs are explicitly fictional. The browser workbench may instead
+select an immutable local V2 upload. In both cases the accepted pack is frozen as canonical
+`inputs/city.json`, so replay, metrics, reports, and inspection are independent of the
+current packaged catalog or workspace registry. Removing, replacing, or corrupting registry
+state cannot change a saved run; corrupt frozen input is refused rather than repaired from
+either catalog.
 
 The artifact freezes the city pack (including v2 road geometry, direction, source
 provenance, bounds, time zone and omissions), generated fictional assignments, seed,

@@ -31,8 +31,9 @@ def command(
 ) -> None:
     """Operate CITY -> CAMPAIGN -> RUN -> INSPECT in the local deterministic workbench.
 
-    A process-local bounded worker creates verified artifacts. This profile includes no
-    authentication, provider configuration, OAuth, or real-world city data.
+    A process-local bounded worker creates verified artifacts. Workspace city-pack upload
+    is available but remains unreviewed for rights. This profile includes no
+    authentication, provider configuration, or OAuth.
     """
     if output_format() != "human":
         raise CommandError("city workbench is interactive; use human output format")

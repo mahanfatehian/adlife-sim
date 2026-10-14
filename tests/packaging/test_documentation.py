@@ -188,6 +188,94 @@ def test_city_catalog_public_contract_is_fictional_offline_and_content_addressed
     assert "no network" in architecture
 
 
+def test_workspace_city_registry_public_contract_is_exact() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs", "architecture.md")
+    city_pilot = _read("docs", "city-pilot.md")
+    cli = _read("docs", "cli-reference.md")
+    qualification = _read("docs", "data", "city-source-qualification.md")
+    model_card = _read("docs", "methodology", "model-card.md")
+    limitations = _read("docs", "methodology", "limitations.md")
+    reproducibility = _read("docs", "reproducibility.md")
+
+    _assert_terms_share_paragraph(
+        readme,
+        "three",
+        "bundled",
+        "fictional",
+        "zero",
+        "rights-reviewed",
+        "real",
+    )
+    _assert_terms_share_paragraph(
+        cli,
+        "POST /api/catalog/cities/upload",
+        "4 MiB",
+        "128 KiB",
+    )
+    _assert_terms_share_paragraph(
+        cli,
+        "city-import",
+        "does not register",
+        "packaged",
+        "--city-id",
+    )
+    _assert_terms_share_paragraph(
+        qualification,
+        "workspace",
+        "technical validation",
+        "does not establish",
+        "rights",
+        "license",
+    )
+    _assert_terms_share_paragraph(
+        architecture,
+        "source URL",
+        "inert",
+        "not dereferenced",
+        "outbound",
+    )
+    _assert_terms_share_paragraph(
+        reproducibility,
+        "inputs/city.json",
+        "workspace registry",
+        "replay",
+        "metrics",
+        "reports",
+        "inspection",
+        "independent",
+    )
+    for text in (city_pilot, model_card, limitations):
+        _assert_terms_share_paragraph(
+            text,
+            "operator-supplied",
+            "unreviewed",
+            "rights",
+        )
+
+    public = "\n".join(
+        (
+            readme,
+            architecture,
+            city_pilot,
+            cli,
+            qualification,
+            model_card,
+            limitations,
+            reproducibility,
+        )
+    ).lower()
+    for stale_claim in (
+        "only shipped entry is `fictional-grid-v2`",
+        "only bundled entry is `fictional-grid-v2`",
+        "only bundled catalog pack",
+        "sole catalog entry",
+        "contains only the `fictional-grid-v2` fixture",
+        "currently contains only the `fictional-grid-v2` fixture",
+    ):
+        assert stale_claim not in public, stale_claim
+
+
 def test_city_v2_docs_preserve_map_evidence_without_overstating_time_zone() -> None:
     city_pilot = _read("docs", "city-pilot.md").lower()
     model_card = _read("docs", "methodology", "model-card.md").lower()
