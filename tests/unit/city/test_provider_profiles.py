@@ -408,14 +408,11 @@ def test_precommit_publication_failure_leaves_no_live_staging_bytes_and_retry_wo
 ) -> None:
     registry = _registry(tmp_path)
 
-    def refuse_link(*_args: object, **_kwargs: object) -> None:
+    def refuse_publication(*_args: object, **_kwargs: object) -> None:
         raise OSError("injected precommit failure")
 
     with monkeypatch.context() as patch:
-        if os.name == "nt":
-            patch.setattr(immutable_registry, "_link_windows_descriptor", refuse_link)
-        else:
-            patch.setattr(immutable_registry.os, "link", refuse_link)
+        patch.setattr(immutable_registry, "_publish_stage_descriptor", refuse_publication)
         with pytest.raises(ProviderProfilePublicationError) as error:
             registry.create(_draft())
 
