@@ -20,6 +20,9 @@
   const LEGAL_PHASES = new Set([
     "queued",
     "evaluating",
+    "simulating",
+    "selecting-explanations",
+    "requesting-explanations",
     "persisting",
     "verifying",
     "completed",
@@ -669,8 +672,10 @@
       documentValue.capabilities.scenario_validation !== true ||
       documentValue.capabilities.jobs !== true ||
       documentValue.capabilities.run_execution !== true ||
-      documentValue.capabilities.provider_configuration !== false ||
+      documentValue.capabilities.provider_configuration !== true ||
       documentValue.capabilities.oauth !== false ||
+      !Array.isArray(documentValue.capabilities.cognition_modes) ||
+      !sameJson(documentValue.capabilities.cognition_modes, ["rules", "mock", "local", "remote"]) ||
       !Array.isArray(documentValue.capabilities.response_modes) ||
       documentValue.capabilities.response_modes.length !== 1 ||
       documentValue.capabilities.response_modes[0] !== "deterministic-rules"

@@ -19,6 +19,9 @@ from adlife.core.ports.cognition import redact_provider_body
 
 MAX_WORKBENCH_BODY_BYTES = 131_072
 MAX_WORKBENCH_ROUTE_BODY_BYTES = 4_194_304
+MAX_WORKBENCH_CREDENTIAL_BODY_BYTES = 8_192
+
+_CREDENTIAL_ROUTE = re.compile(r"^/api/providers/[^/]+/revisions/[^/]+/credential$")
 
 _ERROR_CODE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _FIELD_PATH = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,159}$")
@@ -42,6 +45,14 @@ class WorkbenchJsonContentError(WorkbenchJsonError):
 def new_csrf_token() -> str:
     """Create process-local operational entropy for same-origin writes."""
     return secrets.token_urlsafe(32)
+
+
+def is_workbench_credential_path(path: str) -> bool:
+    """Recognize the dedicated endpoint, including invalid route parameters.
+
+    Its byte ceiling applies before identifier validation, matching HTTP routing.
+    """
+    return _CREDENTIAL_ROUTE.fullmatch(path) is not None
 
 
 def _safe_error_text(value: object, *, maximum: int) -> str:
@@ -259,6 +270,8 @@ class WorkbenchSecurityMiddleware:
         path = scope.get("path")
         assert isinstance(path, str)
         body_limit = self.route_body_limits.get(path, self.max_body_bytes)
+        if is_workbench_credential_path(path):
+            body_limit = min(body_limit, MAX_WORKBENCH_CREDENTIAL_BODY_BYTES)
 
         host = _one_ascii_header(scope, b"host")
         if host is None or _LOOPBACK_HOST.fullmatch(host) is None:
@@ -380,10 +393,12 @@ class WorkbenchSecurityMiddleware:
 
 __all__ = [
     "MAX_WORKBENCH_BODY_BYTES",
+    "MAX_WORKBENCH_CREDENTIAL_BODY_BYTES",
     "MAX_WORKBENCH_ROUTE_BODY_BYTES",
     "WorkbenchJsonContentError",
     "WorkbenchJsonError",
     "WorkbenchSecurityMiddleware",
+    "is_workbench_credential_path",
     "new_csrf_token",
     "strict_json_object",
     "workbench_error",

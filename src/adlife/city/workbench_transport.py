@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from contextlib import suppress
 from hashlib import sha256
 from typing import ClassVar, Literal, Self, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
+from adlife.adapters.cognition.city_credentials import MAX_PROVIDER_CREDENTIAL_BYTES, SecretBuffer
 from adlife.city.run_store import StoredCityRun
 from adlife.city.workbench_binding import validate_workbench_execution_binding
 from adlife.city.workbench_catalog import (
@@ -21,6 +23,7 @@ from adlife.city.workbench_catalog import (
 )
 from adlife.city.workbench_input import (
     CreativeTemplate,
+    NormalizedWorkbenchCognitionV3,
     NormalizedWorkbenchPopulationV2,
     NormalizedWorkbenchScenarioDraft,
     WorkbenchCohortDraft,
@@ -30,10 +33,17 @@ from adlife.city.workbench_input import (
     WorkbenchRunDraftV3,
     WorkbenchRunInput,
     WorkbenchRunInputV2,
+    WorkbenchRunInputV3,
     _reject_structural_secrets,
 )
+from adlife.city.workbench_security import MAX_WORKBENCH_CREDENTIAL_BODY_BYTES, WorkbenchJsonError
 from adlife.core.domain.city import CityBounds, CityPackV2, CitySource
-from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8
+from adlife.core.domain.city_run import (
+    CityRunManifestV7,
+    CityRunManifestV8,
+    CityRunManifestV9,
+    build_city_cognition_manifest_receipt,
+)
 from adlife.core.domain.identifiers import validate_portable_run_identifier
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
@@ -41,6 +51,51 @@ from adlife.core.domain.serialization import canonical_json
 _CANONICAL_SEED = re.compile(r"^(?:0|[1-9][0-9]{0,18})$")
 _MAX_SEED = 2**63 - 1
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
+
+
+class WorkbenchCredentialRequestError(WorkbenchJsonError):
+    """The dedicated credential route's constant, value-free refusal."""
+
+    def __init__(self) -> None:
+        super().__init__("The credential request is invalid.")
+
+
+def _credential_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    if len(pairs) != 1 or pairs[0][0] != "credential":
+        raise WorkbenchCredentialRequestError
+    return {"credential": pairs[0][1]}
+
+
+def _credential_constant(_value: str) -> None:
+    raise WorkbenchCredentialRequestError
+
+
+def parse_workbench_credential_request(data: bytes) -> SecretBuffer:
+    """Accept one exact visible-ASCII credential without validation-error echoes.
+
+    This bypasses ordinary request secret screening only for this exact shape.
+    The caller owns the returned buffer and must clear it after the store write.
+    """
+    if type(data) is not bytes or len(data) > MAX_WORKBENCH_CREDENTIAL_BODY_BYTES:
+        raise WorkbenchCredentialRequestError
+    payload: object = None
+    # Leave the handler before raising: even __context__ must not hold the JSON body.
+    with suppress(UnicodeError, ValueError, RecursionError):
+        payload = json.loads(
+            data.decode("utf-8", errors="strict"),
+            object_pairs_hook=_credential_object,
+            parse_constant=_credential_constant,
+        )
+    if type(payload) is not dict or set(payload) != {"credential"}:
+        raise WorkbenchCredentialRequestError
+    value = payload["credential"]
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= MAX_PROVIDER_CREDENTIAL_BYTES
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in value)
+    ):
+        raise WorkbenchCredentialRequestError
+    return SecretBuffer(value)
 
 
 def _exact_pack_schema_version(value: object) -> object:
@@ -343,17 +398,74 @@ class WorkbenchRunInputViewV2(DomainModel):
         return self
 
 
-WorkbenchRunInputViewDocument: TypeAlias = WorkbenchRunInputView | WorkbenchRunInputViewV2
+class WorkbenchRunInputViewV3(DomainModel):
+    """Path-free browser projection of one fully verified schema-v9 input."""
+
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    run_schema_version: Literal[9] = 9
+    workbench_input_schema_version: Literal[3] = 3
+    manifest_sha256: str = Field(pattern=_HASH_PATTERN)
+    workbench_input_sha256: str = Field(pattern=_HASH_PATTERN)
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario_sha256: str = Field(pattern=_HASH_PATTERN)
+    creative_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario: NormalizedWorkbenchScenarioDraft
+    population: NormalizedWorkbenchPopulationV2
+    settings: WorkbenchRunSettingsView
+    cognition: NormalizedWorkbenchCognitionV3
+    creative_template: CreativeTemplate
+
+    @field_validator("run_schema_version", mode="before")
+    @classmethod
+    def exact_run_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 9:
+            raise ValueError("run_schema_version must be integer 9")
+        return value
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_input_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 3:
+            raise ValueError("workbench_input_schema_version must be integer 3")
+        return value
+
+    @model_validator(mode="after")
+    def internally_consistent(self) -> Self:
+        if self.run_id != self.settings.run_id:
+            raise ValueError("workbench input view run identifier is inconsistent")
+        if self.creative_sha256 != self.creative_template.fingerprint:
+            raise ValueError("workbench input view creative hash is inconsistent")
+        if self.scenario.campaign.creative_template_id != self.creative_template.template_id:
+            raise ValueError("workbench input view creative template is inconsistent")
+        if sum(persona.count for persona in self.population.personas) != self.settings.agent_count:
+            raise ValueError("workbench input view population count is inconsistent")
+        return self
+
+
+WorkbenchRunInputViewDocument: TypeAlias = (
+    WorkbenchRunInputView | WorkbenchRunInputViewV2 | WorkbenchRunInputViewV3
+)
 
 
 def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputViewDocument:
-    """Project one verified v7/v8 record after independently rechecking its binding."""
+    """Project one verified V7/V8/V9 record after rechecking its frozen binding."""
     if not isinstance(stored, StoredCityRun):
         raise TypeError("stored must be a StoredCityRun")
     manifest = stored.manifest
     workbench_input = stored.workbench_input
-    if not isinstance(manifest, (CityRunManifestV7, CityRunManifestV8)):
-        raise ValueError("workbench input view requires a schema-v7 or schema-v8 run")
+    if not isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)):
+        raise ValueError("workbench input view requires a schema-v7, schema-v8, or schema-v9 run")
+    if (
+        type(manifest.schema_version) is not int
+        or type(manifest.workbench_input_schema_version) is not int
+        or (type(manifest), manifest.schema_version, manifest.workbench_input_schema_version)
+        not in (
+            (CityRunManifestV7, 7, 1),
+            (CityRunManifestV8, 8, 2),
+            (CityRunManifestV9, 9, 3),
+        )
+    ):
+        raise ValueError("workbench input view versions are inconsistent")
     if workbench_input is None:
         raise ValueError("workbench input view requires its frozen workbench input")
     try:
@@ -374,6 +486,26 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
         raise ValueError("workbench input view requires workbench input schema 1")
     if isinstance(manifest, CityRunManifestV8) and not isinstance(bound_input, WorkbenchRunInputV2):
         raise ValueError("workbench input view requires workbench input schema 2")
+    if isinstance(manifest, CityRunManifestV9):
+        if not isinstance(bound_input, WorkbenchRunInputV3):
+            raise ValueError("workbench input view requires workbench input schema 3")
+        cognition_input = stored.cognition_input
+        cognition_evaluation = stored.cognition_evaluation
+        if cognition_input is None or cognition_evaluation is None:
+            raise ValueError("workbench input view requires its frozen cognition evidence")
+        cognition = bound_input.draft.cognition
+        profile = cognition_input.provider_profile
+        if (
+            cognition_input.mode != cognition.mode
+            or cognition_input.aggregate_output_token_ceiling
+            != cognition.aggregate_output_token_ceiling
+            or (None if profile is None else profile.profile_id) != cognition.provider_profile_id
+            or (None if profile is None else profile.revision_sha256)
+            != cognition.provider_revision_sha256
+            or build_city_cognition_manifest_receipt(cognition_input, cognition_evaluation)
+            != manifest.cognition
+        ):
+            raise ValueError("workbench input view cognition binding is invalid")
     workbench_input = bound_input
     scenario = stored.spatial_scenario
     if scenario is None:
@@ -409,6 +541,14 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
         ),
         creative_template=creative,
     )
+    if isinstance(workbench_input, WorkbenchRunInputV3):
+        return WorkbenchRunInputViewV3.model_validate(
+            {
+                **common,
+                "population": workbench_input.draft.population,
+                "cognition": workbench_input.draft.cognition,
+            }
+        )
     if isinstance(workbench_input, WorkbenchRunInputV2):
         return WorkbenchRunInputViewV2.model_validate(
             {**common, "population": workbench_input.draft.population}
@@ -419,13 +559,16 @@ def build_workbench_run_input_view(stored: StoredCityRun) -> WorkbenchRunInputVi
 __all__ = [
     "WorkbenchCityCatalogRow",
     "WorkbenchCityDetail",
+    "WorkbenchCredentialRequestError",
     "WorkbenchDraftTransportError",
     "WorkbenchRunInputView",
     "WorkbenchRunInputViewDocument",
     "WorkbenchRunInputViewV2",
+    "WorkbenchRunInputViewV3",
     "WorkbenchRunSettingsView",
     "build_workbench_city_catalog_row",
     "build_workbench_city_detail",
     "build_workbench_run_input_view",
+    "parse_workbench_credential_request",
     "parse_workbench_http_draft",
 ]

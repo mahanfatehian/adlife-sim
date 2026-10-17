@@ -30,6 +30,83 @@ from tests.unit.city.test_workbench_input import draft_v2_data
 
 
 @pytest.mark.parametrize(
+    "document",
+    [
+        b'{"credential":"private-browser-marker",',
+        b'{"credential":"private-browser-marker","extra":true}',
+        b'{"credential":{"Authorization":"private-browser-marker"}}',
+        b'{"credential":["api_key","private-browser-marker"]}',
+        b'{"credential":true}',
+        b'{"credential":"private-browser-marker\\n"}',
+        b'{"credential":"private-browser-marker\\ud800"}',
+        b'{"credential":"' + b"x" * 4097 + b'"}',
+    ],
+    ids=[
+        "syntax",
+        "extra",
+        "nested-object",
+        "nested-list",
+        "boolean",
+        "control",
+        "surrogate",
+        "key-size",
+    ],
+)
+def test_credential_route_screens_invalid_documents_before_profile_lookup(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    document: bytes,
+) -> None:
+    client, root = web_helpers._client(tmp_path)
+    before = web_helpers._snapshot(root)
+    path = "/api/providers/missing-profile/revisions/" + "a" * 64 + "/credential"
+    with caplog.at_level(logging.DEBUG), client:
+        response = client.post(
+            path,
+            content=document,
+            headers={
+                "Content-Type": "application/json",
+                "Origin": web_helpers.ORIGIN,
+                "X-AdLife-CSRF": web_helpers.TOKEN,
+            },
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["fields"] == {}
+        combined = response.text + caplog.text
+        assert "private-browser-marker" not in combined
+        assert "Authorization" not in response.text
+        assert "api_key" not in response.text
+        assert "JSONDecodeError" not in combined
+        assert "ValidationError" not in combined
+        assert response.headers["cache-control"] == "no-store"
+    assert web_helpers._snapshot(root) == before
+
+
+def test_credential_route_rejects_oversized_body_before_parse_or_profile_lookup(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, root = web_helpers._client(tmp_path)
+    before = web_helpers._snapshot(root)
+    path = "/api/providers/missing-profile/revisions/" + "a" * 64 + "/credential"
+    secret = "private-browser-oversize-marker"
+    with caplog.at_level(logging.DEBUG), client:
+        response = client.post(
+            path,
+            content=secret.encode() + b"x" * 8192,
+            headers={
+                "Content-Type": "application/json",
+                "Origin": web_helpers.ORIGIN,
+                "X-AdLife-CSRF": web_helpers.TOKEN,
+            },
+        )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request-too-large"
+    assert secret not in response.text + caplog.text
+    assert web_helpers._snapshot(root) == before
+
+
+@pytest.mark.parametrize(
     "field",
     [
         "persona_id",

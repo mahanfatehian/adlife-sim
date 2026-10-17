@@ -17,6 +17,12 @@ from adlife.adapters.cognition.city_service import CityCognitionCancellation
 from adlife.city.run_store import StoredCityRun
 from adlife.city.runs import PreparedCityRun, PreparedCityScientificRun
 from adlife.city.workbench_input import WorkbenchRunInputV3
+from adlife.city.workbench_providers import (
+    WorkbenchOperationLease,
+    WorkbenchOperationState,
+    WorkbenchProviderBusy,
+    WorkbenchProviderClosed,
+)
 from adlife.city.workbench_runs import WorkbenchCognitionOperation, WorkbenchRunSummary
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.core.domain.person import DomainModel
@@ -312,14 +318,21 @@ def _failure(
 class CityJobManager:
     """Serialize one active run and retain at most 32 terminal public records."""
 
-    def __init__(self, repository: _RunOperations) -> None:
+    def __init__(
+        self,
+        repository: _RunOperations,
+        *,
+        operations: WorkbenchOperationState | None = None,
+    ) -> None:
         self._repository = repository
         self._executor = _new_worker_executor()
-        self._lock = Lock()
+        self._operations = operations if operations is not None else WorkbenchOperationState()
+        self._lock = self._operations.lock
         self._close_lock = Lock()
         self._records: dict[str, _JobRecord] = {}
         self._terminal_ids: deque[str] = deque()
         self._active_job_id: str | None = None
+        self._operation_leases: dict[str, WorkbenchOperationLease] = {}
         self._cognition_operations: dict[str, WorkbenchCognitionOperation] = {}
         self._cancellations: dict[str, CityCognitionCancellation] = {}
         self._closed = False
@@ -368,6 +381,9 @@ class CityJobManager:
         self._transition_locked(record, phase)
         if self._active_job_id == record.job_id:
             self._active_job_id = None
+        lease = self._operation_leases.pop(record.job_id, None)
+        if lease is not None:
+            self._operations.finish(lease)
         operation = self._cognition_operations.pop(record.job_id, None)
         if operation is not None:
             operation.clear()
@@ -381,6 +397,7 @@ class CityJobManager:
         self,
         job_id: str | None,
         operation: WorkbenchCognitionOperation | None,
+        lease: WorkbenchOperationLease | None,
     ) -> None:
         mapped_operation: WorkbenchCognitionOperation | None = None
         if job_id is not None:
@@ -389,6 +406,12 @@ class CityJobManager:
             self._cancellations.pop(job_id, None)
             if self._active_job_id == job_id:
                 self._active_job_id = None
+            mapped_lease = self._operation_leases.pop(job_id, None)
+            if mapped_lease is not None:
+                self._operations.finish(mapped_lease)
+                lease = None
+        if lease is not None:
+            self._operations.finish(lease)
         credential_owner = mapped_operation if mapped_operation is not None else operation
         if credential_owner is not None:
             credential_owner.clear()
@@ -437,8 +460,17 @@ class CityJobManager:
             if self._active_job_id is not None:
                 raise WorkbenchJobBusy("Another workbench run is already active.")
             operation: WorkbenchCognitionOperation | None = None
+            lease: WorkbenchOperationLease | None = None
             job_id: str | None = None
             try:
+                try:
+                    lease = self._operations.begin_job()
+                except WorkbenchProviderBusy:
+                    raise WorkbenchJobBusy(
+                        "Another workbench operation is already active."
+                    ) from None
+                except WorkbenchProviderClosed:
+                    raise WorkbenchJobManagerClosed("The workbench worker is closed.") from None
                 if isinstance(validated.workbench_input, WorkbenchRunInputV3):
                     operation = self._repository.preflight_cognition(validated)
                 self._repository.ensure_available(run_id)
@@ -454,18 +486,20 @@ class CityJobManager:
                     updated_at=created_at,
                 )
                 self._records[job_id] = record
+                self._operation_leases[job_id] = lease
+                lease = None
                 if operation is not None:
                     self._cognition_operations[job_id] = operation
                     self._cancellations[job_id] = CityCognitionCancellation()
                 self._active_job_id = job_id
                 queued = self._view(record)
             except BaseException:
-                self._rollback_submission_locked(job_id, operation)
+                self._rollback_submission_locked(job_id, operation, lease)
                 raise
             try:
                 self._executor.submit(self._run_job, job_id)
             except BaseException as error:
-                self._rollback_submission_locked(job_id, operation)
+                self._rollback_submission_locked(job_id, operation, lease)
                 if isinstance(error, Exception):
                     raise WorkbenchJobSubmissionError(
                         "The workbench worker could not accept the job."
@@ -703,6 +737,7 @@ class CityJobManager:
         """Stop acceptance, cancel active cognition, and drain the owned worker."""
         with self._close_lock:
             cancellation: CityCognitionCancellation | None = None
+            self._operations.close()
             with self._lock:
                 self._closed = True
                 if self._active_job_id is not None:

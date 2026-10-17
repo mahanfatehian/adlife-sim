@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import re
@@ -1056,3 +1057,142 @@ def test_close_cancels_an_active_schema3_provider_phase_before_executor_drain(
     finally:
         gated.allow_request.set()
         closer.join(10)
+
+
+def test_shared_provider_operation_refuses_job_before_repository_preflight(
+    tmp_path: Path,
+) -> None:
+    jobs, runs = _modules()
+    providers = importlib.import_module("adlife.city.workbench_providers")
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+
+    class ObservedRepository(_GatedRepository):
+        def __init__(self, real: Any) -> None:
+            super().__init__(real)
+            self.availability_checks = 0
+
+        def ensure_available(self, run_id: str) -> None:
+            self.availability_checks += 1
+            super().ensure_available(run_id)
+
+    repository = ObservedRepository(runs.WorkbenchRunRepository(workspace))
+    operations = providers.WorkbenchOperationState()
+    check_lease = operations.begin_check()
+    manager = jobs.CityJobManager(repository, operations=operations)
+    try:
+        with pytest.raises(jobs.WorkbenchJobBusy):
+            manager.submit(_validated(run_id="blocked-before-preflight", agents=1, days=2))
+        assert repository.availability_checks == 0
+        assert not (workspace.root / "city-runs" / "blocked-before-preflight").exists()
+    finally:
+        operations.finish(check_lease)
+        manager.close()
+
+
+def test_active_job_holds_shared_provider_lease_until_terminal_state(tmp_path: Path) -> None:
+    jobs, runs = _modules()
+    providers = importlib.import_module("adlife.city.workbench_providers")
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    repository = _GatedRepository(runs.WorkbenchRunRepository(workspace))
+    operations = providers.WorkbenchOperationState()
+    manager = jobs.CityJobManager(repository, operations=operations)
+    try:
+        submitted = manager.submit(_validated(run_id="provider-lease", agents=1, days=2))
+        assert repository.evaluate_entered.wait(5)
+        with pytest.raises(providers.WorkbenchProviderBusy):
+            operations.begin_check()
+        with pytest.raises(providers.WorkbenchProviderBusy):
+            operations.begin_credential()
+
+        repository.allow_evaluate.set()
+        assert repository.persist_entered.wait(10)
+        repository.allow_persist.set()
+        assert repository.verify_entered.wait(10)
+        repository.allow_verify.set()
+        assert _await_terminal(manager, submitted.job_id).phase == "completed"
+
+        check_lease = operations.begin_check()
+        operations.finish(check_lease)
+    finally:
+        repository.allow_evaluate.set()
+        repository.allow_persist.set()
+        repository.allow_verify.set()
+        manager.close()
+
+
+def test_failed_job_submission_releases_shared_provider_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jobs, runs = _modules()
+    providers = importlib.import_module("adlife.city.workbench_providers")
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    operations = providers.WorkbenchOperationState()
+
+    class RejectingExecutor:
+        def submit(self, function: Any, /, *args: Any, **kwargs: Any) -> Future[object]:
+            raise RuntimeError("refused")
+
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            return None
+
+    monkeypatch.setattr(jobs, "_new_worker_executor", RejectingExecutor)
+    manager = jobs.CityJobManager(
+        runs.WorkbenchRunRepository(workspace),
+        operations=operations,
+    )
+    try:
+        with pytest.raises(jobs.WorkbenchJobSubmissionError):
+            manager.submit(_validated(run_id="rejected-provider-lease", agents=1, days=2))
+        check_lease = operations.begin_check()
+        operations.finish(check_lease)
+    finally:
+        manager.close()
+
+
+def test_job_manager_close_closes_shared_provider_admission(tmp_path: Path) -> None:
+    jobs, runs = _modules()
+    providers = importlib.import_module("adlife.city.workbench_providers")
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    operations = providers.WorkbenchOperationState()
+    manager = jobs.CityJobManager(
+        runs.WorkbenchRunRepository(workspace),
+        operations=operations,
+    )
+
+    manager.close()
+
+    with pytest.raises(providers.WorkbenchProviderClosed):
+        operations.begin_check()
+    with pytest.raises(jobs.WorkbenchJobManagerClosed):
+        manager.submit(_validated(run_id="closed-provider-admission", agents=1, days=2))
+
+
+async def test_job_manager_shutdown_cancels_an_active_provider_check(tmp_path: Path) -> None:
+    from tests.unit.city.test_provider_profiles import _draft
+    from tests.unit.city.test_workbench_providers import _controller, _Provider
+
+    jobs, runs = _modules()
+
+    def factory(**kwargs: object) -> _Provider:
+        provider = _Provider(**kwargs)
+        provider.release = asyncio.Event()
+        return provider
+
+    controller, _, providers = _controller(tmp_path, provider_factory=factory)
+    local = controller.create(_draft())
+    manager = jobs.CityJobManager(
+        runs.WorkbenchRunRepository(controller.registry.workspace),
+        operations=controller.operations,
+    )
+    task = asyncio.create_task(controller.check(local.profile_id, local.revision_sha256))
+    while not providers:
+        await asyncio.sleep(0)
+    await providers[0].entered.wait()
+
+    await asyncio.to_thread(manager.close)
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert providers[0].closed
+    assert providers[0].kwargs["credential"].secret.cleared
+    assert controller.list().profiles[0].last_check is None

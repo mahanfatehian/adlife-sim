@@ -19,6 +19,13 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from adlife.adapters.cognition.city_credentials import (
+    CityCredentialStore,
+    CityCredentialStoreError,
+    OSKeyringCityCredentialStore,
+)
+from adlife.adapters.cognition.city_endpoint_policy import CityEndpointPolicy
+from adlife.adapters.cognition.city_openai_compatible import CityProviderTransportError
 from adlife.city.analysis import (
     metrics_for_stored_city_run,
     response_metrics_for_stored_city_run,
@@ -26,6 +33,14 @@ from adlife.city.analysis import (
 from adlife.city.catalog import (
     CityCatalogError,
     UnknownCatalogCity,
+)
+from adlife.city.provider_profiles import (
+    InvalidProviderProfile,
+    ProviderProfileConflict,
+    ProviderProfileNotFound,
+    ProviderProfilePublicationError,
+    ProviderProfileRegistry,
+    ProviderProfileRegistryUnavailable,
 )
 from adlife.city.provider_runtime import ProviderRuntimePolicy, build_provider_runtime_policy
 from adlife.city.run_store import StoredCityRun
@@ -64,6 +79,15 @@ from adlife.city.workbench_personas import (
     PersonaTemplateCatalogError,
     load_persona_template_catalog,
 )
+from adlife.city.workbench_providers import (
+    WorkbenchCheckProviderFactory,
+    WorkbenchOperationState,
+    WorkbenchProviderBusy,
+    WorkbenchProviderClosed,
+    WorkbenchProviderController,
+    WorkbenchProviderEndpointRefused,
+    WorkbenchProviderRateLimited,
+)
 from adlife.city.workbench_runs import (
     DEFAULT_RUN_PAGE_LIMIT,
     MAX_RUN_PAGE_LIMIT,
@@ -84,6 +108,7 @@ from adlife.city.workbench_transport import (
     build_workbench_city_catalog_row,
     build_workbench_city_detail,
     build_workbench_run_input_view,
+    parse_workbench_credential_request,
     parse_workbench_http_draft,
 )
 from adlife.city.workbench_validation import (
@@ -197,6 +222,10 @@ class WorkbenchRunUnavailable(RuntimeError):
 
 class WorkbenchInputUnavailable(ValueError):
     """A verified legacy run has no frozen browser workbench input."""
+
+
+class WorkbenchCognitionUnavailable(ValueError):
+    """A verified legacy run has no frozen city cognition evidence."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,13 +442,34 @@ def create_city_workbench_app(
     *,
     csrf_token: str | None = None,
     provider_runtime: ProviderRuntimePolicy | None = None,
+    credential_store: CityCredentialStore | None = None,
+    provider_factory: WorkbenchCheckProviderFactory | None = None,
 ) -> FastAPI:
     """Build one process-local control app after rechecking its pinned workspace."""
     verify_workbench_workspace(workspace)
     token = new_csrf_token() if csrf_token is None else csrf_token
     runtime = build_provider_runtime_policy() if provider_runtime is None else provider_runtime
-    repository = WorkbenchRunRepository(workspace, provider_runtime=runtime)
-    jobs = CityJobManager(repository)
+    provider_registry = ProviderProfileRegistry(workspace)
+    credentials = (
+        OSKeyringCityCredentialStore(runtime) if credential_store is None else credential_store
+    )
+    endpoint_policy = CityEndpointPolicy(runtime)
+    operations = WorkbenchOperationState()
+    providers = WorkbenchProviderController(
+        provider_registry,
+        runtime,
+        credentials=credentials,
+        operations=operations,
+        provider_factory=provider_factory,
+    )
+    repository = WorkbenchRunRepository(
+        workspace,
+        provider_runtime=runtime,
+        provider_registry=provider_registry,
+        credential_store=credentials,
+        endpoint_policy=endpoint_policy,
+    )
+    jobs = CityJobManager(repository, operations=operations)
     city_resolver = WorkbenchCityResolver(workspace)
     inspector_snapshots = _InspectorSnapshots()
 
@@ -509,6 +559,21 @@ def create_city_workbench_app(
         snapshot = inspector_snapshot(request, run_id)
         return snapshot.stored if snapshot is not None else verified_stored_run(run_id)
 
+    def resolve_cognition_run(request: Request, run_id: str) -> StoredCityRun:
+        stored = resolve_stored_run(request, run_id)
+        version = stored.manifest.schema_version
+        if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+            raise WorkbenchRunUnavailable
+        if version != 9:
+            raise WorkbenchCognitionUnavailable
+        if (
+            not isinstance(stored.manifest, CityRunManifestV9)
+            or stored.cognition_input is None
+            or stored.cognition_evaluation is None
+        ):
+            raise WorkbenchRunUnavailable
+        return stored
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
@@ -525,6 +590,7 @@ def create_city_workbench_app(
         lifespan=lifespan,
     )
     app.state.provider_runtime = runtime
+    app.state.provider_controller = providers
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=list(_LOOPBACK_HOSTS),
@@ -794,6 +860,135 @@ def create_city_workbench_app(
             "The workbench worker is not accepting jobs.",
         )
 
+    @app.exception_handler(InvalidProviderProfile)
+    async def invalid_provider_profile_handler(
+        _request: Request,
+        _error: InvalidProviderProfile,
+    ) -> JSONResponse:
+        return workbench_error(
+            422,
+            "invalid-provider-profile",
+            "The provider profile is invalid.",
+        )
+
+    @app.exception_handler(ProviderProfileNotFound)
+    async def provider_profile_not_found_handler(
+        _request: Request,
+        _error: ProviderProfileNotFound,
+    ) -> JSONResponse:
+        return workbench_error(
+            404,
+            "provider-profile-not-found",
+            "The provider profile revision was not found.",
+        )
+
+    @app.exception_handler(ProviderProfileConflict)
+    async def provider_profile_conflict_handler(
+        _request: Request,
+        _error: ProviderProfileConflict,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-profile-conflict",
+            "The provider profile conflicts with workspace state.",
+        )
+
+    @app.exception_handler(ProviderProfileRegistryUnavailable)
+    async def provider_registry_unavailable_handler(
+        _request: Request,
+        _error: ProviderProfileRegistryUnavailable,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-registry-unavailable",
+            "The provider profile registry is unavailable.",
+        )
+
+    @app.exception_handler(ProviderProfilePublicationError)
+    async def provider_publication_error_handler(
+        _request: Request,
+        error: ProviderProfilePublicationError,
+    ) -> JSONResponse:
+        return workbench_error(
+            500,
+            (
+                "provider-publication-uncertain"
+                if error.potentially_committed
+                else "provider-publication-failed"
+            ),
+            (
+                "The provider profile may already be stored. Reload the provider list."
+                if error.potentially_committed
+                else "The provider profile could not be stored."
+            ),
+        )
+
+    @app.exception_handler(CityCredentialStoreError)
+    async def credential_store_error_handler(
+        _request: Request,
+        _error: CityCredentialStoreError,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "credential-store-unavailable",
+            "The credential could not be stored or resolved by an approved source.",
+        )
+
+    @app.exception_handler(WorkbenchProviderBusy)
+    async def provider_busy_handler(
+        _request: Request,
+        _error: WorkbenchProviderBusy,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-operation-busy",
+            "Another provider or simulation operation is active.",
+        )
+
+    @app.exception_handler(WorkbenchProviderEndpointRefused)
+    async def provider_endpoint_refused_handler(
+        _request: Request,
+        _error: WorkbenchProviderEndpointRefused,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-endpoint-refused",
+            "The provider profile is not allowed by the current startup policy.",
+        )
+
+    @app.exception_handler(WorkbenchProviderRateLimited)
+    async def provider_rate_handler(
+        _request: Request,
+        _error: WorkbenchProviderRateLimited,
+    ) -> JSONResponse:
+        return workbench_error(
+            429,
+            "provider-check-rate-limited",
+            "The provider compatibility check limit was reached.",
+        )
+
+    @app.exception_handler(WorkbenchProviderClosed)
+    async def provider_closed_handler(
+        _request: Request,
+        _error: WorkbenchProviderClosed,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-operations-closed",
+            "Provider operations are no longer accepting requests.",
+        )
+
+    @app.exception_handler(CityProviderTransportError)
+    async def provider_transport_error_handler(
+        _request: Request,
+        _error: CityProviderTransportError,
+    ) -> JSONResponse:
+        return workbench_error(
+            502,
+            "provider-check-failed",
+            "The provider compatibility check could not be completed.",
+        )
+
     @app.exception_handler(UnsafeWorkbenchWorkspace)
     async def workspace_unavailable_handler(
         _request: Request,
@@ -832,6 +1027,17 @@ def create_city_workbench_app(
             404,
             "workbench-input-unavailable",
             "This saved run has no browser workbench input.",
+        )
+
+    @app.exception_handler(WorkbenchCognitionUnavailable)
+    async def cognition_unavailable_handler(
+        _request: Request,
+        _error: WorkbenchCognitionUnavailable,
+    ) -> JSONResponse:
+        return workbench_error(
+            404,
+            "cognition-unavailable",
+            "This saved run has no frozen cognition evidence.",
         )
 
     @app.exception_handler(StorageError)
@@ -951,8 +1157,9 @@ def create_city_workbench_app(
                 "jobs": True,
                 "run_execution": True,
                 "run_inspection": True,
-                "provider_configuration": False,
+                "provider_configuration": True,
                 "oauth": False,
+                "cognition_modes": ["rules", "mock", "local", "remote"],
                 "response_modes": ["deterministic-rules"],
             },
             "active_job": None if active is None else active.model_dump(mode="json"),
@@ -1020,6 +1227,46 @@ def create_city_workbench_app(
         ]
         return {"schema_version": 1, "templates": templates}
 
+    @app.get("/api/providers")
+    def provider_profiles(request: Request) -> dict[str, object]:
+        _require_empty_query(request)
+        return providers.list().model_dump(mode="json")
+
+    @app.post("/api/providers")
+    async def create_provider_profile(request: Request) -> JSONResponse:
+        _require_empty_query(request)
+        profile = providers.create(strict_json_object(await request.body()))
+        return JSONResponse(status_code=201, content=profile.model_dump(mode="json"))
+
+    @app.post("/api/providers/{profile_id}/revisions/{revision_id}/credential")
+    async def store_provider_credential(
+        profile_id: str,
+        revision_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _require_empty_query(request)
+        credential = parse_workbench_credential_request(await request.body())
+        profile = providers.store_credential(profile_id, revision_id, credential)
+        return JSONResponse(content=profile.model_dump(mode="json"))
+
+    @app.post("/api/providers/{profile_id}/revisions/{revision_id}/check")
+    async def check_provider_compatibility(
+        profile_id: str,
+        revision_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _require_empty_query(request)
+        payload = strict_json_object(await request.body())
+        if payload:
+            return workbench_error(
+                422,
+                "invalid-fields",
+                "One or more request fields are invalid.",
+                {"request": "Unknown field."},
+            )
+        result = await providers.check(profile_id, revision_id)
+        return JSONResponse(content=result.model_dump(mode="json"))
+
     @app.post("/api/scenarios/validate")
     async def validate_scenario(request: Request) -> dict[str, object]:
         _require_empty_query(request)
@@ -1074,7 +1321,9 @@ def create_city_workbench_app(
     def workbench_run_input(run_id: str, request: Request) -> JSONResponse:
         _require_empty_query(request)
         stored = resolve_stored_run(request, run_id)
-        if not isinstance(stored.manifest, (CityRunManifestV7, CityRunManifestV8)):
+        if not isinstance(
+            stored.manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)
+        ):
             raise WorkbenchInputUnavailable
         try:
             view = build_workbench_run_input_view(stored)
@@ -1082,6 +1331,49 @@ def create_city_workbench_app(
             raise WorkbenchRunUnavailable from None
         return JSONResponse(
             content=view.model_dump(mode="json"),
+            headers=_SHELL_HEADERS,
+        )
+
+    @app.get("/api/runs/{run_id}/cognition-summary")
+    def cognition_summary(run_id: str, request: Request) -> JSONResponse:
+        _require_empty_query(request)
+        stored = resolve_cognition_run(request, run_id)
+        cognition_input = stored.cognition_input
+        evaluation = stored.cognition_evaluation
+        assert cognition_input is not None and evaluation is not None
+        profile = cognition_input.provider_profile
+        return JSONResponse(
+            content={
+                "schema_version": 1,
+                "run_id": stored.manifest.run_id,
+                "run_schema_version": 9,
+                "cognition_input_sha256": cognition_input.fingerprint,
+                "mode": cognition_input.mode,
+                "explainer_id": cognition_input.explainer_id,
+                "provider_profile_id": None if profile is None else profile.profile_id,
+                "provider_revision_sha256": None if profile is None else profile.revision_sha256,
+                "model_id": None if profile is None else profile.model_id,
+                "aggregate_output_token_ceiling": cognition_input.aggregate_output_token_ceiling,
+                "summary": evaluation.summary.model_dump(mode="json"),
+            },
+            headers=_SHELL_HEADERS,
+        )
+
+    @app.get("/api/runs/{run_id}/cognition-records")
+    def cognition_records(run_id: str, request: Request) -> JSONResponse:
+        _require_empty_query(request)
+        stored = resolve_cognition_run(request, run_id)
+        cognition_input = stored.cognition_input
+        evaluation = stored.cognition_evaluation
+        assert cognition_input is not None and evaluation is not None
+        return JSONResponse(
+            content={
+                "schema_version": 1,
+                "run_id": stored.manifest.run_id,
+                "run_schema_version": 9,
+                "cognition_input_sha256": cognition_input.fingerprint,
+                "records": [record.model_dump(mode="json") for record in evaluation.records],
+            },
             headers=_SHELL_HEADERS,
         )
 

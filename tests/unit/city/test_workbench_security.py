@@ -590,3 +590,132 @@ def test_strict_json_object_accepts_an_explicit_larger_limit_without_changing_de
 def test_strict_json_object_refuses_invalid_explicit_limits(limit: object) -> None:
     with pytest.raises(ValueError, match="limit"):
         _module().strict_json_object(b"{}", max_body_bytes=limit)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("credential", ["!", "sk-" + "x" * 32, "x" * 4096])
+def test_dedicated_credential_parser_returns_only_a_redacted_secret_buffer(credential: str) -> None:
+    transport = importlib.import_module("adlife.city.workbench_transport")
+    parser = getattr(transport, "parse_workbench_credential_request", None)
+    assert callable(parser), "dedicated credential parser is not implemented"
+    secret = parser(json.dumps({"credential": credential}).encode())
+    try:
+        assert secret.reveal_text() == credential
+        assert credential not in repr(secret)
+        assert credential not in str(secret)
+    finally:
+        secret.clear()
+    assert secret.cleared
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        b'{"credential":"private-marker",',
+        b'{"credential":"private-marker","extra":"private-marker"}',
+        b'{"credential":"private-marker","credential":"private-marker"}',
+        b'{"credential":{"api_key":"private-marker"}}',
+        b'{"credential":["Authorization","private-marker"]}',
+        b'{"private-marker":"private-marker"}',
+        b'{"credential":true}',
+        b'{"credential":123}',
+        b'{"credential":null}',
+        b'{"credential":NaN}',
+        b'{"credential":Infinity}',
+        b'{"credential":""}',
+        b'{"credential":"private-marker\\n"}',
+        b'{"credential":"private-marker\\u0000"}',
+        b'{"credential":"private-marker\\u007f"}',
+        b'{"credential":"private-marker\\u0085"}',
+        b'{"credential":"private-marker\\u202e"}',
+        b'{"credential":"private-marker\\ud800"}',
+        b'{"credential":"private-marker\\udfff"}',
+        b'{"credential":"private-marker "}',
+        b'{"credential":"private-marker\xff"}',
+        b'{"credential":"' + b"x" * 4097 + b'"}',
+        b'{"credential":"' + b"x" * 8192 + b'"}',
+        b'{"credential":' + b"[" * 2000 + b'"private-marker"' + b"]" * 2000 + b"}",
+        b'["private-marker"]',
+        b'"private-marker"',
+        b"{}",
+    ],
+)
+def test_credential_parser_refusals_have_constant_value_free_diagnostics(document: bytes) -> None:
+    transport = importlib.import_module("adlife.city.workbench_transport")
+    parser = getattr(transport, "parse_workbench_credential_request", None)
+    assert callable(parser), "dedicated credential parser is not implemented"
+    with pytest.raises(ValueError) as caught:
+        parser(document)
+    error = caught.value
+    assert str(error) == "The credential request is invalid."
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    assert "private-marker" not in repr(error)
+    response = _module().workbench_error(400, "invalid-credential", str(error))
+    assert "private-marker" not in response.body.decode()
+
+
+def test_credential_parser_counts_encoded_body_bytes_without_widening_ordinary_json() -> None:
+    transport = importlib.import_module("adlife.city.workbench_transport")
+    parser = getattr(transport, "parse_workbench_credential_request", None)
+    assert callable(parser), "dedicated credential parser is not implemented"
+    document = b'{"credential":"safe"}'
+    exact = document + b" " * (8192 - len(document))
+    secret = parser(exact)
+    secret.clear()
+    with pytest.raises(ValueError, match="credential request is invalid"):
+        parser(exact + b" ")
+    with pytest.raises(_module().WorkbenchJsonContentError):
+        _module().strict_json_object(document)
+
+
+@pytest.mark.asyncio
+async def test_credential_stream_limit_is_8192_for_exact_routes_only() -> None:
+    module = _module()
+    calls: list[bytes] = []
+    middleware = module.WorkbenchSecurityMiddleware(
+        _counting_raw_app(calls),
+        csrf_token=TOKEN,
+        route_body_limits={"/api/catalog/cities/upload": 4_194_304},
+    )
+    path = "/api/providers/provider-main/revisions/" + "a" * 64 + "/credential"
+    for size, expected_status in ((8192, 200), (8193, 413)):
+        calls.clear()
+        status, _, _ = await _raw_request(
+            middleware,
+            path=path,
+            body_messages=[{"type": "http.request", "body": b"x" * size, "more_body": False}],
+        )
+        assert status == expected_status
+        assert len(calls) == (1 if expected_status == 200 else 0)
+    for nearby_path in (path + "/", path + "s", path.replace("/credential", "/check")):
+        calls.clear()
+        status, _, _ = await _raw_request(
+            middleware,
+            path=nearby_path,
+            body_messages=[{"type": "http.request", "body": b"x" * 8193, "more_body": False}],
+        )
+        assert status == 200
+        assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/providers/INVALID/revisions/" + "a" * 64 + "/credential",
+        "/api/providers/provider-main/revisions/not-a-revision/credential",
+    ],
+)
+async def test_invalid_credential_route_parameters_cannot_bypass_stream_ceiling(path: str) -> None:
+    calls: list[bytes] = []
+    middleware = _module().WorkbenchSecurityMiddleware(
+        _counting_raw_app(calls), csrf_token=TOKEN, route_body_limits={path: 131_072}
+    )
+    status, _, body = await _raw_request(
+        middleware,
+        path=path,
+        body_messages=[{"type": "http.request", "body": b"x" * 8193, "more_body": False}],
+    )
+    assert status == 413
+    assert calls == []
+    assert json.loads(body)["error"]["code"] == "request-too-large"

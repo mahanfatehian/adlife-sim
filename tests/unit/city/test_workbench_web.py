@@ -419,8 +419,9 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
             "jobs": True,
             "run_execution": True,
             "run_inspection": True,
-            "provider_configuration": False,
+            "provider_configuration": True,
             "oauth": False,
+            "cognition_modes": ["rules", "mock", "local", "remote"],
             "response_modes": ["deterministic-rules"],
         },
         "active_job": None,
@@ -442,6 +443,193 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
     }
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
+
+
+def _local_provider_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "profile_id": "local-ollama",
+        "display_label": "Local Ollama",
+        "mode": "local",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "model_id": "qwen2.5:7b",
+        "protocol": "openai-chat-completions-json-schema-v1",
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "seed_policy": "fixed",
+        "seed": 42,
+        "max_output_tokens": 384,
+        "attempt_timeout_seconds": 30,
+        "transient_retries": 2,
+        "repair_attempts": 1,
+        "origin_approval_id": "local-ollama",
+    }
+
+
+def test_provider_routes_create_list_and_run_explicit_compatibility_check(
+    tmp_path: Path,
+) -> None:
+    from adlife.core.domain.city_cognition import CityProviderAttemptV1
+    from adlife.core.simulation.city_cognition import build_city_mock_result
+
+    providers: list[object] = []
+
+    class CompatibleProvider:
+        async def call(self, request: Any) -> CityProviderAttemptV1:
+            return CityProviderAttemptV1(
+                schema_version=1,
+                status="valid",
+                result=build_city_mock_result(request),
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    def factory(**kwargs: object) -> CompatibleProvider:
+        providers.append(kwargs)
+        return CompatibleProvider()
+
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    app = _module().create_city_workbench_app(
+        workspace,
+        csrf_token=TOKEN,
+        provider_factory=factory,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        empty = client.get("/api/providers")
+        created = _secure_post(client, "/api/providers", _local_provider_payload())
+        revision = created.json()["revision_sha256"]
+        listed = client.get("/api/providers")
+        checked = _secure_post(
+            client,
+            f"/api/providers/local-ollama/revisions/{revision}/check",
+            {},
+        )
+
+    assert empty.status_code == 200
+    assert empty.json()["profiles"] == []
+    assert empty.json()["oauth"] is False
+    assert empty.json()["cognition_modes"] == ["rules", "mock", "local", "remote"]
+    assert created.status_code == 201
+    assert created.json()["credential_available"] is True
+    assert listed.status_code == 200
+    assert listed.json()["profiles"] == [created.json()]
+    assert checked.status_code == 200
+    assert checked.json() == {"status": "compatible", "reason_code": None}
+    assert len(providers) == 1
+    exposed = empty.text + created.text + listed.text + checked.text
+    assert str(workspace.root) not in exposed
+    assert 'credential"' not in exposed
+
+
+def test_provider_credential_route_stores_once_without_echoing_secret(tmp_path: Path) -> None:
+    from adlife.adapters.cognition.city_credentials import (
+        ProviderCredentialUnavailable,
+        ResolvedCredential,
+        SecretBuffer,
+    )
+    from adlife.city.provider_runtime import build_provider_runtime_policy
+
+    secret = "sk-test-browser-credential-1234567890"
+    stored: dict[str, str] = {}
+
+    class MemoryCredentialStore:
+        def available(self, profile: Any) -> bool:
+            return profile.revision_sha256 in stored
+
+        def store(self, profile: Any, credential: SecretBuffer) -> None:
+            stored[profile.revision_sha256] = credential.reveal_text()
+
+        def resolve(self, profile: Any) -> ResolvedCredential:
+            value = stored.get(profile.revision_sha256)
+            if value is None:
+                raise ProviderCredentialUnavailable("unavailable")
+            return ResolvedCredential(
+                source="keyring",
+                secret=SecretBuffer(value),
+                origin_approval_id=profile.origin_approval_id,
+                credential_slot_id=profile.credential_slot_id,
+            )
+
+    runtime = build_provider_runtime_policy(
+        provider_origins=("remote-acme=https://api.example.invalid/v1",)
+    )
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    app = _module().create_city_workbench_app(
+        workspace,
+        csrf_token=TOKEN,
+        provider_runtime=runtime,
+        credential_store=MemoryCredentialStore(),
+    )
+    profile = {
+        **_local_provider_payload(),
+        "profile_id": "remote-acme",
+        "display_label": "Remote Acme",
+        "mode": "remote",
+        "base_url": "https://api.example.invalid/v1",
+        "origin_approval_id": "remote-acme",
+    }
+    with TestClient(app, base_url=ORIGIN) as client:
+        created = _secure_post(client, "/api/providers", profile)
+        revision = created.json()["revision_sha256"]
+        response = _secure_post(
+            client,
+            f"/api/providers/remote-acme/revisions/{revision}/credential",
+            {"credential": secret},
+        )
+        listed = client.get("/api/providers")
+
+    assert created.status_code == 201
+    assert response.status_code == 200
+    assert response.json()["credential_available"] is True
+    assert listed.json()["profiles"][0]["credential_available"] is True
+    assert stored[revision] == secret
+    assert secret not in response.text + listed.text
+
+
+def test_provider_credential_route_screens_startup_policy_drift(tmp_path: Path) -> None:
+    from adlife.city.provider_runtime import build_provider_runtime_policy
+
+    secret = "sk-test-policy-drift-secret-1234567890"
+    root = tmp_path / "workspace"
+    workspace = prepare_workbench_workspace(root)
+    approved = build_provider_runtime_policy(
+        provider_origins=("remote-acme=https://api.example.invalid/v1",)
+    )
+    first_app = _module().create_city_workbench_app(
+        workspace,
+        csrf_token=TOKEN,
+        provider_runtime=approved,
+    )
+    profile = {
+        **_local_provider_payload(),
+        "profile_id": "remote-acme",
+        "display_label": "Remote Acme",
+        "mode": "remote",
+        "base_url": "https://api.example.invalid/v1",
+        "origin_approval_id": "remote-acme",
+    }
+    with TestClient(first_app, base_url=ORIGIN) as client:
+        created = _secure_post(client, "/api/providers", profile)
+    assert created.status_code == 201
+
+    restarted = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+    )
+    revision = created.json()["revision_sha256"]
+    with TestClient(restarted, base_url=ORIGIN) as client:
+        response = _secure_post(
+            client,
+            f"/api/providers/remote-acme/revisions/{revision}/credential",
+            {"credential": secret},
+        )
+        listed = client.get("/api/providers")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "provider-endpoint-refused"
+    assert secret not in response.text
+    assert listed.json()["profiles"][0]["endpoint_policy_accepted"] is False
 
 
 @pytest.mark.parametrize("schema_version", [6, 7])
@@ -1628,6 +1816,132 @@ def test_schema3_offline_job_publishes_one_verified_manifest_v9_run(
     assert capabilities.json()["active_job"] is None
     assert runs.json()["verified_total"] == 1
     assert (root / "city-runs" / payload["settings"]["run_id"] / "run.json").is_file()
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock"])
+def test_v9_cognition_routes_project_one_pinned_verified_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    client, root = _client(tmp_path)
+    payload = draft_v3_data(mode=mode)
+    run_id = f"cognition-{mode}"
+    payload["settings"].update({"seed": "42", "run_id": run_id})
+    with client:
+        submitted = _secure_post(client, "/api/jobs", payload)
+        assert submitted.status_code == 202
+        terminal = _await_job(client, submitted.json()["status_url"])
+        assert terminal["phase"] == "completed"
+        stored = CityRunStore(root).load(run_id)
+        assert stored.cognition_evaluation is not None
+        assert stored.cognition_input is not None
+        assert stored.cognition_evaluation.records
+        loaded: list[str] = []
+        original_load = _module().WorkbenchRunRepository.load
+
+        def counted_load(repository: object, candidate: str):
+            loaded.append(candidate)
+            return original_load(repository, candidate)
+
+        monkeypatch.setattr(_module().WorkbenchRunRepository, "load", counted_load)
+        before = _artifact_snapshot(root)
+        page = client.get(f"/runs/{run_id}")
+        token = re.search(
+            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">', page.text
+        )
+        assert token is not None
+        headers = {"X-AdLife-View-Token": token.group(1)}
+        summary = client.get(f"/api/runs/{run_id}/cognition-summary", headers=headers)
+        records = client.get(f"/api/runs/{run_id}/cognition-records", headers=headers)
+        frozen = client.get(f"/api/runs/{run_id}/workbench-input", headers=headers)
+        assert summary.status_code == records.status_code == frozen.status_code == 200
+        summary_data = summary.json()
+        assert set(summary_data) == {
+            "schema_version",
+            "run_id",
+            "run_schema_version",
+            "cognition_input_sha256",
+            "mode",
+            "explainer_id",
+            "provider_profile_id",
+            "provider_revision_sha256",
+            "model_id",
+            "aggregate_output_token_ceiling",
+            "summary",
+        }
+        assert summary_data["summary"] == stored.cognition_evaluation.summary.model_dump(
+            mode="json"
+        )
+        assert summary_data["mode"] == mode
+        assert summary_data["explainer_id"] == f"city-{mode}-explainer-v1"
+        assert summary_data["model_id"] is None
+        assert summary_data["provider_profile_id"] is None
+        assert summary_data["provider_revision_sha256"] is None
+        assert summary_data["aggregate_output_token_ceiling"] == 0
+        assert summary_data["cognition_input_sha256"] == stored.cognition_input.fingerprint
+        assert records.json() == {
+            "schema_version": 1,
+            "run_id": run_id,
+            "run_schema_version": 9,
+            "cognition_input_sha256": stored.cognition_input.fingerprint,
+            "records": [
+                record.model_dump(mode="json") for record in stored.cognition_evaluation.records
+            ],
+        }
+        assert frozen.json()["run_schema_version"] == 9
+        assert frozen.json()["workbench_input_schema_version"] == 3
+        assert frozen.json()["cognition"]["mode"] == mode
+        assert loaded == [run_id]
+        assert str(root) not in summary.text + records.text + frozen.text
+        assert _artifact_snapshot(root) == before
+
+        artifact = stored.directory / "outputs" / "cognition.jsonl"
+        artifact.write_bytes(artifact.read_bytes() + b" ")
+        for suffix, expected in (("cognition-summary", summary), ("cognition-records", records)):
+            assert (
+                client.get(f"/api/runs/{run_id}/{suffix}", headers=headers).content
+                == expected.content
+            )
+            fresh = client.get(f"/api/runs/{run_id}/{suffix}")
+            assert fresh.status_code == 409
+            assert fresh.json()["error"]["code"] == "run-unavailable"
+
+
+@pytest.mark.parametrize("schema_version", [6, 7, 8])
+def test_cognition_routes_refuse_verified_pre_v9_runs(tmp_path: Path, schema_version: int) -> None:
+    client, root = _client(tmp_path)
+    run_id = f"no-cognition-v{schema_version}"
+    with client:
+        if schema_version == 8:
+            submitted = _secure_post(client, "/api/jobs", _persona_draft(run_id=run_id))
+            assert _await_job(client, submitted.json()["status_url"])["phase"] == "completed"
+        else:
+            _saved_workbench_run(root, run_id=run_id, schema_version=schema_version)
+        for suffix in ("cognition-summary", "cognition-records"):
+            response = client.get(f"/api/runs/{run_id}/{suffix}")
+            assert response.status_code == 404
+            assert response.json()["error"] == {
+                "code": "cognition-unavailable",
+                "message": "This saved run has no frozen cognition evidence.",
+                "fields": {},
+            }
+
+
+@pytest.mark.parametrize("suffix", ["cognition-summary", "cognition-records"])
+def test_cognition_routes_screen_queries_and_snapshot_tokens(tmp_path: Path, suffix: str) -> None:
+    client, _root = _client(tmp_path)
+    marker = "Authorization: Bearer sk-never-echo-cognition-1234567890"
+    with client:
+        query = client.get(f"/api/runs/unknown/{suffix}", params={"private": marker})
+        token = client.get(f"/api/runs/unknown/{suffix}", headers={"X-AdLife-View-Token": marker})
+        missing = client.get(f"/api/runs/unknown/{suffix}")
+    assert query.status_code == 422
+    assert query.json()["error"]["code"] == "invalid-query"
+    assert token.status_code == 409
+    assert token.json()["error"]["code"] == "run-unavailable"
+    assert missing.status_code == 404
+    assert marker not in query.text + token.text + missing.text
 
 
 @pytest.mark.parametrize("phase", ["prepare", "publish", "verified_summary"])
