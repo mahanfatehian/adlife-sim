@@ -59,13 +59,13 @@ What this model cannot support. Read alongside the
 ## Engineering caveats
 
 - **The D1b workbench is local orchestration, not an enterprise service.** One
-  process-local worker executes at most one deterministic-rules job, and operational job
+  process-local worker executes at most one job or provider operation, and operational job
   history disappears on restart; only fully verified run artifacts are rediscovered.
-  Schema-v7/schema-v8 add canonical `inputs/workbench.json` provenance to schema-v6 evidence, not a
+  Schema-v7/schema-v8/schema-v9 add canonical `inputs/workbench.json` provenance to schema-v6 evidence, not a
   new or calibrated behavior model. The four-stage browser can validate and operate this
   local deterministic workflow, cooperatively cancel before persistence, resume polling
   after a page refresh in the same live process, and reopen the verified library. It does
-  not provide authentication or multi-user authorization, provider or OAuth settings,
+  not provide authentication or multi-user authorization, OAuth,
   report download, comparison/paired-study operation, process-restart recovery, or a
   rights-reviewed real city/worldwide catalog. It remains loopback-only and makes no
   observed or calibrated population, traffic, attention, sales, or external-validity
@@ -75,7 +75,7 @@ What this model cannot support. Read alongside the
   ownership, license compliance, legal routing, coverage quality, or fitness for a customer
   use. Its declared source URL is inert and not dereferenced. The default workbench has no
   outbound data request.
-- **The browser workflow does not make the city model more realistic.** Schema-2 assigns
+- **The browser workflow does not make the city model more realistic.** Schema-2/schema-3 assign
   explicit interests, response traits and initial state per fictional persona; schema-1
   retains one homogeneous set for every synthetic agent. The model clock and day/night presentation are illustrative; fixed
   schedules are not calendar-, daylight-, traffic-, or demand-calibrated. Playback,
@@ -100,14 +100,14 @@ What this model cannot support. Read alongside the
   C3b schema-v5 runs add one synthetic impression per opportunity and a keyed
   noticed/ignored label using a fixed 0.5 probability under
   `synthetic-attention-not-observed-behavior`. The threshold is uncalibrated and is not
-  observed attention. For schema-v5, schema-v6, schema-v7, and schema-v8, the C4a spatial metrics remain
+  observed attention. For schema-v5, schema-v6, schema-v7, schema-v8, and schema-v9, the C4a spatial metrics remain
   attention-only: they summarize verified opportunity/attention files, not response state,
   with exact numerator, denominator, and source paths under
   `synthetic-metrics-not-observed-outcomes`. Schema-v6's separate response layer derives
   `spatial-response-metrics-v1` under
   `synthetic-response-metrics-not-observed-outcomes`; its state receipts are overall and
   campaign scoped, never allocated to a channel.
-- **Schema-v6/schema-v7/schema-v8 response state is an illustrative rules model, not observed behavior.** Only
+- **Schema-v6/schema-v7/schema-v8/schema-v9 response state is an illustrative rules model, not observed behavior.** Only
   a validated noticed record can produce a bounded response and campaign-scoped state
   update under `synthetic-response-not-observed-behavior`. Purchase intention is an
   uncalibrated internal proxy, not purchase probability, sales, or a transaction. Schema-v6
@@ -116,6 +116,16 @@ What this model cannot support. Read alongside the
   calibrated. The saved-run browser's full-run response ledger makes the proxy visible with
   receipts; purchase intention remains not purchase probability or an observed outcome. C3
   therefore remains open for those broader causal mechanisms.
+- **Schema-v9 provider prose is not an agent mind or a causal model.** The optional
+  noncausal explanation pass sees bounded, already-computed response evidence. It cannot
+  change movement, exposure, attention, deterministic response values, campaign state,
+  budget, purchase probability, metrics, events, or identities. A fluent explanation can
+  still be wrong, stereotyped, inconsistent, or misleading; strict validation and screening
+  reduce technical risk but do not establish psychological or scientific validity. Live
+  provider explanations are nondeterministic; frozen schema-v9 replay is deterministic and
+  performs no provider call, credential lookup, profile lookup, cache lookup, or network
+  request. Its `inputs/cognition.json`, `outputs/cognition.jsonl`, and
+  `outputs/cognition-summary.json` preserve provenance, not truth.
 - **Geographic evidence omits important mechanisms.** Road proximity and the half-plane
   orientation heuristic omit occlusion, lanes, buildings, traffic, speed variation and
   measured viewability. Phone probability is an analyst assumption, not an observed usage
@@ -154,8 +164,8 @@ as release blockers.
 
 ## Fictional audience limits
 
-Default schema-2 personas produce schema-v8; schema-1/schema-v7 remains the homogeneous
-compatibility path. Names, ages, occupations, backgrounds and MBTI are noncausal descriptive
+Default schema-3 personas produce schema-v9; schema-2/schema-v8 and schema-1/schema-v7 remain
+compatible. Names, ages, occupations, backgrounds and MBTI are noncausal descriptive
 metadata, with no real-person validity, demographic calibration or MBTI predictive power.
 Explicit interests, six traits and initial campaign state are causal response assumptions;
 IDs/counts/assignments are structural. Reordering definitions preserves assignments, while
@@ -168,4 +178,4 @@ Purchase intention is an uncalibrated proxy, never a transaction. Canonical byte
 use. Screening refuses recognized sensitive identifiers/secrets and unsafe text; it cannot
 prove absence of personal information. Use wholly fictional data only. There is no authenticated
 shared deployment, durable job recovery, worldwide qualified catalog, provider persona generation,
-or full browser comparison/study/report workflow. These limitations remain despite V8 consumer support.
+or full browser comparison/study/report workflow. These limitations remain despite V9 consumer support.

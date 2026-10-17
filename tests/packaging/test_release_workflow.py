@@ -520,3 +520,11 @@ def test_frozen_binary_smoke_exercises_packaged_catalog_and_replay() -> None:
         "frozen-city-output",
         "catalog-frozen",
     ] in commands
+
+
+def test_frozen_binary_collects_keyring_discovery_metadata_and_backends() -> None:
+    spec = (ROOT / "packaging/adlife.spec").read_text(encoding="utf-8")
+
+    assert "copy_metadata" in spec
+    assert 'copy_metadata("keyring")' in spec
+    assert 'collect_submodules("keyring.backends")' in spec

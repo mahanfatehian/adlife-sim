@@ -1195,38 +1195,38 @@ def test_persona_authoring_docs_publish_version_and_scientific_boundaries() -> N
         (
             "docs/architecture.md",
             "Saved city studies use separate strict",
-            "v1/v2/v3/v4/v5/v6/v7/v8",
+            "v1/v2/v3/v4/v5/v6/v7/v8/v9",
         ),
         (
             "docs/architecture.md",
             "validates before serving one immutable mobility projection",
-            "V4 through V8",
+            "V4 through V9",
         ),
         (
             "docs/architecture.md",
             "The adapter-free core exposes the original read-only",
-            "V5, V6, V7, and V8",
+            "V5, V6, V7, V8, and V9",
         ),
-        ("docs/architecture.md", "Schema V6", "V6, V7, and V8"),
-        ("docs/city-pilot.md", "Use `city-metrics --layer response`", "V6/V7/V8"),
+        ("docs/architecture.md", "Schema V6", "V6, V7, V8, and V9"),
+        ("docs/city-pilot.md", "Use `city-metrics --layer response`", "V6/V7/V8/V9"),
         (
             "docs/city-pilot.md",
             "`city-view` validates the full trace before opening",
-            "v4, v5, v6, v7, and v8",
+            "v4, v5, v6, v7, v8, and v9",
         ),
         (
             "docs/city-pilot.md",
             "`/api/response-summary`, paged",
-            "V6, V7, and V8",
+            "V6, V7, V8, and V9",
         ),
         (
             "docs/methodology/model-card.md",
             "City-pack v2 can preserve real-world road geometry",
-            "v3/v4/v5/v6/v7/v8",
+            "v3/v4/v5/v6/v7/v8/v9",
         ),
     ],
 )
-def test_current_city_consumer_and_replay_descriptions_include_v8(path, anchor, versions):
+def test_current_city_consumer_and_replay_descriptions_include_v9(path, anchor, versions):
     paragraphs = re.split(r"\n\s*\n", _read(path))
     paragraph = next(value for value in paragraphs if anchor in value)
     assert versions in paragraph, (path, anchor, versions)
@@ -1264,9 +1264,9 @@ def test_fictional_only_policy_does_not_claim_identity_enforcement(path) -> None
         ("docs/methodology/model-card.md", "workbench artifacts retain that entire"),
     ],
 )
-def test_workbench_replay_provenance_paragraph_covers_v7_and_v8(path, anchor) -> None:
+def test_workbench_replay_provenance_paragraph_covers_v7_v8_and_v9(path, anchor) -> None:
     paragraph = next(value for value in re.split(r"\n\s*\n", _read(path)) if anchor in value)
-    for version in ("schema-v7", "schema-v8"):
+    for version in ("schema-v7", "schema-v8", "schema-v9"):
         assert version in paragraph.lower(), (path, version)
     assert "inputs/workbench.json" in paragraph
 
@@ -1547,6 +1547,133 @@ def test_workbench_docs_describe_one_verified_timeline_projection() -> None:
             "individual",
         )
     assert "GET /api/runs/{run_id}/timeline?minute=&agent_id=&..." in cli
+
+
+def test_optional_city_explanations_are_documented_as_a_noncausal_v9_layer() -> None:
+    paths = (
+        "README.md",
+        "CHANGELOG.md",
+        "docs/architecture.md",
+        "docs/city-pilot.md",
+        "docs/cli-reference.md",
+        "docs/reproducibility.md",
+        "docs/methodology/model-card.md",
+        "docs/methodology/limitations.md",
+        "docs/methodology/experiment-protocol.md",
+        "docs/superpowers/plans/2026-09-28-production-city-platform-roadmap.md",
+    )
+    for path in paths:
+        text = _squash(_read(path))
+        assert "schema-v9" in text, path
+        assert "noncausal" in text, path
+
+    public = _squash(
+        "\n".join(
+            _read(path)
+            for path in (
+                "README.md",
+                "docs/architecture.md",
+                "docs/city-pilot.md",
+                "docs/cli-reference.md",
+                "docs/reproducibility.md",
+                "docs/methodology/model-card.md",
+                "docs/methodology/limitations.md",
+            )
+        )
+    )
+    for artifact in (
+        "inputs/cognition.json",
+        "outputs/cognition.jsonl",
+        "outputs/cognition-summary.json",
+    ):
+        assert artifact in public, artifact
+    for prohibited_effect in (
+        "movement",
+        "attention",
+        "response",
+        "state",
+        "budget",
+        "purchase probability",
+        "metrics",
+    ):
+        assert prohibited_effect in public, prohibited_effect
+
+
+def test_provider_setup_docs_pin_the_supported_compatible_endpoint_contract() -> None:
+    readme = _read("README.md")
+    architecture = _read("docs/architecture.md")
+    city_pilot = _read("docs/city-pilot.md")
+    cli = _read("docs/cli-reference.md")
+
+    for text in (readme, city_pilot, cli):
+        assert "--provider-origin ID=URL" in text
+        assert "--provider-key-env ID=ENVIRONMENT_VARIABLE" in text
+        assert "local-ollama" in text
+    for text in (architecture, city_pilot, cli):
+        _assert_terms_share_paragraph(
+            text,
+            "OpenAI-compatible",
+            "Chat Completions",
+            "non-streaming",
+            "/chat/completions",
+        )
+    _assert_terms_share_paragraph(
+        cli,
+        "ChatGPT",
+        "Codex",
+        "subscription",
+        "OAuth",
+        "not accepted",
+    )
+    _assert_terms_share_paragraph(
+        architecture,
+        "adlife.city-provider.v1",
+        "keyring",
+        "environment-variable name",
+        "credential value",
+    )
+    for route in (
+        "GET /api/providers",
+        "POST /api/providers",
+        "POST /api/providers/{profile_id}/revisions/{revision_id}/credential",
+        "POST /api/providers/{profile_id}/revisions/{revision_id}/check",
+        "GET /api/runs/{run_id}/cognition-summary",
+        "GET /api/runs/{run_id}/cognition-records",
+    ):
+        assert route in cli, route
+
+
+def test_provider_replay_docs_distinguish_live_variation_from_frozen_reproduction() -> None:
+    readme = _read("README.md")
+    reproducibility = _read("docs/reproducibility.md")
+    model_card = _read("docs/methodology/model-card.md")
+    limitations = _read("docs/methodology/limitations.md")
+
+    for text in (readme, reproducibility, model_card, limitations):
+        _assert_terms_share_paragraph(
+            text,
+            "live",
+            "nondeterministic",
+            "frozen",
+            "replay",
+            "no provider call",
+        )
+    _assert_terms_share_paragraph(
+        readme,
+        "rules",
+        "mock",
+        "offline",
+        "default",
+        "no credential",
+    )
+
+    combined = _squash("\n".join((readme, reproducibility, model_card, limitations)))
+    for stale_claim in (
+        "does not configure providers or oauth",
+        "does not provide provider or oauth configuration",
+        "provider/oauth configuration is not implemented",
+    ):
+        assert stale_claim not in combined, stale_claim
 
 
 def test_spatial_study_plan_records_completed_tasks_and_exact_evidence() -> None:

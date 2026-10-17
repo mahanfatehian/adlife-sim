@@ -27,9 +27,10 @@ movement change. All spatial evidence is persisted and replayed from frozen inpu
 schema-v4 runs remain opportunity-only and ordinary schema-v5 runs remain
 opportunity/attention-only.
 
-The loopback workbench publishes that same deterministic rules evidence as schema-v8 for
-schema-2 persona requests, retaining schema-1/schema-v7 compatibility.
-Neither version adds a new behavioral model: canonical `inputs/workbench.json` freezes the
+The loopback workbench publishes schema-v9 for schema-3 requests, retaining
+schema-2/schema-v8 and schema-1/schema-v7 compatibility. V9 can add optional bounded
+noncausal explanations after deterministic response evaluation.
+No version adds a new behavioral model: canonical `inputs/workbench.json` freezes the
 complete accepted draft and exact fictional creative-template snapshot, and the manifest's
 `workbench_input_sha256` binds it to the other run inputs. Verified discovery, replay and
 run-scoped inspection refuse a missing, changed, noncanonical or inconsistent sidecar.
@@ -43,8 +44,9 @@ deterministic profile. Its Audience editor assigns explicitly displayed interest
 and initial response-state assumptions per persona. The schema-1 compatibility path is a
 homogeneous response cohort, not demographic calibration or evidence about a real
 population. The model clock, map animation, playback speed, filtering, and selection are
-presentation only and cannot change the frozen run. Provider-backed city cognition is not
-installed; city responses remain the transparent deterministic rules described here.
+presentation only and cannot change the frozen run. Optional provider-backed city
+explanations annotate those transparent deterministic rules; they do not become agent state
+or a decision input.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -83,7 +85,28 @@ shared per-person scalars, not per-campaign state; multi-campaign final-state ch
 be assigned to one ad. The separate spatial schema-v6 response model instead maintains
 explicit campaign-scoped sentiment, recall, and purchase-intention proxy state.
 
-## The LLM's role (and its limits)
+## The LLM's role in schema-v9 city runs
+
+The city workbench first computes the complete deterministic response stream and final
+campaign state. It then selects at most 60 response records under a fixed aggregate budget.
+Rules, mock, local, or remote explainers may produce bounded text for those records. This
+text is a noncausal annotation: it cannot change movement, exposure, attention, response
+values, sentiment, recall, purchase-intention state, budget, purchase probability, metrics,
+events, or identities. It is not an agent's private thought and must not be presented as
+sentience, observed psychology, sales prediction, or model calibration.
+
+Schema-v9 freezes the effective request in `inputs/cognition.json`, one terminal outcome per
+selected record in `outputs/cognition.jsonl`, and aggregate provenance in
+`outputs/cognition-summary.json`. Strict schema validation, output screening, byte/token/
+time/retry/repair bounds, endpoint policy, and deterministic fallback constrain the optional
+OpenAI-compatible provider. Credentials never enter these files or the prompt.
+
+Rules and mock explanations are deterministic and offline. Live provider explanations are
+nondeterministic; frozen schema-v9 replay is deterministic and performs no provider call,
+credential lookup, cache lookup, registry lookup, or network access. Replay verifies the
+recorded terminal stream against the same numeric evidence and leaves the source unchanged.
+
+## The zone engine LLM role (and its limits)
 
 In hybrid mode an OpenAI-compatible provider supplies narrative text and bounded numeric
 inputs. `rule_modifier` (−0.10 to +0.10) adjusts rule sentiment and recall deltas before
@@ -119,7 +142,7 @@ source provenance, but it contains no real-person trajectories. Its IANA time zo
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
 pilot can optionally assign synthetic home, workplace and leisure points supplied in a
 pack-hash-bound place set. Those points must be routable road nodes, carry explicit
-authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6/v7/v8 replay;
+authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6/v7/v8/v9 replay;
 they are
 scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
@@ -163,12 +186,13 @@ intention values are synthetic internal state: purchase intention is not purchas
 probability, sales, or evidence of effect, and the formulas are not calibrated to any real
 person, city, brand, or population.
 
-Schema-v7 and schema-v8 workbench artifacts retain that entire schema-v6 scientific layer
-and bind the canonical `inputs/workbench.json` provenance sidecar (input schema 1 and 2,
-respectively); schema-v8 additionally binds the authored persona population and assignments.
-Replay validates and reuses those accepted inputs. The workbench accepts only
-packaged fictional creatives and deterministic rules; it neither invokes the zone engine's
-language-model providers nor upgrades any geographic validity claim.
+Schema-v7, schema-v8, and schema-v9 workbench artifacts retain that entire schema-v6
+scientific layer and bind the canonical `inputs/workbench.json` provenance sidecar (input
+schema 1, 2, and 3, respectively); schema-v8/v9 additionally bind the authored persona
+population and assignments. Replay validates and reuses those accepted inputs. V9's optional
+provider explains frozen city response evidence through a separate adapter and does not
+invoke the zone engine's numeric cognition composition or upgrade any geographic validity
+claim.
 
 ## Metrics
 
@@ -178,13 +202,13 @@ intention delta, high-intention count, purchases, and cognition counters — eac
 numerator, denominator, and event/state sources recorded, so provenance is re-derivable
 from the artifact.
 
-For schema-v5, schema-v6, schema-v7, and schema-v8 city runs, the original spatial-metrics fold
+For schema-v5, schema-v6, schema-v7, schema-v8, and schema-v9 city runs, the original spatial-metrics fold
 remains the attention default: it derives exact opportunity, impression, and noticed
 receipts from verified persisted evidence and carries
 `synthetic-metrics-not-observed-outcomes`. It does not consume v6 response or final-state
 evidence.
 
-Schema-v6, schema-v7, and schema-v8 add a separate `spatial-response-metrics-v1` fold under
+Schema-v6, schema-v7, schema-v8, and schema-v9 add a separate `spatial-response-metrics-v1` fold under
 `synthetic-response-metrics-not-observed-outcomes`. It derives direct rule-response receipts
 plus complete initial/final campaign-state receipts. Event evidence may be grouped by
 channel, but nonlinear committed state is only overall/campaign scoped. The response
@@ -251,7 +275,8 @@ inside the synthetic world, not absolute prediction.
 
 ## Fictional personas and external validity
 
-Default schema-2 authoring creates schema-v8, with schema-1/schema-v7 homogeneous compatibility.
+Default schema-3 authoring creates schema-v9, with schema-2/schema-v8 persona and
+schema-1/schema-v7 homogeneous compatibility.
 Four fictional templates are editable starting assumptions, not real residents or population
 samples. Name, age, occupation, background and MBTI are noncausal descriptive context;
 no personality predictive power, demographic calibration or real-person validity is claimed.

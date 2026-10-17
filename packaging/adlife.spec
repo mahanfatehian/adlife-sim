@@ -14,7 +14,7 @@ both stylesheets, and Textual/Plotly resources — is collected below.
 
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 block_cipher = None
 
@@ -22,6 +22,7 @@ _datas = (
     collect_data_files("adlife")
     + collect_data_files("textual")
     + collect_data_files("plotly")
+    + copy_metadata("keyring")
 )
 
 _hiddenimports = (
@@ -30,6 +31,7 @@ _hiddenimports = (
     + collect_submodules("adlife.core")
     + collect_submodules("adlife.adapters")
     + collect_submodules("adlife.reporting")
+    + collect_submodules("keyring.backends")
     + ["adlife.tui.app", "adlife.tui.widgets", "adlife.tui.controller", "adlife.tui.event_bus"]
 )
 

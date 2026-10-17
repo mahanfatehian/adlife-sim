@@ -329,12 +329,14 @@ also depend on E. Keep existing CLI/TUI/report paths working.
   offline resources, XSS/CSP, large timeline and slow API responses. A live browser
   smoke uses a fresh sample artifact; no screenshots substitute for assertions.
 
-  **D3 progress (2026-10-10):** scenario operation is now available for the local
-  deterministic profile. The browser edits bounded phone/billboard assumptions, validates
-  the homogeneous synthetic cohort, preserves an exact decimal seed, freezes schema-v7
-  provenance, and reopens verified results. D3 remains open: provider/OAuth configuration,
-  fallback/cognition views, paired study/comparison operation, uncertainty views, and
-  report download are not browser features.
+  **D3 progress (2026-10-17):** scenario operation and optional provider operation are now available
+  for the local single-operator profile. The browser edits bounded phone/billboard and
+  persona assumptions, preserves an exact decimal seed, selects rules/mock or one exact
+  local/remote provider-profile revision, freezes schema-v9 cognition provenance, and
+  reopens each verified explanation beside its computed response. Provider output is a
+  noncausal annotation and deterministic fallback remains visible. D3 remains open for
+  authenticated OAuth identity, paired study/comparison operation, uncertainty views, and
+  report download in the browser.
 
   **D4 evidence (2026-10-12):** required headless-browser certification covers the complete
   four-stage workflow, exact maximum seed, keyboard and narrow-screen operation, concise
@@ -477,7 +479,7 @@ the focused plan or milestone evidence document.
    the next dependency-unblocked package and whether the branch is pushed. No plan
    itself authorizes a push, remote change, deployment or publication.
 
-Current ledger (2026-10-14, after the workspace city-registry slice): **A1–A4, B6, C1,
+Current ledger (2026-10-17, after the local provider-explanation slice): **A1–A4, B6, C1,
 C2, D1a, D1b, and the local deterministic D2 profile are
 checked.** Technical foundations also include city-pack v2/import/catalog work, C3a
 opportunity storage, C3b attention evidence, C3c response/state evidence, C4a read-only
@@ -490,7 +492,7 @@ scale, and basemap decisions; C3 still requires the broader cognition/memory/soc
 integration described above; C4 remains open for spatial social/purchase integration and
 the other declared geographic outcome metrics; D–G retain their unchecked production,
 identity, calibration, operational, and
-enterprise gates. No rights-reviewed real city, authentication boundary, provider settings,
+enterprise gates. No rights-reviewed real city, authentication boundary, browser
 browser paired-study/comparison/report operation, or external-validity evidence is claimed
 by this ledger.
 
@@ -504,8 +506,22 @@ remain noncausal; no predictive validity or identity-derived mobility is implied
 Verified saved identities, canonical inputs/workbench.json assignments, template-independent
 replay and explicit V8 analysis/study consumers extend this bounded local slice.
 
-This evidence does not close D3 provider/authentication/browser report-download/study operation,
+This evidence does not close D3 authentication/browser report-download/study operation,
 worldwide qualified catalog, durable jobs, month simulation or empirical-validation gates.
 Screening refuses recognized unsafe inputs but does not prove absence of personal information.
 Purchase intention remains an uncalibrated proxy without purchase transactions. No release,
 package-version change or real-person validation is recorded by this dated progress note.
+
+## Provider explanation evidence — 2026-10-17
+
+The local workbench now accepts schema-3 and publishes schema-v9 with immutable provider
+profiles, startup-approved origins, OS-keyring/environment credential resolution, bounded
+compatibility checks, deterministic selection/budgeting/fallback, manifest-bound cognition
+artifacts, offline replay, and a read-only saved-explanation inspector. Rules/mock remain the
+offline default path. Provider prose is noncausal and cannot alter the schema-v6 numeric
+response/state model, movement, attention, budget, purchase probability, or metrics.
+
+This evidence closes the provider-selection and fallback-inspection part of D3 only. It does
+not close D3's comparison/study/report views; E1's OIDC identity and authorization; E2's
+shared-deployment authorization boundary and managed secret service; or the real-city,
+calibration, durable-operation, external-validation, and enterprise gates.

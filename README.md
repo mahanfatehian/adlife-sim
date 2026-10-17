@@ -94,8 +94,9 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
 | Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
 | Verified offline, content-addressed city catalog with three `fictional-fixture` entries | Foundation complete; zero rights-reviewed real-city entries |
-| Browser-operated local city workbench, immutable schema-v8 persona inputs, workspace V2 city-pack upload, verified run library, and run-scoped inspection | Local deterministic slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
-| Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated provider settings | Not implemented |
+| Browser-operated local city workbench, immutable schema-v9 cognition evidence, workspace V2 city-pack upload, verified run library, and run-scoped inspection | Local single-operator slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
+| Optional OpenAI-compatible noncausal explanations with approved origins, protected credentials, deterministic fallback, and frozen replay | Complete for the local workbench; authentication and OAuth are not implemented |
+| Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
 | Package-index publication (PyPI) and public tagged releases | Not performed by this audit |
@@ -232,8 +233,10 @@ resume polling the same active process through `/api/workbench` and its frozen
 library rediscovers fully verified run artifacts at
 `<workspace>/city-runs/<run-id>/`.
 
-Default browser workbench runs use schema-2 fictional personas and schema-v8 city artifacts;
-schema-1 homogeneous cohort requests remain schema-v7 compatibility. Both retain schema-v6 scientific
+Default browser workbench runs submit schema-3 and create schema-v9 city artifacts. Rules is
+the offline default with a zero explanation budget; mock is also offline and requires no
+credential. Schema-2/schema-v8 fictional-persona and schema-1/schema-v7 homogeneous-cohort
+requests remain compatible. All retain schema-v6 scientific
 evidence and add canonical `inputs/workbench.json`, bound by
 `workbench_input_sha256`, so the accepted city, creative snapshot, campaign,
 population assumptions, and settings are frozen for load and replay. The scoped inspector
@@ -250,12 +253,48 @@ that viewer starts, while older schema capabilities retain their compatible indi
 reads. This removes repeated reconstruction without changing any persisted result; a new
 page load re-verifies current files and refuses inconsistent changes.
 
-This local deterministic slice does not configure providers or OAuth, authenticate users,
-qualify a real-city/worldwide catalog, download reports, operate comparisons or paired
-studies in the browser, calibrate traffic/population behavior, or predict sales. A local
-upload can contain authorized real street geometry, but the upload is not rights review or
-catalog qualification. The model clock is illustrative and workbench runs remain capped at
-seven model days.
+### Optional explanation providers
+
+The workbench can attach bounded prose explanations to response events after the
+deterministic simulation has completed. Start it with explicit server-side endpoint policy;
+the fixed `local-ollama` loopback approval is always available:
+
+```bash
+uv run adlife city-workbench --workspace ./workbench \
+  --provider-origin ID=URL \
+  --provider-key-env ID=ENVIRONMENT_VARIABLE
+```
+
+`--provider-origin ID=URL` approves one exact base URL for this process and may be repeated.
+`--provider-key-env ID=ENVIRONMENT_VARIABLE` binds a remote profile to an environment-variable
+*name*, never a credential value. A credential entered in the panel is sent once to the
+dedicated loopback route and stored only through an approved operating-system keyring; it is
+not put in a profile, run artifact, prompt, URL, log, browser storage, report, or later API
+response. A ChatGPT or Codex product login, subscription, or OAuth token is not accepted as
+an API credential. There is no OAuth flow in this local profile.
+
+The provider implements a deliberately narrow OpenAI-compatible Chat Completions subset. It
+makes bounded, non-streaming requests to the startup-approved `/chat/completions` target and
+accepts only the strict explanation schema. Provider prose is a **noncausal annotation**: it
+cannot change movement, exposure, attention, deterministic response values, campaign state,
+budget, purchase probability, or metrics, and it cannot create events or identities. The
+rules engine computes those facts first; the provider can only explain the frozen evidence.
+Invalid, unavailable, oversized, timed-out, or unsafe answers become typed deterministic
+fallbacks.
+
+Schema-v9 freezes the explanation request and every terminal outcome as
+`inputs/cognition.json`, `outputs/cognition.jsonl`, and
+`outputs/cognition-summary.json`, with hashes and counts in the manifest. Live provider
+explanations are nondeterministic; frozen schema-v9 replay is deterministic and performs no
+provider call. The saved-run inspector labels provider/cache, rules, mock, fallback, and
+budget-skipped records separately and renders each explanation beside its matching computed
+response.
+
+This local profile still does not authenticate users, qualify a real-city/worldwide catalog,
+download reports, operate comparisons or paired studies in the browser, calibrate
+traffic/population behavior, or predict sales. A local upload can contain authorized real
+street geometry, but the upload is not rights review or catalog qualification. The model
+clock is illustrative and workbench runs remain capped at seven model days.
 
 An optional schema-v1 place-set JSON can bind fictional home, workplace and leisure
 points to exact road nodes and to the selected pack hash. Validate it before use, then
@@ -321,15 +360,15 @@ adds no cognition, memory, social propagation, budget mutation, purchase event, 
 change.
 
 `city-replay` recomputes and verifies every layer without changing the source. For verified
-schema-v5, schema-v6, schema-v7, and schema-v8 runs, `city-view` shows read-only
+schema-v5, schema-v6, schema-v7, schema-v8, and schema-v9 runs, `city-view` shows read-only
 current-minute opportunity and current-minute attention evidence on the map and in bounded
-evidence rails; schema-v6, schema-v7, and schema-v8 also show response records and complete end-of-run
+evidence rails; schema-v6, schema-v7, schema-v8, and schema-v9 also show response records and complete end-of-run
 campaign state. It also renders
 the verified full-run response ledger, keeping planned rule deltas separate from committed
 state and retaining exact receipt provenance without changing the scrubbed timeline or
 source run. The existing `/api/spatial-metrics` ledger and default `city-metrics` output
 remain attention-only for all four schema versions under
-`synthetic-metrics-not-observed-outcomes`. Schema-v6, schema-v7, and schema-v8 add the separate
+`synthetic-metrics-not-observed-outcomes`. Schema-v6, schema-v7, schema-v8, and schema-v9 add the separate
 `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`, selected with `--layer response` or read
 from `/api/spatial-response-metrics`. It reports direct rule-response receipts and
@@ -343,7 +382,7 @@ configuration do not change numeric response values when the frozen response ass
 remain fixed.
 
 `city-metrics` and `city-compare` preserve the exact attention output by default. Their
-additive `--layer response` mode requires schema-v6, schema-v7 or schema-v8 and independently
+additive `--layer response` mode requires schema-v6, schema-v7, schema-v8 or schema-v9 and independently
 classifies opportunity structure and numeric response assumptions. A same-run A/A
 comparison is exactly zero. When
 the normalized placement/channel opportunity structure differs, the result is explicitly
@@ -370,8 +409,9 @@ terminal window for you.
 
 `city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
 schema-v5 spatial runs additionally persist opportunity and attention evidence, schema-v6
-runs add the bounded response/state layer above, and schema-v7/schema-v8 workbench runs add immutable
-accepted-input provenance without changing that scientific model. `city-replay` verifies
+runs add the bounded response/state layer above, schema-v7/schema-v8 workbench runs add immutable
+accepted-input provenance, and schema-v9 adds frozen noncausal explanations without changing
+that scientific model. `city-replay` verifies
 the selected contract without changing source artifacts, and `city-view` opens its verified
 mobility projection plus persisted evidence in the same read-only local timeline.
 
@@ -477,8 +517,9 @@ execution is reproducible event for event. Every stochastic decision is drawn
 from a keyed random oracle scoped to its agent and purpose, so a change in evaluation order cannot
 change an outcome. Every campaign run persists a manifest recording the code version, scenario fingerprint,
 provider, and seed, and `adlife replay` re-executes a stored run and verifies the event stream matches
-the recorded one. Live API responses are not inherently reproducible: replay requires the
-recorded validated cognition. Wall-clock metadata is not part of event equality.
+the recorded one. Live provider explanations are nondeterministic; frozen schema-v9 replay
+uses the recorded validated cognition and makes no provider call. Wall-clock metadata is
+not part of event equality.
 The recipe is in [docs/reproducibility.md](docs/reproducibility.md).
 
 ---

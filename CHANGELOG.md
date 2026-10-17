@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional city response explanations (2026-10-17)** — schema-3 workbench requests now
+  publish schema-v9 runs with noncausal rules, mock, local, or remote explanations. Exact
+  provider profiles are immutable; remote origins require startup approval; credentials
+  resolve from an approved OS keyring or explicitly bound environment-variable name and
+  never enter artifacts. The bounded OpenAI-compatible Chat Completions adapter validates a
+  strict result schema, screens unsafe output, and records deterministic fallback. Frozen
+  `inputs/cognition.json`, `outputs/cognition.jsonl`, and
+  `outputs/cognition-summary.json` make saved inspection and replay provider-free. These
+  explanations cannot change movement, exposure, attention, rule responses, campaign state,
+  budget, purchase probability, or metrics. OAuth and multi-user authentication remain out
+  of scope.
+
 - **Immutable workspace city registry (2026-10-14)** — the loopback workbench can now
   register a bounded local CityPack V2 without exposing a client/server path, list it
   beside three bundled fictional fixtures, select it, run it, inspect its frozen source
@@ -46,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   packaged `CITY -> CAMPAIGN -> RUN -> INSPECT` workflow selects verified fictional
   geography, edits bounded campaign assumptions, transports seeds as exact decimal strings,
   validates, operates/cancels/resumes polling of the process-local job, and reopens the
-  verified library in the scoped inspector. Provider/OAuth settings, report download,
+  verified library in the scoped inspector. OAuth, report download,
   comparison/paired-study operation, real-city calibration, authentication, process-restart
   recovery, and outcome prediction remain explicitly unavailable.
 - **City-pack v2 and offline catalog foundation** — backwards-compatible city packs

@@ -137,3 +137,9 @@ retroactive claim that a study followed every proposed reporting step.
 - Reports show persisted fictional episodic memory summaries, not free-form
   end-of-day reflections or human observations. Optional human ranking remains an
   unimplemented research exercise, not an existing validation result.
+- Schema-v9 city explanations are a noncausal evidence annotation, not a treatment or
+  outcome. Rules, mock, provider, cache, deterministic fallback, and budget-skipped prose
+  are excluded from numeric metrics, treatment equality, A/A deltas, paired estimates, and
+  rank ordering. A city comparison uses the same verified response equations and causal
+  inputs as schema-v6/v7/v8; differing explanation mode, profile revision, text, or token
+  budget cannot be cited as an effect on synthetic response state.
