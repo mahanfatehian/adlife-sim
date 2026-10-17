@@ -406,15 +406,7 @@ def test_exact_installed_wheel_spatial_report_is_offline_and_no_clobber(built_wh
     original = report.read_bytes()
     assert b"<style>" in original and b"<script" not in original
     assert b"Content-Security-Policy" in original
-    conflict = subprocess.run(
-        command,
-        cwd=scratch,
-        capture_output=True,
-        text=True,
-        env=smoke_release._subprocess_environment(),
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        timeout=60,
-    )
+    conflict = smoke_release._run(command, cwd=scratch, expected_exit=3)
     assert conflict.returncode == 3
     assert json.loads(conflict.stdout)["error"]["message"] == "report destination already exists"
     assert report.read_bytes() == original
