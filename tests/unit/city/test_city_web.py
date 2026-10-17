@@ -1074,7 +1074,7 @@ async def test_saved_v7_view_preserves_exact_metric_source_schema() -> None:
     assert metadata["run_schema_version"] == 7
     assert projected_attention["source_run_schema_version"] == 7
     assert projected_response["source_run_schema_version"] == 7
-    assert "![6, 7, 8].includes(document.source_run_schema_version)" in javascript
+    assert "![6, 7, 8, 9].includes(document.source_run_schema_version)" in javascript
     assert "document.source_run_schema_version !== state.meta.run_schema_version" in javascript
 
 

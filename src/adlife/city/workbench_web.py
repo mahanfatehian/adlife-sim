@@ -1119,6 +1119,22 @@ def create_city_workbench_app(
             headers=_SHELL_HEADERS,
         )
 
+    @app.get("/assets/workbench-providers.js", include_in_schema=False)
+    def provider_script() -> Response:
+        return Response(
+            _read_packaged_text("workbench-providers.js"),
+            media_type="text/javascript",
+            headers=_SHELL_HEADERS,
+        )
+
+    @app.get("/assets/workbench-providers.css", include_in_schema=False)
+    def provider_stylesheet() -> Response:
+        return Response(
+            _read_packaged_text("workbench-providers.css"),
+            media_type="text/css",
+            headers=_SHELL_HEADERS,
+        )
+
     @app.get("/assets/workbench-icon.svg", include_in_schema=False)
     def icon() -> Response:
         return Response(

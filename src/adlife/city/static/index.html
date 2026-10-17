@@ -18,7 +18,7 @@
         <span class="mark" aria-hidden="true"><span></span></span>
         <div><span class="eyebrow">AdLife City</span><h1>Run inspector</h1><span class="eyebrow" id="saved-run-label" hidden></span><a class="workbench-back" id="workbench-back-link" href="/" hidden>&larr; Back to workbench</a></div>
       </div>
-      <div class="masthead-right"><span class="status-dot" aria-hidden="true"></span><span>Deterministic rules · no AI provider</span><span class="division">/</span><span id="city-name">Loading city…</span></div>
+      <div class="masthead-right"><span class="status-dot" aria-hidden="true"></span><span id="model-boundary-label">Deterministic simulation</span><span class="division">/</span><span id="city-name">Loading city…</span></div>
     </header>
 
     <main class="workspace">
@@ -223,6 +223,20 @@
           <div class="response-causal" id="response-causal" aria-label="Notice causes a rule response; responses are atomically committed as a state update"><span>NOTICE</span><i aria-hidden="true">&rarr;</i><span>RULE RESPONSE</span><i aria-hidden="true">&rarr;</i><span>STATE UPDATE</span></div>
           <div class="response-totals" aria-label="Synthetic response totals"><div><span>RESPONSES</span><strong id="response-responses">0</strong></div><div><span>UPDATES</span><strong id="response-updates">0</strong></div><div><span>CAMPAIGNS</span><strong id="response-campaigns">0</strong></div></div>
           <p class="response-claim" id="response-claim">Modeled response &middot; not observed behavior</p>
+          <details class="cognition-summary" id="cognition-summary" hidden>
+            <summary><span><span class="eyebrow">Saved explanation evidence</span><strong id="cognition-summary-label">Explanations</strong></span><span id="cognition-summary-status">Checking</span></summary>
+            <div class="cognition-summary-content">
+              <p id="cognition-summary-disclosure">Synthetic narrative, not observed behavior. Explanations cannot change the deterministic simulation.</p>
+              <dl>
+                <div><dt>Mode</dt><dd><bdi id="cognition-summary-mode" dir="auto">&mdash;</bdi></dd></div>
+                <div><dt>Source outcomes</dt><dd><bdi id="cognition-summary-outcomes" dir="auto">&mdash;</bdi></dd></div>
+                <div><dt>Provider profile</dt><dd><bdi id="cognition-summary-provider" dir="auto">&mdash;</bdi></dd></div>
+                <div><dt>Model</dt><dd><bdi id="cognition-summary-model" dir="auto">&mdash;</bdi></dd></div>
+                <div><dt id="cognition-summary-fallback-label">Fallback / skipped</dt><dd><bdi id="cognition-summary-fallbacks" dir="auto">&mdash;</bdi></dd></div>
+                <div><dt>Output ceiling</dt><dd><bdi id="cognition-summary-budget" dir="auto">&mdash;</bdi></dd></div>
+              </dl>
+            </div>
+          </details>
           <div class="response-now"><span>Selected minute</span><strong id="response-current">0 RECORDS AT THIS MINUTE &middot; 0 FOR SELECTED AGENT</strong></div>
           <div class="response-list" id="response-list"></div>
           <p class="response-empty" id="response-empty">No response evidence at this minute.</p>

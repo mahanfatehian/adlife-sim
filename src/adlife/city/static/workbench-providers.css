@@ -1,0 +1,228 @@
+.explanations-section {
+  position: relative;
+}
+
+.explanation-heading {
+  align-items: end;
+}
+
+.explanation-heading h2 {
+  margin-top: 5px;
+}
+
+.section-lead {
+  max-width: 62ch;
+  margin: 8px 0 0;
+  color: #b6c7c4;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.explanation-path {
+  position: relative;
+  margin-top: 16px;
+  padding-left: 18px;
+  border-left: 1px solid var(--mint-deep);
+}
+
+.explanation-path::before {
+  position: absolute;
+  top: 18px;
+  left: -4px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--mint);
+  background: var(--ink-soft);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.explanation-path > .field {
+  margin-top: 0;
+}
+
+.provider-settings {
+  min-width: 0;
+  margin-top: 14px;
+  padding-top: 2px;
+}
+
+.provider-receipt {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  background: rgba(6, 20, 26, .55);
+}
+
+.provider-receipt > div {
+  min-width: 0;
+  padding: 10px 11px;
+}
+
+.provider-receipt > div + div {
+  border-left: 1px solid var(--line);
+}
+
+.provider-receipt span,
+.provider-receipt strong {
+  display: block;
+}
+
+.provider-receipt span {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.provider-receipt strong {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--paper);
+  font: 600 10px Consolas, "Courier New", monospace;
+}
+
+.provider-create-details {
+  margin-top: 14px;
+}
+
+.provider-form {
+  padding: 2px 13px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.provider-form input[type="text"],
+.provider-form input[type="number"],
+.provider-credential-controls input[type="password"] {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  color: var(--paper);
+  background: #091920;
+}
+
+.provider-advanced {
+  margin: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.provider-advanced > summary {
+  padding: 11px 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.provider-advanced[open] {
+  padding-bottom: 12px;
+}
+
+.provider-credential-controls,
+.provider-check-row {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: rgba(6, 20, 26, .45);
+}
+
+.provider-check-row > div {
+  min-width: 0;
+}
+
+.provider-credential-controls .field {
+  margin-top: 0;
+}
+
+.provider-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.provider-action-status {
+  min-height: 16px;
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.provider-check-row .provider-action-status {
+  margin: 0;
+}
+
+.provider-cost-warning,
+.provider-product-login-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.provider-cost-warning {
+  padding-left: 10px;
+  border-left: 2px solid var(--amber);
+}
+
+.explanation-boundary {
+  margin-top: 16px;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  background: rgba(110, 205, 183, .045);
+}
+
+.explanation-boundary strong {
+  color: var(--mint);
+  font-size: 11px;
+}
+
+.explanation-boundary p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+@media (max-width: 700px) {
+  .provider-receipt {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-receipt > div + div {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .provider-check-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 430px) {
+  .explanation-path {
+    padding-left: 12px;
+  }
+
+  .provider-form {
+    padding-inline: 10px;
+  }
+
+  .provider-credential-controls .button,
+  .provider-check-row .button,
+  #provider-create-submit {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explanation-path::before {
+    transform: none;
+  }
+}

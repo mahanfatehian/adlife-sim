@@ -231,6 +231,663 @@ def _set_audience_count(page, count: int) -> None:
     page.locator("#campaign-continue").click()
 
 
+def _remote_provider_document(*, credential_available: bool = False) -> dict[str, object]:
+    revision = "a" * 64
+    return {
+        "schema_version": 1,
+        "profiles": [
+            {
+                "schema_version": 1,
+                "profile_id": "remote-demo",
+                "display_label": "Remote demo",
+                "mode": "remote",
+                "base_url": "https://api.example.invalid/v1",
+                "model_id": "fictional-model",
+                "protocol": "openai-chat-completions-json-schema-v1",
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "seed_policy": "fixed",
+                "seed": 42,
+                "max_output_tokens": 384,
+                "attempt_timeout_seconds": 30,
+                "transient_retries": 2,
+                "repair_attempts": 1,
+                "origin_approval_id": "remote-demo",
+                "revision_sha256": revision,
+                "credential_slot_id": "b" * 64,
+                "credential_available": credential_available,
+                "endpoint_policy_accepted": True,
+                "last_check": None,
+            }
+        ],
+        "origins": [
+            {
+                "approval_id": "local-ollama",
+                "base_url": "http://127.0.0.1:11434/v1",
+                "trust_class": "local",
+                "environment_variable": None,
+            },
+            {
+                "approval_id": "remote-demo",
+                "base_url": "https://api.example.invalid/v1",
+                "trust_class": "remote",
+                "environment_variable": None,
+            },
+        ],
+        "provider_configuration": True,
+        "oauth": False,
+        "cognition_modes": ["rules", "mock", "local", "remote"],
+    }
+
+
+def test_explanations_panel_creates_exact_profile_and_emits_schema_three(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    submitted: list[dict[str, object]] = []
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+            page.on(
+                "request",
+                lambda request: (
+                    submitted.append(json.loads(request.post_data or "{}"))
+                    if request.method == "POST" and request.url.endswith("/api/scenarios/validate")
+                    else None
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+
+            expect(page.get_by_role("heading", name="Explanations", exact=True)).to_be_visible()
+            expect(page.locator("#cognition-mode option")).to_have_count(4)
+            expect(page.locator("#cognition-mode")).to_have_value("rules")
+            expect(page.locator("#provider-settings")).to_be_hidden()
+            expect(page.locator("#provider-boundary")).to_contain_text(
+                "never changes movement, ad response, state, or metrics"
+            )
+            expect(page.locator("#provider-product-login-note")).to_contain_text(
+                "ChatGPT or Codex subscription"
+            )
+
+            page.locator("#cognition-mode").select_option("local")
+            expect(page.locator("#provider-settings")).to_be_visible()
+            expect(page.locator("#cognition-budget")).to_have_attribute("step", "1536")
+            page.locator("#provider-create-details").evaluate("node => { node.open = true; }")
+            page.locator("#provider-profile-id").fill("local-browser")
+            page.locator("#provider-label").fill("Local browser model")
+            page.locator("#provider-model").fill("fictional-local-model")
+            page.locator("#provider-create-submit").click()
+            expect(page.locator("#provider-profile")).to_be_enabled(timeout=10_000)
+            expect(page.locator("#provider-profile option")).to_have_count(1)
+            expect(page.locator("#provider-status")).to_contain_text("Profile saved")
+
+            revision = page.locator("#provider-profile").input_value().split("/")[1]
+            assert re.fullmatch(r"[0-9a-f]{64}", revision)
+            page.locator("#cognition-budget").fill("3072")
+            page.locator("#cognition-budget").dispatch_event("input")
+            expect(page.locator("#cognition-budget-status")).to_contain_text(
+                "2 selected responses funded"
+            )
+            expect(page.locator("#provider-cost-warning")).to_contain_text("not a spending limit")
+
+            page.route(
+                "**/api/providers/local-browser/revisions/*/check",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps({"status": "compatible", "reason_code": None}),
+                ),
+            )
+            page.locator("#provider-check").click()
+            expect(page.locator("#provider-check-status")).to_have_text(
+                "Compatible inference confirmed.", timeout=10_000
+            )
+
+            page.locator("#validate-run").click()
+            expect(page.locator("#validation-review")).to_be_visible(timeout=15_000)
+            assert submitted[-1]["schema_version"] == 3
+            assert submitted[-1]["cognition"] == {
+                "mode": "local",
+                "provider_profile_id": "local-browser",
+                "provider_revision_sha256": revision,
+                "aggregate_output_token_ceiling": 3072,
+            }
+
+            page.locator("#cognition-mode").select_option("mock")
+            page.locator("#validate-run").click()
+            expect(page.locator("#validation-review")).to_be_visible(timeout=15_000)
+            assert submitted[-1]["schema_version"] == 3
+            assert submitted[-1]["cognition"] == {
+                "mode": "mock",
+                "provider_profile_id": None,
+                "provider_revision_sha256": None,
+                "aggregate_output_token_ceiling": 0,
+            }
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_remote_credential_is_transient_after_success_refusal_and_network_failure(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    credential_prefix = "sk" + "-browser-"
+    secrets = (
+        credential_prefix + "success-fixture",
+        credential_prefix + "refusal-fixture",
+        credential_prefix + "network-fixture",
+    )
+    credential_bodies: list[str] = []
+    credential_urls: list[str] = []
+    attempts = 0
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        console_messages: list[str] = []
+        try:
+            page.on("console", lambda message: console_messages.append(message.text))
+
+            def providers(route: Route) -> None:
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(_remote_provider_document()),
+                )
+
+            def credential(route: Route) -> None:
+                nonlocal attempts
+                attempts += 1
+                credential_urls.append(route.request.url)
+                credential_bodies.append(route.request.post_data or "")
+                if attempts == 1:
+                    response = _remote_provider_document(credential_available=True)["profiles"][0]
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=json.dumps(response),
+                    )
+                elif attempts == 2:
+                    route.fulfill(
+                        status=409,
+                        content_type="application/json",
+                        body=json.dumps(
+                            {
+                                "error": {
+                                    "code": "credential-store-unavailable",
+                                    "message": "Secure credential storage is unavailable.",
+                                    "fields": {},
+                                }
+                            }
+                        ),
+                    )
+                else:
+                    route.abort("connectionfailed")
+
+            page.route("**/api/providers", providers)
+            page.route("**/api/providers/remote-demo/revisions/*/credential", credential)
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#cognition-mode").select_option("remote")
+            expect(page.locator("#provider-profile")).to_have_value(f"remote-demo/{'a' * 64}")
+            expect(page.locator("#provider-credential")).to_have_attribute("autocomplete", "off")
+
+            for index, secret in enumerate(secrets, start=1):
+                page.locator("#provider-credential").fill(secret)
+                page.locator("#provider-save-credential").click()
+                expect(page.locator("#provider-credential")).to_have_value("", timeout=10_000)
+                expect(page.locator("#provider-credential-status")).not_to_have_text("")
+                snapshot = page.evaluate(
+                    """secret => ({
+                      text: document.body.textContent.includes(secret),
+                      html: document.documentElement.outerHTML.includes(secret),
+                      attributes: [...document.querySelectorAll('*')].some(node =>
+                        [...node.attributes].some(attribute => attribute.value.includes(secret))),
+                      local: Object.values(localStorage).includes(secret),
+                      session: Object.values(sessionStorage).includes(secret),
+                      globalPrimitive: Object.getOwnPropertyNames(window).some(name => {
+                        try { return typeof window[name] === 'string' && window[name] === secret; }
+                        catch (_error) { return false; }
+                      }),
+                    })""",
+                    secret,
+                )
+                assert snapshot == {
+                    "text": False,
+                    "html": False,
+                    "attributes": False,
+                    "local": False,
+                    "session": False,
+                    "globalPrimitive": False,
+                }
+                assert all(secret not in url for url in credential_urls)
+                assert all(secret not in message for message in console_messages)
+                assert json.loads(credential_bodies[index - 1]) == {"credential": secret}
+
+            expect(page.locator("#provider-credential-status")).to_contain_text("did not respond")
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_replacing_remote_credential_clears_stale_compatibility_status(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    listed = _remote_provider_document(credential_available=True)
+    listed["profiles"][0]["last_check"] = {
+        "status": "compatible",
+        "reason_code": None,
+    }
+    updated = _remote_provider_document(credential_available=True)["profiles"][0]
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+            page.route(
+                "**/api/providers",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(listed),
+                ),
+            )
+            page.route(
+                "**/api/providers/remote-demo/revisions/*/credential",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(updated),
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#cognition-mode").select_option("remote")
+            expect(page.locator("#provider-check-status")).to_have_text(
+                "Compatible inference confirmed."
+            )
+
+            page.locator("#provider-credential").fill("credential-" + "replacement")
+            page.locator("#provider-save-credential").click()
+
+            expect(page.locator("#provider-credential")).to_have_value("", timeout=10_000)
+            expect(page.locator("#provider-credential-status")).to_contain_text("Credential saved")
+            expect(page.locator("#provider-check-status")).to_have_text("")
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_empty_provider_numbers_are_refused_before_any_write(tmp_path: Path) -> None:
+    browser_path = _installed_browser()
+    profile_posts: list[str] = []
+    validation_posts: list[str] = []
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+
+            def providers(route: Route) -> None:
+                if route.request.method == "GET":
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=json.dumps(_remote_provider_document(credential_available=True)),
+                    )
+                    return
+                profile_posts.append(route.request.post_data or "")
+                route.abort("failed")
+
+            page.route("**/api/providers", providers)
+            page.on(
+                "request",
+                lambda request: (
+                    validation_posts.append(request.post_data or "")
+                    if request.method == "POST" and request.url.endswith("/api/scenarios/validate")
+                    else None
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#cognition-mode").select_option("remote")
+            page.locator("#provider-create-details").evaluate("node => { node.open = true; }")
+            page.locator("#provider-create-details .provider-advanced").evaluate(
+                "node => { node.open = true; }"
+            )
+            page.locator("#provider-profile-id").fill("empty-number-check")
+            page.locator("#provider-label").fill("Empty number check")
+            page.locator("#provider-model").fill("fictional-model")
+
+            for control_id, valid_value in (
+                ("provider-temperature", "0.2"),
+                ("provider-retries", "2"),
+            ):
+                page.locator(f"#{control_id}").fill("")
+                page.locator("#provider-create-submit").click()
+                expect(page.locator("#provider-create-error")).to_contain_text("Enter a")
+                assert page.evaluate("document.activeElement.id") == control_id
+                assert profile_posts == []
+                page.locator(f"#{control_id}").fill(valid_value)
+
+            page.locator("#cognition-budget").fill("")
+            page.locator("#validate-run").click()
+            expect(page.locator("#cognition-budget-error")).to_contain_text("whole number")
+            assert page.evaluate("document.activeElement.id") == "cognition-budget"
+            assert validation_posts == []
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_credential_is_cleared_on_selection_change_and_while_request_is_pending(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    provider_document = _remote_provider_document(credential_available=True)
+    first_profile = provider_document["profiles"][0]
+    second_profile = {
+        **first_profile,
+        "profile_id": "remote-second",
+        "display_label": "Remote second",
+        "revision_sha256": "c" * 64,
+        "credential_slot_id": "d" * 64,
+        "credential_available": False,
+    }
+    updated_second_profile = {**second_profile, "credential_available": True}
+    provider_document["profiles"].append(second_profile)
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+            page.add_init_script(
+                """
+                  const originalFetch = window.fetch.bind(window);
+                  window.fetch = (input, init) => {
+                    const url = String(input);
+                    if (url.includes('/api/providers/remote-second/revisions/') &&
+                        url.endsWith('/credential')) {
+                      return new Promise((resolve, reject) => {
+                        window.__resumeCredentialRequest = () => {
+                          originalFetch(input, init).then(resolve, reject);
+                        };
+                      });
+                    }
+                    return originalFetch(input, init);
+                  };
+                """
+            )
+            page.route(
+                "**/api/providers",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(provider_document),
+                ),
+            )
+            page.route(
+                "**/api/providers/remote-second/revisions/*/credential",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(updated_second_profile),
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#cognition-mode").select_option("remote")
+            expect(page.locator("#provider-profile option")).to_have_count(2)
+
+            page.locator("#provider-credential").fill("unsent-" + "first-profile")
+            page.locator("#provider-profile").select_option(f"remote-second/{'c' * 64}")
+            expect(page.locator("#provider-credential")).to_have_value("")
+
+            page.locator("#provider-credential").fill("unsent-" + "second-profile")
+            page.locator("#cognition-mode").select_option("rules")
+            expect(page.locator("#provider-credential")).to_have_value("")
+
+            page.locator("#cognition-mode").select_option("remote")
+            page.locator("#provider-profile").select_option(f"remote-second/{'c' * 64}")
+            page.locator("#provider-credential").fill("pending-" + "credential")
+            page.locator("#provider-save-credential").click()
+
+            expect(page.locator("#provider-credential-status")).to_contain_text("Saving")
+            expect(page.locator("#provider-credential")).to_have_value("")
+            page.locator("#provider-profile").select_option(f"remote-demo/{'a' * 64}")
+            page.evaluate("window.__resumeCredentialRequest()")
+            expect(page.locator("#provider-save-credential")).to_be_enabled(timeout=10_000)
+            expect(page.locator("#provider-credential-status")).to_have_text("")
+            expect(page.locator("#provider-credential")).to_have_value("")
+            page.locator("#provider-profile").select_option(f"remote-second/{'c' * 64}")
+            expect(page.locator("#provider-credential-state")).to_have_text("Available on server")
+            expect(page.locator("#provider-check")).to_be_enabled()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_stale_provider_actions_release_controls_for_current_selection(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    provider_document = _remote_provider_document(credential_available=True)
+    first_profile = provider_document["profiles"][0]
+    second_profile = {
+        **first_profile,
+        "profile_id": "remote-second",
+        "display_label": "Remote second",
+        "revision_sha256": "c" * 64,
+        "credential_slot_id": "d" * 64,
+    }
+    created_profile = {
+        **first_profile,
+        "profile_id": "remote-created",
+        "display_label": "Remote created",
+        "revision_sha256": "e" * 64,
+        "credential_slot_id": "f" * 64,
+    }
+    provider_document["profiles"].append(second_profile)
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+            page.add_init_script(
+                """
+                  const originalFetch = window.fetch.bind(window);
+                  window.fetch = (input, init) => {
+                    const url = String(input);
+                    const method = init?.method || 'GET';
+                    const delayed =
+                      (url.endsWith('/api/providers') && method === 'POST') ||
+                      url.endsWith('/check') || url.endsWith('/credential');
+                    if (delayed) {
+                      return new Promise((resolve, reject) => {
+                        window.__resumeProviderAction = () => {
+                          originalFetch(input, init).then(resolve, reject);
+                        };
+                      });
+                    }
+                    return originalFetch(input, init);
+                  };
+                """
+            )
+
+            def providers(route: Route) -> None:
+                response = provider_document if route.request.method == "GET" else created_profile
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(response),
+                )
+
+            page.route("**/api/providers", providers)
+            page.route(
+                "**/api/providers/*/revisions/*/check",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps({"status": "compatible", "reason_code": None}),
+                ),
+            )
+            page.route(
+                "**/api/providers/*/revisions/*/credential",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(second_profile),
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#cognition-mode").select_option("remote")
+
+            page.locator("#provider-create-details").evaluate("node => { node.open = true; }")
+            page.locator("#provider-profile-id").fill("remote-created")
+            page.locator("#provider-label").fill("Remote created")
+            page.locator("#provider-model").fill("fictional-model")
+            page.locator("#provider-create-submit").click()
+            expect(page.locator("#provider-status")).to_contain_text("Saving")
+            page.locator("#cognition-mode").select_option("local")
+            page.evaluate("window.__resumeProviderAction()")
+            expect(page.locator("#provider-create-submit")).to_be_enabled(timeout=10_000)
+            expect(page.locator("#provider-status")).to_have_text("")
+
+            page.locator("#cognition-mode").select_option("remote")
+            page.locator("#provider-profile").select_option(f"remote-demo/{'a' * 64}")
+            page.locator("#provider-check").click()
+            expect(page.locator("#provider-check-status")).to_contain_text("Checking")
+            page.locator("#provider-profile").select_option(f"remote-second/{'c' * 64}")
+            page.evaluate("window.__resumeProviderAction()")
+            expect(page.locator("#provider-check")).to_be_enabled(timeout=10_000)
+            expect(page.locator("#provider-check-status")).to_have_text("")
+
+            page.locator("#provider-credential").fill("race-" + "credential")
+            page.locator("#provider-save-credential").click()
+            expect(page.locator("#provider-credential-status")).to_contain_text("Saving")
+            expect(page.locator("#provider-credential")).to_have_value("")
+            page.locator("#provider-profile").select_option(f"remote-demo/{'a' * 64}")
+            page.evaluate("window.__resumeProviderAction()")
+            expect(page.locator("#provider-save-credential")).to_be_enabled(timeout=10_000)
+            expect(page.locator("#provider-credential-status")).to_have_text("")
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_provider_registry_load_survives_mode_change_while_pending(tmp_path: Path) -> None:
+    browser_path = _installed_browser()
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+            page.add_init_script(
+                """
+                  const originalFetch = window.fetch.bind(window);
+                  window.fetch = (input, init) => {
+                    const url = String(input);
+                    if (url.endsWith('/api/providers') && (init?.method || 'GET') === 'GET') {
+                      return new Promise((resolve, reject) => {
+                        window.__resumeProviderLoad = () => {
+                          originalFetch(input, init).then(resolve, reject);
+                        };
+                      });
+                    }
+                    return originalFetch(input, init);
+                  };
+                """
+            )
+            page.route(
+                "**/api/providers",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(_remote_provider_document(credential_available=True)),
+                ),
+            )
+            page.goto(base_url, wait_until="domcontentloaded")
+            page.wait_for_function("() => typeof window.__resumeProviderLoad === 'function'")
+            page.locator("#cognition-mode").evaluate(
+                """node => {
+                  node.value = 'remote';
+                  node.dispatchEvent(new Event('change', {bubbles: true}));
+                }"""
+            )
+            page.evaluate("window.__resumeProviderLoad()")
+
+            expect(page.locator("#provider-profile")).to_have_value(
+                f"remote-demo/{'a' * 64}", timeout=10_000
+            )
+            expect(page.locator("#provider-profile")).to_be_enabled()
+            expect(page.locator("#provider-endpoint")).to_have_text(
+                "https://api.example.invalid/v1"
+            )
+            expect(page.locator("#error-banner")).to_be_hidden()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_stale_provider_check_cannot_override_a_newer_mode_selection(tmp_path: Path) -> None:
+    browser_path = _installed_browser()
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(browser_path, base_url)
+        try:
+            page.add_init_script(
+                """
+                  const originalFetch = window.fetch.bind(window);
+                  window.fetch = (input, init) => {
+                    const url = String(input);
+                    if (url.includes('/api/providers/remote-demo/revisions/') &&
+                        url.endsWith('/check')) {
+                      return new Promise(resolve => {
+                        window.__resolveProviderCheck = () => resolve(new Response(
+                          JSON.stringify({status: 'compatible', reason_code: null}),
+                          {status: 200, headers: {'Content-Type': 'application/json'}}
+                        ));
+                      });
+                    }
+                    return originalFetch(input, init);
+                  };
+                """
+            )
+            page.route(
+                "**/api/providers",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(_remote_provider_document(credential_available=True)),
+                ),
+            )
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#cognition-mode").select_option("remote")
+            page.locator("#provider-check").click()
+            expect(page.locator("#provider-check-status")).to_have_text("Checking compatibility…")
+            page.locator("#cognition-mode").select_option("rules")
+            page.evaluate("window.__resolveProviderCheck()")
+            page.wait_for_timeout(100)
+
+            expect(page.locator("#provider-settings")).to_be_hidden()
+            expect(page.locator("#provider-check-status")).to_have_text("")
+            expect(page.locator("#cognition-mode")).to_have_value("rules")
+            page.locator("#cognition-mode").select_option("remote")
+            expect(page.locator("#provider-check-status")).to_have_text(
+                "Compatible inference confirmed."
+            )
+        finally:
+            browser.close()
+            playwright.stop()
+
+
 def _publish_v7_inspector_fixture(page, root: Path):
     """Create an explicitly legacy inspector fixture, independent of authoring jobs."""
     from adlife.city.runs import create_city_run
@@ -248,7 +905,8 @@ def _publish_v7_inspector_fixture(page, root: Path):
     expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
     page.unroute("**/api/scenarios/validate", capture)
     payload = captured[-1]
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
+    payload.pop("cognition")
     population = payload.pop("population")
     assert len(population["personas"]) == 1
     persona = population["personas"][0]
@@ -271,7 +929,7 @@ def _publish_v7_inspector_fixture(page, root: Path):
     return stored
 
 
-def test_audience_templates_preserve_causal_values_and_submit_schema_two(tmp_path: Path) -> None:
+def test_audience_templates_preserve_causal_values_and_submit_schema_three(tmp_path: Path) -> None:
     with _workbench(tmp_path) as (base_url, root):
         playwright, browser, page = _open_page(_installed_browser(), base_url)
         try:
@@ -321,11 +979,17 @@ def test_audience_templates_preserve_causal_values_and_submit_schema_two(tmp_pat
             page.locator("#start-run").click()
             expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
             assert posted[-1] == posted[-2]
-            assert posted[-1]["schema_version"] == 2
+            assert posted[-1]["schema_version"] == 3
+            assert posted[-1]["cognition"] == {
+                "mode": "rules",
+                "provider_profile_id": None,
+                "provider_revision_sha256": None,
+                "aggregate_output_token_ceiling": 0,
+            }
             assert "cohort" not in posted[-1]
             assert posted[-1]["population"]["personas"][1]["interests"] == ["books", "cooking"]
             manifest = json.loads((root / "city-runs/persona-browser/run.json").read_text())
-            assert manifest["schema_version"] == 8
+            assert manifest["schema_version"] == 9
         finally:
             browser.close()
             playwright.stop()
@@ -602,15 +1266,19 @@ def test_cancellation_settings_drift_cannot_rebind_later_completion(
 ) -> None:
     entered = threading.Event()
     release = threading.Event()
-    original = workbench_web.WorkbenchRunRepository.prepare
+    original = workbench_web.WorkbenchRunRepository.prepare_scientific
 
-    def blocked_prepare(repository, validated):
+    def blocked_prepare(repository, validated, operation):
         entered.set()
         if not release.wait(30):
             raise RuntimeError("cancellation binding gate timed out")
-        return original(repository, validated)
+        return original(repository, validated, operation)
 
-    monkeypatch.setattr(workbench_web.WorkbenchRunRepository, "prepare", blocked_prepare)
+    monkeypatch.setattr(
+        workbench_web.WorkbenchRunRepository,
+        "prepare_scientific",
+        blocked_prepare,
+    )
     with _workbench(tmp_path) as (base_url, root):
         playwright, browser, page = _open_page(_installed_browser(), base_url)
         try:
@@ -630,7 +1298,15 @@ def test_cancellation_settings_drift_cannot_rebind_later_completion(
             job_id = queued["job_id"]
             drifted = {**queued["accepted_settings"], "seed": "43"}
             summary = _library_summary("cancel-binding", seed="43").model_dump(mode="json")
-            summary.update(run_schema_version=8, days=2, frame_count=2880)
+            summary.update(
+                run_schema_version=9,
+                days=2,
+                frame_count=2880,
+                cognition_mode="rules",
+                provider_profile_id=None,
+                provider_revision_sha256=None,
+                aggregate_output_token_ceiling=0,
+            )
             cancelled = False
 
             def drift_cancellation(route: Route) -> None:
@@ -680,7 +1356,7 @@ def test_cancellation_settings_drift_cannot_rebind_later_completion(
             playwright.stop()
 
 
-@pytest.mark.parametrize("input_version,run_version", [(1, 7), (2, 8)])
+@pytest.mark.parametrize("input_version,run_version", [(1, 7), (2, 8), (3, 9)])
 def test_exact_completed_schema_pairs_resume_from_server_authority(
     tmp_path: Path, input_version: int, run_version: int
 ) -> None:
@@ -698,6 +1374,27 @@ def test_exact_completed_schema_pairs_resume_from_server_authority(
                 agent_count=1,
             )
             summary["run_schema_version"] = run_version
+            if input_version == 3:
+                settings.update(
+                    cognition_mode="rules",
+                    provider_profile_id=None,
+                    provider_revision_sha256=None,
+                    aggregate_output_token_ceiling=0,
+                )
+                summary.update(
+                    cognition_mode="rules",
+                    provider_profile_id=None,
+                    provider_revision_sha256=None,
+                    aggregate_output_token_ceiling=0,
+                )
+            else:
+                for field in (
+                    "cognition_mode",
+                    "provider_profile_id",
+                    "provider_revision_sha256",
+                    "aggregate_output_token_ceiling",
+                ):
+                    settings.pop(field, None)
             job.update(phase="completed", can_cancel=False, result=summary)
 
             def active(route: Route) -> None:
@@ -713,7 +1410,49 @@ def test_exact_completed_schema_pairs_resume_from_server_authority(
             expect(page.locator("#job-inspect-link")).to_have_attribute(
                 "href", "/runs/city-study-001"
             )
+            expect(page.locator("#job-settings")).to_contain_text("Simulation")
+            expect(page.locator("#job-settings")).to_contain_text("Deterministic rules")
+            expect(page.locator("#job-settings")).to_contain_text("Explanations")
             expect(page.locator("#error-banner")).to_be_hidden()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_offline_completed_job_with_provider_half_binding_is_refused(
+    tmp_path: Path,
+) -> None:
+    from tests.security.test_workbench_browser_security import _job_documents
+
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            settings, job = _job_documents()
+            settings.update(days=1, agent_count=1)
+            settings["provider_profile_id"] = "misplaced-profile"
+            summary = _library_summary("city-study-001").model_dump(mode="json")
+            summary.update(
+                run_schema_version=9,
+                cognition_mode="rules",
+                provider_profile_id="misplaced-profile",
+                provider_revision_sha256=None,
+                aggregate_output_token_ceiling=0,
+            )
+            job.update(phase="completed", can_cancel=False, result=summary)
+
+            def active(route: Route) -> None:
+                response = route.fetch()
+                document = response.json()
+                document["active_job"] = job
+                route.fulfill(response=response, json=document)
+
+            page.route("**/api/workbench", active)
+            page.goto(base_url, wait_until="networkidle")
+
+            expect(page.locator("#error-banner")).to_be_visible()
+            expect(page.locator("#error-banner")).to_contain_text("incompatible")
+            expect(page.locator("#stage-run")).to_be_disabled()
+            expect(page.locator("#job-inspect-link")).to_be_hidden()
         finally:
             browser.close()
             playwright.stop()
@@ -786,7 +1525,7 @@ def test_city_stage_boots_from_verified_local_catalog_without_external_requests(
             expect(page.locator("#city-map-alternative")).to_contain_text("12 roads")
             expect(page.locator("#city-map-alternative")).to_contain_text("9 nodes")
             expect(page.locator("#provider-boundary")).to_contain_text(
-                "This city workflow does not call an AI provider"
+                "never changes movement, ad response, state, or metrics"
             )
             expect(page.locator(".map-column")).to_be_visible()
             page.locator("#city-continue").click()
@@ -1613,8 +2352,8 @@ def test_real_job_completes_without_auto_navigation_and_enters_verified_library(
             from adlife.city.run_store import CityRunStore
 
             stored = CityRunStore(root).load("browser-complete")
-            assert stored.manifest.schema_version == 8
-            assert stored.workbench_input.schema_version == 2
+            assert stored.manifest.schema_version == 9
+            assert stored.workbench_input.schema_version == 3
 
             page.locator("#stage-inspect").click()
             expect(page.locator("#run-library")).to_contain_text("browser-complete")
@@ -2372,17 +3111,17 @@ def test_refresh_resumes_the_exact_active_job_and_polling(
     browser_path = _installed_browser()
     entered = threading.Event()
     release = threading.Event()
-    original = workbench_web.WorkbenchRunRepository.prepare
+    original = workbench_web.WorkbenchRunRepository.prepare_scientific
 
-    def blocked_prepare(repository: object, validated: object):
+    def blocked_prepare(repository: object, validated: object, operation: object):
         entered.set()
         if not release.wait(15):
             raise RuntimeError("refresh resume gate timed out")
-        return original(repository, validated)
+        return original(repository, validated, operation)
 
     monkeypatch.setattr(
         workbench_web.WorkbenchRunRepository,
-        "prepare",
+        "prepare_scientific",
         blocked_prepare,
     )
     try:
@@ -2407,7 +3146,7 @@ def test_refresh_resumes_the_exact_active_job_and_polling(
                 expect(page.locator("#job-panel")).to_be_visible()
                 expect(page.locator("#job-settings")).to_contain_text("refresh-resume")
                 expect(page.locator("#job-settings")).to_contain_text("9223372036854775807")
-                expect(page.locator("#job-phase")).to_have_text("EVALUATING")
+                expect(page.locator("#job-phase")).to_have_text("SIMULATING")
 
                 release.set()
                 expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
@@ -2432,17 +3171,17 @@ def test_cooperative_cancellation_never_presents_a_completed_artifact(
     browser_path = _installed_browser()
     entered = threading.Event()
     release = threading.Event()
-    original = workbench_web.WorkbenchRunRepository.prepare
+    original = workbench_web.WorkbenchRunRepository.prepare_scientific
 
-    def blocked_prepare(repository: object, validated: object):
+    def blocked_prepare(repository: object, validated: object, operation: object):
         entered.set()
         if not release.wait(15):
             raise RuntimeError("cancellation gate timed out")
-        return original(repository, validated)
+        return original(repository, validated, operation)
 
     monkeypatch.setattr(
         workbench_web.WorkbenchRunRepository,
-        "prepare",
+        "prepare_scientific",
         blocked_prepare,
     )
     try:
@@ -2649,6 +3388,28 @@ def test_workbench_is_keyboard_legible_and_contained_at_390_pixels(tmp_path: Pat
             assert snapshot["live"] == "polite"
             assert snapshot["stageNames"] == ["CITY", "CAMPAIGN", "RUN", "INSPECT"]
             assert snapshot["animation"] == "none"
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#cognition-mode").focus()
+            provider_snapshot = page.evaluate(
+                """() => ({
+                  documentWidth: document.documentElement.scrollWidth,
+                  viewport: window.innerWidth,
+                  active: document.activeElement.id,
+                  outline: getComputedStyle(document.activeElement).outlineStyle,
+                  sectionWidth: document.getElementById('explanations-section')
+                    .getBoundingClientRect().width,
+                  panelWidth: document.querySelector('.setup-column')
+                    .getBoundingClientRect().width,
+                  transitions: getComputedStyle(document.getElementById('provider-settings'))
+                    .transitionDuration,
+                })"""
+            )
+            assert provider_snapshot["documentWidth"] <= provider_snapshot["viewport"]
+            assert provider_snapshot["sectionWidth"] <= provider_snapshot["panelWidth"]
+            assert provider_snapshot["active"] == "cognition-mode"
+            assert provider_snapshot["outline"] != "none"
+            assert provider_snapshot["transitions"] in {"0s", "0ms"}
         finally:
             browser.close()
             playwright.stop()

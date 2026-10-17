@@ -32,6 +32,8 @@ const viewerApiEndpoints = new Set([
   "/frame",
   "/timeline",
   "/workbench-input",
+  "/cognition-summary",
+  "/cognition-records",
 ]);
 
 function invalidApiBase() {
@@ -173,6 +175,50 @@ const timelineRouteKeys = [
   "agent_id", "direction", "destination_activity", "node_ids", "road_ids",
   "directions", "geometry", "duration_minutes", "distance_meters",
 ];
+const cognitionSummaryDocumentKeys = [
+  "schema_version", "run_id", "run_schema_version", "cognition_input_sha256", "mode",
+  "explainer_id", "provider_profile_id", "provider_revision_sha256", "model_id",
+  "aggregate_output_token_ceiling", "summary",
+];
+const cognitionSummaryKeys = [
+  "schema_version", "selected_request_count", "outcome_counts", "reason_counts",
+  "attempt_count", "prompt_tokens", "completion_tokens", "terminal_stream_sha256",
+  "terminal_stream_bytes", "terminal_record_count", "disclosure",
+];
+const cognitionOutcomeKeys = [
+  "schema_version", "rules", "mock", "provider", "cache", "fallback", "budget_skipped",
+];
+const cognitionReasonKeys = [
+  "schema_version", "endpoint_resolution_refused", "authentication_refused",
+  "timeout_exhausted", "rate_limit_exhausted", "server_error_exhausted",
+  "response_too_large", "protocol_incompatible", "invalid_result", "budget_skipped",
+];
+const cognitionRecordDocumentKeys = [
+  "schema_version", "run_id", "run_schema_version", "cognition_input_sha256", "records",
+];
+const cognitionRecordKeys = [
+  "schema_version", "selection_index", "request_id", "request_sha256", "run_input_sha256",
+  "response_input_sha256", "scenario_sha256", "city_sha256", "response_event_id",
+  "notice_event_id", "opportunity_id", "state_update_event_id", "agent_id", "campaign_id",
+  "placement_id", "model_minute", "millisecond_within_minute", "state_update_cause_count",
+  "source", "result", "attempt_count", "reason", "provider_profile_id",
+  "provider_revision_sha256", "provider_profile_snapshot_sha256", "provider_protocol",
+  "provider_effective_settings_sha256", "prompt_contract_sha256",
+  "result_schema_contract_sha256", "selection_policy_sha256", "fallback_policy_sha256",
+  "prompt_tokens", "completion_tokens", "disclosure", "record_hash",
+];
+const cognitionResultKeys = [
+  "schema_version", "request_id", "interpretation", "decision_factors", "safety_flags",
+  "disclosure",
+];
+const cognitionSources = ["rules", "mock", "provider", "cache", "fallback", "budget-skipped"];
+const cognitionReasons = [
+  "endpoint-resolution-refused", "authentication-refused", "timeout-exhausted",
+  "rate-limit-exhausted", "server-error-exhausted", "response-too-large",
+  "protocol-incompatible", "invalid-result", "budget-skipped",
+];
+const cognitionSafetyFlags = ["stereotype-risk", "unsupported-inference", "unsafe-content"];
+const cognitionDisclosure = "synthetic-narrative-not-observed-behavior";
 const state = {
   meta: null,
   metaSeedToken: null,
@@ -192,6 +238,9 @@ const state = {
   spatialMetrics: null,
   spatialResponseMetrics: null,
   spatialResponseSeedToken: null,
+  cognitionSummary: null,
+  cognitionRecords: null,
+  cognitionByResponseId: new Map(),
   frame: null,
   selected: null,
   selectedCampaign: null,
@@ -1524,6 +1573,458 @@ function signedProxyText(value, label) {
   return value >= 0 ? `+${formatted}` : formatted;
 }
 
+function invalidCognitionEvidence() {
+  throw new Error("Saved cognition evidence is invalid");
+}
+
+function validateCognitionText(value, minimum, maximum) {
+  if (
+    typeof value !== "string"
+    || value.trim().length === 0
+    || Array.from(value).length < minimum
+    || Array.from(value).length > maximum
+    || /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]/u.test(value)
+  ) invalidCognitionEvidence();
+  return value;
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(
+      (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+    ).join(",")}}`;
+  }
+  invalidCognitionEvidence();
+}
+
+async function sha256Text(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function validateCognitionSummary(value) {
+  const documentValue = requireRecord(value, "Saved cognition summary");
+  const input = state.workbenchInput;
+  if (!input || input.run_schema_version !== 9) invalidCognitionEvidence();
+  const cognition = requireRecord(input.cognition, "Saved cognition summary");
+  if (
+    !hasExactKeys(documentValue, cognitionSummaryDocumentKeys)
+    || documentValue.schema_version !== 1
+    || documentValue.run_id !== input.run_id
+    || documentValue.run_id !== state.meta.run_id
+    || documentValue.run_schema_version !== 9
+    || !validEvidenceHash(documentValue.cognition_input_sha256)
+    || !["rules", "mock", "local", "remote"].includes(documentValue.mode)
+    || documentValue.mode !== cognition.mode
+    || documentValue.aggregate_output_token_ceiling !== cognition.aggregate_output_token_ceiling
+    || documentValue.provider_profile_id !== cognition.provider_profile_id
+    || documentValue.provider_revision_sha256 !== cognition.provider_revision_sha256
+  ) invalidCognitionEvidence();
+  const offline = ["rules", "mock"].includes(documentValue.mode);
+  const expectedExplainer = offline
+    ? `city-${documentValue.mode}-explainer-v1`
+    : "city-provider-explainer-v1";
+  if (
+    documentValue.explainer_id !== expectedExplainer
+    || (
+      offline
+      && (
+        documentValue.provider_profile_id !== null
+        || documentValue.provider_revision_sha256 !== null
+        || documentValue.model_id !== null
+        || documentValue.aggregate_output_token_ceiling !== 0
+      )
+    )
+    || (
+      !offline
+      && (
+        !validEvidenceId(documentValue.provider_profile_id)
+        || !validEvidenceHash(documentValue.provider_revision_sha256)
+        || validateCognitionText(documentValue.model_id, 1, 120) !== documentValue.model_id
+        || documentValue.aggregate_output_token_ceiling % 1536 !== 0
+      )
+    )
+  ) invalidCognitionEvidence();
+
+  const summary = requireRecord(documentValue.summary, "Saved cognition summary");
+  const outcomes = requireRecord(summary.outcome_counts, "Saved cognition summary");
+  const reasons = requireRecord(summary.reason_counts, "Saved cognition summary");
+  if (
+    !hasExactKeys(summary, cognitionSummaryKeys)
+    || !hasExactKeys(outcomes, cognitionOutcomeKeys)
+    || !hasExactKeys(reasons, cognitionReasonKeys)
+    || summary.schema_version !== 1
+    || outcomes.schema_version !== 1
+    || reasons.schema_version !== 1
+    || summary.disclosure !== cognitionDisclosure
+    || !validEvidenceHash(summary.terminal_stream_sha256)
+  ) invalidCognitionEvidence();
+  const selected = requireBoundedInteger(
+    summary.selected_request_count, 0, 60, "Saved cognition summary",
+  );
+  const outcomeTotal = cognitionOutcomeKeys.slice(1).reduce((total, key) => (
+    total + requireBoundedInteger(outcomes[key], 0, 60, "Saved cognition summary")
+  ), 0);
+  const reasonTotal = cognitionReasonKeys.slice(1).reduce((total, key) => (
+    total + requireBoundedInteger(reasons[key], 0, 60, "Saved cognition summary")
+  ), 0);
+  if (
+    outcomeTotal !== selected
+    || summary.terminal_record_count !== selected
+    || reasons.budget_skipped !== outcomes.budget_skipped
+    || reasonTotal - reasons.budget_skipped !== outcomes.fallback
+    || !Number.isInteger(summary.attempt_count)
+    || summary.attempt_count < outcomes.provider
+    || summary.attempt_count > 4 * (outcomes.provider + outcomes.fallback)
+  ) invalidCognitionEvidence();
+  requireBoundedInteger(summary.prompt_tokens, 0, 128849018820, "Saved cognition summary");
+  requireBoundedInteger(summary.completion_tokens, 0, 128849018820, "Saved cognition summary");
+  requireBoundedInteger(summary.terminal_stream_bytes, 0, 1048576, "Saved cognition summary");
+  if (
+    offline
+      ? cognitionOutcomeKeys.slice(1).some((key) => (
+        outcomes[key] !== (key === documentValue.mode ? selected : 0)
+      ))
+      : outcomes.rules !== 0 || outcomes.mock !== 0
+  ) invalidCognitionEvidence();
+  return documentValue;
+}
+
+function validateCognitionResult(value, requestId) {
+  const result = requireRecord(value, "Saved cognition result");
+  if (
+    !hasExactKeys(result, cognitionResultKeys)
+    || result.schema_version !== 1
+    || result.request_id !== requestId
+    || result.disclosure !== cognitionDisclosure
+  ) invalidCognitionEvidence();
+  validateCognitionText(result.interpretation, 1, 480);
+  if (
+    !Array.isArray(result.decision_factors)
+    || result.decision_factors.length < 1
+    || result.decision_factors.length > 3
+    || new Set(result.decision_factors).size !== result.decision_factors.length
+  ) invalidCognitionEvidence();
+  for (const factor of result.decision_factors) validateCognitionText(factor, 1, 120);
+  if (
+    !Array.isArray(result.safety_flags)
+    || result.safety_flags.length > 3
+    || new Set(result.safety_flags).size !== result.safety_flags.length
+    || result.safety_flags.some((flag) => !cognitionSafetyFlags.includes(flag))
+  ) invalidCognitionEvidence();
+  return result;
+}
+
+async function validateCognitionRecords(value, summaryDocument) {
+  const documentValue = requireRecord(value, "Saved cognition records");
+  const summary = summaryDocument.summary;
+  if (
+    !hasExactKeys(documentValue, cognitionRecordDocumentKeys)
+    || documentValue.schema_version !== 1
+    || documentValue.run_id !== summaryDocument.run_id
+    || documentValue.run_schema_version !== 9
+    || documentValue.cognition_input_sha256 !== summaryDocument.cognition_input_sha256
+    || !Array.isArray(documentValue.records)
+    || documentValue.records.length !== summary.terminal_record_count
+  ) invalidCognitionEvidence();
+  const responseIds = new Set();
+  const sourceCounts = Object.fromEntries(cognitionSources.map((source) => [source, 0]));
+  const reasonCounts = Object.fromEntries(cognitionReasons.map((reason) => [reason, 0]));
+  let attempts = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let terminalStream = "";
+  for (let index = 0; index < documentValue.records.length; index += 1) {
+    const record = requireRecord(documentValue.records[index], "Saved cognition record");
+    if (
+      !hasExactKeys(record, cognitionRecordKeys)
+      || record.schema_version !== 1
+      || record.selection_index !== index
+      || typeof record.request_id !== "string"
+      || !/^cog-[0-9a-f]{64}$/.test(record.request_id)
+      || !validEvidenceHash(record.request_sha256)
+      || record.run_input_sha256 !== state.workbenchInput.workbench_input_sha256
+      || record.response_input_sha256 !== state.responseSummary.response_input_sha256
+      || record.scenario_sha256 !== state.workbenchInput.scenario_sha256
+      || record.city_sha256 !== state.workbenchInput.city_sha256
+      || !validEvidenceHash(record.response_event_id)
+      || responseIds.has(record.response_event_id)
+      || !validEvidenceHash(record.notice_event_id)
+      || !validEvidenceHash(record.opportunity_id)
+      || !validEvidenceHash(record.state_update_event_id)
+      || typeof record.agent_id !== "string"
+      || !/^person-(?:00[1-9]|0[12][0-9]|030)$/.test(record.agent_id)
+      || !validEvidenceId(record.campaign_id)
+      || !validEvidenceId(record.placement_id)
+      || !Number.isInteger(record.model_minute)
+      || record.model_minute < 0
+      || record.model_minute >= 10080
+      || !Number.isInteger(record.millisecond_within_minute)
+      || record.millisecond_within_minute < 0
+      || record.millisecond_within_minute >= 60000
+      || !Number.isInteger(record.state_update_cause_count)
+      || record.state_update_cause_count < 1
+      || record.state_update_cause_count > 520800
+      || !cognitionSources.includes(record.source)
+      || record.disclosure !== cognitionDisclosure
+      || !validEvidenceHash(record.prompt_contract_sha256)
+      || !validEvidenceHash(record.result_schema_contract_sha256)
+      || !validEvidenceHash(record.selection_policy_sha256)
+      || !validEvidenceHash(record.fallback_policy_sha256)
+      || !validEvidenceHash(record.record_hash)
+    ) invalidCognitionEvidence();
+    validateCognitionResult(record.result, record.request_id);
+    const providerValues = [
+      record.provider_profile_id,
+      record.provider_revision_sha256,
+      record.provider_profile_snapshot_sha256,
+      record.provider_protocol,
+      record.provider_effective_settings_sha256,
+    ];
+    const hasProvider = providerValues.every((item) => item !== null);
+    if (providerValues.some((item) => item !== null) !== hasProvider) invalidCognitionEvidence();
+    if (
+      hasProvider
+      && (
+        record.provider_profile_id !== summaryDocument.provider_profile_id
+        || record.provider_revision_sha256 !== summaryDocument.provider_revision_sha256
+        || !validEvidenceHash(record.provider_profile_snapshot_sha256)
+        || record.provider_protocol !== "openai-chat-completions-json-schema-v1"
+        || !validEvidenceHash(record.provider_effective_settings_sha256)
+      )
+    ) invalidCognitionEvidence();
+    const hasUsage = record.prompt_tokens !== null && record.completion_tokens !== null;
+    if ((record.prompt_tokens !== null || record.completion_tokens !== null) !== hasUsage) {
+      invalidCognitionEvidence();
+    }
+    if (hasUsage) {
+      requireBoundedInteger(record.prompt_tokens, 0, 2147483647, "Saved cognition record");
+      requireBoundedInteger(record.completion_tokens, 0, 2147483647, "Saved cognition record");
+    }
+    const validSource = (
+      ["rules", "mock"].includes(record.source)
+        ? record.source === summaryDocument.mode
+          && record.attempt_count === 0 && record.reason === null && !hasProvider && !hasUsage
+        : record.source === "provider"
+          ? record.attempt_count >= 1 && record.attempt_count <= 4
+            && record.reason === null && hasProvider
+          : record.source === "cache"
+            ? record.attempt_count === 0 && record.reason === null && hasProvider
+            : record.source === "fallback"
+              ? record.attempt_count >= 0 && record.attempt_count <= 4
+                && cognitionReasons.includes(record.reason)
+                && record.reason !== "budget-skipped" && hasProvider
+              : record.source === "budget-skipped"
+                && record.attempt_count === 0 && record.reason === "budget-skipped"
+                && hasProvider && !hasUsage
+    );
+    if (!validSource) invalidCognitionEvidence();
+    const recordFacts = Object.fromEntries(
+      Object.entries(record).filter(([key]) => key !== "record_hash"),
+    );
+    if (await sha256Text(canonicalJson(recordFacts)) !== record.record_hash) {
+      invalidCognitionEvidence();
+    }
+    responseIds.add(record.response_event_id);
+    sourceCounts[record.source] += 1;
+    if (record.reason !== null) reasonCounts[record.reason] += 1;
+    attempts += record.attempt_count;
+    promptTokens += record.prompt_tokens || 0;
+    completionTokens += record.completion_tokens || 0;
+    terminalStream += `${canonicalJson(record)}\n`;
+  }
+  for (const source of cognitionSources) {
+    if (sourceCounts[source] !== summary.outcome_counts[source.replaceAll("-", "_")]) {
+      invalidCognitionEvidence();
+    }
+  }
+  for (const reason of cognitionReasons) {
+    if (reasonCounts[reason] !== summary.reason_counts[reason.replaceAll("-", "_")]) {
+      invalidCognitionEvidence();
+    }
+  }
+  if (
+    attempts !== summary.attempt_count
+    || promptTokens !== summary.prompt_tokens
+    || completionTokens !== summary.completion_tokens
+    || new TextEncoder().encode(terminalStream).length !== summary.terminal_stream_bytes
+    || await sha256Text(terminalStream) !== summary.terminal_stream_sha256
+  ) invalidCognitionEvidence();
+  return documentValue;
+}
+
+async function loadCognitionEvidence() {
+  const [summaryValue, recordsValue] = await Promise.all([
+    fetchJson("/cognition-summary"),
+    fetchJson("/cognition-records"),
+  ]);
+  const summary = validateCognitionSummary(summaryValue);
+  const records = await validateCognitionRecords(recordsValue, summary);
+  state.cognitionSummary = summary;
+  state.cognitionRecords = records;
+  state.cognitionByResponseId = new Map(
+    records.records.map((record) => [record.response_event_id, record]),
+  );
+}
+
+function cognitionSourceLabel(source) {
+  return {
+    provider: "AI-generated explanation",
+    cache: "AI-generated explanation",
+    rules: "Deterministic explanation",
+    mock: "Mock explanation",
+    fallback: "Deterministic fallback",
+    "budget-skipped": "Explanation skipped",
+  }[source];
+}
+
+function readableCognitionToken(value) {
+  return value.replaceAll("-", " ").replace(/(^| )\w/g, (letter) => letter.toUpperCase());
+}
+
+function appendExplanationFact(list, label, value, className = "") {
+  const row = document.createElement("div");
+  const term = document.createElement("dt");
+  const detail = document.createElement("dd");
+  const isolated = document.createElement("bdi");
+  term.textContent = label;
+  isolated.dir = "auto";
+  isolated.textContent = value;
+  detail.append(isolated);
+  if (className) detail.className = className;
+  row.append(term, detail);
+  list.append(row);
+}
+
+function createResponseExplanation(record, response) {
+  if (
+    record.agent_id !== response.agent_id
+    || record.campaign_id !== response.campaign_id
+    || record.placement_id !== response.placement_id
+    || record.model_minute !== response.model_minute
+    || record.millisecond_within_minute !== response.millisecond_within_minute
+  ) invalidCognitionEvidence();
+  const details = document.createElement("details");
+  details.className = `response-explanation source-${record.source}`;
+  details.dataset.responseEventId = record.response_event_id;
+  const summary = document.createElement("summary");
+  const label = document.createElement("strong");
+  const status = document.createElement("span");
+  label.textContent = cognitionSourceLabel(record.source);
+  status.textContent = record.reason === null ? "Saved" : readableCognitionToken(record.reason);
+  summary.append(label, status);
+  const body = document.createElement("div");
+  body.className = "response-explanation-body";
+  const copy = document.createElement("bdi");
+  copy.className = "explanation-copy";
+  copy.dir = "auto";
+  copy.textContent = record.result.interpretation;
+  const facts = document.createElement("dl");
+  facts.className = "explanation-facts";
+  const provider = state.cognitionSummary.provider_profile_id === null
+    ? (record.source === "mock" ? "Deterministic mock" : "Offline rules")
+    : state.cognitionSummary.provider_profile_id;
+  const model = state.cognitionSummary.model_id === null
+    ? "Not used"
+    : state.cognitionSummary.model_id;
+  appendExplanationFact(facts, "Source", record.source, "explanation-source");
+  appendExplanationFact(facts, "Provider", provider, "explanation-provider");
+  appendExplanationFact(facts, "Model", model, "explanation-model");
+  appendExplanationFact(
+    facts,
+    "Fallback",
+    record.reason === null ? "None" : readableCognitionToken(record.reason),
+    "explanation-fallback",
+  );
+  const factorsTitle = document.createElement("h4");
+  factorsTitle.textContent = "Decision factors";
+  const factors = document.createElement("ul");
+  factors.className = "explanation-factors";
+  for (const value of record.result.decision_factors) {
+    const item = document.createElement("li");
+    const isolated = document.createElement("bdi");
+    isolated.className = "explanation-factor";
+    isolated.dir = "auto";
+    isolated.textContent = value;
+    item.append(isolated);
+    factors.append(item);
+  }
+  const safety = document.createElement("p");
+  safety.className = "explanation-safety";
+  safety.textContent = record.result.safety_flags.length === 0
+    ? "Safety flags: None recorded"
+    : `Safety flags: ${record.result.safety_flags.map(readableCognitionToken).join(" · ")}`;
+  const disclosure = document.createElement("p");
+  disclosure.className = "explanation-disclosure";
+  disclosure.textContent = "Synthetic narrative, not observed behavior. The deterministic response above was already committed.";
+  body.append(copy, facts, factorsTitle, factors, safety, disclosure);
+  details.append(summary, body);
+  return details;
+}
+
+function cognitionSummaryPresentation(documentValue) {
+  const outcomes = documentValue.summary.outcome_counts;
+  const total = documentValue.summary.terminal_record_count;
+  const aiGenerated = outcomes.provider + outcomes.cache;
+  if (total === 0) {
+    return ["No saved explanations", "Deterministic simulation · no saved explanations"];
+  }
+  if (aiGenerated === total) {
+    return ["AI-generated explanations", "Deterministic simulation · saved AI explanations"];
+  }
+  if (aiGenerated > 0) {
+    return [
+      "Mixed explanation evidence",
+      "Deterministic simulation · saved mixed explanation evidence",
+    ];
+  }
+  if (outcomes.rules === total) {
+    return [
+      "Deterministic explanations",
+      "Deterministic simulation · saved local explanations",
+    ];
+  }
+  if (outcomes.mock === total) {
+    return ["Mock explanations", "Deterministic simulation · saved mock explanations"];
+  }
+  return ["Saved explanation evidence", "Deterministic simulation · saved explanation evidence"];
+}
+
+function renderCognitionSummary() {
+  if (!state.cognitionSummary || !state.cognitionRecords) return;
+  const documentValue = state.cognitionSummary;
+  const summary = documentValue.summary;
+  const offline = ["rules", "mock"].includes(documentValue.mode);
+  const [label, boundary] = cognitionSummaryPresentation(documentValue);
+  byId("cognition-summary-label").textContent = label;
+  byId("cognition-summary-status").textContent = `${summary.terminal_record_count} saved`;
+  byId("cognition-summary-mode").textContent = documentValue.mode;
+  byId("cognition-summary-outcomes").textContent = cognitionSources
+    .filter((source) => summary.outcome_counts[source.replaceAll("-", "_")] > 0)
+    .map((source) => (
+      `${cognitionSourceLabel(source)} ${summary.outcome_counts[source.replaceAll("-", "_")]}`
+    ))
+    .join(" · ") || "No selected responses";
+  byId("cognition-summary-provider").textContent = offline
+    ? (documentValue.mode === "mock" ? "Deterministic mock" : "Offline rules")
+    : documentValue.provider_profile_id;
+  byId("cognition-summary-model").textContent = documentValue.model_id || "Not used";
+  byId("cognition-summary-fallbacks").textContent = (
+    `${summary.outcome_counts.fallback} / ${summary.outcome_counts.budget_skipped}`
+  );
+  byId("cognition-summary-budget").textContent = offline
+    ? "No provider tokens"
+    : `${documentValue.aggregate_output_token_ceiling} reserved tokens`;
+  byId("cognition-summary").open = false;
+  byId("cognition-summary").hidden = false;
+  byId("model-boundary-label").textContent = boundary;
+}
+
 function renderResponseEvidence() {
   if (!state.responseSummary || !state.responsePage) return;
   const page = state.responsePage;
@@ -1531,6 +2032,8 @@ function renderResponseEvidence() {
   const fragment = document.createDocumentFragment();
   const selectedCount = page.agent_counts[state.selected] || 0;
   for (const record of page.items) {
+    const item = document.createElement("div");
+    item.className = "response-evidence-item";
     const card = document.createElement("button");
     card.type = "button";
     card.className = "response-card";
@@ -1568,7 +2071,15 @@ function renderResponseEvidence() {
     }
     card.append(stageLabel, at, identity, detail);
     card.addEventListener("click", () => selectCausalEvidence("response", record));
-    fragment.append(card);
+    item.append(card);
+    if (record.event_type === "spatial.response") {
+      const cognition = state.cognitionByResponseId.get(record.event_id);
+      if (cognition) {
+        item.dataset.responseEventId = record.event_id;
+        item.append(createResponseExplanation(cognition, record));
+      }
+    }
+    fragment.append(item);
   }
   list.replaceChildren(fragment);
   byId("response-current").textContent = `${page.total} RECORDS AT THIS MINUTE \u00b7 ${selectedCount} FOR SELECTED AGENT`;
@@ -1999,7 +2510,7 @@ function validateSpatialResponseMetrics(documentValue, seedToken) {
     || document.schema_version !== 1
     || document.model_id !== "spatial-response-metrics-v1"
     || document.claim_scope !== "synthetic-response-metrics-not-observed-outcomes"
-    || ![6, 7, 8].includes(document.source_run_schema_version)
+    || ![6, 7, 8, 9].includes(document.source_run_schema_version)
     || document.source_run_schema_version !== state.meta.run_schema_version
     || document.opportunity_model_id !== "spatial-opportunity-v1"
     || document.attention_model_id !== "spatial-attention-v1"
@@ -2648,9 +3159,61 @@ function validateWorkbenchRoadside(value, days) {
   return roadside;
 }
 
+function validateWorkbenchCognition(value) {
+  const cognition = requireRecord(value, "Frozen workbench input");
+  const keys = [
+    "mode", "provider_profile_id", "provider_revision_sha256",
+    "aggregate_output_token_ceiling", "prompt_contract_version", "result_schema_version",
+    "selection_policy_version", "fallback_policy_version", "selected_requests_per_agent",
+    "selected_requests_per_run", "concurrency_limit", "max_request_bytes",
+    "max_wire_response_bytes", "max_output_tokens_per_attempt",
+    "reservation_tokens_per_request", "initial_attempts", "transient_retries",
+    "repair_attempts", "attempt_timeout_seconds", "aggregate_deadline_seconds",
+  ];
+  const fixedIntegers = {
+    prompt_contract_version: 1,
+    result_schema_version: 1,
+    selection_policy_version: 1,
+    fallback_policy_version: 1,
+    selected_requests_per_agent: 4,
+    selected_requests_per_run: 60,
+    concurrency_limit: 4,
+    max_request_bytes: 8192,
+    max_wire_response_bytes: 1048576,
+    max_output_tokens_per_attempt: 384,
+    reservation_tokens_per_request: 1536,
+    initial_attempts: 1,
+    transient_retries: 2,
+    repair_attempts: 1,
+    attempt_timeout_seconds: 30,
+    aggregate_deadline_seconds: 180,
+  };
+  if (
+    !hasExactKeys(cognition, keys)
+    || !["rules", "mock", "local", "remote"].includes(cognition.mode)
+    || Object.entries(fixedIntegers).some(([key, expected]) => cognition[key] !== expected)
+    || !Number.isInteger(cognition.aggregate_output_token_ceiling)
+    || cognition.aggregate_output_token_ceiling < 0
+    || cognition.aggregate_output_token_ceiling > 92160
+  ) invalidWorkbenchInput();
+  const offline = ["rules", "mock"].includes(cognition.mode);
+  if (
+    offline
+      ? cognition.provider_profile_id !== null
+        || cognition.provider_revision_sha256 !== null
+        || cognition.aggregate_output_token_ceiling !== 0
+      : !validEvidenceId(cognition.provider_profile_id)
+        || cognition.provider_profile_id.length > 64
+        || !validEvidenceHash(cognition.provider_revision_sha256)
+        || cognition.aggregate_output_token_ceiling % 1536 !== 0
+  ) invalidWorkbenchInput();
+  return cognition;
+}
+
 function validateWorkbenchInput(value) {
   const documentValue = requireRecord(value, "Frozen workbench input");
-  const isPersonaRun = documentValue.run_schema_version === 8;
+  const isPersonaRun = [8, 9].includes(documentValue.run_schema_version);
+  const isCognitionRun = documentValue.run_schema_version === 9;
   if (!hasExactKeys(documentValue, [
     "run_id",
     "run_schema_version",
@@ -2663,6 +3226,7 @@ function validateWorkbenchInput(value) {
     "scenario",
     isPersonaRun ? "population" : "cohort",
     "settings",
+    ...(isCognitionRun ? ["cognition"] : []),
     "creative_template",
   ])) invalidWorkbenchInput();
   const settings = requireRecord(documentValue.settings, "Frozen workbench input");
@@ -2671,9 +3235,9 @@ function validateWorkbenchInput(value) {
   ])) invalidWorkbenchInput();
   const runId = requireWorkbenchId(documentValue.run_id, 40);
   if (
-    ![7, 8].includes(documentValue.run_schema_version)
+    ![7, 8, 9].includes(documentValue.run_schema_version)
     || documentValue.run_schema_version !== state.meta.run_schema_version
-    || documentValue.workbench_input_schema_version !== (isPersonaRun ? 2 : 1)
+    || documentValue.workbench_input_schema_version !== (isCognitionRun ? 3 : isPersonaRun ? 2 : 1)
     || runId !== settings.run_id
     || runId !== state.meta.run_id
     || settings.response_mode !== "deterministic-rules"
@@ -2729,6 +3293,7 @@ function validateWorkbenchInput(value) {
 
   if (isPersonaRun) validateWorkbenchPopulation(documentValue.population, settings.agent_count);
   else validateWorkbenchCohort(documentValue.cohort);
+  if (isCognitionRun) validateWorkbenchCognition(documentValue.cognition);
 
   const creative = requireRecord(documentValue.creative_template, "Frozen workbench input");
   if (!hasExactKeys(creative, [
@@ -3214,7 +3779,7 @@ async function boot() {
     if (meta.workbench_input_available === true) {
       try {
         if (
-          ![7, 8].includes(meta.run_schema_version)
+          ![7, 8, 9].includes(meta.run_schema_version)
           || !validEvidenceHash(meta.workbench_input_sha256)
           || !validatedApiBase().startsWith("/api/runs/")
         ) invalidWorkbenchInput();
@@ -3271,6 +3836,18 @@ async function boot() {
       byId("response-panel").hidden = false;
       byId("response-state-panel").hidden = false;
     }
+    if (meta.run_schema_version === 9) {
+      if (
+        meta.saved !== true
+        || !state.workbenchInput
+        || !state.responseSummary
+        || !validatedApiBase().startsWith("/api/runs/")
+      ) invalidCognitionEvidence();
+      await loadCognitionEvidence();
+      renderCognitionSummary();
+    } else {
+      byId("model-boundary-label").textContent = "Deterministic simulation · no saved explanations";
+    }
     if (meta.spatial_metrics === true) {
       state.spatialMetrics = await fetchJson("/spatial-metrics");
       renderSpatialMetrics();
@@ -3301,14 +3878,15 @@ async function boot() {
     byId("timeline-duration").textContent = `${meta.days} ${meta.days === 1 ? "DAY" : "DAYS"}`;
     byId("time-slider").max = String(meta.days * 1440 - 1);
     if (state.workbenchInput) {
-      if (state.workbenchInput.run_schema_version === 8) {
+      if ([8, 9].includes(state.workbenchInput.run_schema_version)) {
         state.personaByAgent = validateWorkbenchPopulation(
           state.workbenchInput.population, state.workbenchInput.settings.agent_count,
         );
       }
       renderWorkbenchAssumptions(state.workbenchInput);
     }
-    await setMinute(0);
+    if (state.request === 0) await setMinute(0);
+    else if (state.frame !== null) renderTimeline();
   } catch (error) { showError(String(error)); }
 }
 

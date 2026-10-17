@@ -238,8 +238,8 @@ def _job_documents() -> tuple[dict[str, object], dict[str, object]]:
     job_id = "job-" + "a" * 32
     settings = {
         "schema_version": 1,
-        "workbench_input_schema_version": 2,
-        "run_schema_version": 8,
+        "workbench_input_schema_version": 3,
+        "run_schema_version": 9,
         "city_id": "fictional-grid-v2",
         "scenario_id": "city-study",
         "campaign_id": "fictional-campaign",
@@ -247,6 +247,10 @@ def _job_documents() -> tuple[dict[str, object], dict[str, object]]:
         "agent_count": 20,
         "days": 2,
         "response_mode": "deterministic-rules",
+        "cognition_mode": "rules",
+        "provider_profile_id": None,
+        "provider_revision_sha256": None,
+        "aggregate_output_token_ceiling": 0,
     }
     queued: dict[str, object] = {
         "schema_version": 1,
@@ -275,6 +279,8 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         city_pack_script = client.get("/assets/workbench-city-packs.js")
         persona_script = client.get("/assets/workbench-personas.js")
         persona_style = client.get("/assets/workbench-personas.css")
+        provider_script = client.get("/assets/workbench-providers.js")
+        provider_style = client.get("/assets/workbench-providers.css")
         icon = client.get("/assets/workbench-icon.svg")
         capabilities = client.get("/api/workbench")
 
@@ -286,8 +292,20 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         == 200
     )
     assert icon.status_code == capabilities.status_code == 200
-    assert persona_script.status_code == persona_style.status_code == 200
-    for asset in (city_pack_script, persona_script, persona_style):
+    assert (
+        persona_script.status_code
+        == persona_style.status_code
+        == provider_script.status_code
+        == provider_style.status_code
+        == 200
+    )
+    for asset in (
+        city_pack_script,
+        persona_script,
+        persona_style,
+        provider_script,
+        provider_style,
+    ):
         assert asset.headers["cache-control"] == "no-store"
         assert asset.headers["x-content-type-options"] == "nosniff"
         assert asset.headers["content-security-policy"] == shell.headers["content-security-policy"]
@@ -313,6 +331,8 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         "/assets/workbench-icon.svg",
         "/assets/workbench-personas.css",
         "/assets/workbench-personas.js",
+        "/assets/workbench-providers.css",
+        "/assets/workbench-providers.js",
         "/assets/workbench.css",
         "/assets/workbench.js",
     ]
@@ -340,8 +360,10 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         "https://",
         "//outside",
     ):
-        assert forbidden not in script.text + city_pack_script.text + persona_script.text
-    lowered_css = stylesheet.text.lower() + persona_style.text.lower()
+        assert forbidden not in (
+            script.text + city_pack_script.text + persona_script.text + provider_script.text
+        )
+    lowered_css = stylesheet.text.lower() + persona_style.text.lower() + provider_style.text.lower()
     for forbidden in ("@import", "@font-face", "url(", "expression("):
         assert forbidden not in lowered_css
     assert re.search(r"(?m)^\s*behavior\s*:", lowered_css) is None
@@ -354,6 +376,220 @@ def test_served_package_assets_expose_no_external_or_persistent_execution_surfac
         assert response.headers["x-content-type-options"] == "nosniff"
         assert "access-control-allow-origin" not in response.headers
         assert "server" not in response.headers
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ["success", "server-refusal", "network-failure", "cancellation"],
+)
+def test_provider_credential_is_transient_and_cleared_on_every_submission_outcome(
+    tmp_path: Path,
+    outcome: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from adlife.adapters.cognition.city_credentials import (
+        ProviderCredentialUnavailable,
+        ResolvedCredential,
+        SecretBuffer,
+    )
+    from adlife.city.provider_runtime import build_provider_runtime_policy
+
+    marker = "-".join(("browser", "transient", "marker", str(1_234_567_890)))
+    stored: dict[str, str] = {}
+
+    class MemoryCredentialStore:
+        def available(self, profile: Any) -> bool:
+            return profile.revision_sha256 in stored
+
+        def store(self, profile: Any, credential: SecretBuffer) -> None:
+            stored[profile.revision_sha256] = credential.reveal_text()
+
+        def resolve(self, profile: Any) -> ResolvedCredential:
+            value = stored.get(profile.revision_sha256)
+            if value is None:
+                raise ProviderCredentialUnavailable("unavailable")
+            return ResolvedCredential(
+                source="keyring",
+                secret=SecretBuffer(value),
+                origin_approval_id=profile.origin_approval_id,
+                credential_slot_id=profile.credential_slot_id,
+            )
+
+    root = tmp_path / "workspace"
+    app = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="provider-browser-security-token",
+        provider_runtime=build_provider_runtime_policy(
+            provider_origins=("remote-acme=https://api.example.invalid/v1",),
+        ),
+        credential_store=MemoryCredentialStore(),
+    )
+    profile = {
+        "schema_version": 1,
+        "profile_id": "remote-acme",
+        "display_label": "Remote Acme",
+        "mode": "remote",
+        "base_url": "https://api.example.invalid/v1",
+        "model_id": "fictional-compatible-model",
+        "protocol": "openai-chat-completions-json-schema-v1",
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "seed_policy": "fixed",
+        "seed": 42,
+        "max_output_tokens": 384,
+        "attempt_timeout_seconds": 30,
+        "transient_retries": 2,
+        "repair_attempts": 1,
+        "origin_approval_id": "remote-acme",
+    }
+
+    with _serve(app) as base_url:
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        console_messages: list[str] = []
+        page_errors: list[str] = []
+        requests: list[tuple[str, str, str | None]] = []
+        try:
+            created = page.request.post(
+                f"{base_url}/api/providers",
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": base_url,
+                    "X-AdLife-CSRF": "provider-browser-security-token",
+                },
+                data=profile,
+            )
+            assert created.status == 201, created.text()
+            revision = created.json()["revision_sha256"]
+            credential_url = f"{base_url}/api/providers/remote-acme/revisions/{revision}/credential"
+            preload = page.request.get(f"{base_url}/api/providers")
+            assert preload.status == 200, preload.text()
+
+            page.on("console", lambda message: console_messages.append(message.text))
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.on(
+                "request",
+                lambda request: requests.append((request.method, request.url, request.post_data)),
+            )
+            if outcome != "success":
+
+                def reject_credential(route: Any) -> None:
+                    if outcome == "server-refusal":
+                        route.fulfill(
+                            status=503,
+                            content_type="application/json",
+                            body=json.dumps(
+                                {
+                                    "error": {
+                                        "code": "credential-store-unavailable",
+                                        "message": "Credential storage is unavailable.",
+                                    }
+                                }
+                            ),
+                        )
+                    elif outcome == "cancellation":
+                        route.abort("aborted")
+                    else:
+                        route.abort("connectionrefused")
+
+                page.route("**/api/providers/**/credential", reject_credential)
+
+            response = page.goto(base_url, wait_until="networkidle")
+            assert response is not None and response.status == 200
+            assert page_errors == [], page_errors
+            configure = page.get_by_role("button", name="Configure campaign")
+            expect(configure).to_be_enabled(timeout=10_000)
+            configure.click()
+            page.get_by_role("button", name="Review run").click()
+            page.get_by_label("Source").select_option("remote")
+            credential = page.locator("#provider-credential")
+            save = page.locator("#provider-save-credential")
+            expect(credential).to_be_visible()
+            expect(save).to_be_enabled()
+            credential.fill(marker)
+            expect(credential).to_have_value(marker)
+            assert credential.get_attribute("value") != marker
+
+            save.click()
+            expect(credential).to_have_value("")
+
+            credential_requests = [
+                item for item in requests if item[0] == "POST" and item[1] == credential_url
+            ]
+            assert len(credential_requests) == 1
+            assert json.loads(credential_requests[0][2] or "null") == {"credential": marker}
+            for _method, url, body in requests:
+                assert marker not in url
+                if url != credential_url:
+                    assert marker not in (body or "")
+
+            browser_state = page.evaluate(
+                """async (marker) => {
+                  const textMatches = [];
+                  const walker = document.createTreeWalker(document, NodeFilter.SHOW_TEXT);
+                  while (walker.nextNode()) {
+                    if ((walker.currentNode.nodeValue || "").includes(marker)) {
+                      textMatches.push(walker.currentNode.parentElement?.tagName || "text");
+                    }
+                  }
+                  const attributeMatches = [];
+                  for (const element of document.querySelectorAll("*")) {
+                    for (const name of element.getAttributeNames()) {
+                      if ((element.getAttribute(name) || "").includes(marker)) {
+                        attributeMatches.push(`${element.tagName}:${name}`);
+                      }
+                    }
+                  }
+                  const globalMatches = [];
+                  for (const name of Object.getOwnPropertyNames(window)) {
+                    try {
+                      const value = window[name];
+                      if (typeof value === "string" && value.includes(marker)) {
+                        globalMatches.push(name);
+                      }
+                    } catch (_error) {
+                      // Cross-origin and browser-owned accessors may throw.
+                    }
+                  }
+                  return {
+                    textMatches,
+                    attributeMatches,
+                    globalMatches,
+                    localStorage: Object.entries(localStorage),
+                    sessionStorage: Object.entries(sessionStorage),
+                    indexedDatabases: indexedDB.databases ?
+                      (await indexedDB.databases()).map((item) => item.name) : [],
+                    urls: performance.getEntriesByType("resource").map((item) => item.name),
+                    pageUrl: location.href,
+                  };
+                }""",
+                marker,
+            )
+            assert browser_state == {
+                "textMatches": [],
+                "attributeMatches": [],
+                "globalMatches": [],
+                "localStorage": [],
+                "sessionStorage": [],
+                "indexedDatabases": [],
+                "urls": browser_state["urls"],
+                "pageUrl": base_url + "/",
+            }
+            assert all(marker not in url for url in browser_state["urls"])
+            assert marker not in page.content()
+            assert marker not in "".join(console_messages + page_errors)
+            assert marker not in caplog.text
+
+            listing = page.request.get(f"{base_url}/api/providers")
+            capabilities = page.request.get(f"{base_url}/api/workbench")
+            assert listing.status == capabilities.status == 200
+            assert marker not in listing.text() + capabilities.text()
+            assert (outcome == "success") is bool(stored)
+            for artifact in root.rglob("*"):
+                if artifact.is_file():
+                    assert marker.encode() not in artifact.read_bytes()
+        finally:
+            browser.close()
+            playwright.stop()
 
 
 def test_workbench_city_disclosure_covers_uploaded_sources_without_claiming_review(
@@ -659,7 +895,11 @@ def test_real_worker_exception_is_screened_from_dom_response_log_and_artifacts(
     def fail_prepare(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError(f"{secret} at {private_path}")
 
-    monkeypatch.setattr(workbench_web.WorkbenchRunRepository, "prepare", fail_prepare)
+    monkeypatch.setattr(
+        workbench_web.WorkbenchRunRepository,
+        "prepare_scientific",
+        fail_prepare,
+    )
     with caplog.at_level(logging.ERROR), _workbench(tmp_path) as (base_url, root):
         playwright, browser, page = _open_page(browser_path, base_url)
         job_urls: list[str] = []

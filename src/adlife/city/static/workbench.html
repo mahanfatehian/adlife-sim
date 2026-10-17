@@ -9,8 +9,10 @@
   <link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/workbench.css">
   <link rel="stylesheet" href="/assets/workbench-personas.css">
+  <link rel="stylesheet" href="/assets/workbench-providers.css">
   <script defer src="/assets/workbench-city-packs.js"></script>
   <script defer src="/assets/workbench-personas.js"></script>
+  <script defer src="/assets/workbench-providers.js"></script>
   <script defer src="/assets/workbench.js"></script>
 </head>
 <body>
@@ -21,7 +23,7 @@
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
       <span><b>ADLIFE</b><small>CITY WORKBENCH</small></span>
     </a>
-    <div class="runtime"><span class="runtime-pulse" aria-hidden="true"></span>Local workspace · rules engine</div>
+    <div class="runtime"><span class="runtime-pulse" aria-hidden="true"></span>Local workspace · deterministic engine</div>
   </header>
 
   <div id="synthetic-disclosure" class="disclosure" role="note" aria-label="Synthetic data disclosure">
@@ -233,8 +235,8 @@
           </section>
 
           <aside id="provider-boundary" class="boundary-note" role="note">
-            <strong>Engine: deterministic rules</strong>
-            <p>This city workflow does not call an AI provider. ChatGPT/Codex subscriptions and custom API credentials are not used.</p>
+            <strong>Decisions stay deterministic</strong>
+            <p>An optional explanation can describe a saved rule result. It never changes movement, ad response, state, or metrics.</p>
           </aside>
 
           <div class="stage-actions split">
@@ -279,6 +281,120 @@
                 <input id="response-mode" type="text" value="Rules engine (offline)" readonly>
               </div>
             </div>
+          </section>
+
+          <section id="explanations-section" class="form-section explanations-section" aria-labelledby="explanations-title">
+            <div class="section-heading explanation-heading">
+              <div>
+                <p class="eyebrow">Optional narrative layer</p>
+                <h2 id="explanations-title">Explanations</h2>
+              </div>
+              <span id="explanation-source-label">Rules</span>
+            </div>
+            <p class="section-lead">Choose how saved deterministic responses are explained. This does not change the simulation result.</p>
+
+            <div class="explanation-path" aria-label="Explanation configuration path">
+              <div class="field" data-field-path="cognition.mode">
+                <label for="cognition-mode">Source</label>
+                <select id="cognition-mode" aria-describedby="cognition-mode-help cognition-mode-error">
+                  <option value="rules">Rules — offline</option>
+                  <option value="mock">Mock — reproducible demo</option>
+                  <option value="local">Local compatible model</option>
+                  <option value="remote">Remote compatible model</option>
+                </select>
+                <small id="cognition-mode-help" class="field-help">Rules is the offline default.</small>
+                <p id="cognition-mode-error" class="field-error" role="status"></p>
+              </div>
+
+              <div id="provider-settings" class="provider-settings" hidden>
+                <div class="field" data-field-path="cognition.provider_profile_id">
+                  <label for="provider-profile">Exact profile revision</label>
+                  <select id="provider-profile" aria-describedby="provider-profile-help provider-profile-error" disabled>
+                    <option value="">No matching profile</option>
+                  </select>
+                  <small id="provider-profile-help" class="field-help">Runs pin one immutable, non-secret revision.</small>
+                  <p id="provider-profile-error" class="field-error" role="status"></p>
+                </div>
+
+                <div id="provider-receipt" class="provider-receipt" aria-live="polite" hidden>
+                  <div><span>Endpoint</span><strong id="provider-endpoint" dir="auto">—</strong></div>
+                  <div><span>Model</span><strong id="provider-model-receipt" dir="auto">—</strong></div>
+                  <div><span>Credential</span><strong id="provider-credential-state">—</strong></div>
+                </div>
+
+                <details id="provider-create-details" class="technical-details provider-create-details">
+                  <summary>Create an immutable profile</summary>
+                  <form id="provider-create-form" class="provider-form" novalidate>
+                    <div class="field-grid two">
+                      <div class="field">
+                        <label for="provider-origin">Approved endpoint</label>
+                        <select id="provider-origin" required></select>
+                      </div>
+                      <div class="field">
+                        <label for="provider-profile-id">Profile ID</label>
+                        <input id="provider-profile-id" type="text" maxlength="64" autocomplete="off" placeholder="local-lab">
+                      </div>
+                      <div class="field">
+                        <label for="provider-label">Display name</label>
+                        <input id="provider-label" type="text" maxlength="80" autocomplete="off" placeholder="Local lab model">
+                      </div>
+                      <div class="field">
+                        <label for="provider-model">Model ID</label>
+                        <input id="provider-model" type="text" maxlength="120" autocomplete="off" placeholder="qwen2.5:7b">
+                      </div>
+                    </div>
+                    <details class="provider-advanced">
+                      <summary>Advanced inference settings</summary>
+                      <div class="field-grid three">
+                        <div class="field"><label for="provider-temperature">Temperature</label><input id="provider-temperature" type="number" min="0" max="2" step="0.1" value="0.2"></div>
+                        <div class="field"><label for="provider-top-p">Top P</label><input id="provider-top-p" type="number" min="0.01" max="1" step="0.01" value="0.9"></div>
+                        <div class="field"><label for="provider-seed-policy">Seed</label><select id="provider-seed-policy"><option value="fixed">Fixed</option><option value="omit">Provider default</option></select></div>
+                        <div class="field"><label for="provider-seed">Fixed seed</label><input id="provider-seed" type="text" inputmode="numeric" maxlength="19" value="42" autocomplete="off"></div>
+                        <div class="field"><label for="provider-max-output">Output tokens</label><input id="provider-max-output" type="number" min="1" max="384" step="1" value="384"></div>
+                        <div class="field"><label for="provider-timeout">Attempt timeout</label><input id="provider-timeout" type="number" min="1" max="30" step="1" value="30"></div>
+                        <div class="field"><label for="provider-retries">Transient retries</label><input id="provider-retries" type="number" min="0" max="2" step="1" value="2"></div>
+                        <div class="field"><label for="provider-repair">Schema repairs</label><input id="provider-repair" type="number" min="0" max="1" step="1" value="1"></div>
+                      </div>
+                    </details>
+                    <p id="provider-create-error" class="field-error" role="alert"></p>
+                    <button id="provider-create-submit" class="button quiet compact" type="submit">Save profile revision</button>
+                  </form>
+                </details>
+
+                <form id="provider-credential-controls" class="provider-credential-controls" novalidate hidden>
+                  <div class="field">
+                    <label for="provider-credential">API credential</label>
+                    <input id="provider-credential" type="password" maxlength="4096" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    <small class="field-help">Sent once to the server-side secret store; never added to the run.</small>
+                  </div>
+                  <button id="provider-save-credential" class="button quiet compact" type="submit">Save credential</button>
+                  <p id="provider-credential-status" class="provider-action-status" role="status" aria-live="polite"></p>
+                </form>
+
+                <div class="provider-check-row">
+                  <button id="provider-check" class="button quiet compact" type="button" disabled>Check compatibility</button>
+                  <div>
+                    <p id="provider-check-status" class="provider-action-status" role="status" aria-live="polite"></p>
+                    <small class="field-help">Runs one bounded inference and may incur provider usage.</small>
+                  </div>
+                </div>
+                <p id="provider-status" class="provider-action-status" role="status" aria-live="polite"></p>
+
+                <div class="field" data-field-path="cognition.aggregate_output_token_ceiling">
+                  <label for="cognition-budget">Output-token reservation <span>0–92,160</span></label>
+                  <input id="cognition-budget" type="number" min="0" max="92160" step="1536" value="92160" inputmode="numeric">
+                  <small id="cognition-budget-status" class="field-help">Up to 60 selected responses funded.</small>
+                  <p id="cognition-budget-error" class="field-error" role="status"></p>
+                </div>
+                <p id="provider-cost-warning" class="provider-cost-warning">The reservation limits generated output tokens. It is not a spending limit and does not include provider input or vendor charges.</p>
+              </div>
+            </div>
+
+            <aside class="explanation-boundary" role="note">
+              <strong>What a model can do</strong>
+              <p>Generate bounded text for an already-computed fictional response. It cannot decide purchases, move people, create events, or change scores.</p>
+            </aside>
+            <p id="provider-product-login-note" class="provider-product-login-note">A ChatGPT or Codex subscription, product login, or OAuth token is not accepted here. Use a server-approved OpenAI-compatible endpoint and its API credential.</p>
           </section>
 
           <p id="persona-count-status" class="section-note" role="status"></p>

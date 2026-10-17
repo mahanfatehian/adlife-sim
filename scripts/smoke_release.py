@@ -7,6 +7,7 @@ and runs the documented workflow — including the verified packaged city catalo
 validated fictional place, campaign, and response inputs, a schema-v6 spatial opportunity,
 attention, and rules-only response run, its replay, its read-only ASGI viewer, and a complete
 schema-v8 persona submit/poll/discover/inspect lifecycle with explicit V7 compatibility,
+schema-v9 rules/mock explanations, and one real loopback compatible-provider check,
 validating the JSON output contract
 along the way. Every temporary artifact is cleaned up on success and on failure.
 """
@@ -143,8 +144,15 @@ def _is_local_address(address):
 
 
 def _deny_network(event, arguments):
+    if event == "socket.getaddrinfo":
+        hostname = arguments[0] if arguments else None
+        try:
+            if isinstance(hostname, str) and ipaddress.ip_address(hostname).is_loopback:
+                return
+        except ValueError:
+            pass
+        raise RuntimeError(f"installed-wheel smoke blocked network operation: {event}")
     if event in {
-        "socket.getaddrinfo",
         "socket.gethostbyname",
         "socket.gethostbyname_ex",
         "socket.gethostbyaddr",
@@ -159,6 +167,7 @@ def _deny_network(event, arguments):
 
 sys.addaudithook(_deny_network)
 sys.audit("socket.connect", None, ("127.0.0.1", 1))
+sys.audit("socket.getaddrinfo", "127.0.0.1", 1, 0, 0, 0)
 sys.audit("socket.sendto", None, ("::1", 1))
 sys.audit("socket.sendmsg", None, ("127.0.0.1", 1))
 for _event, _arguments in (
@@ -190,15 +199,18 @@ with Path(__file__).with_name("adlife-smoke-network-guard.log").open(
 ) as _guard_log:
     _guard_log.write(f"{_guard_token}\\t{sys.argv[0]}\\n")
 '''
-_VIEWER_PROBE_SOURCE = '''"""Verify installed V6, V7 and V8 personas without a socket."""
+_VIEWER_PROBE_SOURCE = '''"""Verify installed V6-V9 behavior with external network denied."""
 from __future__ import annotations
 
 import asyncio
 import builtins
 import inspect
 import json
+import socketserver
 import sys
+import threading
 from hashlib import sha256
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 def _inside(path: str | Path, root: Path) -> bool:
@@ -209,6 +221,7 @@ def _verify_guard() -> None:
     assert builtins.__adlife_smoke_network_guard__
     assert builtins.__adlife_smoke_network_guard_self_test__
     sys.audit("socket.connect", None, ("127.0.0.1", 1))
+    sys.audit("socket.getaddrinfo", "127.0.0.1", 1, 0, 0, 0)
     sys.audit("socket.sendto", None, ("::1", 1))
     sys.audit("socket.sendmsg", None, ("127.0.0.1", 1))
     for event, arguments in (
@@ -238,9 +251,10 @@ from adlife.city.analysis import metrics_for_stored_city_run
 from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import replay_city_run
+from adlife.city.provider_runtime import build_provider_runtime_policy
 from adlife.city.web import create_city_app
 from adlife.city.workbench_personas import PersonaTemplateCatalog
-from adlife.city.workbench_transport import WorkbenchRunInputViewV2
+from adlife.city.workbench_transport import WorkbenchRunInputViewV2, WorkbenchRunInputViewV3
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.serialization import canonical_json
@@ -257,6 +271,164 @@ async def _json(client: httpx.AsyncClient, path: str) -> dict[str, object]:
     payload = response.json()
     assert isinstance(payload, dict)
     return payload
+
+
+_LOCAL_HEADER_VALUE = "Bearer " + "-".join(("adlife", "local", "provider"))
+
+
+class _LoopbackCompatibleHandler(BaseHTTPRequestHandler):
+    """One exact non-streaming Chat Completions fixture; it retains no request body."""
+
+    protocol_version = "HTTP/1.1"
+    request_count = 0
+    protocol_verified = False
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return None
+
+    def _reply(self, status: int, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
+
+    def do_POST(self) -> None:
+        type(self).request_count += 1
+        valid = self.path == "/v1/chat/completions"
+        raw_length = self.headers.get("Content-Length", "")
+        length = int(raw_length) if raw_length.isdigit() else -1
+        valid = valid and 0 < length <= 131_072
+        body = self.rfile.read(length) if valid else b""
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            messages = payload["messages"]
+            user_content = messages[1]["content"]
+            request_text = user_content.split(
+                "BEGIN_UNTRUSTED_CITY_COGNITION_DATA\\n", 1
+            )[1].split("\\nEND_UNTRUSTED_CITY_COGNITION_DATA", 1)[0]
+            request = json.loads(request_text)
+            valid = valid and (
+                self.headers.get("Authorization") == _LOCAL_HEADER_VALUE
+                and self.headers.get("Content-Type") == "application/json"
+                and self.headers.get("Accept") == "application/json"
+                and payload["stream"] is False
+                and payload["max_tokens"] == 384
+                and payload["model"] == "wheel-compatible-model"
+                and len(messages) == 2
+                and payload["response_format"]["type"] == "json_schema"
+                and payload["response_format"]["json_schema"]["strict"] is True
+            )
+            result = {
+                "schema_version": 1,
+                "request_id": request["request_id"],
+                "interpretation": (
+                    "The deterministic rule result is described without changing the simulation."
+                ),
+                "decision_factors": ["The saved rule factors remain authoritative."],
+                "safety_flags": [],
+                "disclosure": "synthetic-narrative-not-observed-behavior",
+            }
+            envelope = {
+                "id": "chatcmpl-wheel-smoke",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "wheel-compatible-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(result, separators=(",", ":")),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 12, "total_tokens": 32},
+            }
+            response = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+        except (IndexError, KeyError, TypeError, UnicodeError, ValueError):
+            valid = False
+            response = b'{"error":"invalid compatible request"}'
+        type(self).protocol_verified = valid
+        self._reply(200 if valid else 400, response)
+
+
+class _LoopbackCompatibleServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = False
+    daemon_threads = True
+
+
+async def _verify_loopback_compatible_provider(root: Path) -> None:
+    _LoopbackCompatibleHandler.request_count = 0
+    _LoopbackCompatibleHandler.protocol_verified = False
+    server = _LoopbackCompatibleServer(("127.0.0.1", 0), _LoopbackCompatibleHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = int(server.server_address[1])
+        base_url = f"http://127.0.0.1:{port}/v1"
+        runtime = build_provider_runtime_policy(
+            provider_origins=(f"wheel-local={base_url}",),
+        )
+        application = create_city_workbench_app(
+            prepare_workbench_workspace(root / "provider-check-workspace"),
+            csrf_token="installed-wheel-provider-token",
+            provider_runtime=runtime,
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "http://127.0.0.1",
+            "X-AdLife-CSRF": "installed-wheel-provider-token",
+        }
+        profile = {
+            "schema_version": 1,
+            "profile_id": "wheel-local",
+            "display_label": "Wheel local compatible fixture",
+            "mode": "local",
+            "base_url": base_url,
+            "model_id": "wheel-compatible-model",
+            "protocol": "openai-chat-completions-json-schema-v1",
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "seed_policy": "fixed",
+            "seed": 42,
+            "max_output_tokens": 384,
+            "attempt_timeout_seconds": 10,
+            "transient_retries": 0,
+            "repair_attempts": 0,
+            "origin_approval_id": "wheel-local",
+        }
+        async with application.router.lifespan_context(application):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application),
+                base_url="http://127.0.0.1",
+            ) as client:
+                created = await client.post("/api/providers", headers=headers, json=profile)
+                assert created.status_code == 201, created.text
+                revision = created.json()["revision_sha256"]
+                checked = await client.post(
+                    f"/api/providers/wheel-local/revisions/{revision}/check",
+                    headers=headers,
+                    json={},
+                )
+                listing = await client.get("/api/providers")
+                assert checked.status_code == listing.status_code == 200
+                assert checked.json() == {"status": "compatible", "reason_code": None}
+                view = listing.json()["profiles"][0]
+                assert view["profile_id"] == "wheel-local"
+                assert view["credential_available"] is True
+                assert view["endpoint_policy_accepted"] is True
+                assert view["last_check"] == checked.json()
+        assert _LoopbackCompatibleHandler.request_count == 1
+        assert _LoopbackCompatibleHandler.protocol_verified is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
 
 
 async def _main() -> None:
@@ -539,6 +711,8 @@ async def _main() -> None:
                 ("workbench-city-packs.js", "text/javascript"),
                 ("workbench-personas.js", "text/javascript"),
                 ("workbench-personas.css", "text/css"),
+                ("workbench-providers.js", "text/javascript"),
+                ("workbench-providers.css", "text/css"),
             ):
                 asset = await workbench_client.get("/assets/" + name)
                 assert asset.status_code == 200
@@ -552,7 +726,10 @@ async def _main() -> None:
                 workbench_shell.text.index("workbench-personas.js")
             )
             assert workbench_shell.text.index("workbench-personas.js") < workbench_shell.text.index(
-                'src="/assets/workbench.js"'
+                'src="/assets/workbench-providers.js"'
+            )
+            assert workbench_shell.text.index("workbench-providers.js") < (
+                workbench_shell.text.index('src="/assets/workbench.js"')
             )
 
             uploaded = await workbench_client.post(
@@ -616,6 +793,10 @@ async def _main() -> None:
                 "agent_count": 2,
                 "days": 1,
                 "response_mode": "deterministic-rules",
+                "cognition_mode": None,
+                "provider_profile_id": None,
+                "provider_revision_sha256": None,
+                "aggregate_output_token_ceiling": None,
             }
             status_url = accepted_document["status_url"]
             deadline = asyncio.get_running_loop().time() + 30.0
@@ -706,6 +887,66 @@ async def _main() -> None:
                 await asyncio.sleep(0.01)
             assert legacy_job["phase"] == "completed", legacy_job
             assert legacy_job["result"]["run_schema_version"] == 7
+
+            for cognition_mode in ("rules", "mock"):
+                cognition_draft = json.loads(json.dumps(workbench_draft))
+                cognition_run_id = f"wheel-{cognition_mode}-v9"
+                cognition_draft["schema_version"] = 3
+                cognition_draft["settings"]["run_id"] = cognition_run_id
+                cognition_draft["cognition"] = {
+                    "mode": cognition_mode,
+                    "provider_profile_id": None,
+                    "provider_revision_sha256": None,
+                    "aggregate_output_token_ceiling": 0,
+                }
+                cognition_accepted = await workbench_client.post(
+                    "/api/jobs", headers=secure_headers, json=cognition_draft,
+                )
+                assert cognition_accepted.status_code == 202, cognition_accepted.text
+                cognition_settings = cognition_accepted.json()["job"]["accepted_settings"]
+                assert (
+                    cognition_settings["workbench_input_schema_version"],
+                    cognition_settings["run_schema_version"],
+                    cognition_settings["cognition_mode"],
+                    cognition_settings["aggregate_output_token_ceiling"],
+                ) == (3, 9, cognition_mode, 0)
+                deadline = asyncio.get_running_loop().time() + 30.0
+                while True:
+                    cognition_status = await workbench_client.get(
+                        cognition_accepted.json()["status_url"]
+                    )
+                    cognition_job = cognition_status.json()
+                    if cognition_job["phase"] in {"completed", "failed", "cancelled"}:
+                        break
+                    assert asyncio.get_running_loop().time() < deadline
+                    await asyncio.sleep(0.01)
+                assert cognition_job["phase"] == "completed", cognition_job
+                assert cognition_job["result"]["run_schema_version"] == 9
+                assert cognition_job["result"]["cognition_mode"] == cognition_mode
+                cognition_input = await workbench_client.get(
+                    f"/api/runs/{cognition_run_id}/workbench-input"
+                )
+                cognition_summary = await workbench_client.get(
+                    f"/api/runs/{cognition_run_id}/cognition-summary"
+                )
+                cognition_records = await workbench_client.get(
+                    f"/api/runs/{cognition_run_id}/cognition-records"
+                )
+                assert (
+                    cognition_input.status_code
+                    == cognition_summary.status_code
+                    == cognition_records.status_code
+                    == 200
+                )
+                verified_cognition_input = WorkbenchRunInputViewV3.model_validate_json(
+                    cognition_input.content
+                )
+                assert verified_cognition_input.cognition.mode == cognition_mode
+                assert cognition_summary.json()["mode"] == cognition_mode
+                assert cognition_summary.json()["run_schema_version"] == 9
+                assert cognition_records.json()["run_schema_version"] == 9
+
+    await _verify_loopback_compatible_provider(root)
 
     workbench_stored = CityRunStore(root).load("wheel-workbench")
     assert workbench_stored.manifest.schema_version == 8
@@ -831,6 +1072,13 @@ async def _main() -> None:
     assert legacy_stored.manifest.schema_version == 7
     assert legacy_stored.workbench_input.schema_version == 1
     assert replay_city_run(legacy_stored).identical is True
+    for cognition_mode in ("rules", "mock"):
+        cognition_stored = CityRunStore(root).load(f"wheel-{cognition_mode}-v9")
+        assert cognition_stored.manifest.schema_version == 9
+        assert cognition_stored.workbench_input.schema_version == 3
+        assert cognition_stored.cognition_input.mode == cognition_mode
+        assert cognition_stored.cognition_evaluation is not None
+        assert replay_city_run(cognition_stored).identical is True
 
     print(
         json.dumps(
@@ -859,6 +1107,10 @@ async def _main() -> None:
                 "workbench_registry_restart_verified": True,
                 "workbench_registry_independence_verified": True,
                 "legacy_workbench_run_schema_version": 7,
+                "cognition_workbench_run_schema_version": 9,
+                "cognition_rules_verified": True,
+                "cognition_mock_verified": True,
+                "loopback_compatible_provider_verified": True,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
                 "workbench_inspector_verified": True,
@@ -4342,6 +4594,10 @@ def _verify_installed_viewer(
         ("workbench_registry_restart_verified", True),
         ("workbench_registry_independence_verified", True),
         ("legacy_workbench_run_schema_version", 7),
+        ("cognition_workbench_run_schema_version", 9),
+        ("cognition_rules_verified", True),
+        ("cognition_mock_verified", True),
+        ("loopback_compatible_provider_verified", True),
         ("workbench_sidecar_verified", True),
         ("workbench_discovery_verified", True),
         ("workbench_inspector_verified", True),
@@ -5165,7 +5421,8 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
             "smoke ok: "
             f"report at {html.stat().st_size} bytes; "
             "schema-v6 response API/UI, schema-v7 compatibility and "
-            "schema-v8 persona lifecycle verified without network; "
+            "schema-v8 persona lifecycle plus schema-v9 rules/mock explanations "
+            "and a local compatible provider verified under the network guard; "
             "catalog fictional-grid-v2 metrics, A/A comparison, and replay verified; "
             f"two-seed response study and {spatial_report_bytes}-byte static report verified"
         )

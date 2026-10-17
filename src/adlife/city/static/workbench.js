@@ -9,6 +9,7 @@
   const MAX_HTTP_URL_LENGTH = 2_083;
   const MAX_SEED = 9223372036854775807n;
   const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
+  const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
   const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
   const JOB_ID_PATTERN = /^job-[0-9a-f]{32}$/;
   const HASH_PATTERN = /^[0-9a-f]{64}$/;
@@ -51,6 +52,7 @@
     cities: [],
     templates: [],
     personaEditor: null,
+    providerPanel: null,
     cityDetail: null,
     catalogGeneration: 0,
     cityGeneration: 0,
@@ -112,6 +114,10 @@
     ["settings.agent_count", ["agent-count-error", "agent-count"]],
     ["settings.days", ["days-error", "days"]],
     ["settings.seed", ["seed-error", "seed"]],
+    ["cognition.mode", ["cognition-mode-error", "cognition-mode"]],
+    ["cognition.provider_profile_id", ["provider-profile-error", "provider-profile"]],
+    ["cognition.provider_revision_sha256", ["provider-profile-error", "provider-profile"]],
+    ["cognition.aggregate_output_token_ceiling", ["cognition-budget-error", "cognition-budget"]],
   ]);
 
   const AGGREGATE_PATHS = [
@@ -336,6 +342,60 @@
     return documentValue;
   }
 
+  async function postCredential(path, secret) {
+    const safePath = validateApiPath(path);
+    if (
+      !/^\/api\/providers\/[a-z0-9][a-z0-9-]{0,63}\/revisions\/[0-9a-f]{64}\/credential$/.test(safePath) ||
+      typeof secret !== "string"
+    ) {
+      throw new RequestError("The credential request was refused before sending.");
+    }
+    if (!boundedText(csrfToken, 256)) {
+      throw new RequestError("The local security token is unavailable. Reload the page.");
+    }
+    let body = JSON.stringify({ credential: secret });
+    secret = "";
+    let request = {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-AdLife-CSRF": csrfToken,
+      },
+      body,
+      cache: "no-store",
+      credentials: "same-origin",
+      redirect: "error",
+    };
+    let response;
+    try {
+      response = await fetch(safePath, request);
+    } catch (_error) {
+      throw new RequestError("The local workbench did not respond. Check that it is still running.");
+    } finally {
+      body = "";
+      request = null;
+    }
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      throw new RequestError("The local workbench returned an unexpected response type.");
+    }
+    const text = await response.text();
+    if (new TextEncoder().encode(text).length > MAX_JSON_BYTES) {
+      throw new RequestError("The local workbench response exceeded its browser limit.");
+    }
+    let documentValue;
+    try {
+      documentValue = JSON.parse(text);
+    } catch (_error) {
+      throw new RequestError("The local workbench returned malformed JSON.");
+    }
+    if (!response.ok) {
+      throw new RequestError(requestErrorMessage(documentValue), documentValue);
+    }
+    return documentValue;
+  }
+
   function parseSeedText(value) {
     if (typeof value !== "string" || !SEED_PATTERN.test(value)) {
       throw new DraftError(
@@ -463,10 +523,20 @@
 
     const agentCount = numberValue("agent-count", "settings.agent_count", 1, 30, true);
     if (!state.personaEditor) throw new DraftError("population", "The fictional audience catalog is unavailable.", null);
+    if (!state.providerPanel) throw new DraftError("cognition", "The explanation controls are unavailable.", null);
     const issue = state.personaEditor.issue(agentCount);
     if (issue) throw new DraftError(issue.path, issue.message, null);
+    let cognition;
+    try {
+      cognition = state.providerPanel.serialize();
+    } catch (error) {
+      if (error && boundedText(error.path, 100) && boundedText(error.message, 500)) {
+        throw new DraftError(error.path, error.message, error.controlId || null);
+      }
+      throw error;
+    }
     return {
-      schema_version: 2,
+      schema_version: 3,
       city_id: state.cityDetail.city_id,
       scenario: {
         scenario_id: requiredText("scenario-id", "scenario.scenario_id", 80),
@@ -482,6 +552,7 @@
         roadside,
       },
       population: state.personaEditor.serialize(),
+      cognition,
       settings: {
         run_id: requiredText("run-id", "settings.run_id", 40),
         agent_count: agentCount,
@@ -640,6 +711,7 @@
       byId(id).value = value;
     }
     state.personaEditor?.reset(20);
+    state.providerPanel?.reset();
     byId("run-id").dataset.touched = "false";
     byId("run-id").value = suggestedRunId();
     resetSchedules();
@@ -1273,11 +1345,14 @@
   }
 
   function assertAcceptedSettings(value, runId) {
+    const schemaThree = value?.workbench_input_schema_version === 3 && value?.run_schema_version === 9;
+    const providerMode = value?.cognition_mode === "local" || value?.cognition_mode === "remote";
     if (
       !isObject(value) ||
       value.schema_version !== 1 ||
       !((value.workbench_input_schema_version === 1 && value.run_schema_version === 7) ||
-        (value.workbench_input_schema_version === 2 && value.run_schema_version === 8)) ||
+        (value.workbench_input_schema_version === 2 && value.run_schema_version === 8) ||
+        schemaThree) ||
       !RUN_ID_PATTERN.test(runId || "") ||
       !ID_PATTERN.test(value.city_id || "") ||
       !ID_PATTERN.test(value.scenario_id || "") ||
@@ -1290,7 +1365,27 @@
       !Number.isInteger(value.days) ||
       value.days < 1 ||
       value.days > 7 ||
-      value.response_mode !== "deterministic-rules"
+      value.response_mode !== "deterministic-rules" ||
+      (schemaThree && (
+        !["rules", "mock", "local", "remote"].includes(value.cognition_mode) ||
+        !Number.isInteger(value.aggregate_output_token_ceiling) ||
+        value.aggregate_output_token_ceiling < 0 ||
+        value.aggregate_output_token_ceiling > 92160 ||
+        value.aggregate_output_token_ceiling % 1536 !== 0 ||
+        (providerMode
+          ? !(
+              PROFILE_ID_PATTERN.test(value.provider_profile_id || "") &&
+              HASH_PATTERN.test(value.provider_revision_sha256 || "")
+            )
+          : value.provider_profile_id !== null || value.provider_revision_sha256 !== null) ||
+        (!providerMode && value.aggregate_output_token_ceiling !== 0)
+      )) ||
+      (!schemaThree && [
+        value.cognition_mode,
+        value.provider_profile_id,
+        value.provider_revision_sha256,
+        value.aggregate_output_token_ceiling,
+      ].some((item) => item !== null && item !== undefined))
     ) {
       throw new RequestError("The worker returned incompatible accepted settings.");
     }
@@ -1304,7 +1399,7 @@
       !RUN_ID_PATTERN.test(value.run_id || "") ||
       !Number.isInteger(value.run_schema_version) ||
       value.run_schema_version < 1 ||
-      value.run_schema_version > 8 ||
+      value.run_schema_version > 9 ||
       !ID_PATTERN.test(value.city_id || "") ||
       !SEED_PATTERN.test(value.seed || "") ||
       BigInt(value.seed) > MAX_SEED ||
@@ -1320,6 +1415,32 @@
       value.frame_count !== value.days * 1440
     ) {
       throw new RequestError("A verified run summary is incompatible.");
+    }
+    if (value.run_schema_version === 9) {
+      const providerMode = value.cognition_mode === "local" || value.cognition_mode === "remote";
+      if (
+        !["rules", "mock", "local", "remote"].includes(value.cognition_mode) ||
+        !Number.isInteger(value.aggregate_output_token_ceiling) ||
+        value.aggregate_output_token_ceiling < 0 ||
+        value.aggregate_output_token_ceiling > 92160 ||
+        value.aggregate_output_token_ceiling % 1536 !== 0 ||
+        (providerMode
+          ? !(
+              PROFILE_ID_PATTERN.test(value.provider_profile_id || "") &&
+              HASH_PATTERN.test(value.provider_revision_sha256 || "")
+            )
+          : value.provider_profile_id !== null || value.provider_revision_sha256 !== null) ||
+        (!providerMode && value.aggregate_output_token_ceiling !== 0)
+      ) {
+        throw new RequestError("A verified run summary has incompatible explanation settings.");
+      }
+    } else if ([
+      value.cognition_mode,
+      value.provider_profile_id,
+      value.provider_revision_sha256,
+      value.aggregate_output_token_ceiling,
+    ].some((item) => item !== null && item !== undefined)) {
+      throw new RequestError("A legacy run summary carried unsupported explanation settings.");
     }
     return value;
   }
@@ -1350,7 +1471,11 @@
         result.campaign_ids[0] !== settings.campaign_id ||
         result.seed !== settings.seed ||
         result.agent_count !== settings.agent_count ||
-        result.days !== settings.days
+        result.days !== settings.days ||
+        (result.cognition_mode ?? null) !== (settings.cognition_mode ?? null) ||
+        (result.provider_profile_id ?? null) !== (settings.provider_profile_id ?? null) ||
+        (result.provider_revision_sha256 ?? null) !== (settings.provider_revision_sha256 ?? null) ||
+        (result.aggregate_output_token_ceiling ?? null) !== (settings.aggregate_output_token_ceiling ?? null)
       ) {
         throw new RequestError("The worker result is incompatible with its accepted settings.");
       }
@@ -1389,7 +1514,14 @@
     appendFact(facts, "Campaign", settings.campaign_id);
     appendFact(facts, "Population", `${settings.agent_count} · ${settings.days} days`);
     appendFact(facts, "Seed", settings.seed);
-    appendFact(facts, "Mode", "Deterministic rules");
+    appendFact(facts, "Simulation", "Deterministic rules");
+    appendFact(
+      facts,
+      "Explanations",
+      settings.cognition_mode === null || settings.cognition_mode === undefined
+        ? "Legacy run"
+        : settings.cognition_mode,
+    );
     const cancel = byId("cancel-job");
     cancel.hidden = !job.can_cancel;
     cancel.disabled = !job.can_cancel;
@@ -1411,6 +1543,9 @@
       const phaseMessages = {
         queued: "The worker accepted this study and is preparing evaluation.",
         evaluating: "Deterministic model evaluation is in progress.",
+        simulating: "The deterministic city simulation is in progress.",
+        "selecting-explanations": "Saved responses are being selected in stable order.",
+        "requesting-explanations": "Bounded explanations are being resolved.",
         persisting: "Evaluation finished; the immutable artifact is being persisted.",
         verifying: "The saved artifact is being independently verified.",
       };
@@ -1534,7 +1669,11 @@
           accepted.agent_count !== draft.settings.agent_count || accepted.days !== draft.settings.days ||
           accepted.seed !== draft.settings.seed || accepted.city_id !== draft.city_id ||
           accepted.scenario_id !== draft.scenario.scenario_id ||
-          accepted.campaign_id !== draft.scenario.campaign.campaign_id) {
+          accepted.campaign_id !== draft.scenario.campaign.campaign_id ||
+          accepted.cognition_mode !== draft.cognition.mode ||
+          accepted.provider_profile_id !== draft.cognition.provider_profile_id ||
+          accepted.provider_revision_sha256 !== draft.cognition.provider_revision_sha256 ||
+          accepted.aggregate_output_token_ceiling !== draft.cognition.aggregate_output_token_ceiling) {
         throw new RequestError("The worker acceptance is incompatible with the submitted draft.");
       }
       beginPolling(job, documentValue.status_url);
@@ -1695,6 +1834,18 @@
     });
   }
 
+  function installProviderPanel() {
+    if (typeof window.AdLifeProviderPanel !== "function") {
+      throw new RequestError("The explanation controls are unavailable. Reload the page.");
+    }
+    state.providerPanel = new window.AdLifeProviderPanel({
+      requestJson: fetchJson,
+      postCredential,
+      onChange: () => invalidateValidation(),
+      announce,
+    });
+  }
+
   function installEvents() {
     for (const button of document.querySelectorAll("[data-stage]")) {
       button.addEventListener("click", () => showStage(button.dataset.stage));
@@ -1770,6 +1921,7 @@
 
   async function boot() {
     installCityPackUploader();
+    installProviderPanel();
     installEvents();
     resetSchedules();
     updatePlacementVisibility();
@@ -1791,6 +1943,7 @@
       renderCatalog();
       renderTemplates();
       renderRunPage(assertRunPage(runsDocument));
+      await state.providerPanel.load();
       await loadCity(byId("city-select").value);
       const active = state.capabilities.active_job;
       if (active !== null) {

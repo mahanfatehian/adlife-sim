@@ -16,15 +16,18 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 import uvicorn
+from fastapi.testclient import TestClient
 from playwright.sync_api import Request as PlaywrightRequest
 from playwright.sync_api import Route, expect, sync_playwright
 
+from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run
 from adlife.city.web import create_city_app
 from adlife.city.workbench_input import WorkbenchRunDraft, WorkbenchRunDraftV2
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
 from adlife.core.experiments.spatial_response_metrics import (
@@ -51,7 +54,7 @@ from tests.unit.city.test_spatial_opportunity import (
     _scenario,
 )
 from tests.unit.city.test_spatial_response import _response_input
-from tests.unit.city.test_workbench_input import draft_data, persona_data
+from tests.unit.city.test_workbench_input import draft_data, draft_v3_data, persona_data
 
 _BROWSER_PATHS = (
     Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
@@ -415,6 +418,63 @@ def _workbench_assumptions_viewer(
         "campaign_name": campaign_name,
     }
     with _serve(application) as base_url:
+        yield base_url, root, expected
+
+
+@contextmanager
+def _cognition_viewer(
+    tmp_path: Path,
+    *,
+    mode: str = "rules",
+) -> Iterator[tuple[str, Path, dict[str, object]]]:
+    root = tmp_path / "cognition-workbench"
+    workspace = prepare_workbench_workspace(root)
+    csrf_token = "browser-cognition-token"
+    run_id = f"browser-cognition-{mode}"
+    application = create_city_workbench_app(workspace, csrf_token=csrf_token)
+    draft = draft_v3_data(agent_count=3, mode=mode)
+    draft["settings"].update({"run_id": run_id, "days": 2, "seed": "42"})
+    with TestClient(application, base_url="http://127.0.0.1") as client:
+        accepted = client.post(
+            "/api/jobs",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "http://127.0.0.1",
+                "X-AdLife-CSRF": csrf_token,
+            },
+            content=json.dumps(draft, ensure_ascii=False, separators=(",", ":")).encode(),
+        )
+        assert accepted.status_code == 202, accepted.text
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            job = client.get(accepted.json()["status_url"])
+            assert job.status_code == 200
+            terminal = job.json()
+            if terminal["phase"] in {"completed", "failed", "cancelled"}:
+                break
+            threading.Event().wait(0.005)
+        else:
+            raise AssertionError("schema-v9 browser fixture did not finish")
+        assert terminal["phase"] == "completed", terminal
+    stored = CityRunStore(root).load(run_id)
+    assert stored.cognition_evaluation is not None
+    assert stored.cognition_input is not None
+    assert stored.cognition_evaluation.records
+    record = stored.cognition_evaluation.records[0]
+    expected: dict[str, object] = {
+        "run_id": run_id,
+        "response_event_id": record.response_event_id,
+        "model_minute": record.model_minute,
+        "interpretation": record.result.interpretation,
+        "decision_factors": record.result.decision_factors,
+        "safety_flags": record.result.safety_flags,
+        "cognition_input_sha256": stored.cognition_input.fingerprint,
+        "cognition_records": tuple(
+            item.model_dump(mode="json") for item in stored.cognition_evaluation.records
+        ),
+    }
+    viewer = create_city_workbench_app(workspace, csrf_token=csrf_token)
+    with _serve(viewer) as base_url:
         yield base_url, root, expected
 
 
@@ -974,6 +1034,414 @@ def test_schema_v8_inspector_maps_verified_saved_identities_and_collapsed_contex
         assert all(method == "GET" and url.startswith(base_url) for method, url in requests)
         assert not any("persona-templates" in url or "workbench.json" in url for _, url in requests)
         assert _artifact_hashes(root) == before
+        browser.close()
+
+
+def test_schema_v9_inspector_binds_saved_explanation_to_its_rule_response(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    with (
+        _cognition_viewer(tmp_path) as (base_url, root, expected),
+        sync_playwright() as playwright,
+    ):
+        before = _artifact_hashes(root)
+        cognition_requests: list[PlaywrightRequest] = []
+        browser = playwright.chromium.launch(
+            executable_path=str(browser_path),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page.emulate_media(reduced_motion="reduce")
+        page.on(
+            "request",
+            lambda request: (
+                cognition_requests.append(request)
+                if request.url.endswith(("/cognition-summary", "/cognition-records"))
+                else None
+            ),
+        )
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+
+        expect(page.locator("#error-banner")).to_be_hidden()
+        expect(page.locator("#cognition-summary")).to_be_visible()
+        expect(page.locator("#cognition-summary-label")).to_have_text("Deterministic explanations")
+        expect(page.locator("#cognition-summary-status")).to_contain_text("saved")
+        assert len(cognition_requests) == 2
+        token = page.locator('meta[name="adlife-view-token"]').get_attribute("content")
+        assert token is not None and len(token) == 43
+        assert {request.url.rsplit("/", 1)[-1] for request in cognition_requests} == {
+            "cognition-summary",
+            "cognition-records",
+        }
+        for request in cognition_requests:
+            assert request.method == "GET"
+            assert request.headers["x-adlife-view-token"] == token
+            assert request.post_data is None
+
+        minute = int(expected["model_minute"])
+        assert page.evaluate("minute => setMinute(minute)", minute) is True
+        page.wait_for_function("minute => state.minute === minute", arg=minute)
+        response_event_id = str(expected["response_event_id"])
+        item = page.locator(
+            f'.response-evidence-item[data-response-event-id="{response_event_id}"]'
+        )
+        expect(item).to_have_count(1)
+        assert item.locator(".response-card").get_attribute("data-evidence-id") == response_event_id
+        drawer = item.locator(".response-explanation")
+        expect(drawer).to_be_visible()
+        expect(drawer).not_to_have_attribute("open", "")
+        expect(drawer.locator("summary")).to_contain_text("Deterministic explanation")
+        before_minute = page.evaluate("state.minute")
+        drawer.locator("summary").click()
+        expect(drawer).to_have_attribute("open", "")
+        expect(drawer.locator(".explanation-copy")).to_have_text(str(expected["interpretation"]))
+        expect(drawer.locator(".explanation-source")).to_have_text("rules")
+        expect(drawer.locator(".explanation-provider")).to_contain_text("Offline rules")
+        expect(drawer.locator(".explanation-model")).to_contain_text("Not used")
+        expect(drawer.locator(".explanation-disclosure")).to_contain_text(
+            "Synthetic narrative, not observed behavior"
+        )
+        expect(drawer.locator(".explanation-factor")).to_have_count(
+            len(expected["decision_factors"])
+        )
+        expect(drawer.locator(".explanation-safety")).to_contain_text("None recorded")
+        assert page.evaluate("state.minute") == before_minute
+        overflow = page.evaluate(
+            """() => ({
+              documentWidth: document.documentElement.scrollWidth,
+              viewportWidth: window.innerWidth,
+              explanationOutside: Array.from(document.querySelectorAll('.response-explanation'))
+                .some((element) => {
+                  const rect = element.getBoundingClientRect();
+                  return rect.left < -0.5 || rect.right > window.innerWidth + 0.5;
+                }),
+            })"""
+        )
+        assert overflow == {
+            "documentWidth": overflow["viewportWidth"],
+            "viewportWidth": overflow["viewportWidth"],
+            "explanationOutside": False,
+        }
+        browser.close()
+        assert _artifact_hashes(root) == before
+
+
+def test_schema_v9_inspector_renders_provider_sources_and_hostile_text_inertly(
+    tmp_path: Path,
+) -> None:
+    with (
+        _cognition_viewer(tmp_path) as (base_url, root, expected),
+        sync_playwright() as playwright,
+    ):
+        before = _artifact_hashes(root)
+        source_records = expected["cognition_records"]
+        assert isinstance(source_records, tuple) and len(source_records) >= 4
+        hostile = "این توضیح ساختگی است <img src=x onerror=window.explanationPwned=1>"
+        provider_id = "provider-browser"
+        revision = "a" * 64
+
+        def provider_projection(
+            sources: tuple[str, ...], *, include_hostile_text: bool
+        ) -> tuple[list[dict[str, object]], str, dict[str, int]]:
+            projected = json.loads(json.dumps(source_records, ensure_ascii=False))
+            assert isinstance(projected, list) and len(projected) == len(sources)
+            for index, (record, source) in enumerate(zip(projected, sources, strict=True)):
+                record.update(
+                    {
+                        "source": source,
+                        "attempt_count": 1 if source in {"provider", "fallback"} else 0,
+                        "reason": (
+                            "timeout-exhausted"
+                            if source == "fallback"
+                            else "budget-skipped"
+                            if source == "budget-skipped"
+                            else None
+                        ),
+                        "provider_profile_id": provider_id,
+                        "provider_revision_sha256": revision,
+                        "provider_profile_snapshot_sha256": "b" * 64,
+                        "provider_protocol": "openai-chat-completions-json-schema-v1",
+                        "provider_effective_settings_sha256": "c" * 64,
+                        "prompt_tokens": None,
+                        "completion_tokens": None,
+                    }
+                )
+                if index == 0 and include_hostile_text:
+                    record["result"].update(
+                        {
+                            "interpretation": hostile,
+                            "decision_factors": [
+                                "زمینهٔ کاملاً خیالی",
+                                "<script>window.explanationPwned=2</script>",
+                            ],
+                            "safety_flags": ["unsupported-inference"],
+                        }
+                    )
+                record["record_hash"] = sha256(
+                    canonical_json(
+                        {key: value for key, value in record.items() if key != "record_hash"}
+                    ).encode("utf-8")
+                ).hexdigest()
+            stream_value = "".join(f"{canonical_json(record)}\n" for record in projected)
+            counts = {
+                source: sum(record["source"] == source for record in projected)
+                for source in (
+                    "rules",
+                    "mock",
+                    "provider",
+                    "cache",
+                    "fallback",
+                    "budget-skipped",
+                )
+            }
+            return projected, stream_value, counts
+
+        mixed_sources = ("provider", "cache", "fallback") + ("budget-skipped",) * (
+            len(source_records) - 3
+        )
+        records, stream, source_counts = provider_projection(
+            mixed_sources, include_hostile_text=True
+        )
+
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()),
+            headless=True,
+            args=["--no-first-run", "--disable-background-networking"],
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+
+        def remote_workbench_input(route: Route) -> None:
+            document = route.fetch().json()
+            document["cognition"].update(
+                {
+                    "mode": "remote",
+                    "provider_profile_id": provider_id,
+                    "provider_revision_sha256": revision,
+                    "aggregate_output_token_ceiling": 3 * 1536,
+                }
+            )
+            route.fulfill(json=document)
+
+        def remote_summary(route: Route) -> None:
+            document = route.fetch().json()
+            document.update(
+                {
+                    "mode": "remote",
+                    "explainer_id": "city-provider-explainer-v1",
+                    "provider_profile_id": provider_id,
+                    "provider_revision_sha256": revision,
+                    "model_id": "مدل آزمایشی <img src=x onerror=window.explanationPwned=3>",
+                    "aggregate_output_token_ceiling": 3 * 1536,
+                }
+            )
+            summary = document["summary"]
+            summary["outcome_counts"].update(
+                {
+                    "rules": source_counts["rules"],
+                    "mock": source_counts["mock"],
+                    "provider": source_counts["provider"],
+                    "cache": source_counts["cache"],
+                    "fallback": source_counts["fallback"],
+                    "budget_skipped": source_counts["budget-skipped"],
+                }
+            )
+            summary["reason_counts"].update(
+                {
+                    "endpoint_resolution_refused": 0,
+                    "authentication_refused": 0,
+                    "timeout_exhausted": source_counts["fallback"],
+                    "rate_limit_exhausted": 0,
+                    "server_error_exhausted": 0,
+                    "response_too_large": 0,
+                    "protocol_incompatible": 0,
+                    "invalid_result": 0,
+                    "budget_skipped": source_counts["budget-skipped"],
+                }
+            )
+            summary.update(
+                {
+                    "attempt_count": source_counts["provider"] + source_counts["fallback"],
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "terminal_stream_sha256": sha256(stream.encode("utf-8")).hexdigest(),
+                    "terminal_stream_bytes": len(stream.encode("utf-8")),
+                }
+            )
+            route.fulfill(json=document)
+
+        def remote_records(route: Route) -> None:
+            document = route.fetch().json()
+            document["records"] = records
+            route.fulfill(json=document)
+
+        page.route("**/workbench-input", remote_workbench_input)
+        page.route("**/cognition-summary", remote_summary)
+        page.route("**/cognition-records", remote_records)
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+
+        expect(page.locator("#error-banner")).to_be_hidden()
+        expect(page.locator("#cognition-summary-label")).to_have_text("Mixed explanation evidence")
+        expect(page.locator("#model-boundary-label")).to_have_text(
+            "Deterministic simulation · saved mixed explanation evidence"
+        )
+        expect(page.locator("#cognition-summary-fallback-label")).to_have_text("Fallback / skipped")
+        expect(page.locator("#cognition-summary-fallbacks")).to_have_text(
+            f"{source_counts['fallback']} / {source_counts['budget-skipped']}"
+        )
+        rendered_labels: list[str] = []
+        for record in records[:4]:
+            assert page.evaluate("minute => setMinute(minute)", record["model_minute"]) is True
+            item = page.locator(
+                f'.response-evidence-item[data-response-event-id="{record["response_event_id"]}"]'
+            )
+            expect(item).to_have_count(1)
+            rendered_labels.append(
+                item.locator(".response-explanation summary strong").inner_text()
+            )
+        assert rendered_labels == [
+            "AI-generated explanation",
+            "AI-generated explanation",
+            "Deterministic fallback",
+            "Explanation skipped",
+        ]
+        # Return to the first explanation after the source-label walk.
+        assert page.evaluate("minute => setMinute(minute)", records[0]["model_minute"]) is True
+        first = page.locator(
+            f'.response-evidence-item[data-response-event-id="{records[0]["response_event_id"]}"]'
+        ).locator(".response-explanation")
+        first.locator("summary").click()
+        expect(first.locator(".explanation-copy")).to_have_text(hostile)
+        expect(first.locator(".explanation-model")).to_contain_text("مدل آزمایشی")
+        expect(first.locator(".explanation-source")).to_have_text("provider")
+        expect(first.locator(".explanation-safety")).to_contain_text("Unsupported Inference")
+        assert first.locator("bdi").first.get_attribute("dir") == "auto"
+        assert (
+            page.locator(
+                "#cognition-summary img, .response-explanation img, .response-explanation script"
+            ).count()
+            == 0
+        )
+        assert page.evaluate("window.explanationPwned") is None
+
+        fallback_sources = tuple(
+            "fallback" if index % 2 == 0 else "budget-skipped"
+            for index in range(len(source_records))
+        )
+        records, stream, source_counts = provider_projection(
+            fallback_sources, include_hostile_text=False
+        )
+        page.reload(wait_until="networkidle")
+
+        expect(page.locator("#error-banner")).to_be_hidden()
+        expect(page.locator("#cognition-summary-label")).to_have_text("Saved explanation evidence")
+        expect(page.locator("#model-boundary-label")).to_have_text(
+            "Deterministic simulation · saved explanation evidence"
+        )
+        assert "AI-generated" not in page.locator("#cognition-summary").inner_text()
+        fallback_labels: list[str] = []
+        for record in records[:2]:
+            assert page.evaluate("minute => setMinute(minute)", record["model_minute"]) is True
+            item = page.locator(
+                f'.response-evidence-item[data-response-event-id="{record["response_event_id"]}"]'
+            )
+            fallback_labels.append(
+                item.locator(".response-explanation summary strong").inner_text()
+            )
+        assert fallback_labels == ["Deterministic fallback", "Explanation skipped"]
+        browser.close()
+        assert _artifact_hashes(root) == before
+
+
+def test_schema_v9_inspector_labels_mock_explanations_without_ai_claim(tmp_path: Path) -> None:
+    with (
+        _cognition_viewer(tmp_path, mode="mock") as (base_url, _root, expected),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        page = browser.new_page()
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+        assert page.evaluate("minute => setMinute(minute)", expected["model_minute"]) is True
+        item = page.locator(
+            f'.response-evidence-item[data-response-event-id="{expected["response_event_id"]}"]'
+        )
+        expect(item.locator(".response-explanation summary strong")).to_have_text(
+            "Mock explanation"
+        )
+        assert "AI-generated" not in page.locator("#cognition-summary").inner_text()
+        browser.close()
+
+
+def test_schema_v9_delayed_explanation_fetch_cannot_replace_newer_timeline_selection(
+    tmp_path: Path,
+) -> None:
+    with (
+        _cognition_viewer(tmp_path) as (base_url, _root, expected),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        page = browser.new_page()
+        page.add_init_script(
+            """(() => {
+              const originalFetch = window.fetch.bind(window);
+              window.cognitionFetchPending = false;
+              window.fetch = async (...args) => {
+                if (String(args[0]).endsWith('/cognition-records')) {
+                  window.cognitionFetchPending = true;
+                  await new Promise((resolve) => { window.releaseCognitionFetch = resolve; });
+                }
+                return originalFetch(...args);
+              };
+            })();"""
+        )
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="domcontentloaded")
+        page.wait_for_function("() => window.cognitionFetchPending === true")
+        minute = int(expected["model_minute"])
+        assert page.evaluate("minute => setMinute(minute)", minute) is True
+        assert page.evaluate("state.minute") == minute
+
+        page.evaluate("window.releaseCognitionFetch()")
+        expect(page.locator("#cognition-summary")).to_be_visible()
+        page.wait_for_function("() => state.cognitionRecords !== null")
+
+        assert page.evaluate("state.minute") == minute
+        item = page.locator(
+            f'.response-evidence-item[data-response-event-id="{expected["response_event_id"]}"]'
+        )
+        expect(item.locator(".response-explanation")).to_be_visible()
+        browser.close()
+
+
+def test_schema_v8_inspector_never_requests_cognition_projections(tmp_path: Path) -> None:
+    with (
+        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (
+            base_url,
+            _root,
+            expected,
+        ),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        page = browser.new_page()
+        cognition_requests: list[str] = []
+        page.on(
+            "request",
+            lambda request: (
+                cognition_requests.append(request.url) if "cognition-" in request.url else None
+            ),
+        )
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+
+        expect(page.locator("#error-banner")).to_be_hidden()
+        expect(page.locator("#cognition-summary")).to_be_hidden()
+        assert cognition_requests == []
         browser.close()
 
 

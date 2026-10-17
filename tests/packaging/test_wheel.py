@@ -197,6 +197,10 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         city_pack_javascript = wheel.read("adlife/city/static/workbench-city-packs.js").decode(
             "utf-8"
         )
+        provider_javascript = wheel.read("adlife/city/static/workbench-providers.js").decode(
+            "utf-8"
+        )
+        provider_style = wheel.read("adlife/city/static/workbench-providers.css").decode("utf-8")
     for resource in (
         "adlife/city/creative_templates.json",
         "adlife/city/static/workbench.html",
@@ -206,6 +210,8 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "adlife/city/static/workbench-city-packs.js",
         "adlife/city/static/workbench-personas.js",
         "adlife/city/static/workbench-personas.css",
+        "adlife/city/static/workbench-providers.js",
+        "adlife/city/static/workbench-providers.css",
     ):
         assert resource in names
     catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
@@ -217,16 +223,20 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     ]
     assert "__ADLIFE_CSRF_TOKEN__" in shell
     assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell
+    assert '<link rel="stylesheet" href="/assets/workbench-providers.css">' in shell
     assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell
     assert '<script defer src="/assets/workbench-city-packs.js"></script>' in shell
+    assert '<script defer src="/assets/workbench-providers.js"></script>' in shell
     assert '<script defer src="/assets/workbench.js"></script>' in shell
-    assert shell.lower().count("<script") == 3
+    assert shell.lower().count("<script") == 4
     assert re.search(r"\son[a-z]+\s*=", shell, flags=re.IGNORECASE) is None
     assert "http://" not in shell and "https://" not in shell
     assert "@import" not in style.lower() and "url(" not in style.lower()
     assert icon.startswith("<svg") and "<script" not in icon.lower()
     assert "http://" not in javascript and "https://" not in javascript
     assert "http://" not in city_pack_javascript and "https://" not in city_pack_javascript
+    assert "http://" not in provider_javascript and "https://" not in provider_javascript
+    assert "@import" not in provider_style.lower() and "url(" not in provider_style.lower()
     for forbidden in (
         "innerHTML",
         "outerHTML",
@@ -238,7 +248,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "eval(",
         "new Function",
     ):
-        assert forbidden not in javascript + city_pack_javascript
+        assert forbidden not in javascript + city_pack_javascript + provider_javascript
 
     scratch = tmp_path / "workbench-clean-room"
     scratch.mkdir()
@@ -271,7 +281,9 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
             "    assert all(p.fictional is True for p in catalog.templates)\n"
             "    for name, media in [('workbench-city-packs.js', 'text/javascript'), "
             "('workbench-personas.js', 'text/javascript'), "
-            "('workbench-personas.css', 'text/css')]:\n"
+            "('workbench-personas.css', 'text/css'), "
+            "('workbench-providers.js', 'text/javascript'), "
+            "('workbench-providers.css', 'text/css')]:\n"
             "        asset=client.get('/assets/'+name)\n"
             "        assert asset.status_code == 200 and len(asset.content) > 100\n"
             "        assert asset.headers['content-type'].startswith(media)\n"
@@ -293,7 +305,12 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/jobs/{job_id}",
         "/api/jobs/{job_id}/cancel",
         "/api/persona-templates",
+        "/api/providers",
+        "/api/providers/{profile_id}/revisions/{revision_id}/check",
+        "/api/providers/{profile_id}/revisions/{revision_id}/credential",
         "/api/runs",
+        "/api/runs/{run_id}/cognition-records",
+        "/api/runs/{run_id}/cognition-summary",
         "/api/runs/{run_id}/workbench-input",
         "/api/scenarios/validate",
         "/api/workbench",
@@ -303,6 +320,8 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/assets/workbench.js",
         "/assets/workbench-personas.js",
         "/assets/workbench-personas.css",
+        "/assets/workbench-providers.js",
+        "/assets/workbench-providers.css",
         "/runs/{run_id}",
         "/static/{asset_name}",
     }
@@ -341,7 +360,8 @@ def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path
     assert "smoke ok" in completed.stdout
     assert (
         "schema-v6 response API/UI, schema-v7 compatibility and "
-        "schema-v8 persona lifecycle verified without network" in completed.stdout
+        "schema-v8 persona lifecycle plus schema-v9 rules/mock explanations and "
+        "a local compatible provider verified under the network guard" in completed.stdout
     )
 
 

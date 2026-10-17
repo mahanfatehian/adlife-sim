@@ -3163,7 +3163,7 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     assert "<summary>Data &amp; integrity</summary>" in shell.text
     assert 'id="completed-runs"' in shell.text
     assert "not observed behavior, real sales" in shell.text
-    assert "This city workflow does not call an AI provider" in shell.text
+    assert "never changes movement, ad response, state, or metrics" in shell.text
     assert "CAUSAL THREAD" not in shell.text
     assert "Compose bounded campaign assumptions" not in shell.text
     for control in ("<input", "<select", "<button"):
