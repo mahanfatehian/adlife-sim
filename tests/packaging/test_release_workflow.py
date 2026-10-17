@@ -528,3 +528,26 @@ def test_frozen_binary_collects_keyring_discovery_metadata_and_backends() -> Non
     assert "copy_metadata" in spec
     assert 'copy_metadata("keyring")' in spec
     assert 'collect_submodules("keyring.backends")' in spec
+
+
+def test_frozen_binary_smoke_certifies_v9_and_loopback_provider_under_guard() -> None:
+    """The native artifact must cross the same cognition boundary as the wheel."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    steps = workflow["jobs"]["build-native"]["steps"]
+    build_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Build the frozen application"
+    )
+    smoke_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Smoke-test the exact frozen artifact on its builder"
+    )
+    smoke = steps[smoke_index]
+
+    assert build_index < smoke_index
+    assert 'uv run python scripts/smoke_frozen.py "$EXE"' in smoke["run"].splitlines()
+
+    spec = (ROOT / "packaging/adlife.spec").read_text(encoding="utf-8")
+    assert 'runtime_hooks=[os.path.join(SPECPATH, "frozen_smoke_network_guard.py")]' in spec

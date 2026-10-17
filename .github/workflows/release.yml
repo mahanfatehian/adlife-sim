@@ -107,6 +107,7 @@ jobs:
           "$EXE" run frozen-smoke --run-id frozen --mode rules --days 1 --population-size 2 --headless
           "$EXE" report frozen-smoke frozen
           test -s frozen-smoke/reports/frozen.html
+          uv run python scripts/smoke_frozen.py "$EXE"
       - name: Package the release asset
         shell: bash
         run: |

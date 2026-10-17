@@ -501,7 +501,7 @@ def test_publication_setup_failures_are_typed_and_redacted(
     assert registry.list() == ()
 
 
-def test_posix_stage_name_swap_cannot_publish_replacement_bytes(
+def test_posix_stage_name_swap_refuses_publication_and_preserves_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -532,12 +532,14 @@ def test_posix_stage_name_swap_cannot_publish_replacement_bytes(
         )
 
     monkeypatch.setattr(immutable_registry.os, "link", swap_then_link)
-    revision = registry.create(_draft())
+    with pytest.raises(ProviderProfilePublicationError) as error:
+        registry.create(_draft())
 
-    assert _record_path(registry, revision).read_bytes() == (
-        canonical_json(revision) + "\n"
-    ).encode("utf-8")
-    assert any(path.read_bytes() == replacement for path in staging.iterdir())
+    records = registry.workspace.root / "provider-profiles"
+    assert error.value.potentially_committed is False
+    assert registry.list() == ()
+    assert not tuple(records.rglob("*.json"))
+    assert [path.read_bytes() for path in staging.iterdir()] == [replacement]
 
 
 def test_load_refuses_missing_invalid_and_reserved_identifiers_without_echo(tmp_path: Path) -> None:
