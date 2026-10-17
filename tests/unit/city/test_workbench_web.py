@@ -590,7 +590,7 @@ def test_provider_credential_route_stores_once_without_echoing_secret(tmp_path: 
 def test_provider_credential_route_screens_startup_policy_drift(tmp_path: Path) -> None:
     from adlife.city.provider_runtime import build_provider_runtime_policy
 
-    secret = "sk-test-policy-drift-secret-1234567890"
+    secret = "not-a-real-credential"
     root = tmp_path / "workspace"
     workspace = prepare_workbench_workspace(root)
     approved = build_provider_runtime_policy(
