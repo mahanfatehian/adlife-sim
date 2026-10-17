@@ -12,6 +12,36 @@
 
 **Dependency Gate:** Complete and certify both the persona/schema-2/V8 plan and the city-registry plan, including its route-specific request-size mechanism, before starting this plan. Do not retrofit the legacy numeric `CognitionResult` or reuse `OpenAICompatibleProvider` unchanged.
 
+## Implementation Status (2026-10-17)
+
+Tasks 1–9 are implemented on `main`. The checkboxes below are retained as the
+historical TDD execution recipe and are intentionally not retroactively checked.
+
+| Task | Result | Commit evidence |
+| --- | --- | --- |
+| 1. Provider-neutral narrative contract | Implemented | `ec6a2f4` |
+| 2. Workbench schema 3 | Implemented | `14fa307` |
+| 3. Immutable profiles and secret storage | Implemented | `45d952b`, `46745f6`, `13d841e` |
+| 4. Hardened endpoint, prompt, transport, and cache | Implemented | `37c292a`, `38a6c06` |
+| 5. Bounded service and cancellation | Implemented | `ebbcdb0` |
+| 6. Manifest V9, atomic storage, and offline replay | Implemented | `ab2a404` |
+| 7. Provider and cognition APIs | Implemented | `330bf8b` |
+| 8. Provider panel and saved-run explanations | Implemented | `52956af` |
+| 9. Documentation and release certification | Implemented | `41c4389`, `772e318`, `eb38fe4`, `13d841e` |
+
+The delivered city workflow supports rules, mock, local, and remote explanation
+modes. Local and remote modes use an exact immutable provider-profile revision
+and a startup-approved OpenAI-compatible Chat Completions origin. Provider prose
+is a bounded, noncausal annotation created after deterministic scientific
+evidence; it cannot alter movement, exposure, attention, response state,
+events, metrics, identities, budgets, or purchase probability. Schema V9 freezes
+validated records and replays them offline without consulting a provider,
+credential, keyring, cache, catalog, or network.
+
+Release certification exercises schema-V9 rules, mock, and funded loopback
+provider runs from both the installed wheel and frozen executable, under an
+external-network guard, and proves replay performs no additional provider call.
+
 ## Global Constraints
 
 - AI output is explanatory evidence only. It cannot supply probabilities, numeric modifiers, movement, events, budgets, identities, memory, or state, including purchase-intention state; the simulator has no purchase-transaction model.
