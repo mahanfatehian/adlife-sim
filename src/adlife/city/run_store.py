@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import stat
 import sys
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from pathlib import Path
+from sys import exc_info
+from threading import RLock
+from typing import TYPE_CHECKING, BinaryIO, cast
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from adlife import __version__
 from adlife.city.loader import MAX_CITY_PACK_BYTES
@@ -19,11 +25,13 @@ from adlife.city.response_loader import MAX_SPATIAL_RESPONSE_INPUT_BYTES
 from adlife.city.spatial_loader import MAX_SPATIAL_CAMPAIGN_BYTES
 from adlife.city.workbench_binding import (
     build_city_cognition_run_context,
+    build_city_cognition_run_context_v2,
     validate_workbench_execution_binding,
 )
 from adlife.city.workbench_input import (
     WorkbenchRunInputDocument,
     WorkbenchRunInputV3,
+    WorkbenchRunInputV4,
     parse_workbench_run_input_json,
 )
 from adlife.core.domain.city import (
@@ -43,6 +51,12 @@ from adlife.core.domain.city_cognition import (
     CityCognitionSummaryV1,
     CityCognitionTerminalRecordV1,
 )
+from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionEvaluationV2,
+    CityCognitionInputV2,
+    CityCognitionSummaryV2,
+    CityCognitionTerminalRecordV2,
+)
 from adlife.core.domain.city_places import CityPlaceSet, parse_city_place_set_json
 from adlife.core.domain.city_run import (
     CityRunManifest,
@@ -55,6 +69,7 @@ from adlife.core.domain.city_run import (
     CityRunManifestV7,
     CityRunManifestV8,
     CityRunManifestV9,
+    CityRunManifestV10,
     build_city_cognition_manifest_receipt,
     parse_city_run_manifest_json,
 )
@@ -79,6 +94,11 @@ from adlife.core.simulation.city_cognition import (
     build_city_cognition_requests,
     validate_city_cognition_evaluation,
 )
+from adlife.core.simulation.city_cognition_v2 import (
+    build_city_cognition_input_v2,
+    build_city_cognition_requests_v2,
+    city_cognition_terminal_lines_v2,
+)
 from adlife.core.simulation.city_mobility import (
     CityAgent,
     CityMobility,
@@ -87,7 +107,6 @@ from adlife.core.simulation.city_mobility import (
 from adlife.core.simulation.city_trace import summarize_city_trace
 from adlife.core.simulation.spatial_attention import (
     MAX_SPATIAL_ATTENTION_STREAM_BYTES,
-    SpatialAttentionArtifactSummary,
     SpatialAttentionEvaluation,
     evaluate_spatial_attention,
     spatial_attention_lines,
@@ -95,7 +114,6 @@ from adlife.core.simulation.spatial_attention import (
 )
 from adlife.core.simulation.spatial_opportunity import (
     MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES,
-    SpatialOpportunityArtifactSummary,
     SpatialOpportunityEvaluation,
     evaluate_spatial_opportunities,
     spatial_opportunity_lines,
@@ -105,14 +123,25 @@ from adlife.core.simulation.spatial_response import (
     MAX_SPATIAL_RESPONSE_STATE_BYTES,
     MAX_SPATIAL_RESPONSE_STREAM_BYTES,
     MAX_SPATIAL_RESPONSE_SUMMARY_BYTES,
-    SpatialResponseArtifactSummary,
     SpatialResponseEvaluation,
-    SpatialResponseStateDocument,
     evaluate_spatial_responses,
     spatial_response_lines,
     spatial_response_state_document,
     summarize_spatial_response_artifact,
 )
+from adlife.core.simulation.spatial_response_v2 import (
+    MAX_SPATIAL_RESPONSE_STATE_BYTES_V2,
+    MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2,
+    MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2,
+    SpatialResponseEvaluationV2,
+    spatial_response_state_document_v2,
+    spatial_response_v2_lines,
+    summarize_spatial_response_artifact_v2,
+)
+
+if TYPE_CHECKING:
+    from adlife.city.runs import PreparedCityRun
+    from adlife.city.workbench_city_registry import _OwnedWindowsHandle
 
 MAX_CITY_MANIFEST_BYTES = 65_536
 MAX_CITY_AGENTS_BYTES = 65_536
@@ -120,6 +149,59 @@ MAX_CITY_PLACE_ASSIGNMENTS_BYTES = 65_536
 MAX_CITY_OPPORTUNITY_SUMMARY_BYTES = 65_536
 MAX_CITY_ATTENTION_SUMMARY_BYTES = 65_536
 MAX_WORKBENCH_INPUT_BYTES = 131_072
+MAX_CITY_COGNITION_INPUT_BYTES_V2 = 131_072
+_IO_CHUNK_BYTES = 65_536
+_V10_INPUT_NAMES = frozenset(
+    {
+        "agents.json",
+        "city.json",
+        "cognition.json",
+        "spatial-campaign.json",
+        "spatial-response.json",
+        "workbench.json",
+    }
+)
+_V10_OUTPUT_NAMES = frozenset(
+    {
+        "attention-summary.json",
+        "cognition-summary.json",
+        "cognition.jsonl",
+        "opportunity-summary.json",
+        "response-state.json",
+        "response-summary.json",
+        "spatial-attention.jsonl",
+        "spatial-opportunities.jsonl",
+        "spatial-responses.jsonl",
+    }
+)
+
+
+@dataclass(slots=True)
+class _DirectoryPin:
+    owner: _OwnedWindowsHandle
+    references: int
+
+
+@dataclass(frozen=True, slots=True)
+class _HeldArtifact:
+    path: Path
+    source: BinaryIO
+    status: os.stat_result
+    named_status: os.stat_result
+    parents: tuple[tuple[Path, tuple[int, int]], ...]
+
+
+_WINDOWS_PINS: dict[Path, _DirectoryPin] = {}
+_PIN_LOCK = RLock()
+
+
+def _release_windows_pin(path: Path) -> None:
+    with _PIN_LOCK:
+        pin = _WINDOWS_PINS[path]
+        pin.references -= 1
+        if not pin.references:
+            del _WINDOWS_PINS[path]
+            pin.owner.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,34 +214,370 @@ class StoredCityRun:
     opportunity_evaluation: SpatialOpportunityEvaluation | None = None
     attention_evaluation: SpatialAttentionEvaluation | None = None
     response_input: SpatialResponseInput | None = None
-    response_evaluation: SpatialResponseEvaluation | None = None
+    response_evaluation: SpatialResponseEvaluation | SpatialResponseEvaluationV2 | None = None
     workbench_input: WorkbenchRunInputDocument | None = None
-    cognition_input: CityCognitionInputV1 | None = None
-    cognition_evaluation: CityCognitionEvaluationV1 | None = None
+    cognition_input: CityCognitionInputV1 | CityCognitionInputV2 | None = None
+    cognition_evaluation: CityCognitionEvaluationV1 | CityCognitionEvaluationV2 | None = None
 
 
 def _runtime_version() -> str:
     return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 
-def _canonical_bytes(
-    value: (
-        CityPackDocument
-        | CityPlaceSet
-        | CityRunManifestDocument
-        | SpatialCampaignScenario
-        | SpatialAttentionArtifactSummary
-        | SpatialOpportunityArtifactSummary
-        | SpatialResponseArtifactSummary
-        | SpatialResponseInput
-        | SpatialResponseStateDocument
-        | WorkbenchRunInputDocument
-        | CityCognitionInputV1
-        | CityCognitionSummaryV1
-        | dict[str, object]
-    ),
-) -> bytes:
+def _canonical_bytes(value: BaseModel | Mapping[str, object]) -> bytes:
     return (canonical_json(value) + "\n").encode("utf-8")
+
+
+def _identity(status: os.stat_result) -> tuple[int, int]:
+    return status.st_dev, status.st_ino
+
+
+def _safe_status(status: os.stat_result, *, directory: bool, published_stage: bool = False) -> None:
+    if stat.S_ISLNK(status.st_mode) or getattr(status, "st_file_attributes", 0) & 0x400:
+        raise UnsafeRunLocation("city run location contains a link or reparse point")
+    if directory:
+        valid = stat.S_ISDIR(status.st_mode)
+    else:
+        valid = stat.S_ISREG(status.st_mode) and status.st_nlink in (
+            (1, 2) if published_stage else (1,)
+        )
+    if not valid:
+        raise UnsafeRunLocation("city run location has unsafe filesystem metadata")
+
+
+def _directory_chain(path: Path) -> tuple[Path, ...]:
+    return (*reversed(path.parents), path)
+
+
+def _inspect_directories(
+    path: Path, *, missing_ok: bool = False
+) -> tuple[tuple[Path, tuple[int, int]], ...]:
+    observed = []
+    for parent in _directory_chain(path):
+        try:
+            status = os.lstat(parent)
+        except FileNotFoundError:
+            if missing_ok:
+                continue
+            raise UnsafeRunLocation("city run parent directory is unavailable") from None
+        except OSError:
+            raise UnsafeRunLocation(
+                "city run parent directory cannot be inspected safely"
+            ) from None
+        _safe_status(status, directory=True)
+        observed.append((parent, _identity(status)))
+    return tuple(observed)
+
+
+@contextmanager
+def _hold_parents(path: Path) -> Iterator[int | None]:
+    """Pin original directory components and recheck their names around every I/O."""
+    observed = _inspect_directories(path)
+    with ExitStack() as stack:
+        descriptor = None
+        for parent, identity in observed:
+            if sys.platform == "win32":
+                # Reuse the registry's native handle owner: no FILE_SHARE_DELETE
+                # keeps each Windows directory entry pinned for the operation.
+                from adlife.city.workbench_city_registry import (
+                    _windows_create_file,
+                )
+
+                with _PIN_LOCK:
+                    pin = _WINDOWS_PINS.get(parent)
+                    if pin is not None:
+                        pin.references += 1
+                    else:
+                        # LIST_DIRECTORY participates in Windows sharing checks;
+                        # READ_ATTRIBUTES alone does not deny rename. Read leases
+                        # remain mutually compatible while excluding DELETE.
+                        owner = _windows_create_file(
+                            parent,
+                            desired_access=0x0001 | 0x0080,
+                            share_mode=0x00000003,
+                            creation_disposition=3,
+                            flags=0x02000000,
+                        )
+                        _WINDOWS_PINS[parent] = _DirectoryPin(owner, 1)
+                    stack.callback(_release_windows_pin, parent)
+            else:
+                flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(parent, flags)
+                stack.callback(os.close, descriptor)
+                if _identity(os.fstat(descriptor)) != identity:
+                    raise UnsafeRunLocation("city run directory identity changed")
+        if _inspect_directories(path) != observed:
+            raise UnsafeRunLocation("city run parent directory changed")
+        yield descriptor
+        if _inspect_directories(path) != observed:
+            raise UnsafeRunLocation("city run parent directory changed")
+
+
+@contextmanager
+def _open_artifact(
+    path: Path, mode: str, *, published_stage: bool = False, anonymous: bool = False
+) -> Iterator[BinaryIO]:
+    with _hold_parents(path.parent) as parent_descriptor, ExitStack() as guards:
+        if anonymous:
+            if sys.platform == "win32":
+                from adlife.city.workbench_city_registry import _open_windows_owned_file
+
+                owner = _open_windows_owned_file(
+                    path,
+                    flags=os.O_RDWR
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_BINARY", 0)
+                    | 0x0040
+                    | 0x0080,
+                    share_mode=0x0020,
+                    mode=0o600,
+                )
+                guards.callback(owner.close)
+                stage = cast(BinaryIO, os.fdopen(owner.fileno(), "w+b", closefd=False))
+            elif sys.platform.startswith("linux"):
+                flag = getattr(os, "O_TMPFILE", 0)
+                if not flag:
+                    raise StorageError("atomic manifest staging is unavailable on this filesystem")
+                try:
+                    descriptor = os.open(path.parent, os.O_RDWR | flag, 0o600)
+                except OSError as error:
+                    if error.errno in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EISDIR}:
+                        raise StorageError(
+                            "atomic manifest staging is unavailable on this filesystem"
+                        ) from None
+                    raise
+                stage = cast(BinaryIO, os.fdopen(descriptor, "w+b"))
+            else:
+                from tempfile import TemporaryFile
+
+                stage = cast(
+                    BinaryIO, guards.enter_context(TemporaryFile(mode="w+b", dir=path.parent))
+                )
+            with stage:
+                if not stat.S_ISREG(os.fstat(stage.fileno()).st_mode):
+                    raise UnsafeRunLocation("city run manifest stage is not a regular file")
+                yield stage
+            return
+        before = None if "x" in mode else os.lstat(path)
+        if before is not None:
+            _safe_status(before, directory=False)
+        if parent_descriptor is None:
+            if mode == "rb":
+                from adlife.city.workbench_city_registry import _open_windows_owned_file
+
+                read_guard = _open_windows_owned_file(
+                    path,
+                    flags=os.O_RDONLY | getattr(os, "O_BINARY", 0) | 0x0080,
+                    share_mode=0x0020,
+                )
+                guards.callback(read_guard.close)
+                if before is None or _identity(os.fstat(read_guard.fileno())) != _identity(before):
+                    raise UnsafeRunLocation("city run pinned read identity changed")
+            source = cast(BinaryIO, path.open(mode))
+        else:
+            flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL) if "x" in mode else os.O_RDONLY
+            descriptor = os.open(
+                path.name, flags | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=parent_descriptor
+            )
+            source = cast(BinaryIO, os.fdopen(descriptor, mode))
+        with source:
+            opened = os.fstat(source.fileno())
+            _safe_status(opened, directory=False)
+            named = os.lstat(path)
+            _safe_status(named, directory=False)
+            if _identity(opened) != _identity(named) or (
+                before is not None and _identity(before) != _identity(opened)
+            ):
+                raise UnsafeRunLocation("city run file identity changed while opening")
+            yield source
+            current = os.lstat(path)
+            _safe_status(current, directory=False, published_stage=published_stage)
+            after = os.fstat(source.fileno())
+            _safe_status(after, directory=False, published_stage=published_stage)
+            if _identity(current) != _identity(opened) or _identity(after) != _identity(opened):
+                raise UnsafeRunLocation("city run file identity changed during I/O")
+            if mode == "rb":
+                # A deliberately published stage gains a link and therefore a
+                # new POSIX ctime; ordinary artifact pins never allow that case.
+                changed = (opened.st_size, opened.st_mtime_ns) != (
+                    after.st_size,
+                    after.st_mtime_ns,
+                )
+                deliberate_link = (
+                    published_stage
+                    and opened.st_nlink == 1
+                    and after.st_nlink == current.st_nlink == 2
+                )
+                if changed or (not deliberate_link and opened.st_ctime_ns != after.st_ctime_ns):
+                    raise UnsafeRunLocation("city run file bytes changed during I/O")
+
+
+def _read_exact(source: BinaryIO, count: int) -> bytes:
+    parts = []
+    remaining = count
+    while remaining:
+        part = source.read(min(remaining, _IO_CHUNK_BYTES))
+        if not part:
+            break
+        parts.append(part)
+        remaining -= len(part)
+    return b"".join(parts)
+
+
+def _write_lines(path: Path, lines: Iterator[bytes], *, limit: int) -> None:
+    size = 0
+    with _open_artifact(path, "xb") as target:
+        for line in lines:
+            size += len(line)
+            if size > limit:
+                raise CorruptRunArtifact("city run stream exceeds its size limit")
+            if target.write(line) != len(line):
+                raise OSError("short city run stream write")
+        target.flush()
+        os.fsync(target.fileno())
+
+
+def _verify_lines(path: Path, lines: Iterator[bytes], *, size: int, limit: int) -> None:
+    if size > limit:
+        raise CorruptRunArtifact("city run stream exceeds its size limit")
+    try:
+        _inspect_directories(path.parent)
+        _safe_status(os.lstat(path), directory=False)
+        if path.stat().st_size != size:
+            raise CorruptRunArtifact("city run stream size does not match")
+        with _open_artifact(path, "rb") as source:
+            total = 0
+            for line in lines:
+                total += len(line)
+                if total > limit or _read_exact(source, len(line)) != line:
+                    raise CorruptRunArtifact("city run stream does not match frozen inputs")
+            if total != size or source.read(1):
+                raise CorruptRunArtifact("city run stream does not match frozen inputs")
+    except OSError:
+        raise CorruptRunArtifact("city run stream is missing or unreadable") from None
+
+
+def _sync_directory(path: Path) -> None:
+    if sys.platform == "win32":
+        # Windows has no portable directory-fsync operation. Each file is
+        # flushed through its handle before the native exclusive commit.
+        return
+    with _hold_parents(path) as descriptor:
+        if descriptor is not None:
+            try:
+                os.fsync(descriptor)
+            except OSError as error:
+                if error.errno not in {errno.EINVAL, errno.ENOTSUP}:
+                    raise
+
+
+def _verify_sidecar_names(parent: Path, allowed: frozenset[str]) -> None:
+    seen: set[str] = set()
+    with os.scandir(parent) as entries:
+        for child in entries:
+            if child.name not in allowed or child.name in seen:
+                raise CorruptRunArtifact("city run V10 sidecar set is incomplete or undeclared")
+            seen.add(child.name)
+    if seen != allowed:
+        raise CorruptRunArtifact("city run V10 sidecar set is incomplete or undeclared")
+
+
+def _read_manifest_stage(source: BinaryIO, limit: int) -> bytes:
+    source.seek(0)
+    return _read_exact(source, limit + 1)
+
+
+def _write_manifest_stage(source: BinaryIO, data: bytes) -> None:
+    if source.write(data) != len(data):
+        raise OSError("short city manifest stage write")
+    source.flush()
+    os.fsync(source.fileno())
+
+
+def _publish_manifest(
+    directory: Path,
+    data: bytes,
+    store: CityRunStore,
+    *,
+    verify_evidence: Callable[[], None] | None = None,
+) -> None:
+    """Publish one verified descriptor; cleanup never unlinks a mutable stage name."""
+    temporary = directory / ".run.json.tmp"
+    with _hold_parents(directory) as parent_descriptor:
+        with _open_artifact(temporary, "xb", anonymous=True) as source:
+            stage_identity = _identity(os.fstat(source.fileno()))
+            _write_manifest_stage(source, data)
+            if _read_manifest_stage(source, len(data)) != data:
+                raise StorageError("city run staged manifest differs from expected bytes")
+            for path in (directory / "inputs", directory / "outputs", directory):
+                if path.is_dir():
+                    _sync_directory(path)
+            _sync_directory(directory.parent)
+            if verify_evidence is not None:
+                verify_evidence()
+            try:
+                if sys.platform == "win32":
+                    from adlife.city.workbench_city_registry import (
+                        _HeldDirectory,
+                        _link_windows_descriptor,
+                    )
+                    from adlife.city.workbench_workspace import (
+                        WorkbenchSubdirectory,
+                        WorkbenchWorkspace,
+                    )
+
+                    status = os.lstat(directory)
+                    workspace = WorkbenchWorkspace(directory.parent, None, None)
+                    pinned = WorkbenchSubdirectory(
+                        workspace,
+                        directory.name,
+                        directory,
+                        status.st_dev,
+                        status.st_ino,
+                    )
+                    with _PIN_LOCK:
+                        directory_handle = _WINDOWS_PINS[directory].owner.handle()
+                    _link_windows_descriptor(
+                        source.fileno(),
+                        _HeldDirectory(pinned, None, directory_handle),
+                        "run.json",
+                    )
+                elif sys.platform.startswith("linux"):
+                    os.link(
+                        f"/proc/self/fd/{source.fileno()}",
+                        "run.json",
+                        dst_dir_fd=parent_descriptor,
+                        follow_symlinks=True,
+                    )
+                elif sys.platform == "darwin":
+                    from adlife.city.workbench_city_registry import _clone_stage_on_darwin
+
+                    if parent_descriptor is None:
+                        raise StorageError("city run exclusive publication is unavailable")
+                    _clone_stage_on_darwin(source.fileno(), parent_descriptor, "run.json")
+                else:
+                    raise StorageError("city run exclusive publication is unavailable")
+            except FileExistsError:
+                raise DuplicateRun("city run completion manifest already exists") from None
+        # Closing a native delete-on-close stage removes only that owned name;
+        # POSIX staging was anonymous from the start. A possible commit survives.
+        published = os.lstat(directory / "run.json")
+        _safe_status(published, directory=False)
+        if sys.platform != "darwin" and _identity(published) != stage_identity:
+            raise UnsafeRunLocation("published city manifest identity changed")
+        if (
+            store._read_document(
+                directory / "run.json",
+                limit=len(data),
+                label="published manifest",
+            )
+            != data
+        ):
+            raise StorageError("published city manifest differs from verified bytes")
+        if _identity(os.lstat(directory / "run.json")) != _identity(published):
+            raise UnsafeRunLocation("published city manifest identity changed")
+        _sync_directory(directory)
 
 
 def _document_sha256(value: Mapping[str, object]) -> str:
@@ -213,7 +631,7 @@ def _validate_schema_pair(
 
 
 def _write_new(path: Path, contents: bytes) -> None:
-    with path.open("xb") as target:
+    with _open_artifact(path, "xb") as target:
         if target.write(contents) != len(contents):
             raise OSError("short city run artifact write")
         target.flush()
@@ -238,7 +656,14 @@ def _write_attention_stream(path: Path, evaluation: SpatialAttentionEvaluation) 
         os.fsync(target.fileno())
 
 
-def _write_response_stream(path: Path, evaluation: SpatialResponseEvaluation) -> None:
+def _write_response_stream(
+    path: Path, evaluation: SpatialResponseEvaluation | SpatialResponseEvaluationV2
+) -> None:
+    if isinstance(evaluation, SpatialResponseEvaluationV2):
+        _write_lines(
+            path, spatial_response_v2_lines(evaluation), limit=MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2
+        )
+        return
     with path.open("xb") as target:
         for line in spatial_response_lines(evaluation):
             if target.write(line) != len(line):
@@ -247,7 +672,16 @@ def _write_response_stream(path: Path, evaluation: SpatialResponseEvaluation) ->
         os.fsync(target.fileno())
 
 
-def _write_cognition_stream(path: Path, evaluation: CityCognitionEvaluationV1) -> None:
+def _write_cognition_stream(
+    path: Path, evaluation: CityCognitionEvaluationV1 | CityCognitionEvaluationV2
+) -> None:
+    if isinstance(evaluation, CityCognitionEvaluationV2):
+        _write_lines(
+            path,
+            city_cognition_terminal_lines_v2(evaluation),
+            limit=MAX_CITY_COGNITION_STREAM_BYTES,
+        )
+        return
     with path.open("xb") as target:
         for record in evaluation.records:
             line = (canonical_json(record) + "\n").encode("utf-8")
@@ -359,9 +793,11 @@ class CityRunStore:
     """A city run is complete only when its final manifest exists and verifies."""
 
     def __init__(self, root: Path) -> None:
-        self.root = root.resolve()
+        self.root = Path(os.path.abspath(root))
+        _inspect_directories(self.root, missing_ok=True)
 
     def _runs_directory(self, *, create: bool = False) -> Path:
+        _inspect_directories(self.root, missing_ok=True)
         runs = self.root / "city-runs"
         if runs.is_symlink():
             raise UnsafeRunLocation("city-runs directory cannot be a symlink")
@@ -372,6 +808,7 @@ class CityRunStore:
                 raise StorageError("city-runs directory could not be created") from None
         if runs.exists() and not runs.is_dir():
             raise UnsafeRunLocation("city-runs location is not a directory")
+        _inspect_directories(runs, missing_ok=True)
         return runs
 
     def run_directory(self, run_id: str, *, create_root: bool = False) -> Path:
@@ -383,9 +820,507 @@ class CityRunStore:
         directory = runs / run_id
         if directory.is_symlink():
             raise UnsafeRunLocation("city run directory cannot be a symlink")
-        if directory.exists() and not directory.resolve().is_relative_to(runs.resolve()):
-            raise UnsafeRunLocation("city run directory escapes the output root")
+        try:
+            status = os.lstat(directory)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise UnsafeRunLocation("city run directory cannot be inspected safely") from None
+        else:
+            _safe_status(status, directory=True)
         return directory
+
+    def _reconstruct_v10(
+        self,
+        manifest: CityRunManifestV10,
+        pack: CityPackV2,
+        scenario: SpatialCampaignScenario,
+        response_input: SpatialResponseInput,
+        workbench_input: WorkbenchRunInputV4,
+        cognition_input: CityCognitionInputV2,
+        evaluation: CityCognitionEvaluationV2,
+        *,
+        historical_metadata: bool = False,
+    ) -> PreparedCityRun:
+        """Rebuild every derivable input, allocation, state, and receipt offline."""
+        from adlife.city.runs import PreparedCityScientificRunV2, finalize_city_run_v2
+
+        checked_workbench = validate_workbench_execution_binding(
+            workbench_input,
+            pack=pack,
+            run_id=manifest.run_id,
+            seed=manifest.seed,
+            agent_count=manifest.agent_count,
+            days=manifest.days,
+            places=None,
+            spatial_scenario=scenario,
+            spatial_response=response_input,
+        )
+        if not isinstance(checked_workbench, WorkbenchRunInputV4):
+            raise CorruptRunArtifact("V10 requires schema-4 workbench evidence")
+        mobility = CityMobility(
+            pack, seed=manifest.seed, agent_count=manifest.agent_count, days=manifest.days
+        )
+        opportunities = evaluate_spatial_opportunities(mobility, scenario)
+        attention = evaluate_spatial_attention(opportunities, seed=manifest.seed)
+        baseline = evaluate_spatial_responses(
+            response_input,
+            scenario,
+            opportunities,
+            attention,
+            agent_ids=tuple(agent.agent_id for agent in mobility.agents),
+        )
+        context = build_city_cognition_run_context_v2(
+            checked_workbench,
+            pack=pack,
+            spatial_scenario=scenario,
+            response_input=response_input,
+            baseline_evaluation=baseline,
+        )
+        settings = checked_workbench.draft.cognition
+        profile = cognition_input.provider_profile
+        if (
+            settings.causal_contract != cognition_input.causal_contract
+            or settings.provider_profile_id != (None if profile is None else profile.profile_id)
+            or settings.provider_revision_sha256
+            != (None if profile is None else profile.revision_sha256)
+        ):
+            raise CorruptRunArtifact("city cognition input does not match workbench authority")
+        requests = build_city_cognition_requests_v2(
+            context,
+            mobility,
+            baseline,
+            causal_contract=cognition_input.causal_contract,
+        )
+        rebuilt_input = build_city_cognition_input_v2(
+            context,
+            requests,
+            mode=settings.mode,
+            funded_response_limit=settings.funded_response_limit,
+            provider_profile=profile,
+            causal_contract=cognition_input.causal_contract,
+        )
+        if rebuilt_input != cognition_input:
+            raise CorruptRunArtifact("city cognition input does not match reconstructed requests")
+        staged = PreparedCityScientificRunV2(
+            pack=pack,
+            mobility=mobility,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=attention,
+            response_input=response_input,
+            baseline_evaluation=baseline,
+            workbench_input=checked_workbench,
+            cognition_input=rebuilt_input,
+            cognition_requests=requests,
+        )
+        rebuilt = finalize_city_run_v2(
+            staged, cognition_input=rebuilt_input, cognition_evaluation=evaluation
+        )
+        if historical_metadata:
+            rebuilt = replace(
+                rebuilt,
+                manifest=rebuilt.manifest.model_copy(
+                    update={
+                        "package_version": manifest.package_version,
+                        "python_version": manifest.python_version,
+                    }
+                ),
+            )
+        if rebuilt.manifest != manifest:
+            raise CorruptRunArtifact("city run manifest does not match reconstructed V10 evidence")
+        return rebuilt
+
+    @staticmethod
+    def _v10_documents(prepared: PreparedCityRun) -> dict[str, tuple[bytes, int]]:
+        response = prepared.response_evaluation
+        cognition = prepared.cognition_evaluation
+        if not isinstance(response, SpatialResponseEvaluationV2) or not isinstance(
+            cognition, CityCognitionEvaluationV2
+        ):
+            raise CorruptRunArtifact("V10 requires V2 response and cognition evaluations")
+        documents: dict[str, tuple[BaseModel | Mapping[str, object], int]] = {
+            "inputs/city.json": (prepared.pack, MAX_CITY_PACK_BYTES),
+            "inputs/agents.json": (
+                {"agents": [asdict(agent) for agent in prepared.mobility.agents]},
+                MAX_CITY_AGENTS_BYTES,
+            ),
+            "outputs/response-state.json": (
+                spatial_response_state_document_v2(response),
+                MAX_SPATIAL_RESPONSE_STATE_BYTES_V2,
+            ),
+            "outputs/response-summary.json": (
+                summarize_spatial_response_artifact_v2(response),
+                MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2,
+            ),
+            "outputs/cognition-summary.json": (
+                cognition.summary,
+                MAX_CITY_COGNITION_SUMMARY_BYTES + 1,
+            ),
+            "run.json": (prepared.manifest, MAX_CITY_MANIFEST_BYTES),
+        }
+        required = (
+            ("inputs/spatial-campaign.json", prepared.spatial_scenario, MAX_SPATIAL_CAMPAIGN_BYTES),
+            (
+                "inputs/spatial-response.json",
+                prepared.response_input,
+                MAX_SPATIAL_RESPONSE_INPUT_BYTES,
+            ),
+            ("inputs/workbench.json", prepared.workbench_input, MAX_WORKBENCH_INPUT_BYTES + 1),
+            (
+                "inputs/cognition.json",
+                prepared.cognition_input,
+                MAX_CITY_COGNITION_INPUT_BYTES_V2 + 1,
+            ),
+        )
+        for name, model, limit in required:
+            if model is None:
+                raise CorruptRunArtifact("V10 document evidence is incomplete")
+            documents[name] = model, limit
+        if prepared.opportunity_evaluation is None or prepared.attention_evaluation is None:
+            raise CorruptRunArtifact("V10 spatial evidence is incomplete")
+        documents["outputs/opportunity-summary.json"] = (
+            summarize_spatial_opportunity_artifact(prepared.opportunity_evaluation),
+            MAX_CITY_OPPORTUNITY_SUMMARY_BYTES,
+        )
+        documents["outputs/attention-summary.json"] = (
+            summarize_spatial_attention_artifact(prepared.attention_evaluation),
+            MAX_CITY_ATTENTION_SUMMARY_BYTES,
+        )
+        encoded = {
+            name: (_canonical_bytes(model), limit) for name, (model, limit) in documents.items()
+        }
+        if any(len(data) > limit for data, limit in encoded.values()):
+            raise CorruptRunArtifact("city run document exceeds its size limit")
+        return encoded
+
+    def _save_v10(
+        self,
+        manifest: CityRunManifestV10,
+        pack: CityPackDocument,
+        agents: tuple[CityAgent, ...],
+        *,
+        places: CityPlaceSet | None,
+        place_assignments: tuple[CityPlaceAssignment, ...],
+        spatial_scenario: SpatialCampaignScenario | None,
+        opportunity_evaluation: SpatialOpportunityEvaluation | None,
+        attention_evaluation: SpatialAttentionEvaluation | None,
+        response_input: SpatialResponseInput | None,
+        response_evaluation: SpatialResponseEvaluation | SpatialResponseEvaluationV2 | None,
+        workbench_input: WorkbenchRunInputDocument | None,
+        cognition_input: CityCognitionInputV1 | CityCognitionInputV2 | None,
+        cognition_evaluation: CityCognitionEvaluationV1 | CityCognitionEvaluationV2 | None,
+    ) -> Path:
+        try:
+            if (
+                type(pack) is not CityPackV2
+                or type(workbench_input) is not WorkbenchRunInputV4
+                or type(cognition_input) is not CityCognitionInputV2
+                or type(cognition_evaluation) is not CityCognitionEvaluationV2
+                or type(response_evaluation) is not SpatialResponseEvaluationV2
+                or spatial_scenario is None
+                or response_input is None
+                or places is not None
+                or place_assignments
+            ):
+                raise CorruptRunArtifact("V10 city run inputs are incomplete or incompatible")
+            checked_pack = CityPackV2.model_validate_json(canonical_json(pack))
+            checked_workbench = WorkbenchRunInputV4.model_validate_json(
+                canonical_json(workbench_input)
+            )
+            checked_input = CityCognitionInputV2.model_validate_json(
+                canonical_json(cognition_input)
+            )
+            checked_evaluation = CityCognitionEvaluationV2.model_validate_json(
+                canonical_json(cognition_evaluation)
+            )
+            checked_response = SpatialResponseEvaluationV2.model_validate(response_evaluation)
+            rebuilt = self._reconstruct_v10(
+                manifest,
+                checked_pack,
+                parse_spatial_campaign_scenario_json(canonical_json(spatial_scenario)),
+                parse_spatial_response_input_json(canonical_json(response_input)),
+                checked_workbench,
+                checked_input,
+                checked_evaluation,
+            )
+            if (
+                rebuilt.mobility.agents != agents
+                or rebuilt.opportunity_evaluation != opportunity_evaluation
+                or rebuilt.attention_evaluation != attention_evaluation
+                or rebuilt.response_evaluation != checked_response
+            ):
+                raise CorruptRunArtifact("V10 supplied evidence does not match frozen inputs")
+            documents = self._v10_documents(rebuilt)
+        except (ValueError, DocumentNotSerialisable):
+            raise CorruptRunArtifact("city run V10 inputs failed validation") from None
+        directory = self.run_directory(manifest.run_id, create_root=True)
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            raise DuplicateRun("city run identifier already exists") from None
+        except OSError:
+            raise StorageError("city run directory could not be created") from None
+        pins = ExitStack()
+        held_artifacts: list[_HeldArtifact] = []
+
+        def hold_artifact(path: Path) -> None:
+            source = pins.enter_context(_open_artifact(path, "rb"))
+            held_artifacts.append(
+                _HeldArtifact(
+                    path,
+                    source,
+                    os.fstat(source.fileno()),
+                    os.lstat(path),
+                    _inspect_directories(path.parent),
+                )
+            )
+
+        def verify_held_evidence() -> None:
+            for artifact in held_artifacts:
+                if _inspect_directories(artifact.path.parent) != artifact.parents:
+                    raise UnsafeRunLocation("city run sidecar parent changed before publication")
+                named = os.lstat(artifact.path)
+                opened = os.fstat(artifact.source.fileno())
+                _safe_status(named, directory=False)
+                _safe_status(opened, directory=False)
+                for status, expected in (
+                    (named, artifact.named_status),
+                    (opened, artifact.status),
+                ):
+                    if (
+                        _identity(status),
+                        status.st_size,
+                        status.st_mtime_ns,
+                        status.st_ctime_ns,
+                    ) != (
+                        _identity(expected),
+                        expected.st_size,
+                        expected.st_mtime_ns,
+                        expected.st_ctime_ns,
+                    ):
+                        raise UnsafeRunLocation(
+                            "city run verified sidecar changed before publication"
+                        )
+            for name, allowed in (("inputs", _V10_INPUT_NAMES), ("outputs", _V10_OUTPUT_NAMES)):
+                _verify_sidecar_names(directory / name, allowed)
+
+        try:
+            (directory / "inputs").mkdir()
+            (directory / "outputs").mkdir()
+            for relative, (data, limit) in documents.items():
+                if relative == "run.json":
+                    continue
+                path = directory / relative
+                _write_new(path, data)
+                hold_artifact(path)
+                if self._read_document(path, limit=limit, label="staged V10 document") != data:
+                    raise StorageError("city run staged V10 document differs from expected bytes")
+            assert rebuilt.opportunity_evaluation is not None
+            assert rebuilt.attention_evaluation is not None
+            assert isinstance(rebuilt.response_evaluation, SpatialResponseEvaluationV2)
+            assert isinstance(rebuilt.cognition_evaluation, CityCognitionEvaluationV2)
+            streams = (
+                (
+                    "spatial-opportunities.jsonl",
+                    spatial_opportunity_lines(rebuilt.opportunity_evaluation),
+                    manifest.opportunity_stream_bytes,
+                    MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES,
+                ),
+                (
+                    "spatial-attention.jsonl",
+                    spatial_attention_lines(rebuilt.attention_evaluation),
+                    manifest.attention_stream_bytes,
+                    MAX_SPATIAL_ATTENTION_STREAM_BYTES,
+                ),
+            )
+            for name, lines, size, limit in streams:
+                path = directory / "outputs" / name
+                _write_lines(path, lines, limit=limit)
+                hold_artifact(path)
+                expected = (
+                    spatial_opportunity_lines(rebuilt.opportunity_evaluation)
+                    if name == "spatial-opportunities.jsonl"
+                    else spatial_attention_lines(rebuilt.attention_evaluation)
+                )
+                _verify_lines(path, expected, size=size, limit=limit)
+            response_path = directory / "outputs/spatial-responses.jsonl"
+            _write_response_stream(response_path, rebuilt.response_evaluation)
+            hold_artifact(response_path)
+            self._verify_response_stream(response_path, rebuilt.response_evaluation)
+            cognition_path = directory / "outputs/cognition.jsonl"
+            _write_cognition_stream(cognition_path, rebuilt.cognition_evaluation)
+            hold_artifact(cognition_path)
+            _verify_lines(
+                cognition_path,
+                city_cognition_terminal_lines_v2(rebuilt.cognition_evaluation),
+                size=manifest.cognition.terminal_stream_bytes,
+                limit=MAX_CITY_COGNITION_STREAM_BYTES,
+            )
+            _publish_manifest(
+                directory, documents["run.json"][0], self, verify_evidence=verify_held_evidence
+            )
+        except OSError:
+            raise StorageError("city run could not be completed") from None
+        except CorruptRunArtifact:
+            raise StorageError("city run staged V10 evidence failed verification") from None
+        finally:
+            primary_failure = exc_info()[0] is not None
+            try:
+                pins.close()
+            except (OSError, StorageError) as error:
+                if not primary_failure:
+                    if isinstance(error, StorageError):
+                        raise
+                    raise StorageError("city run verified sidecars became unavailable") from None
+        return directory
+
+    def _load_v10(
+        self, directory: Path, manifest: CityRunManifestV10, manifest_bytes: bytes, run_id: str
+    ) -> StoredCityRun:
+        pins = ExitStack()
+        try:
+            if manifest.run_id != run_id:
+                raise CorruptRunArtifact("city run identifier does not match its manifest")
+            for name, allowed in (("inputs", _V10_INPUT_NAMES), ("outputs", _V10_OUTPUT_NAMES)):
+                parent = directory / name
+                _inspect_directories(parent)
+                _verify_sidecar_names(parent, allowed)
+                for child in (parent / child_name for child_name in sorted(allowed)):
+                    _safe_status(os.lstat(child), directory=False)
+                    pins.enter_context(_open_artifact(child, "rb"))
+            pins.enter_context(_open_artifact(directory / "run.json", "rb"))
+            if (
+                self._read_document(
+                    directory / "run.json", limit=MAX_CITY_MANIFEST_BYTES, label="pinned manifest"
+                )
+                != manifest_bytes
+            ):
+                raise CorruptRunArtifact("city run manifest changed while pinning sidecars")
+            limits = {
+                "inputs/city.json": MAX_CITY_PACK_BYTES,
+                "inputs/agents.json": MAX_CITY_AGENTS_BYTES,
+                "inputs/workbench.json": MAX_WORKBENCH_INPUT_BYTES + 1,
+                "inputs/spatial-campaign.json": MAX_SPATIAL_CAMPAIGN_BYTES,
+                "inputs/spatial-response.json": MAX_SPATIAL_RESPONSE_INPUT_BYTES,
+                "inputs/cognition.json": MAX_CITY_COGNITION_INPUT_BYTES_V2 + 1,
+                "outputs/cognition-summary.json": MAX_CITY_COGNITION_SUMMARY_BYTES + 1,
+                "outputs/response-state.json": MAX_SPATIAL_RESPONSE_STATE_BYTES_V2,
+                "outputs/response-summary.json": MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2,
+                "outputs/opportunity-summary.json": MAX_CITY_OPPORTUNITY_SUMMARY_BYTES,
+                "outputs/attention-summary.json": MAX_CITY_ATTENTION_SUMMARY_BYTES,
+            }
+            documents = {
+                name: self._read_document(directory / name, limit=limit, label="V10 document")
+                for name, limit in limits.items()
+            }
+            for data in documents.values():
+                _inspect_cognition_json(data)
+            pack = CityPackV2.model_validate_json(documents["inputs/city.json"])
+            workbench = WorkbenchRunInputV4.model_validate_json(documents["inputs/workbench.json"])
+            scenario = parse_spatial_campaign_scenario_json(
+                documents["inputs/spatial-campaign.json"]
+            )
+            response_input = parse_spatial_response_input_json(
+                documents["inputs/spatial-response.json"]
+            )
+            frozen = CityCognitionInputV2.model_validate_json(documents["inputs/cognition.json"])
+            summary = CityCognitionSummaryV2.model_validate_json(
+                documents["outputs/cognition-summary.json"]
+            )
+            stream = self._read_document(
+                directory / "outputs/cognition.jsonl",
+                limit=MAX_CITY_COGNITION_STREAM_BYTES,
+                label="V10 cognition stream",
+            )
+            records = []
+            for index, line in enumerate(stream.splitlines(keepends=True)):
+                if (
+                    index >= MAX_CITY_COGNITION_REQUESTS
+                    or not line.endswith(b"\n")
+                    or line.endswith(b"\r\n")
+                    or len(line) - 1 > frozen.max_terminal_record_bytes
+                ):
+                    raise CorruptRunArtifact("city run terminal grammar is invalid")
+                _inspect_cognition_json(line)
+                record = CityCognitionTerminalRecordV2.model_validate_json(line)
+                if record.selection_index != index or _canonical_bytes(record) != line:
+                    raise CorruptRunArtifact(
+                        "city run terminal order or canonical bytes are invalid"
+                    )
+                records.append(record)
+            evaluation = CityCognitionEvaluationV2(
+                schema_version=2,
+                cognition_input_sha256=frozen.fingerprint,
+                run_input_sha256=frozen.run_input_sha256,
+                effect_scope=frozen.effect_scope,
+                mode=frozen.mode,
+                records=tuple(records),
+                summary=summary,
+            )
+            rebuilt = self._reconstruct_v10(
+                manifest,
+                pack,
+                scenario,
+                response_input,
+                workbench,
+                frozen,
+                evaluation,
+                historical_metadata=True,
+            )
+            documents["run.json"] = manifest_bytes
+            for name, (expected, _limit) in self._v10_documents(rebuilt).items():
+                if documents[name] != expected:
+                    raise CorruptRunArtifact(
+                        "city run V10 document does not match reconstructed evidence"
+                    )
+            assert rebuilt.opportunity_evaluation is not None
+            assert rebuilt.attention_evaluation is not None
+            assert isinstance(rebuilt.response_evaluation, SpatialResponseEvaluationV2)
+            _verify_lines(
+                directory / "outputs/spatial-opportunities.jsonl",
+                spatial_opportunity_lines(rebuilt.opportunity_evaluation),
+                size=manifest.opportunity_stream_bytes,
+                limit=MAX_SPATIAL_OPPORTUNITY_STREAM_BYTES,
+            )
+            _verify_lines(
+                directory / "outputs/spatial-attention.jsonl",
+                spatial_attention_lines(rebuilt.attention_evaluation),
+                size=manifest.attention_stream_bytes,
+                limit=MAX_SPATIAL_ATTENTION_STREAM_BYTES,
+            )
+            self._verify_response_stream(
+                directory / "outputs/spatial-responses.jsonl", rebuilt.response_evaluation
+            )
+            for name, allowed in (("inputs", _V10_INPUT_NAMES), ("outputs", _V10_OUTPUT_NAMES)):
+                _verify_sidecar_names(directory / name, allowed)
+            return StoredCityRun(
+                manifest,
+                pack,
+                rebuilt.mobility,
+                directory,
+                spatial_scenario=scenario,
+                opportunity_evaluation=rebuilt.opportunity_evaluation,
+                attention_evaluation=rebuilt.attention_evaluation,
+                response_input=response_input,
+                response_evaluation=rebuilt.response_evaluation,
+                workbench_input=workbench,
+                cognition_input=frozen,
+                cognition_evaluation=evaluation,
+            )
+        except (ValueError, DocumentNotSerialisable, OSError):
+            raise CorruptRunArtifact("city run V10 artifact failed validation") from None
+        finally:
+            primary_failure = exc_info()[0] is not None
+            try:
+                pins.close()
+            except (OSError, StorageError) as error:
+                if not primary_failure:
+                    if isinstance(error, StorageError):
+                        raise
+                    raise CorruptRunArtifact(
+                        "city run verified sidecars became unavailable"
+                    ) from None
 
     def save(
         self,
@@ -399,12 +1334,32 @@ class CityRunStore:
         opportunity_evaluation: SpatialOpportunityEvaluation | None = None,
         attention_evaluation: SpatialAttentionEvaluation | None = None,
         response_input: SpatialResponseInput | None = None,
-        response_evaluation: SpatialResponseEvaluation | None = None,
+        response_evaluation: SpatialResponseEvaluation | SpatialResponseEvaluationV2 | None = None,
         workbench_input: WorkbenchRunInputDocument | None = None,
-        cognition_input: CityCognitionInputV1 | None = None,
-        cognition_evaluation: CityCognitionEvaluationV1 | None = None,
+        cognition_input: CityCognitionInputV1 | CityCognitionInputV2 | None = None,
+        cognition_evaluation: CityCognitionEvaluationV1 | CityCognitionEvaluationV2 | None = None,
     ) -> Path:
         """Reserve a fresh ID; publish the completion manifest only after frozen inputs."""
+        try:
+            selected = parse_city_run_manifest_json(canonical_json(manifest))
+        except (ValueError, DocumentNotSerialisable):
+            raise CorruptRunArtifact("city run manifest failed validation") from None
+        if isinstance(selected, CityRunManifestV10):
+            return self._save_v10(
+                selected,
+                pack,
+                agents,
+                places=places,
+                place_assignments=place_assignments,
+                spatial_scenario=spatial_scenario,
+                opportunity_evaluation=opportunity_evaluation,
+                attention_evaluation=attention_evaluation,
+                response_input=response_input,
+                response_evaluation=response_evaluation,
+                workbench_input=workbench_input,
+                cognition_input=cognition_input,
+                cognition_evaluation=cognition_evaluation,
+            )
         try:
             manifest = parse_city_run_manifest_json(canonical_json(manifest))
             pack = parse_city_pack_json(canonical_json(pack))
@@ -926,30 +1881,22 @@ class CityRunStore:
                     raise StorageError(
                         "city run staged cognition stream did not match expected bytes"
                     ) from None
-            temporary = directory / ".run.json.tmp"
-            try:
-                _write_new(temporary, manifest_bytes)
-                if (
-                    self._read_document(
-                        temporary, limit=len(manifest_bytes), label="staged manifest"
-                    )
-                    != manifest_bytes
-                ):
-                    raise StorageError("city run staged manifest did not match its expected bytes")
-                os.replace(temporary, directory / "run.json")
-            finally:
-                temporary.unlink(missing_ok=True)
+            # Shared security correction: final visibility is exclusive,
+            # including a destination introduced after ID reservation.
+            _publish_manifest(directory, manifest_bytes, self)
         except OSError:
             # An incomplete directory remains visibly invalid; never reuse its ID.
             raise StorageError("city run could not be completed") from None
         return directory
 
     def _read_document(self, path: Path, *, limit: int, label: str) -> bytes:
-        if path.is_symlink() or not path.resolve().is_relative_to(self.root):
+        path = Path(os.path.abspath(path))
+        if not path.is_relative_to(self.root):
             raise UnsafeRunLocation(f"city run {label} has an unsafe location")
+        _inspect_directories(path.parent)
         try:
-            with path.open("rb") as source:
-                data = source.read(limit + 1)
+            with _open_artifact(path, "rb") as source:
+                data = _read_exact(source, limit + 1)
         except OSError:
             raise CorruptRunArtifact(f"city run {label} is missing or unreadable") from None
         if len(data) > limit:
@@ -1018,8 +1965,17 @@ class CityRunStore:
     def _verify_response_stream(
         self,
         path: Path,
-        evaluation: SpatialResponseEvaluation,
+        evaluation: SpatialResponseEvaluation | SpatialResponseEvaluationV2,
     ) -> None:
+        if isinstance(evaluation, SpatialResponseEvaluationV2):
+            expected_summary_v2 = summarize_spatial_response_artifact_v2(evaluation)
+            _verify_lines(
+                path,
+                spatial_response_v2_lines(evaluation),
+                size=expected_summary_v2.stream_bytes,
+                limit=MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2,
+            )
+            return
         if path.is_symlink() or not path.resolve().is_relative_to(self.root):
             raise UnsafeRunLocation("city run response stream has an unsafe location")
         expected_summary = summarize_spatial_response_artifact(evaluation)
@@ -1078,6 +2034,8 @@ class CityRunStore:
             manifest = parse_city_run_manifest_json(manifest_bytes)
         except (ValidationError, ValueError, TypeError):
             raise CorruptRunArtifact("city run manifest failed validation") from None
+        if isinstance(manifest, CityRunManifestV10):
+            return self._load_v10(directory, manifest, manifest_bytes, run_id)
         city_bytes = self._read_document(
             directory / "inputs" / "city.json", limit=MAX_CITY_PACK_BYTES, label="city input"
         )

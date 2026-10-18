@@ -33,6 +33,36 @@ def _document(city_id: str) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode()
 
 
+def test_uploaded_city_v10_storage_fresh_load_needs_no_live_registry(tmp_path, monkeypatch):
+    from adlife.city.workbench_catalog import WorkbenchCityResolver
+    from adlife.city.workbench_input import WorkbenchRunDraftV4
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.integration.test_city_cognition_v2_artifacts import _prepared_v10, _save_prepared
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    workspace = prepare_workbench_workspace(tmp_path)
+    resolved = WorkbenchCityResolver(workspace).register_city(_document("v10-uploaded-city"))
+    document = draft_v4_data(mode="rules")
+    document["city_id"] = resolved.pack.city_id
+    compiled = construct_workbench_run(
+        WorkbenchRunDraftV4.model_validate_json(json.dumps(document)),
+        selected_pack=resolved.pack,
+    )
+    _, prepared = _prepared_v10(tmp_path, validated=compiled)
+    _save_prepared(tmp_path, prepared)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("saved V10 consulted a live city registry")
+
+    monkeypatch.setattr(WorkbenchCityResolver, "__init__", forbidden)
+    monkeypatch.setattr(WorkspaceCityRegistry, "__init__", forbidden)
+    stored = CityRunStore(tmp_path).load(prepared.manifest.run_id)
+    assert stored.pack == resolved.pack
+    assert stored.manifest.city_sha256 == resolved.pack.fingerprint
+    assert stored.workbench_input.draft.city_id == resolved.pack.city_id
+    assert stored.cognition_input.run_input_sha256 == stored.workbench_input.fingerprint
+
+
 def _post_json(client: TestClient, path: str, payload: dict[str, Any]):
     return client.post(
         path,

@@ -24,6 +24,7 @@ from adlife.core.experiments.spatial_response_metrics import (
     derive_spatial_response_metrics,
 )
 from adlife.core.ports.run_store import CorruptRunArtifact, SchemaVersionMismatch
+from adlife.core.simulation.spatial_response import SpatialResponseEvaluation
 
 
 def metrics_for_stored_city_run(stored: StoredCityRun) -> SpatialMetrics:
@@ -87,7 +88,7 @@ def response_metrics_for_stored_city_run(stored: StoredCityRun) -> SpatialRespon
         or stored.opportunity_evaluation is None
         or stored.attention_evaluation is None
         or stored.response_input is None
-        or stored.response_evaluation is None
+        or not isinstance(stored.response_evaluation, SpatialResponseEvaluation)
     ):
         raise CorruptRunArtifact("response city run has incomplete spatial response evidence")
     attention_metrics = metrics_for_stored_city_run(stored)

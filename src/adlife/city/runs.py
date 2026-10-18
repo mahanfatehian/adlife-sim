@@ -1084,14 +1084,6 @@ def publish_city_run(prepared: PreparedCityRun, *, root: Path) -> StoredCityRun:
     """Publish already evaluated evidence through the no-clobber city store."""
     if not isinstance(prepared, PreparedCityRun):
         raise TypeError("prepared must be a PreparedCityRun")
-    # Task 8 replaces this handoff guard when manifest-selected V10 storage lands.
-    if (
-        isinstance(prepared.manifest, CityRunManifestV10)
-        or isinstance(prepared.response_evaluation, SpatialResponseEvaluationV2)
-        or isinstance(prepared.cognition_input, CityCognitionInputV2)
-        or isinstance(prepared.cognition_evaluation, CityCognitionEvaluationV2)
-    ):
-        raise TypeError("V2 city evidence requires V10 storage support")
     directory = CityRunStore(root).save(
         prepared.manifest,
         prepared.pack,
@@ -1334,8 +1326,8 @@ def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
         if (
             not isinstance(replayed_workbench, WorkbenchRunInputV3)
             or not isinstance(stored.pack, CityPackV2)
-            or stored.cognition_input is None
-            or stored.cognition_evaluation is None
+            or not isinstance(stored.cognition_input, CityCognitionInputV1)
+            or not isinstance(stored.cognition_evaluation, CityCognitionEvaluationV1)
             or stored.spatial_scenario is None
             or stored.response_input is None
             or replayed_response_evaluation is None

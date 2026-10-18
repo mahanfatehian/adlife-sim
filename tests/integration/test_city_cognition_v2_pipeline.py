@@ -481,16 +481,15 @@ def test_v10_finalization_maps_all_counts_hashes_and_receipt_without_a_path():
     _assert_manifest(prepared, evaluation, result)
 
 
-def test_v10_publication_refuses_before_the_v1_only_store_is_constructed(tmp_path, monkeypatch):
+def test_v10_publication_persists_verified_frozen_evidence(tmp_path):
     prepared = _prepare(_validated_v4())
     result = _finalize(prepared, _terminal_evaluation(prepared))
 
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("V2 evidence reached the V1-only store")
-
-    monkeypatch.setattr(runs, "CityRunStore", forbidden)
-    with pytest.raises(TypeError, match="V10 storage support"):
-        runs.publish_city_run(result, root=tmp_path)
+    stored = runs.publish_city_run(result, root=tmp_path)
+    loaded = runs.CityRunStore(tmp_path).load(result.manifest.run_id)
+    assert stored.manifest == loaded.manifest == result.manifest
+    assert stored.cognition_evaluation == loaded.cognition_evaluation == result.cognition_evaluation
+    assert stored.response_evaluation == loaded.response_evaluation == result.response_evaluation
 
 
 async def test_v10_budget_skipped_requests_remain_applied_and_unselected_responses_are_preserved(

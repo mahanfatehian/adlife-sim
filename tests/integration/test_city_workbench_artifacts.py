@@ -48,6 +48,29 @@ def _create(root: Path, *, run_id: str = "launch-run"):
     )
 
 
+def test_v10_direct_storage_freezes_schema4_without_job_submission(tmp_path):
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    _, prepared, directory = _saved_v10(tmp_path)
+    restored = CityRunStore(tmp_path).load(prepared.manifest.run_id)
+    assert restored.manifest.workbench_input_schema_version == 4
+    assert restored.workbench_input == prepared.workbench_input
+    assert (directory / "inputs/workbench.json").read_bytes() == (
+        canonical_json(prepared.workbench_input) + "\n"
+    ).encode()
+    validate_workbench_execution_binding(
+        restored.workbench_input,
+        pack=restored.pack,
+        run_id=restored.manifest.run_id,
+        seed=restored.manifest.seed,
+        agent_count=restored.manifest.agent_count,
+        days=restored.manifest.days,
+        places=None,
+        spatial_scenario=restored.spatial_scenario,
+        spatial_response=restored.response_input,
+    )
+
+
 def _hashes(directory: Path) -> dict[str, str]:
     return {
         path.relative_to(directory).as_posix(): sha256(path.read_bytes()).hexdigest()
@@ -351,6 +374,13 @@ def test_v7_duplicate_and_staged_write_failure_never_overwrite_or_complete(
         original(path, contents)
 
     monkeypatch.setattr(store_module, "_write_new", fail_staged_write)
+    if failed_name == ".run.json.tmp":
+
+        def fail_manifest_stage(source, contents):
+            source.write(contents[:1])
+            raise OSError("injected staged artifact failure")
+
+        monkeypatch.setattr(store_module, "_write_manifest_stage", fail_manifest_stage)
     with pytest.raises(StorageError):
         _create(tmp_path / "failed")
     failed = tmp_path / "failed" / "city-runs" / "launch-run"
@@ -619,6 +649,13 @@ def test_v8_manifest_last_failure_is_not_reusable_or_clobbering(
         original(path, contents)
 
     monkeypatch.setattr(store_module, "_write_new", failing_write)
+    if failed_name == ".run.json.tmp":
+
+        def fail_manifest_stage(_source, _contents):
+            assert not (tmp_path / "failed/city-runs/launch-run/run.json").exists()
+            raise OSError("injected failure")
+
+        monkeypatch.setattr(store_module, "_write_manifest_stage", fail_manifest_stage)
     with pytest.raises(StorageError):
         _create_v8(tmp_path / "failed")
     directory = tmp_path / "failed/city-runs/launch-run"

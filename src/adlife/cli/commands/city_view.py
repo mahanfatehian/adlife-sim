@@ -16,7 +16,8 @@ from adlife.city.run_store import CityRunStore
 from adlife.city.web import create_city_app
 from adlife.cli.errors import CommandError, command_boundary, output_format
 from adlife.cli.output import info
-from adlife.core.ports.run_store import UnsafeRunLocation, validate_run_id
+from adlife.core.ports.run_store import CorruptRunArtifact, UnsafeRunLocation, validate_run_id
+from adlife.core.simulation.spatial_response import SpatialResponseEvaluation
 
 
 @command_boundary
@@ -33,6 +34,10 @@ def command(
     except UnsafeRunLocation:
         raise CommandError("invalid city run identifier") from None
     stored = CityRunStore(root).load(run_id)
+    if stored.response_evaluation is not None and not isinstance(
+        stored.response_evaluation, SpatialResponseEvaluation
+    ):
+        raise CorruptRunArtifact("city viewer requires a supported response model")
     spatial_metrics = (
         metrics_for_stored_city_run(stored)
         if stored.manifest.schema_version in {5, 6, 7, 8, 9}

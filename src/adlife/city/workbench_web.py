@@ -126,6 +126,7 @@ from adlife.city.workbench_workspace import (
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
+from adlife.core.domain.city_cognition import CityCognitionEvaluationV1, CityCognitionInputV1
 from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8, CityRunManifestV9
 from adlife.core.ports.run_store import (
     DuplicateRun,
@@ -134,6 +135,7 @@ from adlife.core.ports.run_store import (
     UnsafeRunLocation,
     validate_run_id,
 )
+from adlife.core.simulation.spatial_response import SpatialResponseEvaluation
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _ASSET_LIMIT_BYTES = 262_144
@@ -501,6 +503,10 @@ def create_city_workbench_app(
     def city_view_from_stored(stored: StoredCityRun) -> CityViewContext:
         schema_version = stored.manifest.schema_version
         try:
+            if stored.response_evaluation is not None and not isinstance(
+                stored.response_evaluation, SpatialResponseEvaluation
+            ):
+                raise ValueError("unsupported city view response model")
             spatial_metrics = (
                 metrics_for_stored_city_run(stored) if schema_version in {5, 6, 7, 8, 9} else None
             )
@@ -1371,7 +1377,8 @@ def create_city_workbench_app(
         stored = resolve_cognition_run(request, run_id)
         cognition_input = stored.cognition_input
         evaluation = stored.cognition_evaluation
-        assert cognition_input is not None and evaluation is not None
+        assert isinstance(cognition_input, CityCognitionInputV1)
+        assert isinstance(evaluation, CityCognitionEvaluationV1)
         profile = cognition_input.provider_profile
         return JSONResponse(
             content={

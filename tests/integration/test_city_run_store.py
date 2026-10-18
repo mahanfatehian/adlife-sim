@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
 
@@ -43,6 +44,379 @@ from adlife.core.simulation.spatial_opportunity import (
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_city_pack import load_pack, load_pack_v2, pack_data, pack_v2_data
 from tests.unit.city.test_spatial_opportunity import _billboard, _mobility, _phone, _scenario
+
+
+def test_v10_store_uses_frozen_core_capacity_and_payload_lf_scopes(tmp_path, monkeypatch):
+    from adlife.core.simulation import spatial_response_v2 as response
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    _, prepared, _ = _saved_v10(tmp_path)
+    frozen = prepared.cognition_input
+    assert frozen.max_request_bytes == frozen.max_terminal_record_bytes == 8192
+    expected = {
+        "MAX_CITY_COGNITION_INPUT_BYTES_V2": 131_072,
+        "MAX_CITY_COGNITION_STREAM_BYTES": 1_048_576,
+        "MAX_CITY_COGNITION_SUMMARY_BYTES": 16_384,
+        "MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2": 2_147_483_648,
+        "MAX_SPATIAL_RESPONSE_STATE_BYTES_V2": 8_388_608,
+        "MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2": 131_072,
+    }
+    for name, literal in expected.items():
+        assert getattr(city_store_module, name, None) == literal
+    assert (
+        city_store_module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2
+        == response.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2
+    )
+    assert (
+        city_store_module.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2
+        == response.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2
+    )
+    assert (
+        city_store_module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
+        == response.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
+    )
+    required = {
+        "inputs/cognition.json": 131_073,
+        "outputs/cognition-summary.json": 16_385,
+        "outputs/response-state.json": 8_388_608,
+        "outputs/response-summary.json": 131_072,
+    }
+    observed = {}
+    original = CityRunStore._read_document
+
+    def read_with_scope(self, path, *, limit, label):
+        relative = "/".join(path.parts[-2:])
+        if relative in required:
+            observed[relative] = limit
+        return original(self, path, limit=limit, label=label)
+
+    monkeypatch.setattr(CityRunStore, "_read_document", read_with_scope)
+    CityRunStore(tmp_path).load(prepared.manifest.run_id)
+    assert observed == required
+
+
+class _GeneratedReader:
+    """A bounded repeated-byte stream, with no allocation proportional to its size."""
+
+    def __init__(self, handle, size, *, chunk=65_536, short=False):
+        self.handle, self.size, self.chunk, self.short = handle, size, chunk, short
+        self.position = 0
+        self.max_requested = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.handle.close()
+
+    def fileno(self):
+        return self.handle.fileno()
+
+    def read(self, count=-1):
+        assert 0 <= count <= self.chunk, "V10 attempted an unbounded or giant read"
+        self.max_requested = max(count, self.max_requested)
+        count = min(count, self.size - self.position)
+        if self.short:
+            count = min(count, 17)
+        self.position += count
+        return b"x" * count
+
+
+@pytest.mark.parametrize("limit", [131_073, 16_385, 8_388_608, 131_072])
+@pytest.mark.parametrize("overflow", [0, 1])
+@pytest.mark.parametrize("short", [False, True])
+def test_v10_document_bounded_io_accepts_exact_physical_limit_and_refuses_plus_one(
+    tmp_path,
+    monkeypatch,
+    limit,
+    overflow,
+    short,
+):
+    path = tmp_path / "bounded-document.json"
+    path.write_bytes(b"placeholder")
+    original = city_store_module._open_artifact
+    readers = []
+
+    @contextmanager
+    def generated(path_arg, mode="r", **kwargs):
+        with original(path_arg, mode, **kwargs) as handle:
+            if path_arg == path and mode == "rb":
+                reader = _GeneratedReader(handle, limit + overflow, short=short)
+                readers.append(reader)
+                yield reader
+            else:
+                yield handle
+
+    monkeypatch.setattr(city_store_module, "_open_artifact", generated)
+    if overflow:
+        with pytest.raises(CorruptRunArtifact):
+            CityRunStore(tmp_path)._read_document(path, limit=limit, label="bounded V10 document")
+    else:
+        data = CityRunStore(tmp_path)._read_document(
+            path, limit=limit, label="bounded V10 document"
+        )
+        assert len(data) == limit
+    assert readers and readers[0].position == limit + overflow
+    assert readers[0].max_requested <= 65_536
+
+
+def test_v10_thirty_agent_seven_day_store_streams_real_admitted_evidence(tmp_path, monkeypatch):
+    from tests.integration.test_city_cognition_v2_artifacts import _prepared_v10, _save_prepared
+
+    staged, prepared = _prepared_v10(tmp_path, agents=30, days=7)
+    original_open = city_store_module._open_artifact
+    original_read_bytes = Path.read_bytes
+    reads = []
+
+    class Guard:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def read(self, count=-1):
+            assert 0 <= count <= 65_536
+            reads.append(count)
+            return self.handle.read(count)
+
+    @contextmanager
+    def bounded_open(path, mode="r", **kwargs):
+        with original_open(path, mode, **kwargs) as handle:
+            yield (
+                Guard(handle) if path.name == "spatial-responses.jsonl" and mode == "rb" else handle
+            )
+
+    def bounded_read_bytes(path):
+        assert path.name != "spatial-responses.jsonl", (
+            "response stream was retained as a whole byte copy"
+        )
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(city_store_module, "_open_artifact", bounded_open)
+    monkeypatch.setattr(Path, "read_bytes", bounded_read_bytes)
+    directory = _save_prepared(tmp_path, prepared)
+    stored = CityRunStore(tmp_path).load(prepared.manifest.run_id)
+    assert reads
+    digest = sha256()
+    count = 0
+    with original_open(directory / "outputs/spatial-responses.jsonl", "rb") as source:
+        while chunk := source.read(65_536):
+            count += len(chunk)
+            digest.update(chunk)
+    assert count == prepared.manifest.response_stream_bytes < 2_147_483_648
+    assert digest.hexdigest() == prepared.manifest.response_stream_sha256
+    assert stored.response_evaluation == prepared.response_evaluation
+    assert stored.response_evaluation.final_rule_states == staged.baseline_evaluation.final_states
+    assert stored.manifest.agent_count == 30 and stored.manifest.days == 7
+
+
+@pytest.mark.parametrize("delta", [0, 1])
+def test_v10_real_response_writer_and_verifier_use_one_inclusive_combined_counter(
+    tmp_path, monkeypatch, delta
+):
+    from adlife.core.simulation.spatial_response_v2 import spatial_response_v2_lines
+    from tests.integration.test_city_cognition_v2_artifacts import _prepared_v10
+
+    _, prepared = _prepared_v10(tmp_path)
+    evaluation = prepared.response_evaluation
+    exact = sum(map(len, spatial_response_v2_lines(evaluation)))
+    assert getattr(city_store_module, "MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2", None) == 2_147_483_648
+    monkeypatch.setattr(city_store_module, "MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2", exact - delta)
+    path = tmp_path / "spatial-responses.jsonl"
+    if delta:
+        with pytest.raises(CorruptRunArtifact):
+            city_store_module._write_response_stream(path, evaluation)
+    else:
+        city_store_module._write_response_stream(path, evaluation)
+        CityRunStore(tmp_path)._verify_response_stream(path, evaluation)
+        assert path.stat().st_size == exact
+
+
+@pytest.mark.parametrize(
+    "declared_size,actual_size,admitted",
+    [
+        (2_147_483_648, 2_147_483_648, True),
+        (2_147_483_649, 2_147_483_649, False),
+        (2_147_483_648, 2_147_483_649, False),
+        (2_147_483_648, 2_147_483_647, False),
+        (2_311_310_880, 2_311_310_880, False),
+    ],
+)
+def test_v10_virtual_response_io_enforces_frozen_two_gib_combined_limit(
+    tmp_path,
+    monkeypatch,
+    declared_size,
+    actual_size,
+    admitted,
+):
+    from types import SimpleNamespace
+
+    from tests.integration.test_city_cognition_v2_artifacts import _prepared_v10
+
+    _, prepared = _prepared_v10(tmp_path)
+    evaluation = prepared.response_evaluation
+    assert getattr(city_store_module, "MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2", None) == 2_147_483_648
+    path = tmp_path / "spatial-responses.jsonl"
+    path.write_bytes(b"placeholder")
+    original_open, original_stat = city_store_module._open_artifact, Path.stat
+    readers = []
+
+    def lines(_evaluation):
+        assert _evaluation is evaluation
+        remaining = declared_size
+        block = b"x" * 65_536
+        while remaining:
+            amount = min(remaining, len(block))
+            yield block[:amount]
+            remaining -= amount
+
+    @contextmanager
+    def generated(path_arg, mode="r", **kwargs):
+        with original_open(path_arg, mode, **kwargs) as handle:
+            if path_arg == path and mode == "rb":
+                reader = _GeneratedReader(handle, actual_size)
+                readers.append(reader)
+                yield reader
+            else:
+                yield handle
+
+    def size_stat(value):
+        fields = {name: getattr(value, name) for name in dir(value) if name.startswith("st_")}
+        fields["st_size"] = declared_size
+        return SimpleNamespace(**fields)
+
+    def generated_stat(path_arg, *args, **kwargs):
+        value = original_stat(path_arg, *args, **kwargs)
+        return size_stat(value) if path_arg == path else value
+
+    monkeypatch.setattr(city_store_module, "spatial_response_v2_lines", lines, raising=False)
+    monkeypatch.setattr(
+        city_store_module,
+        "summarize_spatial_response_artifact_v2",
+        lambda _: SimpleNamespace(stream_bytes=declared_size),
+        raising=False,
+    )
+    monkeypatch.setattr(city_store_module, "_open_artifact", generated)
+    monkeypatch.setattr(Path, "stat", generated_stat)
+    if admitted:
+        CityRunStore(tmp_path)._verify_response_stream(path, evaluation)
+        assert readers and readers[0].position == 2_147_483_648
+    else:
+        with pytest.raises(CorruptRunArtifact):
+            CityRunStore(tmp_path)._verify_response_stream(path, evaluation)
+        if declared_size > 2_147_483_648:
+            assert not readers or readers[0].position == 0
+    assert all(reader.max_requested <= 65_536 for reader in readers)
+
+
+@pytest.mark.parametrize("size", [2_147_483_648, 2_147_483_649, 2_311_310_880])
+@pytest.mark.parametrize("short_write", [False, True])
+def test_v10_virtual_response_writer_refuses_combined_overflow_before_writing_it(
+    tmp_path,
+    monkeypatch,
+    size,
+    short_write,
+):
+    from tests.integration.test_city_cognition_v2_artifacts import _prepared_v10
+
+    _, prepared = _prepared_v10(tmp_path)
+    evaluation = prepared.response_evaluation
+    assert getattr(city_store_module, "MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2", None) == 2_147_483_648
+    path = tmp_path / "virtual-response.jsonl"
+    original = city_store_module._open_artifact
+    written = 0
+
+    class Sink:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.handle.close()
+
+        def write(self, block):
+            nonlocal written
+            assert len(block) <= 65_536
+            assert written + len(block) <= 2_147_483_648, "writer wrote overflow before admission"
+            amount = min(17, len(block)) if short_write else len(block)
+            written += amount
+            return amount
+
+    @contextmanager
+    def virtual_open(path_arg, mode="r", **kwargs):
+        with original(path_arg, mode, **kwargs) as handle:
+            yield Sink(handle) if path_arg == path and mode == "xb" else handle
+
+    def lines(_evaluation):
+        assert _evaluation is evaluation
+        remaining = size
+        block = b"x" * 65_536
+        while remaining:
+            count = min(remaining, len(block))
+            yield block[:count]
+            remaining -= count
+
+    monkeypatch.setattr(city_store_module, "_open_artifact", virtual_open)
+    monkeypatch.setattr(city_store_module, "spatial_response_v2_lines", lines, raising=False)
+    if size > 2_147_483_648 or short_write:
+        expected = OSError if short_write else CorruptRunArtifact
+        with pytest.raises(expected) as error:
+            city_store_module._write_response_stream(path, evaluation)
+        assert type(error.value) is expected
+        assert written <= 2_147_483_648
+    else:
+        city_store_module._write_response_stream(path, evaluation)
+        assert written == 2_147_483_648
+
+
+def test_bounded_io_double_exercises_the_nonwindows_descriptor_branch(tmp_path, monkeypatch):
+    import os
+    from types import SimpleNamespace
+
+    original_open = os.open
+    observed = []
+
+    @contextmanager
+    def synthetic_parent(_path):
+        yield 12345
+
+    def native_open(name, flags, mode=0o777, *, dir_fd=None):
+        assert dir_fd == 12345
+        observed.append(flags)
+        return original_open(tmp_path / str(name), flags, mode)
+
+    monkeypatch.setattr(city_store_module, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(city_store_module, "_hold_parents", synthetic_parent)
+    monkeypatch.setattr(os, "open", native_open)
+    path = tmp_path / "descriptor-document"
+    city_store_module._write_new(path, b"small physical fixture")
+    original_artifact = city_store_module._open_artifact
+    readers = []
+
+    @contextmanager
+    def generated(path_arg, mode, **kwargs):
+        with original_artifact(path_arg, mode, **kwargs) as source:
+            reader = _GeneratedReader(source, 131_073, short=True)
+            readers.append(reader)
+            yield reader
+
+    monkeypatch.setattr(city_store_module, "_open_artifact", generated)
+    data = CityRunStore(tmp_path)._read_document(path, limit=131_073, label="bounded document")
+    assert len(data) == 131_073
+    assert readers[0].max_requested <= 65_536
+    assert len(observed) == 2
 
 
 def specimen() -> tuple[CityRunManifest, CityMobility]:
@@ -990,10 +1364,10 @@ def test_failed_final_publication_is_not_loadable_or_reusable(
     manifest, mobility = specimen()
     store = CityRunStore(tmp_path)
 
-    def fail_publication(source: Path, destination: Path) -> None:
+    def fail_publication(*_args, **_kwargs) -> None:
         raise OSError("injected publication failure")
 
-    monkeypatch.setattr("adlife.city.run_store.os.replace", fail_publication)
+    monkeypatch.setattr(city_store_module, "_publish_manifest", fail_publication)
     with pytest.raises(StorageError):
         store.save(manifest, mobility.pack, mobility.agents)
 
@@ -1078,6 +1452,13 @@ def test_short_write_cannot_publish_a_completed_manifest(
             original_write(path, contents)
 
     monkeypatch.setattr(city_store_module, "_write_new", short_write)
+    if short_file == ".run.json.tmp":
+
+        def short_stage(source, contents):
+            source.write(contents[:-1])
+            source.flush()
+
+        monkeypatch.setattr(city_store_module, "_write_manifest_stage", short_stage)
     with pytest.raises(StorageError):
         store.save(manifest, mobility.pack, mobility.agents)
 
