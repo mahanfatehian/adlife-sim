@@ -39,6 +39,11 @@ The new behavior uses:
 - city run manifest V10;
 - spatial response model `spatial-response-v2`;
 - bounded cognition request/result/input/evaluation contracts version 2;
+- prompt contract `city-cognition-signal-prompt-v2` and result schema
+  `city-cognition-signal-result-v2`;
+- selection policy `city-cognition-selection-v2` and fallback policy
+  `city-cognition-fallback-v2`;
+- deterministic mock policy `city-cognition-mock-signal-v1`;
 - influence policy `city-cognition-influence-v1`.
 
 There is no in-place V9-to-V10 migration. A historical V9 run never gains invented
@@ -142,7 +147,7 @@ The provider request may include only fields already declared as causal scenario
 - advertising skepticism;
 - impulsivity;
 - channel-specific recall encoding;
-- bounded initial rule state;
+- bounded initial rule sentiment and recall, never purchase intention;
 - bounded campaign and creative inputs;
 - channel, time, frequency, and deterministic rule factors.
 
@@ -150,6 +155,13 @@ Display name, age, occupation, biography, and MBTI remain descriptive and are om
 the causal signal prompt. They may continue to appear in the saved-run identity panel and
 in the existing noncausal V9 explanation mode. Treating those labels as causal would
 require a separate empirical and ethics protocol.
+
+V10 therefore separates causal identity from full run provenance. A descriptive-only
+change may change the workbench/run hash and the internal provenance record hash, but it
+does not change the causal request ID, deterministic mock signal, cache identity, or V10
+numeric cognition when the causal inputs and validated terminal result are otherwise the
+same. A fresh external-provider call remains nondeterministic even when its causal request
+is byte-identical; that provider nondeterminism is not attributed to a descriptive field.
 
 ## Bounded result contract
 
@@ -190,8 +202,10 @@ structural responsibilities.
 
 `CityCognitionRequestV2` contains:
 
-- exact schema version and content-addressed request ID;
-- run-input, response-input, scenario, and city hashes;
+- exact schema version, causal request ID, and full request-record hash;
+- the full run-input hash for internal provenance only;
+- one canonical `CityCognitionCausalRequestIdentityV2` containing the response-input,
+  scenario, and city hashes;
 - core-owned baseline response, notice, opportunity, minute-group, agent, campaign, and
   placement bindings;
 - channel, day, minute, and millisecond;
@@ -202,10 +216,15 @@ structural responsibilities.
   in the persona boundary;
 - the exact synthetic disclosure.
 
-Its request ID is the SHA-256 content address of every field except the ID itself. The
-adapter builds a minimized wire projection that retains the request ID and causal facts but
-omits internal identities and all descriptive persona fields. The complete internal request
-is frozen and validated; only the minimized projection crosses the provider boundary.
+The causal request ID is the SHA-256 content address of the canonical causal identity, not
+of the full request record. The identity includes every causal and deterministic binding
+listed above except the full run/workbench provenance hash; it contains no descriptive
+persona field. The request-record hash is the SHA-256 content address of the complete
+internal request except that hash field itself, including the causal request ID and full
+run provenance. The adapter builds a minimized wire projection from the causal identity,
+retains the causal request ID, and omits internal identities, hashes not needed by the
+provider, and all descriptive persona fields. Only that projection crosses the provider
+boundary.
 
 The request does not bind the cumulatively updated cognition state. All requests and budget
 reservations are constructed before provider work begins, so making a later request depend
@@ -218,7 +237,8 @@ later by the core-owned applied response and dual-state update during canonical 
 
 `CityCognitionTerminalRecordV2` contains:
 
-- selection index, request ID/hash, run and scientific input hashes;
+- selection index, causal request ID, full request-record hash, run and scientific input
+  hashes;
 - baseline response, minute-group, notice, opportunity, agent, campaign, placement, and
   time bindings copied from the request;
 - source in `rules`, `mock`, `provider`, `cache`, `fallback`, or `budget-skipped`;
@@ -239,6 +259,14 @@ The source matrix is closed:
 | cache | 0 | absent | complete | validated cached provider vector |
 | fallback | 0-4 | exact non-budget reason | complete | exact neutral vector |
 | budget-skipped | 0 | `budget-skipped` | complete | exact neutral vector |
+
+`city-cognition-fallback-v2` reuses the already public bounded reason vocabulary exactly:
+`endpoint-resolution-refused`, `authentication-refused`, `timeout-exhausted`,
+`rate-limit-exhausted`, `server-error-exhausted`, `response-too-large`,
+`protocol-incompatible`, and `invalid-result`; `budget-skipped` is the only non-runtime
+reason. Repair reasons remain exactly `invalid-json`, `invalid-schema`,
+`request-id-mismatch`, and `unsafe-content`. Their canonical order is the order written
+here. Adding or reinterpreting a reason requires a new policy version.
 
 ### Applied response V2
 
@@ -269,10 +297,17 @@ and both committed states.
 
 ### Input, evaluation, and summary V2
 
-`CityCognitionInputV2` freezes source/effect scope, all complete non-secret provider
-metadata, effective settings, every contract/policy document and hash, funded-response
-limit, hard transport limits, and the canonical reservations. `CityCognitionEvaluationV2`
-contains the ordered terminal records and summary and binds the input/run hashes.
+`CityCognitionCausalContractV2` is the exact run-independent document containing the
+synthetic disclosure plus the prompt contract, result schema, selection policy, fallback
+policy, mock policy, and influence policy documents and their hashes. It contains no run,
+workbench, persona, provider, funding, reservation, or credential field. Its canonical
+SHA-256 is the `causal_contract_sha256` used by request identity and cache binding.
+
+`CityCognitionInputV2` freezes that causal contract, source/effect scope, all complete
+non-secret provider metadata, effective settings, every contract/policy document and hash,
+funded-response limit, hard transport limits, and the canonical reservations.
+`CityCognitionEvaluationV2` contains the ordered terminal records and summary and binds the
+input/run hashes.
 
 The summary contains eligible, selected, funded, budget-skipped, unselected, source,
 fallback, uncertain, safety-neutralized, attempt, usage, byte, record, and stream-hash
@@ -528,18 +563,35 @@ satisfy the V10 signal check. Bounded provider mode requires an explicit success
 compatibility check before run submission. Credential replacement or contract revision
 invalidates the check.
 
+The V2 check uses frozen probe `city-cognition-compatibility-probe-v2`. Its causal profile
+has the sole interest `compatibility-probe`, all six bounded traits set to `0.5`, initial
+sentiment and recall set to `0`, one mobile-feed opportunity at day/minute/millisecond `0`,
+relative price `1`, no prior notice, cap `4`, and campaign text
+`Return the required JSON object for this synthetic compatibility probe.` Opaque internal
+hash fields are SHA-256 of UTF-8
+`"city-cognition-compatibility-probe-v2\0" + field_name`; other internal IDs use the
+fixed values `person-000` for the agent and `compatibility-probe` for run, campaign, and
+placement bindings. Core derives the causal request ID normally and the
+provider must echo it with the exact disclosure. Any otherwise valid closed category vector
+passes—the check tests the protocol, not a preferred answer. Probe output is discarded and
+is never cached, applied, persisted in a run, or exposed as agent evidence. Only the
+process-local sanitized compatibility result is retained.
+
 ## Cache and fallback
 
 V2 cache records use a distinct contract namespace and key that includes:
 
-- canonical minimized request hash;
-- frozen cognition input hash;
+- causal request ID and canonical minimized provider-projection hash;
+- `CityCognitionCausalContractV2.causal_contract_sha256`;
 - provider profile revision and snapshot hashes;
 - effective settings hash;
 - prompt, result-schema, fallback, selection, and influence-policy hashes.
 
 A V1 narrative cache entry can never satisfy a V2 signal request. Corrupt or cross-bound
-cache content is a hard error, not a miss or fallback.
+cache content is a hard error, not a miss or fallback. A valid V2 cached result may be
+revalidated for the same causal request in another run, after which core creates a new
+terminal record bound to that run's full request-record and run hashes. A terminal record
+itself is never reusable across runs.
 
 Expected provider failures—endpoint refusal, authentication refusal, exhausted timeout,
 exhausted rate limit, selected server errors, oversized response, incompatible protocol,
@@ -597,6 +649,14 @@ V10 reuses the established artifact locations with versioned contents:
 - `outputs/response-state.json` — complete final rule and cognition states;
 - `outputs/response-summary.json` — V2 counts and stream/state hashes;
 - `run.json` — V10 manifest, published last.
+
+The response stream has one exact grammar. Groups are ordered by
+`(model_minute, agent_id, campaign_id)`. Inside each group, one
+`SpatialAppliedResponseV2` per baseline response appears in the existing canonical response
+order; each applied record embeds its complete revalidated baseline, so there is no separate
+standalone baseline line. The group's single `SpatialDualStateUpdatedV2` line follows all of
+its applied-response lines. Final-state entries are ordered by `(agent_id, campaign_id)`.
+The cognition terminal stream is ordered by selection index and then causal request ID.
 
 V10 requires all files even when there are no selected provider requests. V1-V8 continue
 to forbid cognition artifacts. V9 requires only V1 cognition contents. V10 requires only
@@ -771,8 +831,9 @@ Important outcomes are:
   identical.
 - Provider output cannot create an event, choose a target, modify a route, or supply a
   purchase probability.
-- Descriptive persona fields remain absent from the causal prompt and cannot change V10
-  numeric science by themselves.
+- Descriptive persona fields remain absent from the causal prompt; changing only those
+  fields preserves the causal request ID, deterministic mock result, and V10 numeric
+  cognition for fixed terminal evidence, while full provenance hashes still change.
 
 ### Failure and atomicity
 
@@ -788,6 +849,11 @@ Important outcomes are:
 ### Artifacts and replay
 
 - V1-V9 golden load/replay behavior is unchanged.
+- Commit small rules, mock, and recorded-provider V10 goldens with exact canonical request,
+  terminal, response-stream, state, and summary hashes plus normalized manifest receipt
+  fields. Run them on every supported OS/Python CI job and never regenerate them
+  automatically. Truthful environment metadata such as `python_version` is checked
+  separately and is not claimed byte-identical across interpreter versions.
 - V9 rejects V2 cognition content and V10 requires it; unknown V11 refuses.
 - Any isolated or internally inconsistent modification to an identity, pre-state, baseline
   proposal, signal, policy, provider binding, response, state, stream, summary, or manifest
