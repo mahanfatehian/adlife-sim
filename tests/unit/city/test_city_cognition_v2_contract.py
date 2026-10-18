@@ -645,3 +645,78 @@ def test_context_canonicalizes_agents_campaigns_interests_and_cartesian_states()
     assert initial.states == context.initial_states
     with pytest.raises(ValidationError):
         initial.model_copy(update={"states": initial.states * 2})
+
+
+@pytest.mark.parametrize("nested_form", ["mapping", "constructed", "tampered"])
+def test_causal_campaign_rejects_split_credential_labels(nested_form: str) -> None:
+    m = module()
+    data = causal_data()["campaign"]
+    creative = data["creative"] | {"message": "arbitrary-opaque-value-123456789"}
+    data = data | {
+        "target_interests": ("api_key",),
+        "creative": creative,
+        "creative_sha256": digest(creative),
+    }
+    if nested_form == "constructed":
+        data["creative"] = m.CityCognitionCreativeSnapshotV1.model_construct(**creative)
+    elif nested_form == "tampered":
+        snapshot = m.CityCognitionCreativeSnapshotV1.model_validate(
+            causal_data()["campaign"]["creative"]
+        )
+        object.__setattr__(snapshot, "message", creative["message"])
+        data["creative"] = snapshot
+    with pytest.raises(ValidationError, match="labelled credential"):
+        m.CityCognitionCausalCampaignV2.model_validate(data)
+
+
+@pytest.mark.parametrize("boundary", ["identity", "request"])
+@pytest.mark.parametrize("nested_form", ["mapping", "constructed", "tampered"])
+def test_rehashed_causal_request_rejects_cross_field_credential_labels(
+    boundary: str,
+    nested_form: str,
+) -> None:
+    m = module()
+    identity = causal_data()
+    identity["agent"] = identity["agent"] | {"interests": ("api_key",)}
+    campaign = identity["campaign"]
+    creative = campaign["creative"] | {"message": "arbitrary-opaque-value-123456789"}
+    identity["campaign"] = campaign | {"creative": creative, "creative_sha256": digest(creative)}
+    # Recompute every changed address independently. Refusal must come from the
+    # split-secret screen, rather than an unrelated stale content address.
+    document = dict(
+        schema_version=2,
+        request_id="cog-" + digest(identity),
+        run_input_sha256="b" * 64,
+        causal_identity=identity,
+    )
+    document["request_record_sha256"] = digest(document)
+    if nested_form == "constructed":
+        identity["agent"] = m.CityCognitionCausalAgentV2.model_construct(**identity["agent"])
+        identity["campaign"] = m.CityCognitionCausalCampaignV2.model_construct(
+            **(
+                identity["campaign"]
+                | {"creative": m.CityCognitionCreativeSnapshotV1.model_construct(**creative)}
+            )
+        )
+        document["causal_identity"] = m.CityCognitionCausalRequestIdentityV2.model_construct(
+            **(
+                identity
+                | {
+                    "baseline": m.CityCognitionBaselineProposalV2.model_validate(
+                        identity["baseline"]
+                    ),
+                    "initial_rule_state": m.CityCognitionInitialRuleStateV2.model_validate(
+                        identity["initial_rule_state"]
+                    ),
+                }
+            )
+        )
+    elif nested_form == "tampered":
+        agent = m.CityCognitionCausalAgentV2.model_validate(causal_data()["agent"])
+        object.__setattr__(agent, "interests", ("api_key",))
+        identity["agent"] = agent
+    with pytest.raises(ValidationError, match="labelled credential"):
+        if boundary == "identity":
+            m.CityCognitionCausalRequestIdentityV2.model_validate(document["causal_identity"])
+        else:
+            m.CityCognitionRequestV2.model_validate(document)

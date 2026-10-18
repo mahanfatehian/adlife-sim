@@ -16,6 +16,7 @@ from adlife.core.domain.city_cognition import (
     CityCognitionSafetyFlag,
     Hash,
     RequestId,
+    _reject_user_labelled_secret_sequence,
     _unique_sorted_text,
 )
 from adlife.core.domain.person import DomainModel
@@ -435,6 +436,18 @@ class CityCognitionCausalCampaignV2(_CityCognitionModelV2):
 
     @model_validator(mode="after")
     def bind_creative(self) -> Self:
+        _reject_user_labelled_secret_sequence(
+            (
+                self.campaign_id,
+                *self.target_interests,
+                self.creative.template_id,
+                self.creative.product_name,
+                self.creative.product_category,
+                self.creative.message,
+                self.creative.call_to_action,
+                self.creative.disclosure,
+            )
+        )
         if self.creative_sha256 != self.creative.fingerprint:
             raise ValueError("campaign creative hash does not match its snapshot")
         return self
@@ -563,6 +576,21 @@ class CityCognitionCausalRequestIdentityV2(_CityCognitionModelV2):
 
     @model_validator(mode="after")
     def bind_causal_snapshots(self) -> Self:
+        _reject_user_labelled_secret_sequence(
+            (
+                self.baseline.placement_id,
+                self.agent.agent_id,
+                *self.agent.interests,
+                self.campaign.campaign_id,
+                *self.campaign.target_interests,
+                self.campaign.creative.template_id,
+                self.campaign.creative.product_name,
+                self.campaign.creative.product_category,
+                self.campaign.creative.message,
+                self.campaign.creative.call_to_action,
+                self.campaign.creative.disclosure,
+            )
+        )
         if self.baseline_sha256 != self.baseline.fingerprint:
             raise ValueError("baseline hash does not match its proposal")
         if self.agent.agent_id != self.baseline.agent_id:
