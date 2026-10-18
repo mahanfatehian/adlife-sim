@@ -677,6 +677,63 @@ def test_invalid_unselected_activity_cannot_hide_behind_selection_caps(
         module.build_city_cognition_requests_v2(context, mobility, baseline)
 
 
+@pytest.mark.parametrize("minute_token", ["off-by-one", "float", "bool"])
+@pytest.mark.parametrize("target", ["selected", "per-agent-unselected", "globally-unselected"])
+def test_every_response_requires_an_exact_matching_mobility_minute(
+    monkeypatch, minute_token, target
+) -> None:
+    context, mobility, baseline = _dense_evidence(
+        agent_count=16 if target == "globally-unselected" else 2
+    )
+    module = _module()
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    response_minutes = [
+        r.model_minute for r in baseline.records if r.event_type == "spatial.response"
+    ]
+    invalid_minute = min(response_minutes) if target == "selected" else max(response_minutes)
+    if target != "selected":
+        assert invalid_minute > max(r.causal_identity.baseline.model_minute for r in requests)
+    else:
+        assert invalid_minute == 0  # False aliases this integer unless exact token type is checked.
+    original = mobility.frame
+
+    def frame(minute):
+        positions = original(minute)
+        if minute != invalid_minute:
+            return positions
+        token = {"off-by-one": minute + 1, "float": float(minute), "bool": bool(minute)}[
+            minute_token
+        ]
+        return tuple(replace(p, minute=token, activity="leisure") for p in positions)
+
+    monkeypatch.setattr(mobility, "frame", frame)
+    with pytest.raises(ValueError, match="minute"):
+        module.build_city_cognition_requests_v2(context, mobility, baseline)
+
+
+def test_request_materialization_retains_validated_mobility_activity(monkeypatch) -> None:
+    context, mobility, baseline = _dense_evidence(agent_count=2)
+    module = _module()
+    expected = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    original = mobility.frame
+    calls = Counter()
+
+    def frame(minute):
+        calls[minute] += 1
+        positions = original(minute)
+        if calls[minute] > 1:
+            return tuple(replace(p, minute=minute + 1, activity="leisure") for p in positions)
+        return positions
+
+    monkeypatch.setattr(mobility, "frame", frame)
+    actual = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    assert actual == expected
+    assert [canonical_json(request) for request in actual] == [
+        canonical_json(request) for request in expected
+    ]
+    assert set(calls.values()) == {1}
+
+
 @pytest.mark.parametrize("mode", ["local", "remote"])
 @pytest.mark.parametrize("tokens", [64, 128, 256])
 def test_effective_settings_cap_only_output_tokens(mode, tokens) -> None:

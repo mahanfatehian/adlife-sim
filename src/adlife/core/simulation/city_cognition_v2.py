@@ -31,7 +31,7 @@ from adlife.core.domain.spatial_response import (
     SpatialResponseProfile,
 )
 from adlife.core.simulation._validation import revalidate_model
-from adlife.core.simulation.city_mobility import CityMobility, CityPosition
+from adlife.core.simulation.city_mobility import Activity, CityMobility, CityPosition
 from adlife.core.simulation.spatial_response import (
     SpatialResponseEvaluation,
     SpatialResponseState,
@@ -216,10 +216,13 @@ def build_city_cognition_requests_v2(
         (record for record in evaluation.records if isinstance(record, SpatialRuleResponse)),
         key=lambda item: (item.model_minute, item.agent_id, item.campaign_id, item.event_id),
     )
-    # Validate the entire admitted baseline before applying either selection cap.
-    # Keep only one mobility frame live; dense evidence may contain 520,800 responses.
+    # Validate every admitted response, including those beyond either selection cap.
+    # Retain <=60 validated facts and one live frame, then materialize requests only
+    # after the entire baseline passes. Never re-fetch unbound activity evidence.
     frame_minute = -1
     positions: dict[str, CityPosition] = {}
+    selected: list[tuple[SpatialRuleResponse, SpatialStateUpdated, Activity]] = []
+    counts: Counter[str] = Counter()
     for response in responses:
         updates = updates_by_cause[response.event_id]
         if len(updates) != 1:
@@ -242,26 +245,21 @@ def build_city_cognition_requests_v2(
         position = positions.get(response.agent_id)
         if position is None:
             raise ValueError("baseline response has no mobility position")
+        if type(position.minute) is not int or position.minute != response.model_minute:
+            raise ValueError("baseline response mobility position minute is inconsistent")
         if position.activity not in {"home", "commute", "work", "leisure"}:
             raise ValueError("baseline response mobility activity is invalid")
         _validate_response_assumptions(
             response, agents[response.agent_id], campaigns[response.campaign_id]
         )
-    selected = []
-    counts: Counter[str] = Counter()
-    for response in responses:
-        if counts[response.agent_id] >= contract.selection_policy.selected_requests_per_agent:
-            continue
-        selected.append(response)
-        counts[response.agent_id] += 1
-        if len(selected) == contract.selection_policy.selected_requests_per_run:
-            break
+        if (
+            counts[response.agent_id] < contract.selection_policy.selected_requests_per_agent
+            and len(selected) < contract.selection_policy.selected_requests_per_run
+        ):
+            selected.append((response, update, position.activity))
+            counts[response.agent_id] += 1
     requests: list[CityCognitionRequestV2] = []
-    for response in selected:
-        update = updates_by_cause[response.event_id][0]
-        position = next(
-            p for p in mobility.frame(response.model_minute) if p.agent_id == response.agent_id
-        )
+    for response, update, activity in selected:
         factors = {
             field: getattr(response, field)
             for field in CityCognitionRuleFactorsV2.model_fields
@@ -278,7 +276,7 @@ def build_city_cognition_requests_v2(
             campaign_id=response.campaign_id,
             placement_id=response.placement_id,
             channel=response.channel,
-            activity=position.activity,
+            activity=activity,
             day_index=response.day_index,
             model_minute=response.model_minute,
             millisecond_within_minute=response.millisecond_within_minute,
