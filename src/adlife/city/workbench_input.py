@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from adlife.core.domain.city import TravelDirection, _validate_public_metadata
+from adlife.core.domain.city_cognition_v2 import CityCognitionCausalContractV2
 from adlife.core.domain.identifiers import (
     WINDOWS_RESERVED_RUN_IDS,
     validate_portable_run_identifier,
@@ -586,6 +587,175 @@ class NormalizedWorkbenchCognitionV3(DomainModel):
         return self
 
 
+class WorkbenchCognitionDraftV4(DomainModel):
+    """The browser chooses only scope, source, immutable profile, and whole requests."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    effect_scope: Literal["bounded-signals-v1"]
+    mode: Literal["rules", "mock", "local", "remote"]
+    provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
+    provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
+    funded_response_limit: Literal[10, 20, 40, 60]
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def bounded_browser_selection(
+        cls, value: object, handler: ModelWrapValidatorHandler[Self]
+    ) -> Self:
+        _reject_structural_secrets(value)
+        if isinstance(value, Mapping) and "funded_response_limit" not in value:
+            value = {
+                **value,
+                "funded_response_limit": 60 if value.get("mode") in ("rules", "mock") else 20,
+            }
+        return handler(value)
+
+    @field_validator("provider_profile_id")
+    @classmethod
+    def safe_provider_profile_id(cls, value: str | None) -> str | None:
+        return _safe_provider_profile_id(value)
+
+    @field_validator("funded_response_limit", mode="before")
+    @classmethod
+    def exact_funded_limit(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("funded_response_limit must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_selection(self) -> Self:
+        if self.mode in {"rules", "mock"}:
+            if (
+                self.provider_profile_id is not None
+                or self.provider_revision_sha256 is not None
+                or self.funded_response_limit != 60
+            ):
+                raise ValueError("offline cognition requires no profile and all selected responses")
+        elif self.provider_profile_id is None or self.provider_revision_sha256 is None:
+            raise ValueError("provider cognition requires an exact profile revision")
+        return self
+
+
+class NormalizedWorkbenchCognitionV4(DomainModel):
+    """Complete server-derived bounded-signal authority, independent of V3 policy."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    effect_scope: Literal["bounded-signals-v1"]
+    mode: Literal["rules", "mock", "local", "remote"]
+    provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
+    provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
+    funded_response_limit: Literal[10, 20, 40, 60]
+    causal_contract: CityCognitionCausalContractV2
+    causal_contract_sha256: Annotated[str, Field(pattern=_SHA256_PATTERN)]
+    request_schema_version: Literal[2]
+    selected_requests_per_agent: Literal[4]
+    selected_requests_per_run: Literal[60]
+    concurrency_limit: Literal[4]
+    max_request_bytes: Literal[8192]
+    max_terminal_record_bytes: Literal[8192]
+    max_wire_response_bytes: Literal[1048576]
+    max_output_tokens_per_attempt: Literal[128]
+    reservation_tokens_per_request: Literal[512]
+    initial_attempts: Literal[1]
+    transient_retries: Literal[2]
+    repair_attempts: Literal[1]
+    attempt_timeout_seconds: Literal[30]
+    aggregate_deadline_seconds: Literal[180]
+    aggregate_output_token_ceiling: int = Field(ge=0, le=30_720)
+    response_model: Literal["spatial-response-v2"]
+    rule_state_noninterference: Literal[True]
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def no_structural_secrets(cls, value: object, handler: ModelWrapValidatorHandler[Self]) -> Self:
+        _reject_structural_secrets(value)
+        return handler(value)
+
+    @field_validator("provider_profile_id")
+    @classmethod
+    def safe_provider_profile_id(cls, value: str | None) -> str | None:
+        return _safe_provider_profile_id(value)
+
+    @field_validator(
+        "funded_response_limit",
+        "request_schema_version",
+        "selected_requests_per_agent",
+        "selected_requests_per_run",
+        "concurrency_limit",
+        "max_request_bytes",
+        "max_terminal_record_bytes",
+        "max_wire_response_bytes",
+        "max_output_tokens_per_attempt",
+        "reservation_tokens_per_request",
+        "initial_attempts",
+        "transient_retries",
+        "repair_attempts",
+        "attempt_timeout_seconds",
+        "aggregate_deadline_seconds",
+        "aggregate_output_token_ceiling",
+        mode="before",
+    )
+    @classmethod
+    def exact_integer_fields(cls, value: object, info: ValidationInfo) -> object:
+        if type(value) is not int:
+            raise ValueError(f"{info.field_name} must be an integer")
+        return value
+
+    @field_validator("rule_state_noninterference", mode="before")
+    @classmethod
+    def exact_noninterference(cls, value: object) -> object:
+        if value is not True:
+            raise ValueError("rule-state noninterference must be true")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_frozen_authority(self) -> Self:
+        WorkbenchCognitionDraftV4(
+            effect_scope=self.effect_scope,
+            mode=self.mode,
+            provider_profile_id=self.provider_profile_id,
+            provider_revision_sha256=self.provider_revision_sha256,
+            funded_response_limit=self.funded_response_limit,
+        )
+        # Reparse nested instances as well as decoded JSON: constructed instances
+        # cannot smuggle a different policy past their canonical hash checks.
+        contract = CityCognitionCausalContractV2.model_validate_json(
+            canonical_json(self.causal_contract)
+        )
+        if contract.fingerprint != self.causal_contract_sha256:
+            raise ValueError("causal contract hash does not match the frozen document")
+        ceiling = 0 if self.mode in {"rules", "mock"} else self.funded_response_limit * 512
+        if self.aggregate_output_token_ceiling != ceiling:
+            raise ValueError("aggregate output ceiling does not match the funded response limit")
+        return self
+
+
+class WorkbenchRunDraftV4(DomainModel):
+    """Fictional population and explicitly bounded synthetic cognition selection."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    schema_version: Literal[4] = 4
+    city_id: str = Field(pattern=_ID_PATTERN)
+    scenario: WorkbenchScenarioDraft
+    population: WorkbenchPopulationDraftV2
+    settings: WorkbenchRunSettings
+    cognition: WorkbenchCognitionDraftV4
+
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
+    @model_validator(mode="after")
+    def exact_population_count(self) -> Self:
+        if sum(item.count for item in self.population.personas) != self.settings.agent_count:
+            raise ValueError("workbench persona count total must equal settings agent count")
+        return self
+
+
 class WorkbenchRunDraft(DomainModel):
     schema_version: Literal[1] = 1
     city_id: str = Field(pattern=_ID_PATTERN)
@@ -764,6 +934,30 @@ class NormalizedWorkbenchRunDraftV3(DomainModel):
         return self
 
 
+class NormalizedWorkbenchRunDraftV4(DomainModel):
+    """Canonical scientific draft with the complete frozen V2 causal contract."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    schema_version: Literal[4] = 4
+    city_id: str = Field(pattern=_ID_PATTERN)
+    scenario: NormalizedWorkbenchScenarioDraft
+    population: NormalizedWorkbenchPopulationV2
+    settings: WorkbenchRunSettings
+    cognition: NormalizedWorkbenchCognitionV4
+
+    @field_validator("city_id")
+    @classmethod
+    def safe_city_id(cls, value: str) -> str:
+        return _safe_identifier(value)
+
+    @model_validator(mode="after")
+    def exact_population_count(self) -> Self:
+        if len(self.population.assignments) != self.settings.agent_count:
+            raise ValueError("workbench assignment count must equal settings agent count")
+        return self
+
+
 class CreativeTemplate(DomainModel):
     template_id: str = Field(pattern=_ID_PATTERN)
     template_version: Literal[1] = 1
@@ -871,8 +1065,34 @@ class WorkbenchRunInputV3(DomainModel):
         return sha256(canonical_json(self).encode("utf-8")).hexdigest()
 
 
-WorkbenchRunDraftDocument: TypeAlias = WorkbenchRunDraft | WorkbenchRunDraftV2 | WorkbenchRunDraftV3
-WorkbenchRunInputDocument: TypeAlias = WorkbenchRunInput | WorkbenchRunInputV2 | WorkbenchRunInputV3
+class WorkbenchRunInputV4(DomainModel):
+    """Frozen schema-4 input; providers affect only the separate cognition track."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    schema_version: Literal[4] = 4
+    draft: NormalizedWorkbenchRunDraftV4
+    creative_template: CreativeTemplate
+
+    @model_validator(mode="after")
+    def creative_matches_draft(self) -> Self:
+        if self.creative_template.template_id != self.draft.scenario.campaign.creative_template_id:
+            raise ValueError("creative template does not match workbench campaign")
+        if len(canonical_json(self).encode("utf-8")) > MAX_WORKBENCH_INPUT_BYTES:
+            raise ValueError("workbench input exceeds its canonical size limit")
+        return self
+
+    @property
+    def fingerprint(self) -> str:
+        return sha256(canonical_json(self).encode("utf-8")).hexdigest()
+
+
+WorkbenchRunDraftDocument: TypeAlias = (
+    WorkbenchRunDraft | WorkbenchRunDraftV2 | WorkbenchRunDraftV3 | WorkbenchRunDraftV4
+)
+WorkbenchRunInputDocument: TypeAlias = (
+    WorkbenchRunInput | WorkbenchRunInputV2 | WorkbenchRunInputV3 | WorkbenchRunInputV4
+)
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -904,9 +1124,9 @@ def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInputDo
     if not isinstance(payload, dict):
         raise ValueError("workbench input must be a JSON object")
     version = payload.get("schema_version")
-    if type(version) is not int or version not in (1, 2, 3):
+    if type(version) is not int or version not in (1, 2, 3, 4):
         raise ValueError("unsupported workbench input schema version")
-    if version in (2, 3):
+    if version in (2, 3, 4):
         _reject_structural_secrets(payload)
     normalized = json.dumps(
         payload,
@@ -918,7 +1138,9 @@ def parse_workbench_run_input_json(document: str | bytes) -> WorkbenchRunInputDo
         return WorkbenchRunInput.model_validate_json(normalized)
     if version == 2:
         return WorkbenchRunInputV2.model_validate_json(normalized)
-    return WorkbenchRunInputV3.model_validate_json(normalized)
+    if version == 3:
+        return WorkbenchRunInputV3.model_validate_json(normalized)
+    return WorkbenchRunInputV4.model_validate_json(normalized)
 
 
 __all__ = [
@@ -928,13 +1150,16 @@ __all__ = [
     "NormalizedPhonePlacementDraft",
     "NormalizedRoadsidePlacementDraft",
     "NormalizedWorkbenchCognitionV3",
+    "NormalizedWorkbenchCognitionV4",
     "NormalizedWorkbenchPopulationV2",
     "NormalizedWorkbenchRunDraft",
     "NormalizedWorkbenchRunDraftV2",
     "NormalizedWorkbenchRunDraftV3",
+    "NormalizedWorkbenchRunDraftV4",
     "NormalizedWorkbenchScenarioDraft",
     "WorkbenchCampaignDraft",
     "WorkbenchCognitionDraftV3",
+    "WorkbenchCognitionDraftV4",
     "WorkbenchCohortDraft",
     "WorkbenchDailyWindow",
     "WorkbenchInitialState",
@@ -947,10 +1172,12 @@ __all__ = [
     "WorkbenchRunDraftDocument",
     "WorkbenchRunDraftV2",
     "WorkbenchRunDraftV3",
+    "WorkbenchRunDraftV4",
     "WorkbenchRunInput",
     "WorkbenchRunInputDocument",
     "WorkbenchRunInputV2",
     "WorkbenchRunInputV3",
+    "WorkbenchRunInputV4",
     "WorkbenchRunSettings",
     "WorkbenchScenarioDraft",
     "materialize_workbench_population",

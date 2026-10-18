@@ -24,6 +24,7 @@ from adlife.city.workbench_catalog import (
 from adlife.city.workbench_input import (
     CreativeTemplate,
     NormalizedWorkbenchCognitionV3,
+    NormalizedWorkbenchCognitionV4,
     NormalizedWorkbenchPopulationV2,
     NormalizedWorkbenchScenarioDraft,
     WorkbenchCohortDraft,
@@ -31,6 +32,7 @@ from adlife.city.workbench_input import (
     WorkbenchRunDraftDocument,
     WorkbenchRunDraftV2,
     WorkbenchRunDraftV3,
+    WorkbenchRunDraftV4,
     WorkbenchRunInput,
     WorkbenchRunInputV2,
     WorkbenchRunInputV3,
@@ -129,7 +131,7 @@ def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDra
     except ValueError:
         raise WorkbenchDraftTransportError("request") from None
     version = payload.get("schema_version", 1)
-    if type(version) is not int or version not in (1, 2, 3):
+    if type(version) is not int or version not in (1, 2, 3, 4):
         raise WorkbenchDraftTransportError("schema_version")
     settings = payload.get("settings")
     if not isinstance(settings, Mapping) or "seed" not in settings:
@@ -155,6 +157,8 @@ def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDra
         return WorkbenchRunDraftV2.model_validate_json(encoded)
     if version == 3:
         return WorkbenchRunDraftV3.model_validate_json(encoded)
+    if version == 4:
+        return WorkbenchRunDraftV4.model_validate_json(encoded)
     return WorkbenchRunDraft.model_validate_json(encoded)
 
 
@@ -442,8 +446,55 @@ class WorkbenchRunInputViewV3(DomainModel):
         return self
 
 
+class WorkbenchRunInputViewV4(DomainModel):
+    """Exact V10 projection contract; stored evidence admission is enabled separately."""
+
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    run_schema_version: Literal[10] = 10
+    workbench_input_schema_version: Literal[4] = 4
+    manifest_sha256: str = Field(pattern=_HASH_PATTERN)
+    workbench_input_sha256: str = Field(pattern=_HASH_PATTERN)
+    city_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario_sha256: str = Field(pattern=_HASH_PATTERN)
+    creative_sha256: str = Field(pattern=_HASH_PATTERN)
+    scenario: NormalizedWorkbenchScenarioDraft
+    population: NormalizedWorkbenchPopulationV2
+    settings: WorkbenchRunSettingsView
+    cognition: NormalizedWorkbenchCognitionV4
+    creative_template: CreativeTemplate
+
+    @field_validator("run_schema_version", mode="before")
+    @classmethod
+    def exact_run_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 10:
+            raise ValueError("run_schema_version must be integer 10")
+        return value
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_input_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 4:
+            raise ValueError("workbench_input_schema_version must be integer 4")
+        return value
+
+    @model_validator(mode="after")
+    def internally_consistent(self) -> Self:
+        if self.run_id != self.settings.run_id:
+            raise ValueError("workbench input view run identifier is inconsistent")
+        if self.creative_sha256 != self.creative_template.fingerprint:
+            raise ValueError("workbench input view creative hash is inconsistent")
+        if self.scenario.campaign.creative_template_id != self.creative_template.template_id:
+            raise ValueError("workbench input view creative template is inconsistent")
+        if sum(persona.count for persona in self.population.personas) != self.settings.agent_count:
+            raise ValueError("workbench input view population count is inconsistent")
+        return self
+
+
 WorkbenchRunInputViewDocument: TypeAlias = (
-    WorkbenchRunInputView | WorkbenchRunInputViewV2 | WorkbenchRunInputViewV3
+    WorkbenchRunInputView
+    | WorkbenchRunInputViewV2
+    | WorkbenchRunInputViewV3
+    | WorkbenchRunInputViewV4
 )
 
 
@@ -565,6 +616,7 @@ __all__ = [
     "WorkbenchRunInputViewDocument",
     "WorkbenchRunInputViewV2",
     "WorkbenchRunInputViewV3",
+    "WorkbenchRunInputViewV4",
     "WorkbenchRunSettingsView",
     "build_workbench_city_catalog_row",
     "build_workbench_city_detail",

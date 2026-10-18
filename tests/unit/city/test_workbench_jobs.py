@@ -22,6 +22,37 @@ from tests.unit.city.test_city_run_preparation import _validated
 TERMINAL = {"completed", "failed", "cancelled"}
 
 
+def test_schema4_submission_is_disabled_before_any_side_effect(tmp_path, monkeypatch):
+    from tests.unit.city.test_workbench_transport_v4 import compiled_v4
+
+    jobs, runs = _modules()
+    validated = compiled_v4(mode="local")
+    repository = runs.WorkbenchRunRepository(prepare_workbench_workspace(tmp_path / "state"))
+    manager = jobs.CityJobManager(repository)
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("schema-4 submission touched a side-effect boundary")
+
+    monkeypatch.setattr(manager._operations, "begin_job", forbidden)
+    monkeypatch.setattr(repository, "preflight_cognition", forbidden)
+    monkeypatch.setattr(repository._credential_store, "resolve", forbidden)
+    monkeypatch.setattr(repository, "ensure_available", forbidden)
+    monkeypatch.setattr(manager, "_new_job_id_locked", forbidden)
+    monkeypatch.setattr(manager._executor, "submit", forbidden)
+    try:
+        with pytest.raises(jobs.WorkbenchJobSubmissionError) as error:
+            manager.submit(validated)
+        assert str(error.value) == "Schema-4 workbench execution is not available."
+        assert manager.active_job() is None
+        assert manager.recent_jobs() == ()
+        assert manager._operation_leases == {}
+        assert manager._cognition_operations == {}
+        assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+    finally:
+        manager.close()
+
+
 def _modules():
     return (
         importlib.import_module("adlife.city.workbench_jobs"),

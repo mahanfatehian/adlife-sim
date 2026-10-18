@@ -15,9 +15,11 @@ from adlife.city.workbench_input import (
     NormalizedPhonePlacementDraft,
     NormalizedRoadsidePlacementDraft,
     NormalizedWorkbenchCognitionV3,
+    NormalizedWorkbenchCognitionV4,
     NormalizedWorkbenchRunDraft,
     NormalizedWorkbenchRunDraftV2,
     NormalizedWorkbenchRunDraftV3,
+    NormalizedWorkbenchRunDraftV4,
     NormalizedWorkbenchScenarioDraft,
     WorkbenchCohortDraft,
     WorkbenchDailyWindow,
@@ -25,13 +27,16 @@ from adlife.city.workbench_input import (
     WorkbenchRunDraftDocument,
     WorkbenchRunDraftV2,
     WorkbenchRunDraftV3,
+    WorkbenchRunDraftV4,
     WorkbenchRunInput,
     WorkbenchRunInputDocument,
     WorkbenchRunInputV2,
     WorkbenchRunInputV3,
+    WorkbenchRunInputV4,
     materialize_workbench_population,
 )
 from adlife.core.domain.city import CityPackV2
+from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
     PhoneOpportunityPlacement,
@@ -99,7 +104,12 @@ def _absolute_windows(
 
 def _normalize_draft(
     draft: WorkbenchRunDraftDocument,
-) -> NormalizedWorkbenchRunDraft | NormalizedWorkbenchRunDraftV2 | NormalizedWorkbenchRunDraftV3:
+) -> (
+    NormalizedWorkbenchRunDraft
+    | NormalizedWorkbenchRunDraftV2
+    | NormalizedWorkbenchRunDraftV3
+    | NormalizedWorkbenchRunDraftV4
+):
     phone = draft.scenario.phone
     normalized_phone = (
         None
@@ -141,6 +151,45 @@ def _normalize_draft(
         phone=normalized_phone,
         roadside=normalized_roadside,
     )
+    if isinstance(draft, WorkbenchRunDraftV4):
+        selection = draft.cognition
+        contract = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
+        return NormalizedWorkbenchRunDraftV4(
+            city_id=draft.city_id,
+            scenario=scenario,
+            population=materialize_workbench_population(
+                draft.population, agent_count=draft.settings.agent_count
+            ),
+            settings=draft.settings,
+            cognition=NormalizedWorkbenchCognitionV4(
+                effect_scope=selection.effect_scope,
+                mode=selection.mode,
+                provider_profile_id=selection.provider_profile_id,
+                provider_revision_sha256=selection.provider_revision_sha256,
+                funded_response_limit=selection.funded_response_limit,
+                causal_contract=contract,
+                causal_contract_sha256=contract.fingerprint,
+                request_schema_version=2,
+                selected_requests_per_agent=4,
+                selected_requests_per_run=60,
+                concurrency_limit=4,
+                max_request_bytes=8192,
+                max_terminal_record_bytes=8192,
+                max_wire_response_bytes=1_048_576,
+                max_output_tokens_per_attempt=128,
+                reservation_tokens_per_request=512,
+                initial_attempts=1,
+                transient_retries=2,
+                repair_attempts=1,
+                attempt_timeout_seconds=30,
+                aggregate_deadline_seconds=180,
+                aggregate_output_token_ceiling=0
+                if selection.mode in {"rules", "mock"}
+                else selection.funded_response_limit * 512,
+                response_model="spatial-response-v2",
+                rule_state_noninterference=True,
+            ),
+        )
     if isinstance(draft, WorkbenchRunDraftV3):
         cognition = draft.cognition
         return NormalizedWorkbenchRunDraftV3(
@@ -262,7 +311,9 @@ def construct_workbench_run(
     selected_pack: CityPackV2 | None = None,
 ) -> ValidatedWorkbenchRun:
     """Construct complete deterministic inputs without network or filesystem writes."""
-    if not isinstance(draft, (WorkbenchRunDraft, WorkbenchRunDraftV2, WorkbenchRunDraftV3)):
+    if not isinstance(
+        draft, (WorkbenchRunDraft, WorkbenchRunDraftV2, WorkbenchRunDraftV3, WorkbenchRunDraftV4)
+    ):
         raise TypeError("draft must be a supported WorkbenchRunDraft")
     if selected_pack is not None and not isinstance(selected_pack, CityPackV2):
         raise TypeError("selected_pack must be a CityPackV2")
@@ -284,9 +335,15 @@ def construct_workbench_run(
     assumptions: dict[str, WorkbenchCohortDraft]
     if isinstance(
         normalized,
-        (NormalizedWorkbenchRunDraftV2, NormalizedWorkbenchRunDraftV3),
+        (
+            NormalizedWorkbenchRunDraftV2,
+            NormalizedWorkbenchRunDraftV3,
+            NormalizedWorkbenchRunDraftV4,
+        ),
     ):
-        if isinstance(normalized, NormalizedWorkbenchRunDraftV3):
+        if isinstance(normalized, NormalizedWorkbenchRunDraftV4):
+            workbench_input = WorkbenchRunInputV4(draft=normalized, creative_template=creative)
+        elif isinstance(normalized, NormalizedWorkbenchRunDraftV3):
             workbench_input = WorkbenchRunInputV3(draft=normalized, creative_template=creative)
         else:
             workbench_input = WorkbenchRunInputV2(draft=normalized, creative_template=creative)

@@ -368,7 +368,7 @@ def test_http_dispatch_preserves_exact_version_and_maximum_seed(version: int) ->
     assert payload == original
 
 
-@pytest.mark.parametrize("version", [True, False, 1.0, 2.0, 3.0, "3", None, 0, 4])
+@pytest.mark.parametrize("version", [True, False, 1.0, 2.0, 3.0, "3", None, 0, 5])
 def test_http_dispatch_refuses_noninteger_and_future_versions(version: object) -> None:
     payload = draft_v3_data()
     payload["schema_version"] = version

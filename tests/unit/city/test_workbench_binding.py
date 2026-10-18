@@ -128,7 +128,7 @@ def test_schema2_binding_revalidates_frozen_persona_assignments(mutation: str) -
 @pytest.mark.parametrize("schema", [1, 2])
 def test_binding_refuses_future_input_schema(schema: int) -> None:
     compiled = construct_workbench_run(_draft() if schema == 1 else persona_draft())
-    changed = unchecked_copy(compiled.workbench_input, schema_version=4)
+    changed = unchecked_copy(compiled.workbench_input, schema_version=5)
     with pytest.raises(ValueError, match="schema version"):
         bind(compiled, workbench_input=changed)
 
@@ -207,7 +207,7 @@ def test_cognition_context_requires_exact_schema3_input_and_revalidates_both_mod
                 field: getattr(compiled.workbench_input, field)
                 for field in type(compiled.workbench_input).model_fields
             },
-            "schema_version": 4,
+            "schema_version": 5,
         }
     )
     with pytest.raises(ValueError, match="schema version"):

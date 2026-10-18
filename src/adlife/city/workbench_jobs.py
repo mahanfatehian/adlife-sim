@@ -16,7 +16,7 @@ from pydantic import Field, field_validator, model_validator
 from adlife.adapters.cognition.city_service import CityCognitionCancellation
 from adlife.city.run_store import StoredCityRun
 from adlife.city.runs import PreparedCityRun, PreparedCityScientificRun
-from adlife.city.workbench_input import WorkbenchRunInputV3
+from adlife.city.workbench_input import WorkbenchRunInputV3, WorkbenchRunInputV4
 from adlife.city.workbench_providers import (
     WorkbenchOperationLease,
     WorkbenchOperationState,
@@ -420,6 +420,8 @@ class CityJobManager:
         """Preflight and schedule one frozen request without waiting for evaluation."""
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
+        if isinstance(validated.workbench_input, WorkbenchRunInputV4):
+            raise WorkbenchJobSubmissionError("Schema-4 workbench execution is not available.")
         run_id = validated.workbench_input.draft.settings.run_id
         draft = validated.workbench_input.draft
         cognition = (
