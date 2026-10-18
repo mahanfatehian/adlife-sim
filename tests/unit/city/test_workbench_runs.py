@@ -9,19 +9,35 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from adlife.city.run_store import StoredCityRun
 from adlife.city.runs import create_city_run
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
     prepare_workbench_workspace,
 )
+from adlife.core.domain.city_run import CityRunManifestV10
 from adlife.core.ports.run_store import DuplicateRun, UnsafeRunLocation
+from adlife.core.simulation.city_mobility import CityMobility
 from tests.unit.city.test_city_run_preparation import _validated
+from tests.unit.city.test_city_run_v10_contract import _manifest_v10
 from tests.unit.city.test_workbench_validation import persona_draft
 
 
 def _module():
     return importlib.import_module("adlife.city.workbench_runs")
+
+
+def test_summary_explicitly_refuses_v10_until_workbench_runtime_support(tmp_path: Path) -> None:
+    pack = _validated().pack
+    stored = StoredCityRun(
+        manifest=CityRunManifestV10.model_validate_json(json.dumps(_manifest_v10())),
+        pack=pack,
+        mobility=CityMobility(pack, seed=42, agent_count=2, days=1),
+        directory=tmp_path / "city-test",
+    )
+    with pytest.raises(ValueError, match="V10 workbench runtime support is not available yet"):
+        _module()._summary(stored)
 
 
 def test_repository_schema2_preparation_does_not_publish(tmp_path: Path) -> None:

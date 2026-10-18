@@ -227,6 +227,8 @@ class WorkbenchRunPage(DomainModel):
 
 def _summary(stored: StoredCityRun) -> WorkbenchRunSummary:
     manifest = stored.manifest
+    if manifest.schema_version == 10:
+        raise ValueError("V10 workbench runtime support is not available yet")
     scenario = stored.spatial_scenario
     campaign_ids = (
         ()
