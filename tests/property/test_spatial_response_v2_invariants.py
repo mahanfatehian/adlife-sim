@@ -519,11 +519,13 @@ def _structural_capacity_high_water_documents():
         attention_seed=2**63 - 1,
         stream_sha256="e" * 64,
         stream_bytes=module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2,
-        state_document_sha256="f" * 64,
+        state_document_sha256=sha256((canonical_json(combined) + "\n").encode()).hexdigest(),
         state_document_bytes=module.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2,
-        rule_state_document_sha256=sha256(canonical_json(rule_document).encode()).hexdigest(),
+        rule_state_document_sha256=sha256(
+            (canonical_json(rule_document) + "\n").encode()
+        ).hexdigest(),
         cognition_state_document_sha256=sha256(
-            canonical_json(cognition_document).encode()
+            (canonical_json(cognition_document) + "\n").encode()
         ).hexdigest(),
         counts=counts,
     )
@@ -588,7 +590,9 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     assert signals.summary.terminal_stream_bytes == 153_530
     assert len((canonical_json(summary) + "\n").encode()) == 1314
     assert len(canonical_json(signals.summary).encode()) <= 16_384
-    assert all(len(line) <= 8192 for line in cognition.city_cognition_terminal_lines_v2(signals))
+    assert all(
+        len(line) - 1 <= 8192 for line in cognition.city_cognition_terminal_lines_v2(signals)
+    )
     assert module.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2 == 8_388_608
     assert module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2 == 131_072
     assert frozen.aggregate_output_token_ceiling == 0
@@ -626,10 +630,12 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     assert module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 == 2_147_483_648
     applied_bytes = 60 * selected_size + (eligible - 60) * unselected_size
     assert applied_bytes == 1_189_507_680
-    admitted_groups = (module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 - applied_bytes) // dual_size
-    assert admitted_groups == 444_742 < structural_group_ceiling
-    admitted_bytes = applied_bytes + admitted_groups * dual_size
-    next_group_bytes = applied_bytes + (admitted_groups + 1) * dual_size
+    stream_fitting_groups = (
+        module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 - applied_bytes
+    ) // dual_size
+    assert stream_fitting_groups == 444_742 < structural_group_ceiling
+    admitted_bytes = applied_bytes + stream_fitting_groups * dual_size
+    next_group_bytes = applied_bytes + (stream_fitting_groups + 1) * dual_size
     assert admitted_bytes == 2_147_481_948
     assert module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 - admitted_bytes == 1700
     assert next_group_bytes == 2_147_484_102
@@ -643,18 +649,30 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     terminal_sizes = tuple(map(len, cognition.city_cognition_terminal_lines_v2(terminals)))
     assert len(terminal_sizes) == 60
     assert (min(terminal_sizes), max(terminal_sizes), sum(terminal_sizes)) == (3090, 3091, 185_450)
-    assert max(terminal_sizes) <= 8192 and sum(terminal_sizes) <= 1_048_576
+    record_sizes = tuple(size - 1 for size in terminal_sizes)
+    assert record_sizes == tuple(
+        len(canonical_json(record).encode()) for record in terminals.records
+    )
+    assert (min(record_sizes), max(record_sizes), sum(record_sizes)) == (3089, 3090, 185_390)
+    assert max(record_sizes) <= 8192 and sum(terminal_sizes) <= 1_048_576
     assert len(canonical_json(terminals.summary).encode()) == 1350 < 16_384
     state_sizes = tuple(
         len(canonical_json(doc).encode()) + 1 for doc in (rule_doc, cognition_doc, combined_doc)
     )
     assert state_sizes == (195_067, 171_072, 366_633)
     assert max(state_sizes) < module.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2
+    assert len(canonical_json(high_summary).encode()) == 1351
     assert (
-        len(canonical_json(high_summary).encode())
-        == 1351
+        len((canonical_json(high_summary) + "\n").encode())
+        == 1352
         < module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
     )
+    for document, fingerprint in (
+        (rule_doc, high_summary.rule_state_document_sha256),
+        (cognition_doc, high_summary.cognition_state_document_sha256),
+        (combined_doc, high_summary.state_document_sha256),
+    ):
+        assert fingerprint == sha256((canonical_json(document) + "\n").encode()).hexdigest()
     # Exercise the same inclusive counter with real small canonical payloads;
     # the analytical independent-max witness above needs no gigabyte allocation.
     small_baseline, small_input, small_signals = _evidence(mode="rules")
