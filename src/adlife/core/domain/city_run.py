@@ -20,6 +20,7 @@ from adlife.core.domain.city_cognition import (
     Hash,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2,
     CityCognitionCoverageCountsV2,
     CityCognitionEvaluationV2,
     CityCognitionInputV2,
@@ -821,9 +822,14 @@ class CityCognitionManifestReceiptV2(DomainModel):
 
     @model_validator(mode="after")
     def complete_receipt(self) -> Self:
+        if any(
+            getattr(self, field) != expected
+            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2
+        ):
+            raise ValueError("city cognition receipt policies do not match the frozen V2 contract")
         summary_fields = set(CityCognitionSummaryV2.model_fields) - {"schema_version", "disclosure"}
         receipt_fields = self.model_dump(mode="json")
-        CityCognitionSummaryV2.model_validate_json(
+        summary = CityCognitionSummaryV2.model_validate_json(
             canonical_json(
                 {name: receipt_fields[name] for name in summary_fields}
                 | {
@@ -832,7 +838,18 @@ class CityCognitionManifestReceiptV2(DomainModel):
                 }
             )
         )
+        if (
+            self.summary_sha256
+            != sha256((canonical_json(summary) + "\n").encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("city cognition receipt summary hash does not match its summary")
         offline = self.mode in {"rules", "mock"}
+        if (
+            offline
+            and self.effective_settings_sha256
+            != sha256(canonical_json({"effective_settings": None}).encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("offline cognition receipt settings must match the null-settings hash")
         if (self.provider_profile_snapshot_sha256 is None) != offline or (
             self.provider_revision_sha256 is None
         ) != offline:
@@ -846,6 +863,19 @@ class CityCognitionManifestReceiptV2(DomainModel):
         ):
             raise ValueError("receipt funding does not match the canonical prefix")
         if self.terminal_record_count == 0:
+            # Summary cardinality proves zero selections and therefore no reservations.
+            empty_allocation_sha256 = sha256(
+                canonical_json(
+                    {
+                        "aggregate_output_token_ceiling": (
+                            0 if offline else 512 * self.funded_response_limit
+                        ),
+                        "reservations": [],
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+            if self.budget_allocation_sha256 != empty_allocation_sha256:
+                raise ValueError("empty cognition receipt budget allocation hash does not match")
             if self.terminal_stream_bytes or self.terminal_stream_sha256 != sha256(b"").hexdigest():
                 raise ValueError("empty cognition receipt requires empty stream bytes")
         elif self.terminal_stream_bytes == 0:

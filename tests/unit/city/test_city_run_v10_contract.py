@@ -387,3 +387,151 @@ def test_receipt_preserves_frozen_funding_limit_and_cached_usage_without_reserva
     assert receipt.prompt_tokens == 1_000_000 * len(records)
     assert receipt.completion_tokens == 2_000_000 * len(records)
     assert receipt.coverage.funded_request_count == len(requests)
+
+
+@pytest.mark.parametrize("boundary", ["receipt", "manifest"])
+@pytest.mark.parametrize(
+    "mode,field",
+    [
+        (mode, field)
+        for mode in ("rules", "mock", "local", "remote")
+        for field in (
+            "causal_contract_sha256",
+            "prompt_contract_sha256",
+            "result_schema_contract_sha256",
+            "selection_policy_sha256",
+            "fallback_policy_sha256",
+            "mock_policy_sha256",
+            "influence_policy_sha256",
+            "summary_sha256",
+            *(("effective_settings_sha256",) if mode in {"rules", "mock"} else ()),
+        )
+    ],
+)
+def test_v10_receipt_rejects_each_internally_known_hash_contradiction(boundary, mode, field):
+    frozen, evaluation = _frozen_evidence(mode)
+    receipt = city_run.build_city_cognition_manifest_receipt_v2(frozen, evaluation)
+    facts = receipt.model_dump(mode="json")
+    assert facts[field] != "f" * 64
+    changed = facts | {field: "f" * 64}
+    if boundary == "manifest":
+        document = _manifest_v10() | {"cognition": facts}
+        assert city_run.parse_city_run_manifest_json(json.dumps(document)).cognition == receipt
+        document["cognition"] = changed
+    with pytest.raises(ValueError):
+        if boundary == "receipt":
+            city_run.CityCognitionManifestReceiptV2.model_validate_json(json.dumps(changed))
+        else:
+            city_run.parse_city_run_manifest_json(json.dumps(document))
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
+@pytest.mark.parametrize("availability", ["unavailable", "replaced"])
+def test_v10_receipt_parsing_uses_frozen_pins_when_current_defaults_change(
+    mode, availability, monkeypatch
+):
+    import adlife.core.domain.city_cognition_v2 as domain
+    import adlife.core.simulation.city_cognition_v2 as simulation
+
+    frozen, evaluation = _frozen_evidence(mode)
+    receipt = city_run.build_city_cognition_manifest_receipt_v2(frozen, evaluation)
+    document = _manifest_v10() | {"cognition": receipt.model_dump(mode="json")}
+    expected = city_run.parse_city_run_manifest_json(json.dumps(document))
+    receipt_json, manifest_json = canonical_json(receipt), canonical_json(expected)
+
+    def unavailable_builder(*args, **kwargs):
+        raise AssertionError("receipt parsing must not call current builders")
+
+    for namespace in (domain, simulation, city_run):
+        for name in tuple(vars(namespace)):
+            if name.startswith("CITY_COGNITION_"):
+                monkeypatch.setattr(
+                    namespace, name, None if availability == "unavailable" else object()
+                )
+            elif name.startswith("build_city_"):
+                monkeypatch.setattr(namespace, name, unavailable_builder)
+    assert city_run.CityCognitionManifestReceiptV2.model_validate_json(receipt_json) == receipt
+    assert city_run.parse_city_run_manifest_json(manifest_json) == expected
+    assert canonical_json(city_run.parse_city_run_manifest_json(manifest_json)) == manifest_json
+
+
+@pytest.mark.parametrize("boundary", ["receipt", "manifest"])
+@pytest.mark.parametrize("mode", ["local", "remote"])
+def test_provider_settings_hash_requires_loaded_input_not_receipt_inference(boundary, mode):
+    frozen, evaluation = _frozen_evidence(mode)
+    receipt = city_run.build_city_cognition_manifest_receipt_v2(frozen, evaluation)
+    facts = receipt.model_dump(mode="json") | {"effective_settings_sha256": "f" * 64}
+    if boundary == "receipt":
+        parsed = city_run.CityCognitionManifestReceiptV2.model_validate_json(json.dumps(facts))
+    else:
+        parsed = city_run.parse_city_run_manifest_json(
+            json.dumps(_manifest_v10() | {"cognition": facts})
+        ).cognition
+    assert parsed.effective_settings_sha256 == "f" * 64
+
+
+@pytest.mark.parametrize("boundary", ["receipt", "manifest"])
+@pytest.mark.parametrize("unselected", [0, 2])
+@pytest.mark.parametrize(
+    "mode,limit",
+    [("rules", 60), ("mock", 60)]
+    + [(mode, limit) for mode in ("local", "remote") for limit in (10, 20, 40, 60)],
+)
+def test_empty_receipt_budget_hash_is_internally_reconstructible(boundary, unselected, mode, limit):
+    frozen, _ = _frozen_evidence(mode)
+    frozen = frozen.model_copy(
+        update=dict(
+            reservations=(),
+            funded_response_limit=limit,
+            aggregate_output_token_ceiling=0 if mode in {"rules", "mock"} else 512 * limit,
+        )
+    )
+    evaluation = CityCognitionEvaluationV2.model_validate_json(
+        json.dumps(
+            evaluation_data((), mode, unselected=unselected)
+            | dict(
+                cognition_input_sha256=frozen.fingerprint,
+                run_input_sha256=frozen.run_input_sha256,
+            )
+        )
+    )
+    receipt = city_run.build_city_cognition_manifest_receipt_v2(frozen, evaluation)
+    facts = receipt.model_dump(mode="json")
+    assert receipt.coverage.selected_request_count == receipt.terminal_record_count == 0
+    assert facts["budget_allocation_sha256"] != "f" * 64
+    changed = facts | {"budget_allocation_sha256": "f" * 64}
+    if boundary == "manifest":
+        document = _manifest_v10() | dict(
+            opportunity_count=unselected,
+            impression_count=unselected,
+            noticed_count=unselected,
+            response_count=unselected,
+            baseline_response_count=unselected,
+            applied_response_count=unselected,
+            state_update_count=int(bool(unselected)),
+            dual_state_update_count=int(bool(unselected)),
+            cognition=facts,
+        )
+        assert city_run.parse_city_run_manifest_json(json.dumps(document)).cognition == receipt
+        document["cognition"] = changed
+    with pytest.raises(ValueError):
+        if boundary == "receipt":
+            city_run.CityCognitionManifestReceiptV2.model_validate_json(json.dumps(changed))
+        else:
+            city_run.parse_city_run_manifest_json(json.dumps(document))
+
+
+@pytest.mark.parametrize("boundary", ["receipt", "manifest"])
+@pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
+def test_nonempty_reservation_hash_requires_loaded_input_not_receipt_inference(boundary, mode):
+    frozen, evaluation = _frozen_evidence(mode)
+    receipt = city_run.build_city_cognition_manifest_receipt_v2(frozen, evaluation)
+    assert receipt.coverage.selected_request_count > 0
+    facts = receipt.model_dump(mode="json") | {"budget_allocation_sha256": "f" * 64}
+    if boundary == "receipt":
+        parsed = city_run.CityCognitionManifestReceiptV2.model_validate_json(json.dumps(facts))
+    else:
+        parsed = city_run.parse_city_run_manifest_json(
+            json.dumps(_manifest_v10() | {"cognition": facts})
+        ).cognition
+    assert parsed.budget_allocation_sha256 == "f" * 64
