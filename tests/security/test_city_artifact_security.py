@@ -9,6 +9,7 @@ import stat
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -17,6 +18,9 @@ import pytest
 
 from adlife.city import run_store as store_module
 from adlife.city.run_store import CityRunStore
+from adlife.city.runs import replay_city_run
+from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
+from adlife.core.domain.city_cognition_v2 import CityCognitionInputV2
 from adlife.core.ports.run_store import (
     CorruptRunArtifact,
     DuplicateRun,
@@ -954,3 +958,28 @@ def test_v10_interrupt_after_successful_exclusive_publication_preserves_committe
     assert (directory / "run.json").is_file()
     assert not (directory / ".run.json.tmp").exists()
     assert CityRunStore(tmp_path).load(prepared.manifest.run_id).manifest == prepared.manifest
+
+
+def test_v10_replay_refuses_bypassed_secret_bearing_profile_without_exposing_it(tmp_path):
+    _, prepared, _ = _saved_v10(tmp_path, mode="local", source="provider")
+    loaded = CityRunStore(tmp_path).load(prepared.manifest.run_id)
+    assert isinstance(loaded.cognition_input, CityCognitionInputV2)
+    profile = loaded.cognition_input.provider_profile
+    assert profile is not None
+    secret = "embedded-profile-secret"
+    bad_profile = CityCognitionProviderProfileSnapshotV1.model_construct(
+        **(
+            profile.model_dump(mode="python")
+            | {"base_url": f"https://user:{secret}@provider.example/v1"}
+        )
+    )
+    bad_input = CityCognitionInputV2.model_construct(
+        **(loaded.cognition_input.model_dump(mode="python") | {"provider_profile": bad_profile})
+    )
+
+    with pytest.raises(CorruptRunArtifact) as error:
+        replay_city_run(replace(loaded, cognition_input=bad_input))
+
+    assert secret not in str(error.value)
+    assert "provider.example" not in str(error.value)
+    assert error.value.__cause__ is None

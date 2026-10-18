@@ -44,8 +44,13 @@ from adlife.core.domain.city_cognition import (
     CityCognitionRequestV1,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionCoverageCountsV2,
     CityCognitionEvaluationV2,
     CityCognitionInputV2,
+    CityCognitionModeV2,
+    CityCognitionNeutralizationCountsV2,
+    CityCognitionOutcomeCountsV2,
+    CityCognitionReasonCountsV2,
     CityCognitionRequestV2,
 )
 from adlife.core.domain.city_places import CityPlaceSet
@@ -103,6 +108,7 @@ from adlife.core.simulation.spatial_response import (
     summarize_spatial_response_artifact,
 )
 from adlife.core.simulation.spatial_response_v2 import (
+    SpatialResponseCountsV2,
     SpatialResponseEvaluationV2,
     apply_spatial_cognition_v2,
     summarize_spatial_response_artifact_v2,
@@ -148,8 +154,44 @@ class CityReplayResult:
     state_update_count: int | None
     response_campaign_count: int | None
     final_state_count: int | None
-    response_counts: SpatialResponseCounts | None
-    cognition_evaluation: CityCognitionEvaluationV1 | None
+    response_counts: SpatialResponseCounts | SpatialResponseCountsV2 | None
+    cognition_evaluation: CityCognitionEvaluationV1 | CityCognitionEvaluationV2 | None
+    response_schema_version: int | None = None
+    baseline_response_count: int | None = None
+    applied_response_count: int | None = None
+    dual_state_update_count: int | None = None
+    final_rule_state_count: int | None = None
+    final_cognition_state_count: int | None = None
+    rule_state_document_sha256: str | None = None
+    cognition_state_document_sha256: str | None = None
+    influence_policy_id: str | None = None
+    influence_policy_sha256: str | None = None
+    workbench_input_schema_version: int | None = None
+    workbench_input_sha256: str | None = None
+    cognition_effect_scope: str | None = None
+    cognition_mode: CityCognitionModeV2 | None = None
+    cognition_coverage: CityCognitionCoverageCountsV2 | None = None
+    cognition_outcomes: CityCognitionOutcomeCountsV2 | None = None
+    cognition_reasons: CityCognitionReasonCountsV2 | None = None
+    cognition_neutralization: CityCognitionNeutralizationCountsV2 | None = None
+    cognition_attempt_count: int | None = None
+    cognition_prompt_tokens: int | None = None
+    cognition_completion_tokens: int | None = None
+    cognition_input_sha256: str | None = None
+    cognition_input_bytes: int | None = None
+    cognition_causal_contract_sha256: str | None = None
+    cognition_prompt_contract_sha256: str | None = None
+    cognition_result_schema_contract_sha256: str | None = None
+    cognition_selection_policy_sha256: str | None = None
+    cognition_fallback_policy_sha256: str | None = None
+    cognition_mock_policy_sha256: str | None = None
+    cognition_influence_policy_sha256: str | None = None
+    cognition_effective_settings_sha256: str | None = None
+    cognition_budget_allocation_sha256: str | None = None
+    cognition_terminal_stream_sha256: str | None = None
+    cognition_terminal_stream_bytes: int | None = None
+    cognition_terminal_record_count: int | None = None
+    cognition_summary_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1143,10 +1185,315 @@ def create_city_run(
     return publish_city_run(prepared, root=root)
 
 
+def _replay_city_run_v10(
+    stored: StoredCityRun,
+    manifest: CityRunManifestV10,
+) -> CityReplayResult:
+    """Rebuild V10 science only from its already loaded, frozen evidence."""
+    if (
+        type(stored.pack) is not CityPackV2
+        or type(stored.mobility) is not CityMobility
+        or type(stored.spatial_scenario) is not SpatialCampaignScenario
+        or type(stored.opportunity_evaluation) is not SpatialOpportunityEvaluation
+        or type(stored.attention_evaluation) is not SpatialAttentionEvaluation
+        or type(stored.response_input) is not SpatialResponseInput
+        or type(stored.response_evaluation) is not SpatialResponseEvaluationV2
+        or type(stored.workbench_input) is not WorkbenchRunInputV4
+        or type(stored.cognition_input) is not CityCognitionInputV2
+        or type(stored.cognition_evaluation) is not CityCognitionEvaluationV2
+        or stored.mobility.places is not None
+        or stored.mobility.place_assignments != ()
+    ):
+        raise CorruptRunArtifact("city run V10 evidence is incomplete")
+
+    try:
+        checked_manifest = revalidate_model(manifest, CityRunManifestV10, label="V10 manifest")
+        pack = revalidate_model(stored.pack, CityPackV2, label="V10 city pack")
+        scenario = revalidate_model(
+            stored.spatial_scenario,
+            SpatialCampaignScenario,
+            label="V10 spatial scenario",
+        )
+        response_input = revalidate_model(
+            stored.response_input,
+            SpatialResponseInput,
+            label="V10 response input",
+        )
+        workbench = revalidate_model(
+            stored.workbench_input,
+            WorkbenchRunInputV4,
+            label="V10 workbench input",
+        )
+        cognition_input = revalidate_model(
+            stored.cognition_input,
+            CityCognitionInputV2,
+            label="V10 cognition input",
+        )
+        stored_cognition = revalidate_model(
+            stored.cognition_evaluation,
+            CityCognitionEvaluationV2,
+            label="V10 cognition evaluation",
+        )
+        stored_response = revalidate_model(
+            stored.response_evaluation,
+            SpatialResponseEvaluationV2,
+            label="V10 response evaluation",
+        )
+        stored_opportunities = revalidate_model(
+            stored.opportunity_evaluation,
+            SpatialOpportunityEvaluation,
+            label="V10 opportunity evaluation",
+        )
+        stored_attention = revalidate_model(
+            stored.attention_evaluation,
+            SpatialAttentionEvaluation,
+            label="V10 attention evaluation",
+        )
+
+        bound_workbench = validate_workbench_execution_binding(
+            workbench,
+            pack=pack,
+            run_id=checked_manifest.run_id,
+            seed=checked_manifest.seed,
+            agent_count=checked_manifest.agent_count,
+            days=checked_manifest.days,
+            places=None,
+            spatial_scenario=scenario,
+            spatial_response=response_input,
+        )
+        if type(bound_workbench) is not WorkbenchRunInputV4:
+            raise ValueError("V10 workbench binding has the wrong version")
+
+        mobility = CityMobility(
+            pack,
+            seed=checked_manifest.seed,
+            agent_count=checked_manifest.agent_count,
+            days=checked_manifest.days,
+        )
+        trace = summarize_city_trace(mobility)
+        stored_trace = summarize_city_trace(stored.mobility)
+        if (
+            stored.mobility.pack != pack
+            or stored.mobility.seed != checked_manifest.seed
+            or stored.mobility.days != checked_manifest.days
+            or stored.mobility.agents != mobility.agents
+            or stored_trace != trace
+        ):
+            raise ValueError("V10 mobility does not match frozen inputs")
+
+        opportunities = evaluate_spatial_opportunities(mobility, scenario)
+        attention = evaluate_spatial_attention(opportunities, seed=checked_manifest.seed)
+        baseline = evaluate_spatial_responses(
+            response_input,
+            scenario,
+            opportunities,
+            attention,
+            agent_ids=tuple(agent.agent_id for agent in mobility.agents),
+        )
+        if opportunities != stored_opportunities or attention != stored_attention:
+            raise ValueError("V10 spatial evidence does not replay identically")
+
+        context = build_city_cognition_run_context_v2(
+            bound_workbench,
+            pack=pack,
+            spatial_scenario=scenario,
+            response_input=response_input,
+            baseline_evaluation=baseline,
+        )
+        cognition_settings = bound_workbench.draft.cognition
+        profile = cognition_input.provider_profile
+        if (
+            cognition_settings.causal_contract != cognition_input.causal_contract
+            or cognition_settings.provider_profile_id
+            != (None if profile is None else profile.profile_id)
+            or cognition_settings.provider_revision_sha256
+            != (None if profile is None else profile.revision_sha256)
+        ):
+            raise ValueError("V10 cognition authority does not match its frozen input")
+        requests = build_city_cognition_requests_v2(
+            context,
+            mobility,
+            baseline,
+            causal_contract=cognition_input.causal_contract,
+        )
+        rebuilt_input = build_city_cognition_input_v2(
+            context,
+            requests,
+            mode=cognition_settings.mode,
+            funded_response_limit=cognition_settings.funded_response_limit,
+            provider_profile=profile,
+            causal_contract=cognition_input.causal_contract,
+        )
+        if rebuilt_input != cognition_input:
+            raise ValueError("V10 cognition input does not replay identically")
+        cognition = validate_city_cognition_evaluation_v2(
+            rebuilt_input,
+            requests,
+            stored_cognition.records,
+            baseline_evaluation=baseline,
+        )
+        if cognition != stored_cognition:
+            raise ValueError("V10 cognition terminals do not replay identically")
+        response = apply_spatial_cognition_v2(baseline, rebuilt_input, cognition)
+        if response != stored_response:
+            raise ValueError("V10 applied response evidence does not replay identically")
+
+        opportunity_summary = summarize_spatial_opportunity_artifact(opportunities)
+        attention_summary = summarize_spatial_attention_artifact(attention)
+        response_summary = summarize_spatial_response_artifact_v2(response)
+        cognition_receipt = build_city_cognition_manifest_receipt_v2(
+            rebuilt_input,
+            cognition,
+        )
+        expected_manifest = CityRunManifestV10(
+            schema_version=10,
+            run_id=checked_manifest.run_id,
+            package_version=checked_manifest.package_version,
+            python_version=checked_manifest.python_version,
+            city_sha256=pack.fingerprint,
+            agents_sha256=trace.agents_sha256,
+            trace_sha256=trace.trace_sha256,
+            scenario_sha256=scenario.fingerprint,
+            opportunity_stream_sha256=opportunity_summary.stream_sha256,
+            opportunity_summary_sha256=sha256(
+                (canonical_json(opportunity_summary) + "\n").encode("utf-8")
+            ).hexdigest(),
+            opportunity_stream_bytes=opportunity_summary.stream_bytes,
+            opportunity_count=opportunity_summary.counts.opportunity_count,
+            attention_stream_sha256=attention_summary.stream_sha256,
+            attention_summary_sha256=sha256(
+                (canonical_json(attention_summary) + "\n").encode("utf-8")
+            ).hexdigest(),
+            attention_stream_bytes=attention_summary.stream_bytes,
+            impression_count=attention_summary.counts.impression_count,
+            noticed_count=attention_summary.counts.noticed_count,
+            spatial_response_schema_version=2,
+            spatial_response_model_id="spatial-response-v2",
+            response_input_sha256=response_input.fingerprint,
+            response_stream_sha256=response_summary.stream_sha256,
+            response_state_sha256=response_summary.state_document_sha256,
+            response_summary_sha256=sha256(
+                (canonical_json(response_summary) + "\n").encode("utf-8")
+            ).hexdigest(),
+            response_stream_bytes=response_summary.stream_bytes,
+            response_count=response_summary.counts.baseline_response_count,
+            state_update_count=response_summary.counts.dual_state_update_count,
+            response_campaign_count=response_summary.counts.campaign_count,
+            final_state_count=response_summary.counts.final_rule_state_count,
+            baseline_response_count=response_summary.counts.baseline_response_count,
+            applied_response_count=response_summary.counts.applied_response_count,
+            dual_state_update_count=response_summary.counts.dual_state_update_count,
+            final_cognition_state_count=response_summary.counts.final_cognition_state_count,
+            rule_state_document_sha256=response_summary.rule_state_document_sha256,
+            cognition_state_document_sha256=(response_summary.cognition_state_document_sha256),
+            influence_policy_id=cognition_input.causal_contract.influence_policy.policy_id,
+            influence_policy_sha256=cognition_input.causal_contract.influence_policy_sha256,
+            seed=checked_manifest.seed,
+            agent_count=checked_manifest.agent_count,
+            days=checked_manifest.days,
+            frame_count=trace.frame_count,
+            position_count=trace.position_count,
+            city_schema_version=pack.schema_version,
+            spatial_scenario_schema_version=scenario.schema_version,
+            spatial_opportunity_schema_version=opportunities.schema_version,
+            spatial_attention_schema_version=attention.schema_version,
+            spatial_attention_model_id=attention.model_id,
+            place_schema_version=None,
+            place_set_sha256=None,
+            place_assignments_sha256=None,
+            workbench_input_schema_version=4,
+            workbench_input_sha256=bound_workbench.fingerprint,
+            cognition=cognition_receipt,
+        )
+        if expected_manifest != checked_manifest:
+            raise ValueError("V10 manifest does not replay identically")
+    except ValueError:
+        raise CorruptRunArtifact("city run V10 evidence does not replay identically") from None
+
+    receipt = expected_manifest.cognition
+    return CityReplayResult(
+        run_id=checked_manifest.run_id,
+        identical=True,
+        city_sha256=checked_manifest.city_sha256,
+        agents_sha256=trace.agents_sha256,
+        trace_sha256=trace.trace_sha256,
+        frame_count=trace.frame_count,
+        position_count=trace.position_count,
+        place_set_sha256=None,
+        place_assignments_sha256=None,
+        scenario_sha256=checked_manifest.scenario_sha256,
+        opportunity_stream_sha256=opportunity_summary.stream_sha256,
+        opportunity_summary_sha256=expected_manifest.opportunity_summary_sha256,
+        opportunity_stream_bytes=opportunity_summary.stream_bytes,
+        opportunity_count=opportunity_summary.counts.opportunity_count,
+        opportunity_counts=opportunity_summary.counts,
+        attention_model_id=attention.model_id,
+        attention_claim_scope=attention.claim_scope,
+        attention_notice_probability=attention.notice_probability,
+        attention_stream_sha256=attention_summary.stream_sha256,
+        attention_summary_sha256=expected_manifest.attention_summary_sha256,
+        attention_stream_bytes=attention_summary.stream_bytes,
+        impression_count=attention_summary.counts.impression_count,
+        noticed_count=attention_summary.counts.noticed_count,
+        attention_counts=attention_summary.counts,
+        response_model_id=response.model_id,
+        response_claim_scope=response.claim_scope,
+        response_input_sha256=response.response_input_sha256,
+        response_stream_sha256=response_summary.stream_sha256,
+        response_state_sha256=response_summary.state_document_sha256,
+        response_summary_sha256=expected_manifest.response_summary_sha256,
+        response_stream_bytes=response_summary.stream_bytes,
+        response_count=response_summary.counts.baseline_response_count,
+        state_update_count=response_summary.counts.dual_state_update_count,
+        response_campaign_count=response_summary.counts.campaign_count,
+        final_state_count=response_summary.counts.final_rule_state_count,
+        response_counts=response_summary.counts,
+        cognition_evaluation=cognition,
+        response_schema_version=response.schema_version,
+        baseline_response_count=response_summary.counts.baseline_response_count,
+        applied_response_count=response_summary.counts.applied_response_count,
+        dual_state_update_count=response_summary.counts.dual_state_update_count,
+        final_rule_state_count=response_summary.counts.final_rule_state_count,
+        final_cognition_state_count=response_summary.counts.final_cognition_state_count,
+        rule_state_document_sha256=response_summary.rule_state_document_sha256,
+        cognition_state_document_sha256=response_summary.cognition_state_document_sha256,
+        influence_policy_id=expected_manifest.influence_policy_id,
+        influence_policy_sha256=expected_manifest.influence_policy_sha256,
+        workbench_input_schema_version=expected_manifest.workbench_input_schema_version,
+        workbench_input_sha256=expected_manifest.workbench_input_sha256,
+        cognition_effect_scope=receipt.effect_scope,
+        cognition_mode=receipt.mode,
+        cognition_coverage=receipt.coverage,
+        cognition_outcomes=receipt.outcomes,
+        cognition_reasons=receipt.reasons,
+        cognition_neutralization=receipt.neutralization,
+        cognition_attempt_count=receipt.attempt_count,
+        cognition_prompt_tokens=receipt.prompt_tokens,
+        cognition_completion_tokens=receipt.completion_tokens,
+        cognition_input_sha256=receipt.cognition_input_sha256,
+        cognition_input_bytes=receipt.cognition_input_bytes,
+        cognition_causal_contract_sha256=receipt.causal_contract_sha256,
+        cognition_prompt_contract_sha256=receipt.prompt_contract_sha256,
+        cognition_result_schema_contract_sha256=receipt.result_schema_contract_sha256,
+        cognition_selection_policy_sha256=receipt.selection_policy_sha256,
+        cognition_fallback_policy_sha256=receipt.fallback_policy_sha256,
+        cognition_mock_policy_sha256=receipt.mock_policy_sha256,
+        cognition_influence_policy_sha256=receipt.influence_policy_sha256,
+        cognition_effective_settings_sha256=receipt.effective_settings_sha256,
+        cognition_budget_allocation_sha256=receipt.budget_allocation_sha256,
+        cognition_terminal_stream_sha256=receipt.terminal_stream_sha256,
+        cognition_terminal_stream_bytes=receipt.terminal_stream_bytes,
+        cognition_terminal_record_count=receipt.terminal_record_count,
+        cognition_summary_sha256=receipt.summary_sha256,
+    )
+
+
 def replay_city_run(stored: StoredCityRun) -> CityReplayResult:
     """Recompute all minute frames; a mismatch is corruption, never a repair."""
-    summary = summarize_city_trace(stored.mobility)
     manifest = stored.manifest
+    if type(manifest) is CityRunManifestV10:
+        return _replay_city_run_v10(stored, manifest)
+    summary = summarize_city_trace(stored.mobility)
     replayed_workbench: WorkbenchRunInputDocument | None = None
     if isinstance(manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)):
         if stored.workbench_input is None:

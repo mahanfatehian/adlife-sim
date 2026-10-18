@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
+import subprocess
+import sys
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -35,7 +39,15 @@ from adlife.core.domain.city_cognition import (
     CityCognitionResultV1,
     CityCognitionSource,
 )
-from adlife.core.domain.city_run import CityRunManifestV5, CityRunManifestV9
+from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionEvaluationV2,
+    CityCognitionInputV2,
+)
+from adlife.core.domain.city_run import (
+    CityRunManifestV5,
+    CityRunManifestV9,
+    CityRunManifestV10,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import CorruptRunArtifact, DuplicateRun
 from adlife.core.simulation.city_cognition import (
@@ -45,6 +57,8 @@ from adlife.core.simulation.city_cognition import (
     build_city_rules_result,
     validate_city_cognition_evaluation,
 )
+from adlife.core.simulation.spatial_response_v2 import SpatialResponseEvaluationV2
+from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
 from tests.integration.test_city_workbench_artifacts import _create_uploaded_workbench_run
 from tests.unit.city.test_city_catalog_contract import write_catalog_root
 from tests.unit.city.test_city_mobility import mobility_place_set
@@ -186,7 +200,7 @@ def test_persona_replay_uses_frozen_inputs_after_template_catalog_changes(
     from tests.integration.test_city_workbench_artifacts import _create_v8
 
     stored = _create_v8(tmp_path / "source")
-    before = _file_hashes(stored.directory)
+    before = _artifact_inventory(stored.directory)
     baseline = replay_city_run(stored)
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
@@ -199,15 +213,56 @@ def test_persona_replay_uses_frozen_inputs_after_template_catalog_changes(
     replay = replay_city_run(CityRunStore(tmp_path / "source").load("launch-run"))
     assert replay.identical is True
     assert replay == baseline
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
 
-def _file_hashes(directory: Path) -> dict[str, str]:
-    return {
-        path.relative_to(directory).as_posix(): sha256(path.read_bytes()).hexdigest()
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    }
+_HASH_CHUNK_SIZE = 1024 * 1024
+_EMPTY_SHA256 = sha256(b"").hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(_HASH_CHUNK_SIZE):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_inventory(directory: Path) -> tuple[tuple[str, str, int, str], ...]:
+    inventory: list[tuple[str, str, int, str]] = []
+    paths = sorted(
+        directory.rglob("*"),
+        key=lambda path: path.relative_to(directory).as_posix(),
+    )
+    for path in paths:
+        metadata = path.lstat()
+        relative_path = path.relative_to(directory).as_posix()
+        if stat.S_ISREG(metadata.st_mode):
+            path_type = "file"
+            size = metadata.st_size
+            digest = _sha256_file(path)
+        elif stat.S_ISDIR(metadata.st_mode):
+            path_type = "directory"
+            size = 0
+            digest = _EMPTY_SHA256
+        elif stat.S_ISLNK(metadata.st_mode):
+            path_type = "symlink"
+            target = os.fsencode(os.readlink(path))
+            size = len(target)
+            digest = sha256(target).hexdigest()
+        else:
+            path_type = "other"
+            size = metadata.st_size
+            digest = _EMPTY_SHA256
+        inventory.append((relative_path, path_type, size, digest))
+    return tuple(inventory)
+
+
+def _create_v10_run(root: Path, **options):
+    staged, prepared, directory = _saved_v10(root, **options)
+    loaded = CityRunStore(root).load(prepared.manifest.run_id)
+    assert loaded.directory == directory
+    return staged, prepared, loaded
 
 
 def _assert_no_response_evidence(result: CityReplayResult) -> None:
@@ -235,7 +290,7 @@ def test_fresh_city_runs_have_the_same_trace_and_replay_never_mutates_source(
     second = create_city_run(
         pack, root=tmp_path / "second", run_id="study", seed=42, agent_count=3, days=1
     )
-    before = _file_hashes(first.directory)
+    before = _artifact_inventory(first.directory)
 
     result = replay_city_run(CityRunStore(tmp_path / "first").load("study"))
 
@@ -244,8 +299,8 @@ def test_fresh_city_runs_have_the_same_trace_and_replay_never_mutates_source(
     assert result.frame_count == 1440
     assert result.position_count == 4320
     _assert_no_response_evidence(result)
-    assert _file_hashes(first.directory) == before
-    assert _file_hashes(second.directory) == before
+    assert _artifact_inventory(first.directory) == before
+    assert _artifact_inventory(second.directory) == before
 
 
 def test_changed_source_is_not_silently_repaired(tmp_path: Path) -> None:
@@ -253,13 +308,14 @@ def test_changed_source_is_not_silently_repaired(tmp_path: Path) -> None:
         load_pack(pack_data()), root=tmp_path, run_id="study", seed=42, agent_count=2, days=1
     )
     city_file = stored.directory / "inputs" / "city.json"
-    city_file.write_bytes(city_file.read_bytes() + b" ")
-    before = _file_hashes(stored.directory)
+    with city_file.open("ab") as stream:
+        stream.write(b" ")
+    before = _artifact_inventory(stored.directory)
 
     with pytest.raises(CorruptRunArtifact):
         replay_city_run(CityRunStore(tmp_path).load("study"))
 
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
 
 def test_v2_replay_is_identical_and_preserves_every_source_artifact(tmp_path: Path) -> None:
@@ -270,15 +326,15 @@ def test_v2_replay_is_identical_and_preserves_every_source_artifact(tmp_path: Pa
     second = create_city_run(
         pack, root=tmp_path / "second", run_id="v2-study", seed=17, agent_count=3, days=1
     )
-    first_before = _file_hashes(first.directory)
-    second_before = _file_hashes(second.directory)
+    first_before = _artifact_inventory(first.directory)
+    second_before = _artifact_inventory(second.directory)
     result = replay_city_run(CityRunStore(tmp_path / "first").load("v2-study"))
     assert result.identical is True
     assert first.manifest.schema_version == 2
     assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
     _assert_no_response_evidence(result)
-    assert _file_hashes(first.directory) == first_before
-    assert _file_hashes(second.directory) == second_before
+    assert _artifact_inventory(first.directory) == first_before
+    assert _artifact_inventory(second.directory) == second_before
 
 
 def test_v3_place_replay_is_identical_and_preserves_every_source_artifact(
@@ -304,13 +360,13 @@ def test_v3_place_replay_is_identical_and_preserves_every_source_artifact(
         days=7,
         places=places,
     )
-    before = _file_hashes(first.directory)
+    before = _artifact_inventory(first.directory)
     result = replay_city_run(CityRunStore(tmp_path / "first").load("place-study"))
     assert result.identical is True
     assert first.manifest.schema_version == 3
     assert result.trace_sha256 == first.manifest.trace_sha256 == second.manifest.trace_sha256
     _assert_no_response_evidence(result)
-    assert _file_hashes(first.directory) == before == _file_hashes(second.directory)
+    assert _artifact_inventory(first.directory) == before == _artifact_inventory(second.directory)
 
 
 def test_catalog_selected_run_replays_after_catalog_is_removed(tmp_path: Path) -> None:
@@ -325,7 +381,7 @@ def test_catalog_selected_run_replays_after_catalog_is_removed(tmp_path: Path) -
         agent_count=2,
         days=1,
     )
-    before = _file_hashes(stored.directory)
+    before = _artifact_inventory(stored.directory)
     for path in sorted(catalog_root.rglob("*"), reverse=True):
         if path.is_file():
             path.unlink()
@@ -336,7 +392,7 @@ def test_catalog_selected_run_replays_after_catalog_is_removed(tmp_path: Path) -
     result = replay_city_run(loaded)
     assert result.identical is True
     assert loaded.pack == selected
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
 
 def test_spatial_city_run_replays_exact_attention_artifacts_without_mutation(
@@ -371,7 +427,7 @@ def test_spatial_city_run_replays_exact_attention_artifacts_without_mutation(
         days=1,
         spatial_scenario=scenario,
     )
-    before = _file_hashes(first.directory)
+    before = _artifact_inventory(first.directory)
 
     result = replay_city_run(CityRunStore(tmp_path / "first").load("spatial-study"))
 
@@ -394,7 +450,7 @@ def test_spatial_city_run_replays_exact_attention_artifacts_without_mutation(
     assert result.noticed_count == first.manifest.noticed_count
     assert result.attention_counts == first.attention_evaluation.counts
     _assert_no_response_evidence(result)
-    assert _file_hashes(first.directory) == before == _file_hashes(second.directory)
+    assert _artifact_inventory(first.directory) == before == _artifact_inventory(second.directory)
 
 
 def test_spatial_city_run_can_bind_places_and_replay_them(tmp_path: Path) -> None:
@@ -479,15 +535,15 @@ def test_uploaded_run_replay_ignores_removed_replaced_and_corrupt_registry(
         run_id=run_id,
     )
     record = workspace.root / "city-packs" / f"{resolved.pack.city_id}.json"
-    before = _file_hashes(stored.directory)
+    before = _artifact_inventory(stored.directory)
     baseline = replay_city_run(CityRunStore(root).load(run_id))
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
     record.unlink()
     with pytest.raises(UnknownWorkbenchCity):
         WorkbenchCityResolver(prepare_workbench_workspace(root)).resolve_city(resolved.pack.city_id)
     assert replay_city_run(CityRunStore(root).load(run_id)) == baseline
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
     replacement_data = resolved.pack.model_dump(mode="json")
     replacement_data["name"] = "Externally replaced operator city"
@@ -500,7 +556,7 @@ def test_uploaded_run_replay_ignores_removed_replaced_and_corrupt_registry(
     )
     assert replacement_resolved.pack.fingerprint == replacement.fingerprint
     assert replay_city_run(CityRunStore(root).load(run_id)) == baseline
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
     record.write_bytes(b'{"schema_version":2}\n')
     with pytest.raises(WorkbenchCityRegistryUnavailable):
@@ -526,7 +582,7 @@ def test_uploaded_run_replay_ignores_removed_replaced_and_corrupt_registry(
     assert metadata.json()["city_sha256"] == resolved.pack.fingerprint
     assert frozen_city.json()["city_id"] == resolved.pack.city_id
     assert replay_city_run(CityRunStore(root).load(run_id)) == baseline
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
 
 @pytest.mark.parametrize(
@@ -545,7 +601,7 @@ def test_uploaded_run_refuses_misbound_frozen_city_without_registry_repair(
         input_schema_version=input_schema_version,
         run_id=run_id,
     )
-    original_hashes = _file_hashes(stored.directory)
+    original_hashes = _artifact_inventory(stored.directory)
     sidecar = stored.directory / "inputs" / "city.json"
     changed_data = resolved.pack.model_dump(mode="json")
     changed_data["name"] = "Canonical but causally different frozen city"
@@ -554,7 +610,7 @@ def test_uploaded_run_refuses_misbound_frozen_city_without_registry_repair(
     changed_bytes = (canonical_json(changed_pack) + "\n").encode("utf-8")
     assert changed_pack.fingerprint != resolved.pack.fingerprint
     sidecar.write_bytes(changed_bytes)
-    tampered_hashes = _file_hashes(stored.directory)
+    tampered_hashes = _artifact_inventory(stored.directory)
     assert tampered_hashes != original_hashes
 
     with pytest.raises(CorruptRunArtifact):
@@ -566,14 +622,14 @@ def test_uploaded_run_refuses_misbound_frozen_city_without_registry_repair(
     assert registered.pack.fingerprint == resolved.pack.fingerprint
     assert registered.pack.fingerprint != changed_pack.fingerprint
     assert sidecar.read_bytes() == changed_bytes
-    assert _file_hashes(stored.directory) == tampered_hashes
+    assert _artifact_inventory(stored.directory) == tampered_hashes
 
 
 def test_v9_finalization_publishes_complete_cognition_and_replays_read_only(
     tmp_path: Path,
 ) -> None:
     stored = _create_v9_run(tmp_path)
-    before = _file_hashes(stored.directory)
+    before = _artifact_inventory(stored.directory)
 
     result = replay_city_run(CityRunStore(tmp_path).load("v9-study"))
 
@@ -588,7 +644,7 @@ def test_v9_finalization_publishes_complete_cognition_and_replays_read_only(
     assert result.cognition_evaluation.summary.terminal_stream_sha256 == (
         stored.manifest.cognition.terminal_stream_sha256
     )
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
 
 def test_v9_replay_uses_only_frozen_evidence_without_runtime_services(
@@ -602,7 +658,7 @@ def test_v9_replay_uses_only_frozen_evidence_without_runtime_services(
 
     stored = _create_v9_run(tmp_path)
     loaded = CityRunStore(tmp_path).load("v9-study")
-    before = _file_hashes(stored.directory)
+    before = _artifact_inventory(stored.directory)
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("offline replay consulted a live runtime service")
@@ -622,7 +678,7 @@ def test_v9_replay_uses_only_frozen_evidence_without_runtime_services(
 
     assert first == second
     assert first.cognition_evaluation == loaded.cognition_evaluation
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
 
 @pytest.mark.parametrize(
@@ -640,7 +696,7 @@ def test_v9_replay_preserves_every_provider_terminal_outcome_offline(
 
     stored = _create_provider_v9_run(tmp_path / source, source=source)
     loaded = CityRunStore(tmp_path / source / "runs").load(f"{source}-v9")
-    before = _file_hashes(stored.directory)
+    before = _artifact_inventory(stored.directory)
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("replay consulted live provider state")
@@ -656,7 +712,7 @@ def test_v9_replay_preserves_every_provider_terminal_outcome_offline(
     assert loaded.cognition_evaluation is not None
     assert replayed.cognition_evaluation == loaded.cognition_evaluation
     assert {record.source for record in replayed.cognition_evaluation.records} == {source}
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
 
 
 def test_v9_replay_refuses_cross_run_cognition_without_repair(
@@ -664,16 +720,16 @@ def test_v9_replay_refuses_cross_run_cognition_without_repair(
 ) -> None:
     first = _create_v9_run(tmp_path / "first", run_id="first-v9")
     second = _create_v9_run(tmp_path / "second", run_id="second-v9")
-    first_before = _file_hashes(first.directory)
-    second_before = _file_hashes(second.directory)
+    first_before = _artifact_inventory(first.directory)
+    second_before = _artifact_inventory(second.directory)
     assert second.cognition_evaluation is not None
     crossed = replace(first, cognition_evaluation=second.cognition_evaluation)
 
     with pytest.raises(CorruptRunArtifact, match="cognition"):
         replay_city_run(crossed)
 
-    assert _file_hashes(first.directory) == first_before
-    assert _file_hashes(second.directory) == second_before
+    assert _artifact_inventory(first.directory) == first_before
+    assert _artifact_inventory(second.directory) == second_before
 
 
 def test_v9_replay_does_not_disguise_an_implementation_type_error(
@@ -700,9 +756,357 @@ def test_v9_replay_does_not_disguise_an_implementation_type_error(
 
 def test_v9_publication_refuses_an_existing_destination(tmp_path: Path) -> None:
     stored = _create_v9_run(tmp_path)
-    before = _file_hashes(stored.directory)
+    before = _artifact_inventory(stored.directory)
 
     with pytest.raises(DuplicateRun):
         _create_v9_run(tmp_path)
 
-    assert _file_hashes(stored.directory) == before
+    assert _artifact_inventory(stored.directory) == before
+
+
+def test_v10_replay_is_offline_and_source_artifacts_are_immutable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+
+    from adlife.adapters.cognition.city_cache import CityCognitionCache
+    from adlife.adapters.cognition.city_cache_v2 import CityCognitionCacheV2
+    from adlife.adapters.cognition.city_credentials import OSKeyringCityCredentialStore
+    from adlife.adapters.cognition.city_openai_compatible import CityOpenAICompatibleProvider
+    from adlife.adapters.cognition.city_openai_compatible_v2 import (
+        CityOpenAICompatibleProviderV2,
+    )
+    from adlife.city import runs as runs_module
+    from adlife.city import workbench_personas
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+
+    _, prepared, loaded = _create_v10_run(
+        tmp_path,
+        mode="local",
+        source="provider",
+        agents=8,
+        run_id="offline-v10",
+    )
+    before = _artifact_inventory(loaded.directory)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("V10 replay consulted external or current runtime state")
+
+    monkeypatch.setattr(CityOpenAICompatibleProvider, "__init__", forbidden)
+    monkeypatch.setattr(CityOpenAICompatibleProviderV2, "__init__", forbidden)
+    monkeypatch.setattr(CityCognitionCache, "__init__", forbidden)
+    monkeypatch.setattr(CityCognitionCache, "get", forbidden)
+    monkeypatch.setattr(CityCognitionCache, "put", forbidden)
+    monkeypatch.setattr(CityCognitionCacheV2, "__init__", forbidden)
+    monkeypatch.setattr(CityCognitionCacheV2, "get", forbidden)
+    monkeypatch.setattr(CityCognitionCacheV2, "put", forbidden)
+    monkeypatch.setattr(OSKeyringCityCredentialStore, "resolve", forbidden)
+    monkeypatch.setattr(ProviderProfileRegistry, "__init__", forbidden)
+    monkeypatch.setattr(ProviderProfileRegistry, "load", forbidden)
+    monkeypatch.setattr(WorkbenchCityResolver, "resolve_city", forbidden)
+    monkeypatch.setattr(workbench_personas, "load_persona_template_catalog", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    monkeypatch.setattr(os, "getenv", forbidden)
+    monkeypatch.setattr(type(os.environ), "get", forbidden)
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_PROMPT_CONTRACT_TEXT", "changed")
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_RESULT_SCHEMA_DOCUMENT", "changed")
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_DEFAULT_SELECTION_POLICY", object())
+    monkeypatch.setattr(runs_module, "CITY_COGNITION_DEFAULT_FALLBACK_POLICY", object())
+
+    first = replay_city_run(loaded)
+    second = replay_city_run(CityRunStore(tmp_path).load("offline-v10"))
+
+    assert first == second
+    assert first.cognition_evaluation == prepared.cognition_evaluation
+    assert _artifact_inventory(loaded.directory) == before
+
+
+def test_v10_replay_passes_the_frozen_contract_and_influence_policy_explicitly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.city import runs as runs_module
+    from adlife.core.simulation import spatial_response_v2 as spatial_response_v2_module
+
+    _, prepared, loaded = _create_v10_run(tmp_path, mode="mock", run_id="contract-v10")
+    frozen = prepared.cognition_input
+    assert isinstance(frozen, CityCognitionInputV2)
+    request_builder = runs_module.build_city_cognition_requests_v2
+    input_builder = runs_module.build_city_cognition_input_v2
+    influence_application = runs_module.apply_spatial_cognition_v2
+    influence_vector_builder = spatial_response_v2_module.apply_city_cognition_influence_v1
+    observed: list[object] = []
+    inner_policies: list[object] = []
+
+    def checked_requests(*args: object, **kwargs: object):
+        assert kwargs.get("causal_contract") == frozen.causal_contract
+        observed.append(kwargs["causal_contract"])
+        return request_builder(*args, **kwargs)
+
+    def checked_input(*args: object, **kwargs: object):
+        assert kwargs.get("causal_contract") == frozen.causal_contract
+        observed.append(kwargs["causal_contract"])
+        return input_builder(*args, **kwargs)
+
+    def checked_influence_application(baseline, cognition_input, cognition_evaluation):
+        assert isinstance(cognition_input, CityCognitionInputV2)
+        policy = cognition_input.causal_contract.influence_policy
+        assert policy == frozen.causal_contract.influence_policy
+        observed.append(policy)
+        return influence_application(baseline, cognition_input, cognition_evaluation)
+
+    def checked_influence_vector(*args: object, **kwargs: object):
+        assert "policy" in kwargs
+        policy = kwargs["policy"]
+        assert policy == frozen.causal_contract.influence_policy
+        inner_policies.append(policy)
+        return influence_vector_builder(*args, **kwargs)
+
+    monkeypatch.setattr(runs_module, "build_city_cognition_requests_v2", checked_requests)
+    monkeypatch.setattr(runs_module, "build_city_cognition_input_v2", checked_input)
+    monkeypatch.setattr(
+        runs_module,
+        "apply_spatial_cognition_v2",
+        checked_influence_application,
+    )
+    monkeypatch.setattr(
+        spatial_response_v2_module,
+        "apply_city_cognition_influence_v1",
+        checked_influence_vector,
+    )
+
+    replay_city_run(loaded)
+
+    assert observed == [
+        frozen.causal_contract,
+        frozen.causal_contract,
+        frozen.causal_contract.influence_policy,
+    ]
+    assert isinstance(prepared.response_evaluation, SpatialResponseEvaluationV2)
+    assert inner_policies == [frozen.causal_contract.influence_policy] * (
+        prepared.response_evaluation.counts.applied_response_count
+    )
+
+
+def test_v10_replay_regenerates_complete_evidence_from_frozen_inputs(tmp_path: Path) -> None:
+    staged, prepared, loaded = _create_v10_run(
+        tmp_path,
+        mode="local",
+        source="cache",
+        agents=8,
+        run_id="evidence-v10",
+    )
+
+    result = replay_city_run(loaded)
+
+    assert isinstance(prepared.manifest, CityRunManifestV10)
+    assert isinstance(prepared.response_evaluation, SpatialResponseEvaluationV2)
+    assert isinstance(prepared.cognition_evaluation, CityCognitionEvaluationV2)
+    assert result.identical is True
+    assert result.response_schema_version == 2
+    assert result.response_counts == prepared.response_evaluation.counts
+    assert result.cognition_evaluation == prepared.cognition_evaluation
+    assert result.cognition_effect_scope == prepared.cognition_input.effect_scope
+    assert result.cognition_mode == prepared.cognition_input.mode
+    assert result.cognition_coverage == prepared.manifest.cognition.coverage
+    assert result.cognition_outcomes == prepared.manifest.cognition.outcomes
+    assert result.cognition_reasons == prepared.manifest.cognition.reasons
+    assert result.cognition_neutralization == prepared.manifest.cognition.neutralization
+    assert result.cognition_input_sha256 == prepared.manifest.cognition.cognition_input_sha256
+    assert result.cognition_terminal_stream_sha256 == (
+        prepared.manifest.cognition.terminal_stream_sha256
+    )
+    assert result.cognition_summary_sha256 == prepared.manifest.cognition.summary_sha256
+    assert result.rule_state_document_sha256 == prepared.manifest.rule_state_document_sha256
+    assert result.cognition_state_document_sha256 == (
+        prepared.manifest.cognition_state_document_sha256
+    )
+    assert result.baseline_response_count == staged.baseline_evaluation.counts.response_count
+    assert (
+        result.applied_response_count == prepared.response_evaluation.counts.applied_response_count
+    )
+    assert result.dual_state_update_count == (
+        prepared.response_evaluation.counts.dual_state_update_count
+    )
+    assert result.final_rule_state_count == len(prepared.response_evaluation.final_rule_states)
+    assert result.final_cognition_state_count == len(
+        prepared.response_evaluation.final_cognition_states
+    )
+
+
+@pytest.mark.parametrize("corruption", ["reverse", "missing", "input-binding"])
+def test_v10_replay_refuses_direct_bypass_corruption_without_normalizing_it(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    _, _, loaded = _create_v10_run(tmp_path, mode="mock", agents=8)
+    before = _artifact_inventory(loaded.directory)
+    assert isinstance(loaded.cognition_evaluation, CityCognitionEvaluationV2)
+    assert isinstance(loaded.cognition_input, CityCognitionInputV2)
+    assert len(loaded.cognition_evaluation.records) > 1
+    if corruption == "input-binding":
+        bad_input = CityCognitionInputV2.model_construct(
+            **(
+                loaded.cognition_input.model_dump(mode="python")
+                | {"causal_contract_sha256": "0" * 64}
+            )
+        )
+        corrupted = replace(loaded, cognition_input=bad_input)
+    else:
+        records = loaded.cognition_evaluation.records
+        changed = tuple(reversed(records)) if corruption == "reverse" else records[:-1]
+        bad_evaluation = CityCognitionEvaluationV2.model_construct(
+            **(loaded.cognition_evaluation.model_dump(mode="python") | {"records": changed})
+        )
+        corrupted = replace(loaded, cognition_evaluation=bad_evaluation)
+
+    with pytest.raises(CorruptRunArtifact, match="V10"):
+        replay_city_run(corrupted)
+
+    assert _artifact_inventory(loaded.directory) == before
+
+
+def test_v10_replay_refuses_a_noncanonical_mutable_mobility_container(tmp_path: Path) -> None:
+    _, _, loaded = _create_v10_run(tmp_path, mode="rules")
+    loaded.mobility.place_assignments = []
+
+    with pytest.raises(CorruptRunArtifact, match="V10"):
+        replay_city_run(loaded)
+
+
+@pytest.mark.parametrize(
+    ("mode", "source", "agents", "empty", "outcome"),
+    [
+        ("rules", None, 3, False, "rules"),
+        ("mock", None, 3, False, "mock"),
+        ("local", "provider", 8, False, "provider"),
+        ("local", "cache", 8, False, "cache"),
+        ("local", "fallback", 8, False, "fallback"),
+        ("local", "provider", 30, False, "budget_skipped"),
+        ("local", "provider", 3, True, "provider"),
+    ],
+)
+def test_v10_replay_preserves_every_frozen_terminal_class(
+    tmp_path: Path,
+    mode: str,
+    source: str | None,
+    agents: int,
+    empty: bool,
+    outcome: str,
+) -> None:
+    _, prepared, loaded = _create_v10_run(
+        tmp_path / f"{mode}-{source}-{agents}-{empty}",
+        mode=mode,
+        source=source,
+        agents=agents,
+        empty=empty,
+    )
+
+    result = replay_city_run(loaded)
+
+    assert isinstance(prepared.manifest, CityRunManifestV10)
+    assert result.cognition_outcomes == prepared.manifest.cognition.outcomes
+    if empty:
+        assert result.cognition_terminal_record_count == 0
+        assert result.cognition_coverage is not None
+        assert result.cognition_coverage.selected_request_count == 0
+    else:
+        assert result.cognition_outcomes is not None
+        assert getattr(result.cognition_outcomes, outcome) > 0
+
+
+def test_v10_identical_recorded_provider_cognition_has_identical_downstream_evidence(
+    tmp_path: Path,
+) -> None:
+    _, _, first = _create_v10_run(
+        tmp_path / "first",
+        mode="local",
+        source="provider",
+        agents=8,
+        run_id="recorded-provider-v10",
+    )
+    _, _, second = _create_v10_run(
+        tmp_path / "second",
+        mode="local",
+        source="provider",
+        agents=8,
+        run_id="recorded-provider-v10",
+    )
+
+    assert replay_city_run(first) == replay_city_run(second)
+
+
+def test_v10_replay_does_not_disguise_an_implementation_type_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.city import runs as runs_module
+
+    _, _, loaded = _create_v10_run(tmp_path, mode="rules")
+
+    def fail_validation(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("injected V10 replay implementation defect")
+
+    monkeypatch.setattr(runs_module, "validate_city_cognition_evaluation_v2", fail_validation)
+
+    with pytest.raises(TypeError, match="injected V10 replay implementation defect"):
+        replay_city_run(loaded)
+
+
+def test_v10_replay_has_a_fixed_cross_process_hashseed_witness(tmp_path: Path) -> None:
+    _, prepared, _ = _create_v10_run(
+        tmp_path,
+        mode="mock",
+        agents=8,
+        run_id="hashseed-v10",
+    )
+    script = """
+import hashlib
+import json
+import sys
+from pathlib import Path
+from adlife.city.run_store import CityRunStore
+from adlife.city.runs import replay_city_run
+
+result = replay_city_run(CityRunStore(Path(sys.argv[1])).load(sys.argv[2]))
+witness = {
+    "trace": result.trace_sha256,
+    "opportunity": result.opportunity_stream_sha256,
+    "attention": result.attention_stream_sha256,
+    "response": result.response_stream_sha256,
+    "response_state": result.response_state_sha256,
+    "response_summary": result.response_summary_sha256,
+    "rule_state": result.rule_state_document_sha256,
+    "cognition_state": result.cognition_state_document_sha256,
+    "cognition_input": result.cognition_input_sha256,
+    "terminal": result.cognition_terminal_stream_sha256,
+    "cognition_summary": result.cognition_summary_sha256,
+    "causal_contract": result.cognition_causal_contract_sha256,
+    "effective_settings": result.cognition_effective_settings_sha256,
+    "budget_allocation": result.cognition_budget_allocation_sha256,
+    "influence_policy": result.cognition_influence_policy_sha256,
+}
+print(
+    hashlib.sha256(
+        json.dumps(witness, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+)
+"""
+
+    def witness(seed: str) -> str:
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path), prepared.manifest.run_id],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=os.environ | {"PYTHONHASHSEED": seed},
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        assert completed.stderr == ""
+        return completed.stdout.strip()
+
+    seed_zero = witness("0")
+    seed_other = witness("12345")
+    assert seed_zero == seed_other
+    assert seed_zero == "93b064c34f56d84b94217c91378855f8f065bb69441e147b95f02ec3393045f8"
