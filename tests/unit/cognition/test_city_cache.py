@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 import warnings
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-import adlife.adapters.cognition.city_cache as city_cache_module
 import adlife.city.workbench_immutable_registry as immutable_registry
 from adlife.adapters.cognition.city_cache import (
     MAX_CITY_COGNITION_CACHE_RECORD_BYTES,
@@ -75,6 +76,39 @@ def _case(tmp_path: Path):
 
 def _path(cache: CityCognitionCache, record: CityCognitionCacheRecordV1) -> Path:
     return cache.workspace.root / "city-cognition-cache" / f"{record.key}.json"
+
+
+def _storage_module():
+    return importlib.import_module("adlife.adapters.cognition.city_cache_storage")
+
+
+def test_v1_delegation_preserves_frozen_key_path_and_record_bytes(tmp_path: Path) -> None:
+    storage_module = _storage_module()
+    cache, record = _case(tmp_path)
+    expected = (canonical_json(record) + "\n").encode("utf-8")
+    # Captured from the V1 fixture before the storage extraction.
+    assert record.key == "72a4a12a7d00e4250f598f64461a851cbbbc638cfa3a7cc7fcbad6b6244d68d2"
+    assert len(expected) == 8456
+    assert sha256(expected).hexdigest() == (
+        "b7a50ecc8f49103db2044e58808edaa1615cc9b42dae8bd1df1097f6e2bb13a8"
+    )
+    cache.put(record.key, record)
+    assert _path(cache, record).read_bytes() == expected
+    storage = storage_module.CityCognitionCacheByteStorage(
+        cache.workspace,
+        namespace="city-cognition-cache",
+        max_record_bytes=MAX_CITY_COGNITION_CACHE_RECORD_BYTES,
+    )
+    assert storage.read(record.key) == expected
+    assert cache.get(record.key) == record
+
+
+def test_v1_exception_exports_are_the_shared_class_objects() -> None:
+    storage = _storage_module()
+    assert CityCognitionCacheCorruption is storage.CityCognitionCacheCorruption
+    assert CityCognitionCacheConflict is storage.CityCognitionCacheConflict
+    assert CityCognitionCacheUnavailable is storage.CityCognitionCacheUnavailable
+    assert CityCognitionCachePublicationError is storage.CityCognitionCachePublicationError
 
 
 def test_cache_round_trip_is_canonical_bounded_and_at_the_exact_workspace_path(
@@ -245,7 +279,8 @@ def test_unreadable_post_link_state_remains_conservatively_possibly_committed(
 ) -> None:
     cache, record = _case(tmp_path)
     final_path = _path(cache, record)
-    real_lstat = city_cache_module.os.lstat
+    storage_module = _storage_module()
+    real_lstat = storage_module.os.lstat
     final_lstat_calls = 0
 
     def fail_second_final_lstat(path: object, *args: object, **kwargs: object):
@@ -259,8 +294,8 @@ def test_unreadable_post_link_state_remains_conservatively_possibly_committed(
     def fail_after_link(_path: Path) -> None:
         raise OSError("injected post-link sync failure")
 
-    monkeypatch.setattr(city_cache_module.os, "lstat", fail_second_final_lstat)
-    monkeypatch.setattr(city_cache_module, "_sync_directory", fail_after_link)
+    monkeypatch.setattr(storage_module.os, "lstat", fail_second_final_lstat)
+    monkeypatch.setattr(storage_module, "_sync_directory", fail_after_link)
 
     with pytest.raises(CityCognitionCachePublicationError) as caught:
         cache.put(record.key, record)
@@ -371,7 +406,7 @@ def test_cache_validation_and_workspace_errors_do_not_retain_hostile_values(
     def fail_lookup(*_args: object, **_kwargs: object) -> None:
         raise OSError(hostile)
 
-    monkeypatch.setattr(city_cache_module, "find_workbench_subdirectory", fail_lookup)
+    monkeypatch.setattr(_storage_module(), "find_workbench_subdirectory", fail_lookup)
     with pytest.raises(CityCognitionCacheUnavailable) as workspace_error:
         cache.get(record.key)
 
@@ -391,7 +426,7 @@ def test_cache_setup_and_read_errors_do_not_retain_hostile_filesystem_details(
     def fail_verification(*_args: object, **_kwargs: object) -> None:
         raise OSError(hostile)
 
-    monkeypatch.setattr(city_cache_module, "verify_workbench_workspace", fail_verification)
+    monkeypatch.setattr(_storage_module(), "verify_workbench_workspace", fail_verification)
     with pytest.raises(CityCognitionCacheUnavailable) as setup_error:
         CityCognitionCache(cache.workspace)
     monkeypatch.undo()
