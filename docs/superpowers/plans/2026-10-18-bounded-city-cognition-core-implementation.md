@@ -1178,6 +1178,7 @@ git commit -m "feat(city): add atomic dual response state"
 **Files:**
 - Modify: `tests/property/test_spatial_response_v2_invariants.py`
 - Modify: `tests/architecture/test_core_import_boundary.py`
+- Modify: `tests/unit/city/test_city_cognition_v2.py`
 - Modify: `src/adlife/core/simulation/city_cognition_v2.py`
 - Modify only if a failing property exposes a defect: `src/adlife/core/domain/city_cognition_v2.py`
 - Modify only if a failing property exposes a defect: `src/adlife/core/simulation/spatial_response_v2.py`
@@ -1195,6 +1196,8 @@ Run: `uv run pytest tests/property/test_spatial_response_v2_invariants.py::test_
 Expected: FAIL because the Task 4 builder still presents noncanonical arrival order to the strict persisted model.
 
 - [ ] **Step 3: Implement arrival-order canonicalization in `validate_city_cognition_evaluation_v2`.** Revalidate every record first, reject duplicate selection indices/request IDs before sorting, sort only after all request/input cross-bindings pass, and leave `CityCognitionEvaluationV2`'s direct-order validator unchanged.
+
+  Reconcile the Task 4 regression that intentionally required reverse builder arrivals to fail: the builder now accepts and normalizes those valid arrivals, while direct parsing of a reordered persisted `CityCognitionEvaluationV2` must continue to fail.
 
 - [ ] **Step 4: Run the completion-order property and verify green.**
 
