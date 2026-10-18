@@ -1464,6 +1464,7 @@ git commit -m "feat(city): define manifest v10"
 - Consumes: every completed Task 1-7 core interface.
 - Produces no production interface. The golden JSON has top-level keys `schema_version`, `cases`, and `combined_scientific_sha256`; `schema_version` is exact integer `1`, and `cases` has exactly `rules`, `mock`, and `recorded-provider`. Each case has exact keys `mode`, `causal_request_id`, `request_record_sha256`, `validated_result`, `cognition_input_sha256`, `cognition_terminal_stream_sha256`, `cognition_terminal_stream_bytes`, `response_stream_sha256`, `response_stream_bytes`, `dual_state_document_sha256`, `rule_state_document_sha256`, `cognition_state_document_sha256`, `response_summary_sha256`, `manifest_cognition_receipt_sha256`, and `case_scientific_sha256`.
 - The fixture contains only fictional/non-secret data and literal reviewed outputs. It has no update flag or automatic regeneration path.
+- Build the dedicated fixture through public core interfaces rather than importing evolving private unit-test helpers. Use one agent, one campaign, `attention_seed=5`, and two left-side roadside placements on the same route: `a-later` at fraction `0.5` / longitude `0.005`, and `z-earlier` at fraction `0.4` / longitude `0.004`. The admitted result must have exactly two baseline/applied responses, one dual update, one rule state, and one cognition state. The singular request/result fields pin the first canonical selected request; full stream hashes bind both requests.
 
 - [ ] **Step 1: Write the failing golden test before creating the record.** Add `test_v10_core_science_matches_reviewed_cross_platform_golden`; build one shared fixed one-agent/one-campaign/two-response baseline, then derive a rules case with exact neutral terminals, a mock case with the frozen digest policy, and a recorded-provider case with a literal validated `CityCognitionResultV2(affect="positive", relevance="high", credibility="medium", salience="high", safety_flags=())`. Use the same public core interfaces for all three cases, give provider mode a complete fictional non-secret profile/input, derive every listed value, and compare the complete dictionary to `record.json`.
 
@@ -1496,6 +1497,8 @@ Expected: FAIL because `tests/golden/scenarios/cognition-v2-small/record.json` i
 - [ ] **Step 3: Print the candidate golden document once without writing it automatically.** Use a temporary diagnostic in the test or a one-off `uv run python -c` that calls the same public fixture builder; inspect every semantic field and ensure it contains no timestamp, platform, unordered collection, environment value, path, or secret.
 
 - [ ] **Step 4: Add the reviewed literal `record.json` with `apply_patch`.** Do not add a regeneration option or write from the test.
+
+Also add a regression that redirects the golden path to `tmp_path`, requires `FileNotFoundError`, and proves neither the directory nor file is created. Missing committed evidence must fail closed rather than silently generate a candidate.
 
 - [ ] **Step 5: Run the golden node and verify green.**
 
