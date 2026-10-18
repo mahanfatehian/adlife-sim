@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import ssl
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import suppress
-from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, cast
 
@@ -34,6 +32,7 @@ from adlife.core.domain.serialization import canonical_json
 _JSON_CONTENT_TYPES = frozenset({"application/json"})
 _TRANSIENT_SERVER_STATUSES = frozenset({500, 502, 503, 504})
 _AUTHENTICATION_STATUSES = frozenset({401, 403})
+_RAW_HEADER_END = re.compile(rb"\n\r?\n")
 _JSON_ESCAPE = re.compile(r'\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})')
 _JSON_SIMPLE_ESCAPES = {
     '"': '"',
@@ -45,32 +44,6 @@ _JSON_SIMPLE_ESCAPES = {
     "r": "\r",
     "t": "\t",
 }
-_CITY_PROVIDER_TRANSPORT_ACTIVE: ContextVar[bool] = ContextVar(
-    "adlife_city_provider_transport_active",
-    default=False,
-)
-
-
-class _DropCityProviderHttpcoreLogs(logging.Filter):
-    """Keep provider-controlled wire values out of dependency debug logs."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        del record
-        return not _CITY_PROVIDER_TRANSPORT_ACTIVE.get()
-
-
-_HTTPCORE_LOG_FILTER = _DropCityProviderHttpcoreLogs()
-# Keep logger configuration stable during calls. Only the task-local context flag
-# changes, so unrelated requests and logs before/after a provider call stay visible.
-for _httpcore_logger_name in (
-    "httpcore",
-    "httpcore.connection",
-    "httpcore.http11",
-    "httpcore.http2",
-    "httpcore.proxy",
-    "httpcore.socks",
-):
-    logging.getLogger(_httpcore_logger_name).addFilter(_HTTPCORE_LOG_FILTER)
 
 
 class CityProviderCallError(RuntimeError):
@@ -168,6 +141,17 @@ _TransportFailure = Literal[
     "unavailable",
 ]
 _TransportOutcome = _WireResponse | _TransportFailure
+
+
+async def _redact_httpcore_trace(event: str, info: dict[str, Any]) -> None:
+    """Redact request-local diagnostics before httpcore renders its debug event.
+
+    Completed/failed trace mappings contain raw response headers or exceptions.
+    Started mappings contain safe request/connection metadata and are also used as
+    actual operation kwargs, so they must remain intact. No logger is reconfigured.
+    """
+    if event.endswith((".complete", ".failed")):
+        info.clear()
 
 
 def _decode_json_escapes(value: str) -> str:
@@ -345,10 +329,54 @@ class _WireResponseByteCounter:
         return True
 
 
+class _RawResponseHeaderGuard:
+    """Refuse duplicate lengths before h11 can merge matching raw field values."""
+
+    __slots__ = ("_done", "_pending")
+
+    def __init__(self) -> None:
+        self._pending = bytearray()
+        self._done = False
+
+    def check(self, chunk: bytes) -> None:
+        if self._done:
+            return
+        # The stream's independent wire counter bounds this buffer, including an
+        # unfinished head. Only heads are inspected; body/trailer bytes stay opaque.
+        search_from = max(0, len(self._pending) - 2)
+        self._pending.extend(chunk)
+        while (boundary := _RAW_HEADER_END.search(self._pending, search_from)) is not None:
+            head = bytes(self._pending[: boundary.start()]).split(b"\n")
+            del self._pending[: boundary.end()]
+            search_from = 0
+            fields: list[bytes] = []
+            for line in head[1:]:
+                line = line.rstrip(b"\r")
+                if line.startswith((b" ", b"\t")) and fields:
+                    fields[-1] += b" " + line.strip()
+                else:
+                    fields.append(line)
+            lengths = [
+                value.strip()
+                for field in fields
+                for name, separator, value in [field.partition(b":")]
+                if separator and name.lower() == b"content-length"
+            ]
+            if len(lengths) > 1 or any(b"," in value for value in lengths):
+                raise CityProviderProtocolError from None
+            status = head[0].split()
+            if len(status) > 1 and status[1].isdigit() and 100 <= int(status[1]) < 200:
+                # A following final response has its own independent header block.
+                continue
+            self._pending.clear()
+            self._done = True
+            return
+
+
 class _WireBoundedNetworkStream(httpcore.AsyncNetworkStream):
     """Bound inbound HTTP bytes while leaving request writes and TLS setup uncharged."""
 
-    __slots__ = ("_counter", "_inner")
+    __slots__ = ("_counter", "_header_guard", "_inner")
 
     def __init__(
         self,
@@ -356,13 +384,16 @@ class _WireBoundedNetworkStream(httpcore.AsyncNetworkStream):
         *,
         max_wire_bytes: int,
         counter: _WireResponseByteCounter | None = None,
+        header_guard: _RawResponseHeaderGuard | None = None,
     ) -> None:
         self._inner = inner
         self._counter = _WireResponseByteCounter(max_wire_bytes) if counter is None else counter
+        self._header_guard = _RawResponseHeaderGuard() if header_guard is None else header_guard
 
     async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
         chunk = await self._inner.read(max_bytes, timeout=timeout)
         if self._counter.accepts(len(chunk)):
+            self._header_guard.check(chunk)
             return chunk
         with suppress(Exception):
             await self._inner.aclose()
@@ -372,7 +403,31 @@ class _WireBoundedNetworkStream(httpcore.AsyncNetworkStream):
         await self._inner.write(buffer, timeout=timeout)
 
     async def aclose(self) -> None:
-        await self._inner.aclose()
+        # httpcore's pool-close trace has no request/trace extension. Sanitize at
+        # this boundary before that trace can render a dependency exception.
+        failure: Literal["timeout", "network", "protocol", "internal", "cancelled"] | None = None
+        try:
+            await self._inner.aclose()
+        except asyncio.CancelledError:
+            failure = "cancelled"
+        except httpcore.TimeoutException:
+            failure = "timeout"
+        except httpcore.NetworkError:
+            failure = "network"
+        except httpcore.ProtocolError:
+            failure = "protocol"
+        except Exception:
+            failure = "internal"
+        if failure == "cancelled":
+            raise asyncio.CancelledError from None
+        if failure == "timeout":
+            raise httpcore.ReadTimeout("city provider socket close failed") from None
+        if failure == "network":
+            raise httpcore.ReadError("city provider socket close failed") from None
+        if failure == "protocol":
+            raise httpcore.RemoteProtocolError("city provider socket close failed") from None
+        if failure == "internal":
+            raise CityProviderTransportError from None
 
     async def start_tls(
         self,
@@ -385,7 +440,9 @@ class _WireBoundedNetworkStream(httpcore.AsyncNetworkStream):
             server_hostname=server_hostname,
             timeout=timeout,
         )
-        return _WireBoundedNetworkStream(stream, max_wire_bytes=0, counter=self._counter)
+        return _WireBoundedNetworkStream(
+            stream, max_wire_bytes=0, counter=self._counter, header_guard=self._header_guard
+        )
 
     def get_extra_info(self, info: str) -> Any:
         return self._inner.get_extra_info(info)
@@ -506,15 +563,11 @@ class CityProviderHttpTransport:
             raise CityProviderUnavailableError from None
         timed_out = False
         outcome: _TransportOutcome | None = None
-        log_guard = _CITY_PROVIDER_TRANSPORT_ACTIVE.set(True)
         try:
-            try:
-                async with asyncio.timeout(self._attempt_timeout_seconds):
-                    outcome = await self._send_once_safely(payload)
-            except TimeoutError:
-                timed_out = True
-        finally:
-            _CITY_PROVIDER_TRANSPORT_ACTIVE.reset(log_guard)
+            async with asyncio.timeout(self._attempt_timeout_seconds):
+                outcome = await self._send_once_safely(payload)
+        except TimeoutError:
+            timed_out = True
         if timed_out:
             raise CityProviderTimeoutError from None
         if outcome == "timeout":
@@ -576,12 +629,13 @@ class CityProviderHttpTransport:
         )
         timeout = self._attempt_timeout_seconds
         extensions: dict[str, object] = {
+            "trace": _redact_httpcore_trace,
             "timeout": {
                 "connect": float(timeout),
                 "read": float(timeout),
                 "write": float(timeout),
                 "pool": float(timeout),
-            }
+            },
         }
         if resolved.endpoint.tls_server_hostname is not None:
             extensions["sni_hostname"] = resolved.endpoint.tls_server_hostname

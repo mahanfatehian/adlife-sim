@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import subprocess
+import sys
+from textwrap import dedent
 
 import pytest
 
@@ -25,6 +28,153 @@ from tests.unit.cognition.test_city_openai_compatible import (
 def _module():
     # Import inside the test so the missing implementation is a collected failure.
     return importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+
+
+def test_import_does_not_mutate_process_logger_configuration():
+    program = dedent("""
+        import importlib
+        import logging
+        import httpcore
+
+        names = ("httpcore", "httpcore.connection", "httpcore.http11", "httpcore.http2",
+                 "httpcore.proxy", "httpcore.socks")
+        for name in names:
+            logger = logging.getLogger(name)
+            logger.addFilter(logging.Filter())
+            logger.addHandler(logging.NullHandler())
+            logger.setLevel(logging.DEBUG)
+        loggers = [logging.getLogger()] + [
+            value for value in logging.root.manager.loggerDict.values()
+            if isinstance(value, logging.Logger)
+        ]
+        def state():
+            return {logger.name: (logger.level, logger.disabled, tuple(logger.filters),
+                                  tuple(logger.handlers), logger.propagate) for logger in loggers}
+        before = state()
+        importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+        after = state()
+        changed = [name for name in before if before[name] != after[name]]
+        assert not changed, f"import mutated process-global loggers: {changed}"
+    """)
+    completed = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("phase", ["response", "write", "read", "close", "malformed"])
+async def test_httpcore_logs_keep_events_without_provider_values_or_global_mutation(phase, caplog):
+    from tests.unit.cognition.test_city_openai_compatible import _ScriptedStream
+
+    caplog.set_level(logging.DEBUG, logger="httpcore")
+    module = _module()
+    names = (
+        "httpcore",
+        "httpcore.connection",
+        "httpcore.http11",
+        "httpcore.http2",
+        "httpcore.proxy",
+        "httpcore.socks",
+    )
+    loggers = [logging.getLogger(name) for name in names]
+    before = [
+        (logger.level, logger.disabled, tuple(logger.filters), tuple(logger.handlers))
+        for logger in loggers
+    ]
+    response = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n"
+        + f"X-Diagnostic: {FAKE_CREDENTIAL}\r\n\r\n".encode()
+        + b"{}"
+    )
+    if phase == "malformed":
+        response = f"HTTP/1.1 200 OK\r\n{FAKE_CREDENTIAL}\r\n\r\n".encode()
+
+    class FailingStream(_ScriptedStream):
+        async def write(self, buffer, timeout=None):
+            if phase == "write":
+                raise RuntimeError(f"Authorization: Bearer {FAKE_CREDENTIAL}")
+            await super().write(buffer, timeout=timeout)
+
+        async def read(self, max_bytes, timeout=None):
+            if phase == "read":
+                import httpcore
+
+                raise httpcore.ReadTimeout(f"Authorization: Bearer {FAKE_CREDENTIAL}")
+            return await super().read(max_bytes, timeout=timeout)
+
+        async def aclose(self):
+            await super().aclose()
+            if phase == "close":
+                raise RuntimeError(f"Authorization: Bearer {FAKE_CREDENTIAL}")
+
+    class Factory(_BackendFactory):
+        def __call__(self):
+            backend = _ScriptedBackend(FailingStream(response))
+            self.backends.append(backend)
+            return backend
+
+    transport, credential, _resolver, _factory = _transport(factory=Factory(()))
+    try:
+        if phase == "response":
+            assert await transport.post_json({}) == b"{}"
+        else:
+            error = (
+                module.CityProviderTimeoutError
+                if phase == "read"
+                else module.CityProviderProtocolError
+                if phase == "malformed"
+                else module.CityProviderTransportError
+            )
+            with pytest.raises(error):
+                await transport.post_json({})
+        assert "send_request_headers.started" in caplog.text
+        assert FAKE_CREDENTIAL not in caplog.text
+        assert "Authorization: Bearer" not in caplog.text
+        assert before == [
+            (logger.level, logger.disabled, tuple(logger.filters), tuple(logger.handlers))
+            for logger in loggers
+        ]
+    finally:
+        await transport.aclose()
+        credential.clear()
+
+
+@pytest.mark.parametrize(
+    "length_headers", [b"Content-Length: 2\r\nContent-Length: 2", b"Content-Length: 2, 2"]
+)
+@pytest.mark.parametrize("fragment_size", [1, 65536])
+async def test_transport_rejects_matching_raw_content_length_duplicates(
+    length_headers, fragment_size
+):
+    from tests.unit.cognition.test_city_openai_compatible import _ScriptedStream
+
+    response = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        + length_headers
+        + b"\r\nConnection: close\r\n\r\n{}"
+    )
+
+    class FragmentedStream(_ScriptedStream):
+        async def read(self, max_bytes, timeout=None):
+            return await super().read(min(max_bytes, fragment_size), timeout=timeout)
+
+    class Factory(_BackendFactory):
+        def __call__(self):
+            backend = _ScriptedBackend(FragmentedStream(response))
+            self.backends.append(backend)
+            return backend
+
+    transport, credential, _resolver, factory = _transport(factory=Factory(()))
+    try:
+        with pytest.raises(_module().CityProviderProtocolError) as caught:
+            await transport.post_json({})
+        assert str(caught.value) == "city cognition provider response was protocol-incompatible"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert factory.backends[0].stream.closed
+    finally:
+        await transport.aclose()
+        credential.clear()
 
 
 def _transport(responses=(), *, factory=None, resolver=None, **limits):
