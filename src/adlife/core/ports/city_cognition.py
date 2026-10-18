@@ -9,6 +9,11 @@ from adlife.core.domain.city_cognition import (
     CityProviderAttemptV1,
     CityProviderRepairContextV1,
 )
+from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionRequestV2,
+    CityProviderAttemptV2,
+    CityProviderRepairContextV2,
+)
 
 
 @runtime_checkable
@@ -25,4 +30,18 @@ class CityCognitionProvider(Protocol):
     ) -> CityProviderAttemptV1: ...
 
 
-__all__ = ["CityCognitionProvider"]
+@runtime_checkable
+class CityCognitionProviderV2(Protocol):
+    """Closed signal attempts; consumers must exact-revalidate V2 output at runtime."""
+
+    async def call(self, request: CityCognitionRequestV2) -> CityProviderAttemptV2: ...
+
+    async def repair_call(
+        self,
+        request: CityCognitionRequestV2,
+        *,
+        context: CityProviderRepairContextV2,
+    ) -> CityProviderAttemptV2: ...
+
+
+__all__ = ["CityCognitionProvider", "CityCognitionProviderV2"]

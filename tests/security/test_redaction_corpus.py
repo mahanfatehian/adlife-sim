@@ -1906,3 +1906,26 @@ def test_a_rejected_stored_document_does_not_chain_what_it_rejected(
     assert "0000abcdef1234567890" not in "".join(
         traceback.format_exception(type(raised.value), raised.value, raised.value.__traceback__)
     )
+
+
+@pytest.mark.parametrize("shape", LEAK_CORPUS, ids=[s.label for s in LEAK_CORPUS])
+async def test_v2_result_envelope_and_repair_never_retain_corpus_values(shape) -> None:
+    from adlife.core.domain.city_cognition_v2 import CityProviderRepairContextV2
+    from tests.unit.cognition.test_city_openai_compatible import _completion
+    from tests.unit.cognition.test_city_openai_compatible_v2 import _module, _provider
+    from tests.unit.cognition.test_city_prompts_v2 import _module as prompt_module
+
+    _module()
+    request, frozen, provider, *_ = _provider(_completion(shape.body))
+    attempt = await provider.call(request)
+    assert attempt.status == "invalid-result"
+    assert attempt.repair_context.reason_code == "unsafe-content"
+    assert shape.secret not in attempt.model_dump_json() + repr(provider)
+    await provider.aclose()
+    context = CityProviderRepairContextV2.model_construct(
+        schema_version=2, reason_code="invalid-schema", safe_excerpt=shape.body
+    )
+    with pytest.raises(ValueError) as caught:
+        prompt_module().build_city_cognition_repair_payload_v2(request, frozen, context=context)
+    assert shape.secret not in repr(caught.value)
+    assert caught.value.__cause__ is caught.value.__context__ is None

@@ -240,3 +240,128 @@ async def test_city_transport_suppresses_transport_exception_values_from_debug_l
     assert "private/provider.sock" not in caplog.text
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("carrier", ["inner", "outer", "usage", "escaped"])
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "sk-test-city-provider-secret",
+        "Bearer fake-authorization-opaque",
+        "api_key=opaquevalue1234567890",
+        "https://user:opaquevalue1234567890@example.invalid/",
+    ],
+)
+async def test_v2_screens_complete_raw_body_before_field_selection(carrier, secret, caplog) -> None:
+    from tests.unit.cognition.test_city_openai_compatible_v2 import _module, _provider, _result
+    from tests.unit.cognition.test_city_prompts_v2 import _provider_case
+
+    _module()
+    caplog.set_level(logging.DEBUG, logger="httpcore")
+    request, _ = _provider_case()
+    result = _result(request.request_id)
+    envelope = json.loads(_completion(json.dumps(result)))
+    if carrier == "inner":
+        result["extra"] = {"secret": secret}
+        envelope["choices"][0]["message"]["content"] = json.dumps(result)
+    elif carrier == "outer":
+        envelope["ignored"] = {"secret": secret}
+    elif carrier == "usage":
+        envelope["usage"]["ignored"] = secret
+    else:
+        envelope["ignored"] = json.dumps(json.dumps(secret))
+    request, _, provider, *_ = _provider(json.dumps(envelope).encode())
+    attempt = await provider.call(request)
+    assert attempt.status == "invalid-result"
+    assert attempt.repair_context.reason_code == "unsafe-content"
+    published = attempt.model_dump_json() + repr(attempt) + repr(provider) + caplog.text
+    assert secret not in published
+    await provider.aclose()
+
+
+async def test_v2_protocol_exception_discards_raw_body_and_parser_frames() -> None:
+    from tests.unit.cognition.test_city_openai_compatible_v2 import _module, _provider
+
+    _module()
+    marker = "opaque-provider-diagnostic-sentinel"
+    request, _, provider, *_ = _provider(_completion("{}", unknown=marker))
+    with pytest.raises(CityProviderProtocolError) as caught:
+        await provider.call(request)
+    assert caught.value.__cause__ is caught.value.__context__ is None
+    assert marker not in _traceback_local_rendering(caught.value)
+    assert FAKE_CREDENTIAL not in _traceback_local_rendering(caught.value)
+    await provider.aclose()
+
+
+async def test_v2_transport_exception_logs_and_traceback_contain_no_secrets(caplog) -> None:
+    from tests.unit.cognition.test_city_openai_compatible import _UnexpectedWriteFactory
+    from tests.unit.cognition.test_city_openai_compatible_v2 import _module, _provider
+
+    module = _module()
+    caplog.set_level(logging.DEBUG, logger="httpcore")
+    request, _, provider, *_ = _provider(factory=_UnexpectedWriteFactory())
+    with pytest.raises(module.CityProviderTransportError) as caught:
+        await provider.call(request)
+    assert FAKE_CREDENTIAL not in caplog.text + _traceback_local_rendering(caught.value)
+    assert caught.value.__cause__ is caught.value.__context__ is None
+    await provider.aclose()
+
+
+@pytest.mark.parametrize("carrier", ["request", "repair"])
+async def test_v2_forged_call_values_do_not_survive_in_public_traceback(carrier) -> None:
+    from adlife.core.domain.city_cognition_v2 import CityProviderRepairContextV2
+    from tests.unit.cognition.test_city_openai_compatible_v2 import _provider
+
+    request, _, provider, *_ = _provider()
+    secret = "api_key=opaquevalue1234567890"
+    if carrier == "request":
+        request = type(request).model_construct(
+            **(request.model_dump(mode="python") | {"request_id": {"secret": secret}})
+        )
+        operation = provider.call(request)
+    else:
+        context = CityProviderRepairContextV2.model_construct(
+            schema_version=2, reason_code="invalid-schema", safe_excerpt=secret
+        )
+        operation = provider.repair_call(request, context=context)
+    with pytest.raises(ValueError) as caught:
+        await operation
+    assert secret not in _traceback_local_rendering(caught.value)
+    assert caught.value.__cause__ is caught.value.__context__ is None
+    await provider.aclose()
+
+
+@pytest.mark.parametrize("carrier", ["credential-source", "credential-slot", "endpoint-url"])
+def test_v2_constructor_refusal_discards_untrusted_binding_metadata(carrier) -> None:
+    from dataclasses import replace
+
+    from adlife.adapters.cognition.city_endpoint_policy import CityEndpointBindingError
+    from tests.unit.cognition.test_city_openai_compatible import _remote_credential
+    from tests.unit.cognition.test_city_openai_compatible_v2 import _module
+    from tests.unit.cognition.test_city_prompts_v2 import _provider_case
+
+    module = _module()
+    _, frozen = _provider_case()
+    _, _, policy, endpoint, _ = _case()
+    credential = _remote_credential(frozen)
+    secret = "api_key=opaquevalue1234567890"
+    if carrier == "endpoint-url":
+        endpoint = replace(endpoint, base_url="https://user:" + secret + "@example.invalid/")
+    else:
+        credential = replace(
+            credential,
+            **{"source" if carrier == "credential-source" else "credential_slot_id": secret},
+        )
+    with pytest.raises(CityEndpointBindingError) as caught:
+        module.CityOpenAICompatibleProviderV2(
+            endpoint_policy=policy, endpoint=endpoint, cognition_input=frozen, credential=credential
+        )
+    current = caught.value.__traceback__
+    retained = []
+    while current is not None:
+        if str(current.tb_frame.f_globals.get("__name__", "")).startswith("adlife."):
+            retained.extend(repr(v) for k, v in current.tb_frame.f_locals.items() if k != "self")
+        current = current.tb_next
+    assert secret not in "\n".join(retained)
+    assert caught.value.__cause__ is caught.value.__context__ is None
+    credential.clear()
