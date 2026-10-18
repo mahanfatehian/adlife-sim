@@ -251,9 +251,13 @@ Each `SpatialAppliedResponseV2` embeds one revalidated `SpatialRuleResponse` as 
 - source and neutralization status;
 - applied sentiment and recall deltas.
 
+Applied-response source is the terminal source set plus the distinct `unselected` value.
+Only `source=unselected` may use the `unselected-neutral` marker; it has no terminal record.
 Neutralization status is exactly `none`, `uncertain`, `safety`, `rules`, `fallback`,
 `budget-skipped`, or `unselected`. The cross-field validator proves the status, source,
-terminal binding, and applied values agree.
+terminal binding, and applied values agree. If a result has both an `uncertain` category and
+a safety flag, the single applied status is `safety`; the summary still counts uncertain and
+safety-neutralized results independently, so those diagnostic counts may overlap.
 
 ### Dual-state update V2
 
