@@ -182,6 +182,125 @@ def test_influence_refuses_signed_zero_policy_authority_and_preserves_identity_z
     assert copysign(1.0, vector.applied_recall_delta) == -1.0
 
 
+@pytest.mark.parametrize("source", ["provider", "cache", "mock"])
+@pytest.mark.parametrize("sentiment,recall", [(-0.0, -0.0), (-0.0, 0.1), (0.1, -0.0)])
+def test_exact_neutral_signal_preserves_canonical_baseline_identity(source, sentiment, recall):
+    from adlife.core.domain.city_cognition_v2 import CityCognitionResultV2
+
+    # Independent digest search supplies a legal exact-neutral mock signal as well.
+    request_id = next(
+        f"cog-{i:064x}"
+        for i in range(10000)
+        if tuple(
+            b % n
+            for b, n in zip(
+                sha256(("city-cognition-mock-signal-v1\0" + f"cog-{i:064x}").encode()).digest()[:4],
+                (5, 4, 3, 4),
+                strict=True,
+            )
+        )
+        == (2, 2, 1, 2)
+    )
+    result = CityCognitionResultV2(
+        schema_version=2,
+        request_id=request_id,
+        affect="neutral",
+        relevance="medium",
+        credibility="medium",
+        salience="medium",
+        safety_flags=(),
+        disclosure="synthetic-bounded-cognition-not-observed-behavior",
+    )
+    vector = _module().apply_city_cognition_influence_v1(
+        sentiment, recall, source=source, result=result
+    )
+    assert vector.neutralization_status == "none"
+    assert canonical_json(
+        dict(sentiment=vector.applied_sentiment_delta, recall=vector.applied_recall_delta)
+    ) == canonical_json(dict(sentiment=sentiment, recall=recall))
+
+
+@pytest.mark.parametrize("boundary", ["context-input", "baseline-evaluation"])
+@pytest.mark.parametrize("part", ["agent-trait", "initial-sentiment", "initial-recall"])
+def test_canonical_snapshot_substitution_rejects_rehashed_signed_zero(boundary, part):
+    module = _module()
+    context, _, _ = _dense_evidence(agent_count=2)
+    traits = context.agents[0].traits.model_copy(update={"novelty_seeking": 0.0})
+    context, mobility, baseline = _dense_evidence(
+        agent_count=2, traits=traits, sentiment=0.0, recall=0.0
+    )
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    changed = []
+    for request in requests:
+        identity = request.causal_identity
+        if part == "agent-trait":
+            agent = identity.agent.model_dump(mode="python")
+            agent["traits"]["novelty_seeking"] = -0.0
+            updates = {"agent": agent}
+        else:
+            initial = identity.initial_rule_state.model_dump(mode="python")
+            initial["brand_sentiment" if part == "initial-sentiment" else "recall_strength"] = -0.0
+            updates = {"initial_rule_state": initial}
+        changed.append(_rehash_request(request, **updates))
+    changed = tuple(changed)
+    if boundary == "context-input":
+        with pytest.raises(ValueError):
+            module.build_city_cognition_input_v2(
+                context, changed, mode="rules", funded_response_limit=60
+            )
+    else:
+        frozen = module.build_city_cognition_input_v2(
+            context, requests, mode="rules", funded_response_limit=60
+        )
+        frozen = frozen.model_copy(
+            update={
+                "reservations": tuple(
+                    reservation.model_copy(
+                        update={
+                            "request_id": request.request_id,
+                            "request_record_sha256": request.request_record_sha256,
+                        }
+                    )
+                    for reservation, request in zip(frozen.reservations, changed, strict=True)
+                )
+            }
+        )
+        records = tuple(
+            module.build_city_cognition_terminal_record_v2(
+                request,
+                frozen,
+                selection_index=i,
+                source="rules",
+                result=module.build_city_rules_result_v2(request),
+            )
+            for i, request in enumerate(changed)
+        )
+        with pytest.raises(ValueError):
+            module.validate_city_cognition_evaluation_v2(
+                frozen, changed, records, baseline_evaluation=baseline
+            )
+
+
+def test_context_input_binds_even_unused_agent_trait_canonical_bytes():
+    module = _module()
+    context, _, _ = _dense_evidence(agent_count=2)
+    traits = context.agents[0].traits.model_copy(update={"roadside_recall_encoding": 0.0})
+    context, mobility, baseline = _dense_evidence(agent_count=2, traits=traits)
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    changed = []
+    for request in requests:
+        assert request.causal_identity.baseline.channel == "mobile-feed"
+        agent = request.causal_identity.agent.model_dump(mode="python")
+        agent["traits"]["roadside_recall_encoding"] = -0.0
+        changed.append(_rehash_request(request, agent=agent))
+    # Rule assumptions cannot observe this unused channel trait. The complete
+    # context snapshot must still refuse its distinct canonical identity.
+    with pytest.raises(ValueError, match="frozen run context"):
+        module.build_city_cognition_input_v2(
+            context, tuple(changed), mode="rules", funded_response_limit=60
+        )
+
+
 def _terminal_evidence(*, mode="rules", agent_count=2, minutes=20, limit=60, profile=None):
     context, mobility, baseline = _dense_evidence(agent_count=agent_count, minutes=minutes)
     module = _module()
@@ -742,7 +861,15 @@ def test_descriptive_provenance_changes_record_hash_not_causal_identity() -> Non
 
 
 def _dense_evidence(
-    *, agent_count=16, minutes=20, placements=None, roadside=False, attention_seed=10
+    *,
+    agent_count=16,
+    minutes=20,
+    placements=None,
+    roadside=False,
+    attention_seed=10,
+    traits=None,
+    sentiment=0.1,
+    recall=0.1,
 ):
     pack = load_pack(pack_data())
     mobility = (
@@ -763,7 +890,9 @@ def _dense_evidence(
         }
     )
     ids = tuple(a.agent_id for a in mobility.agents)
-    inputs = _response_input(scenario, agent_ids=ids)
+    inputs = _response_input(
+        scenario, agent_ids=ids, traits=traits, sentiment=sentiment, recall=recall
+    )
     opportunities = evaluate_spatial_opportunities(mobility, scenario)
     attention = evaluate_spatial_attention(opportunities, seed=attention_seed)
     baseline = evaluate_spatial_responses(inputs, scenario, opportunities, attention, agent_ids=ids)

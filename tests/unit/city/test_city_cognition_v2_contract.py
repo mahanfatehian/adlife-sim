@@ -9,6 +9,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from adlife.core.domain.serialization import canonical_json
+
 DISCLOSURE = "synthetic-bounded-cognition-not-observed-behavior"
 
 
@@ -46,6 +48,39 @@ def test_applied_vector_requires_bounded_values_and_matching_status(source, stat
         model.model_validate(
             facts | {"neutralization_status": "unselected" if source != "unselected" else "none"}
         )
+
+
+def test_effective_settings_bind_exact_profile_signed_zero_bytes() -> None:
+    facts = input_data("local")
+    profile = facts["provider_profile"]
+    profile["temperature"] = -0.0
+    profile.pop("revision_sha256")
+    profile["revision_sha256"] = sha256((canonical_json(profile) + "\n").encode()).hexdigest()
+    assert facts["effective_settings"]["temperature"] == 0.0
+    with pytest.raises(ValueError):
+        module().CityCognitionInputV2.model_validate(facts)
+    facts["effective_settings"]["temperature"] = -0.0
+    matched = module().CityCognitionInputV2.model_validate(facts)
+    assert matched.effective_settings.fingerprint == digest(facts["effective_settings"])
+
+
+@pytest.mark.parametrize("boundary", ["contract", "input"])
+@pytest.mark.parametrize("part", ["neutral-weight", "recall-minimum"])
+def test_frozen_policy_refuses_self_rehashed_signed_zero_at_admission(boundary, part) -> None:
+    facts = input_data()
+    contract = facts["causal_contract"]
+    influence = contract["influence_policy"]
+    if part == "neutral-weight":
+        influence["affect_adjustments"][2]["weight"] = -0.0
+    else:
+        influence["recall_minimum"] = -0.0
+    contract["influence_policy_sha256"] = digest(influence)
+    facts["causal_contract_sha256"] = digest(contract)
+    with pytest.raises(ValueError):
+        if boundary == "contract":
+            module().CityCognitionCausalContractV2.model_validate(contract)
+        else:
+            module().CityCognitionInputV2.model_validate(facts)
 
 
 PROMPT = (

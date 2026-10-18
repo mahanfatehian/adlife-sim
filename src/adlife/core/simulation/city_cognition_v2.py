@@ -86,9 +86,15 @@ def _validate_context_against_science(
         initial.setdefault(key, state)
     for declared in context.initial_states:
         observed = initial[declared.agent_id, declared.campaign_id]
+        observed_initial = CityCognitionInitialRuleStateV2(
+            schema_version=2,
+            agent_id=observed.agent_id,
+            campaign_id=observed.campaign_id,
+            brand_sentiment=observed.brand_sentiment,
+            recall_strength=observed.recall_strength,
+        )
         if (
-            observed.brand_sentiment != declared.brand_sentiment
-            or observed.recall_strength != declared.recall_strength
+            observed_initial.fingerprint != declared.fingerprint
             or observed.response_count != 0
             or observed.last_response_minute is not None
         ):
@@ -144,19 +150,22 @@ def _validate_response_assumptions(
         if response.channel == "mobile-feed"
         else traits.roadside_recall_encoding
     )
-    if any(
-        getattr(response, field) != getattr(traits, field)
+    expected = {
+        field: getattr(traits, field)
         for field in (
             "price_sensitivity",
             "novelty_seeking",
             "advertising_skepticism",
             "impulsivity",
         )
-    ) or (
-        response.interest_match != interest
-        or response.relative_price != campaign.relative_price
-        or response.channel_recall_encoding != recall
-    ):
+    }
+    expected.update(
+        interest_match=interest,
+        relative_price=campaign.relative_price,
+        channel_recall_encoding=recall,
+    )
+    observed = {field: getattr(response, field) for field in expected}
+    if canonical_json(observed) != canonical_json(expected):
         raise ValueError("causal snapshots disagree with baseline rule assumptions")
 
 
@@ -475,6 +484,9 @@ def build_city_cognition_input_v2(
     for request in checked:
         identity = request.causal_identity
         baseline = identity.baseline
+        agent = agents.get(baseline.agent_id)
+        campaign = campaigns.get(baseline.campaign_id)
+        initial = initials.get((baseline.agent_id, baseline.campaign_id))
         if (
             request.run_input_sha256 != context.run_input_sha256
             or identity.causal_contract_sha256 != contract.fingerprint
@@ -483,10 +495,12 @@ def build_city_cognition_input_v2(
                 getattr(identity, field) != getattr(context, field)
                 for field in ("response_input_sha256", "scenario_sha256", "city_sha256")
             )
-            or identity.agent != agents.get(baseline.agent_id)
-            or identity.campaign != campaigns.get(baseline.campaign_id)
-            or identity.initial_rule_state
-            != initials.get((baseline.agent_id, baseline.campaign_id))
+            or agent is None
+            or campaign is None
+            or initial is None
+            or identity.agent.fingerprint != agent.fingerprint
+            or identity.campaign.fingerprint != campaign.fingerprint
+            or identity.initial_rule_state.fingerprint != initial.fingerprint
         ):
             raise ValueError("city cognition request disagrees with its frozen run context")
     profile = None
@@ -638,8 +652,13 @@ def apply_city_cognition_influence_v1(
         elif "uncertain" in categories:
             status = "uncertain"
     sentiment, recall = baseline_sentiment_delta, baseline_recall_delta
-    if status == "none":
-        assert result is not None
+    # Exact neutral signals are identities, including the baseline's zero signs.
+    if (
+        status == "none"
+        and result is not None
+        and (result.affect, result.relevance, result.credibility, result.salience)
+        != ("neutral", "medium", "medium", "medium")
+    ):
         affect = {row.category: row.weight for row in policy.affect_adjustments}[result.affect]
         relevance = {row.category: row.weight for row in policy.relevance_factors}[result.relevance]
         credibility = {row.category: row.weight for row in policy.credibility_factors}[
@@ -819,8 +838,8 @@ def _bind_requests_to_baseline(
             raise ValueError("request science does not match baseline evaluation")
         if (
             identity.initial_cognition_state_sha256 != document.fingerprint
-            or identity.initial_rule_state
-            != initial_by_key[response.agent_id, response.campaign_id]
+            or identity.initial_rule_state.fingerprint
+            != initial_by_key[response.agent_id, response.campaign_id].fingerprint
         ):
             raise ValueError("request initial state does not match baseline evidence")
         _validate_response_assumptions(response, identity.agent, identity.campaign)

@@ -397,12 +397,18 @@ class CityCognitionCausalContractV2(_CityCognitionModelV2):
             or self.result_schema_contract_sha256 != _CITY_COGNITION_RESULT_SCHEMA_V2_SHA256
         ):
             raise ValueError("prompt and result schema must match their frozen V2 documents")
-        for name in ("selection", "fallback", "mock", "influence"):
+        # Numeric equality alone cannot freeze bytes: -0.0 and 0.0 compare equal.
+        for name, expected in (
+            ("selection", _CITY_COGNITION_SELECTION_POLICY_V2_SHA256),
+            ("fallback", _CITY_COGNITION_FALLBACK_POLICY_V2_SHA256),
+            ("mock", _CITY_COGNITION_MOCK_POLICY_V1_SHA256),
+            ("influence", _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256),
+        ):
             if (
-                getattr(self, name + "_policy_sha256")
-                != getattr(self, name + "_policy").fingerprint
+                getattr(self, name + "_policy_sha256") != expected
+                or getattr(self, name + "_policy").fingerprint != expected
             ):
-                raise ValueError("causal contract policy hash mismatch")
+                raise ValueError("causal contract policy must match its frozen canonical document")
         return self
 
     @property
@@ -817,7 +823,10 @@ class CityCognitionInputV2(_CityCognitionModelV2):
             }
             expected_settings["schema_version"] = 2
             expected_settings["max_output_tokens"] = min(profile.max_output_tokens, 128)
-            if settings != CityCognitionEffectiveSettingsV2.model_validate(expected_settings):
+            if (
+                settings.fingerprint
+                != CityCognitionEffectiveSettingsV2.model_validate(expected_settings).fingerprint
+            ):
                 raise ValueError("effective settings do not match the capped frozen profile")
             if self.aggregate_output_token_ceiling != self.funded_response_limit * 512:
                 raise ValueError("aggregate ceiling must reserve the configured funded limit")
