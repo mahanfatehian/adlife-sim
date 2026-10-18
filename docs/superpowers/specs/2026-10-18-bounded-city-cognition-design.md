@@ -195,7 +195,8 @@ structural responsibilities.
 - core-owned baseline response, notice, opportunity, minute-group, agent, campaign, and
   placement bindings;
 - channel, day, minute, and millisecond;
-- pre-minute rule-state and cognition-state hashes;
+- the pre-minute deterministic rule-state hash and the initial cognition-state document
+  hash;
 - deterministic baseline proposal and its hash;
 - the minimized causal profile, campaign creative, frequency, and rule factors described
   in the persona boundary;
@@ -205,6 +206,13 @@ Its request ID is the SHA-256 content address of every field except the ID itsel
 adapter builds a minimized wire projection that retains the request ID and causal facts but
 omits internal identities and all descriptive persona fields. The complete internal request
 is frozen and validated; only the minimized projection crosses the provider boundary.
+
+The request does not bind the cumulatively updated cognition state. All requests and budget
+reservations are constructed before provider work begins, so making a later request depend
+on an earlier provider result would make request identity sensitive to network completion
+order and would serialize otherwise independent work. The initial cognition-state document
+hash binds the run's starting cognition track; the exact pre-minute cognition state is bound
+later by the core-owned applied response and dual-state update during canonical commit.
 
 ### Terminal record V2
 
