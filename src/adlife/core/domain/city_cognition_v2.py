@@ -179,6 +179,26 @@ class CityCognitionResultV2(CityCognitionSignalVectorV2):
     disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
 
 
+class CityCognitionAppliedVectorV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    source: CityCognitionAppliedSourceV2
+    neutralization_status: CityCognitionNeutralizationStatusV2
+    applied_sentiment_delta: float = Field(ge=-0.2, le=0.2)
+    applied_recall_delta: float = Field(ge=0, le=0.3)
+
+    @model_validator(mode="after")
+    def coherent_status(self) -> Self:
+        if self.source in {"rules", "fallback", "budget-skipped", "unselected"}:
+            valid = self.neutralization_status == self.source
+        elif self.source == "mock":
+            valid = self.neutralization_status == "none"
+        else:
+            valid = self.neutralization_status in {"none", "uncertain", "safety"}
+        if not valid:
+            raise ValueError("applied source and neutralization status are inconsistent")
+        return self
+
+
 class CityCognitionSelectionPolicyV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     policy_id: Literal["city-cognition-selection-v2"]

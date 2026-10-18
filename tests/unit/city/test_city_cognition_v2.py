@@ -6,6 +6,8 @@ import importlib
 from collections import Counter
 from dataclasses import replace
 from hashlib import sha256
+from itertools import product
+from math import fsum
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +43,626 @@ def _bypass(value, **updates):
     return type(value).model_construct(
         **{name: getattr(value, name) for name in type(value).model_fields} | updates
     )
+
+
+def test_mock_signal_uses_only_causal_request_id_and_frozen_digest_order() -> None:
+    context, mobility, baseline = _dense_evidence(agent_count=2)
+    module = _module()
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    orders = (
+        ("annoyed", "skeptical", "neutral", "curious", "positive"),
+        ("none", "low", "medium", "high"),
+        ("low", "medium", "high"),
+        ("none", "low", "medium", "high"),
+    )
+    for request in requests:
+        digest = sha256(("city-cognition-mock-signal-v1\0" + request.request_id).encode()).digest()
+        result = module.build_city_mock_result_v2(request)
+        assert tuple(
+            getattr(result, f) for f in ("affect", "relevance", "credibility", "salience")
+        ) == tuple(order[digest[i] % len(order)] for i, order in enumerate(orders))
+        other_context = context.model_copy(update={"run_input_sha256": "e" * 64})
+        other = module.build_city_cognition_requests_v2(other_context, mobility, baseline)
+        corresponding = next(r for r in other if r.request_id == request.request_id)
+        assert module.build_city_mock_result_v2(corresponding) == result
+        neutral = module.build_city_rules_result_v2(request)
+        assert (neutral.affect, neutral.relevance, neutral.credibility, neutral.salience) == (
+            "neutral",
+            "medium",
+            "medium",
+            "medium",
+        )
+        assert not neutral.safety_flags
+        assert module.build_city_budget_skipped_result_v2(request) == neutral
+        for reason in ("invalid-result", "authentication-refused", "timeout-exhausted"):
+            assert module.build_city_fallback_result_v2(request, reason=reason) == neutral
+        with pytest.raises(ValueError):
+            module.build_city_fallback_result_v2(request, reason="budget-skipped")
+    invalid = _bypass(requests[0], request_id="cog-" + "0" * 64)
+    for builder in (
+        module.build_city_mock_result_v2,
+        module.build_city_rules_result_v2,
+        module.build_city_budget_skipped_result_v2,
+    ):
+        with pytest.raises(ValueError):
+            builder(invalid)
+
+
+def test_influence_policy_exhaustively_maps_applicable_categories_and_neutralizes_whole_vector():
+    context, mobility, baseline = _dense_evidence(agent_count=2)
+    module = _module()
+    request = module.build_city_cognition_requests_v2(context, mobility, baseline)[0]
+    neutral = module.build_city_rules_result_v2(request)
+    apply = module.apply_city_cognition_influence_v1
+    affects = {
+        "annoyed": -0.04,
+        "skeptical": -0.02,
+        "neutral": 0.0,
+        "curious": 0.02,
+        "positive": 0.04,
+    }
+    relevance = {"none": 0.5, "low": 0.75, "medium": 1.0, "high": 1.15}
+    credibility = {"low": 0.75, "medium": 1.0, "high": 1.1}
+    salience = relevance
+    combinations = list(product(affects, relevance, credibility, salience))
+    assert len(combinations) == 240
+    for affect, rel, cred, sal in combinations:
+        result = neutral.model_copy(
+            update=dict(affect=affect, relevance=rel, credibility=cred, salience=sal)
+        )
+        for s, r in ((0.19, 0.29), (-0.19, 0.01), (0.0, 0.0), (0.2, 0.3), (-0.2, 0.3)):
+            vector = apply(s, r, source="provider", result=result)
+            assert vector.applied_sentiment_delta == max(
+                -0.2, min(0.2, fsum((s, affects[affect])) * relevance[rel] * credibility[cred])
+            )
+            assert vector.applied_recall_delta == max(
+                0.0, min(0.3, r * relevance[rel] * credibility[cred] * salience[sal])
+            )
+            assert vector.neutralization_status == "none"
+    for field in ("affect", "relevance", "credibility", "salience"):
+        for flags in ((), ("stereotype-risk",), ("unsupported-inference",), ("unsafe-content",)):
+            result = neutral.model_copy(update={field: "uncertain", "safety_flags": flags})
+            vector = apply(0.03, 0.17, source="cache", result=result)
+            assert (vector.applied_sentiment_delta, vector.applied_recall_delta) == (0.03, 0.17)
+            assert vector.neutralization_status == ("safety" if flags else "uncertain")
+    for flag in ("stereotype-risk", "unsupported-inference", "unsafe-content"):
+        vector = apply(
+            0.03,
+            0.17,
+            source="provider",
+            result=neutral.model_copy(update={"safety_flags": (flag,)}),
+        )
+        assert (
+            vector.applied_sentiment_delta,
+            vector.applied_recall_delta,
+            vector.neutralization_status,
+        ) == (0.03, 0.17, "safety")
+    for source in ("rules", "fallback", "budget-skipped", "unselected"):
+        vector = apply(
+            0.03, 0.17, source=source, result=None if source == "unselected" else neutral
+        )
+        assert (
+            vector.applied_sentiment_delta,
+            vector.applied_recall_delta,
+            vector.neutralization_status,
+        ) == (0.03, 0.17, source)
+    mock = module.build_city_mock_result_v2(request)
+    apply(0.03, 0.17, source="mock", result=mock)
+    for source in ("rules", "fallback", "budget-skipped", "mock", "provider", "cache"):
+        with pytest.raises(ValueError):
+            apply(0.03, 0.17, source=source, result=None)
+    for source, result in (("unselected", neutral), ("invalid", neutral), ("rules", mock)):
+        with pytest.raises(ValueError):
+            apply(0.03, 0.17, source=source, result=result)
+    for bad in (True, float("nan"), float("inf"), -0.21, 0.31, 10**1000):
+        with pytest.raises((TypeError, ValueError)):
+            apply(bad, 0.1, source="provider", result=neutral)
+        with pytest.raises((TypeError, ValueError)):
+            apply(0.1, bad, source="provider", result=neutral)
+
+
+def test_influence_refuses_signed_zero_policy_authority_and_preserves_identity_zero() -> None:
+    from math import copysign
+
+    from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1
+
+    module = _module()
+    policy = CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1
+    weights = tuple(
+        row.model_copy(update={"weight": -0.0}) if row.category == "neutral" else row
+        for row in policy.affect_adjustments
+    )
+    changed = policy.model_copy(update={"affect_adjustments": weights})
+    with pytest.raises(ValueError):
+        module.apply_city_cognition_influence_v1(
+            0.0, 0.0, source="unselected", result=None, policy=changed
+        )
+    vector = module.apply_city_cognition_influence_v1(-0.0, -0.0, source="unselected", result=None)
+    assert copysign(1.0, vector.applied_sentiment_delta) == -1.0
+    assert copysign(1.0, vector.applied_recall_delta) == -1.0
+
+
+def _terminal_evidence(*, mode="rules", agent_count=2, minutes=20, limit=60, profile=None):
+    context, mobility, baseline = _dense_evidence(agent_count=agent_count, minutes=minutes)
+    module = _module()
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    if mode in {"local", "remote"} and profile is None:
+        profile = CityCognitionProviderProfileSnapshotV1.model_validate(profile_data(mode))
+    frozen = module.build_city_cognition_input_v2(
+        context, requests, mode=mode, funded_response_limit=limit, provider_profile=profile
+    )
+    records = tuple(
+        module.build_city_cognition_terminal_record_v2(
+            request,
+            frozen,
+            selection_index=i,
+            source=mode if mode in {"rules", "mock"} else "cache",
+            result=module.build_city_mock_result_v2(request)
+            if mode == "mock"
+            else module.build_city_rules_result_v2(request),
+        )
+        for i, request in enumerate(requests)
+    )
+    return context, baseline, frozen, requests, records
+
+
+def _rehash_terminal(record, **changes):
+    from adlife.core.domain.city_cognition_v2 import CityCognitionTerminalRecordV2
+
+    data = record.model_dump(mode="python", exclude={"record_hash"}) | changes
+    return CityCognitionTerminalRecordV2.model_validate(
+        data | {"record_hash": sha256(canonical_json(data).encode()).hexdigest()}
+    )
+
+
+def test_evaluation_rejects_duplicate_or_cross_bound_terminal_records() -> None:
+    module = _module()
+    _, baseline, frozen, requests, records = _terminal_evidence()
+    validate = module.validate_city_cognition_evaluation_v2
+    evaluation = validate(frozen, requests, records, baseline_evaluation=baseline)
+    lines = tuple(module.city_cognition_terminal_lines_v2(evaluation))
+    assert lines == tuple((canonical_json(r) + "\n").encode() for r in records)
+    assert evaluation.summary.terminal_stream_sha256 == sha256(b"".join(lines)).hexdigest()
+    assert evaluation.summary.coverage.eligible_response_count == baseline.counts.response_count
+    for field in (
+        "request_record_sha256",
+        "run_input_sha256",
+        "response_input_sha256",
+        "scenario_sha256",
+        "city_sha256",
+        "baseline_sha256",
+        "baseline_response_id",
+        "notice_event_id",
+        "opportunity_id",
+        "baseline_state_update_event_id",
+    ):
+        changed = _rehash_terminal(records[0], **{field: "f" * 64})
+        with pytest.raises(ValueError):
+            validate(frozen, requests, (changed, *records[1:]), baseline_evaluation=baseline)
+    for field, value in {
+        "agent_id": "person-099",
+        "campaign_id": "other",
+        "placement_id": "other",
+        "channel": "roadside-billboard",
+        "activity": "commute",
+        "model_minute": 1439,
+        "millisecond_within_minute": 59999,
+        "baseline_state_update_cause_count": 2,
+    }.items():
+        changed = _rehash_terminal(records[0], **{field: value})
+        with pytest.raises(ValueError):
+            validate(frozen, requests, (changed, *records[1:]), baseline_evaluation=baseline)
+    for bad in (
+        records[1:],
+        (*records, records[0]),
+        tuple(reversed(records)),
+        (records[0], *records[:-1]),
+    ):
+        with pytest.raises(ValueError):
+            validate(frozen, requests, bad, baseline_evaluation=baseline)
+    with pytest.raises(ValueError):
+        type(evaluation).model_validate(
+            evaluation.model_dump(mode="python") | {"records": tuple(reversed(records))}
+        )
+    # Rebind every surviving reservation: cardinality consistency is insufficient.
+    shorter_input = frozen.model_copy(update={"reservations": frozen.reservations[:-1]})
+    with pytest.raises(ValueError):
+        validate(shorter_input, requests[:-1], records[:-1], baseline_evaluation=baseline)
+    for i, (request, record) in enumerate(zip(requests, records, strict=True)):
+        proposal = request.causal_identity.baseline
+        for field in type(proposal).model_fields:
+            if field not in {"schema_version", "pre_minute_rule_state_sha256", "rule_factors"}:
+                assert getattr(record, field) == getattr(proposal, field)
+        with pytest.raises(ValueError):
+            module.build_city_cognition_terminal_record_v2(
+                request,
+                frozen,
+                selection_index=(i + 1) % len(records),
+                source="rules",
+                result=record.result,
+            )
+
+
+def test_terminal_uses_frozen_input_when_current_defaults_are_unavailable(monkeypatch) -> None:
+    module = _module()
+    domain = importlib.import_module("adlife.core.domain.city_cognition_v2")
+    _, baseline, frozen, requests, records = _terminal_evidence(mode="mock")
+    for owner in (module, domain):
+        for name in vars(owner):
+            if name.startswith("CITY_COGNITION_"):
+                monkeypatch.setattr(owner, name, None)
+    for i, request in enumerate(requests):
+        assert (
+            module.build_city_cognition_terminal_record_v2(
+                request, frozen, selection_index=i, source="mock", result=records[i].result
+            )
+            == records[i]
+        )
+    module.validate_city_cognition_evaluation_v2(
+        frozen, requests, records, baseline_evaluation=baseline
+    )
+    vector = module.apply_city_cognition_influence_v1(
+        0.1,
+        0.1,
+        source="mock",
+        result=records[0].result,
+        policy=frozen.causal_contract.influence_policy,
+    )
+    assert vector.neutralization_status == "none"
+
+
+def test_provider_funding_attempt_capacity_usage_and_overlapping_diagnostics() -> None:
+    module = _module()
+    context, mobility, baseline = _dense_evidence(agent_count=4)
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    facts = profile_data() | {"transient_retries": 0, "repair_attempts": 0}
+    facts.pop("revision_sha256")
+    profile = CityCognitionProviderProfileSnapshotV1.model_validate(
+        facts | {"revision_sha256": sha256((canonical_json(facts) + "\n").encode()).hexdigest()}
+    )
+    frozen = module.build_city_cognition_input_v2(
+        context, requests, mode="local", funded_response_limit=10, provider_profile=profile
+    )
+    assert len(requests) > 10
+    records = []
+    for i, request in enumerate(requests):
+        neutral = module.build_city_rules_result_v2(request)
+        source, result, reason = (
+            ("budget-skipped", neutral, "budget-skipped") if i >= 10 else ("cache", neutral, None)
+        )
+        if i == 0:
+            result = neutral.model_copy(
+                update={"affect": "uncertain", "safety_flags": ("unsafe-content",)}
+            )
+        if i == 1:
+            source, reason = "fallback", "authentication-refused"
+        if i == 2:
+            source = "provider"
+        record = module.build_city_cognition_terminal_record_v2(
+            request,
+            frozen,
+            selection_index=i,
+            source=source,
+            result=result,
+            reason=reason,
+            attempt_count=1 if source == "provider" else 0,
+            prompt_tokens=2_147_483_647 if source == "cache" else None,
+            completion_tokens=2_147_483_647 if source == "cache" else None,
+        )
+        records.append(record)
+        with pytest.raises(ValueError):
+            module.build_city_cognition_terminal_record_v2(
+                request, frozen, selection_index=i, source="rules", result=neutral
+            )
+        if i < 10:
+            with pytest.raises(ValueError):
+                module.build_city_cognition_terminal_record_v2(
+                    request,
+                    frozen,
+                    selection_index=i,
+                    source="budget-skipped",
+                    result=neutral,
+                    reason="budget-skipped",
+                )
+            for bad_source in ("provider", "fallback"):
+                with pytest.raises(ValueError):
+                    module.build_city_cognition_terminal_record_v2(
+                        request,
+                        frozen,
+                        selection_index=i,
+                        source=bad_source,
+                        result=neutral,
+                        attempt_count=2,
+                        reason="timeout-exhausted" if bad_source == "fallback" else None,
+                    )
+        else:
+            with pytest.raises(ValueError):
+                module.build_city_cognition_terminal_record_v2(
+                    request, frozen, selection_index=i, source="cache", result=neutral
+                )
+    evaluation = module.validate_city_cognition_evaluation_v2(
+        frozen, requests, tuple(records), baseline_evaluation=baseline
+    )
+    summary = evaluation.summary
+    assert summary.neutralization.uncertain_result_count == 1
+    assert summary.neutralization.safety_neutralized_result_count == 1
+    assert summary.neutralization.neutralized_response_count == baseline.counts.response_count - 8
+    assert summary.coverage.funded_request_count == 10
+
+
+def test_empty_terminal_evidence_has_exact_empty_lf_stream() -> None:
+    module = _module()
+    context, _, baseline = _dense_evidence(agent_count=2, placements=[_phone(probability=0.0)])
+    requests = ()
+    records = ()
+    frozen = module.build_city_cognition_input_v2(
+        context, requests, mode="rules", funded_response_limit=60
+    )
+    assert not requests
+    evaluation = module.validate_city_cognition_evaluation_v2(
+        frozen, requests, records, baseline_evaluation=baseline
+    )
+    assert tuple(module.city_cognition_terminal_lines_v2(evaluation)) == ()
+    assert evaluation.summary.terminal_stream_bytes == 0
+    assert evaluation.summary.terminal_stream_sha256 == sha256(b"").hexdigest()
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["initial-doc", "initial-state", "baseline-group", "science", "rule-factors", "pre-state"],
+)
+def test_evaluation_rejects_coordinated_rehashed_request_mutations(change) -> None:
+    module = _module()
+    _, baseline, frozen, requests, _ = _terminal_evidence()
+    request = requests[0]
+    identity = request.causal_identity
+    if change == "initial-doc":
+        updates = {"initial_cognition_state_sha256": "f" * 64}
+    elif change == "initial-state":
+        updates = {
+            "initial_rule_state": identity.initial_rule_state.model_dump(mode="python")
+            | {"brand_sentiment": 0.9}
+        }
+    elif change == "science":
+        updates = {"city_sha256": "f" * 64}
+    else:
+        proposal = identity.baseline.model_dump(mode="python")
+        if change == "baseline-group":
+            proposal["baseline_state_update_event_id"] = "f" * 64
+        elif change == "pre-state":
+            proposal["pre_minute_rule_state_sha256"] = "f" * 64
+        else:
+            proposal["rule_factors"]["baseline_recall_delta"] = 0.299
+        updates = {"baseline": proposal}
+    changed = tuple(
+        _rehash_request(r, **updates)
+        if i == 0
+        or change in {"initial-doc", "science"}
+        or (
+            change == "initial-state"
+            and r.causal_identity.baseline.agent_id == identity.baseline.agent_id
+        )
+        else r
+        for i, r in enumerate(requests)
+    )
+    reservations = tuple(
+        _bypass(item, request_id=r.request_id, request_record_sha256=r.request_record_sha256)
+        for item, r in zip(frozen.reservations, changed, strict=True)
+    )
+    frozen = frozen.model_copy(update={"reservations": reservations})
+    terminals = tuple(
+        module.build_city_cognition_terminal_record_v2(
+            r,
+            frozen,
+            selection_index=i,
+            source="rules",
+            result=module.build_city_rules_result_v2(r),
+        )
+        for i, r in enumerate(changed)
+    )
+    with pytest.raises(ValueError):
+        module.validate_city_cognition_evaluation_v2(
+            frozen, changed, terminals, baseline_evaluation=baseline
+        )
+
+
+def test_evaluation_regenerates_global_selection_and_full_same_minute_group() -> None:
+    module = _module()
+    _, baseline, frozen, requests, records = _terminal_evidence(agent_count=16)
+    assert len(requests) == 60
+    evaluation = module.validate_city_cognition_evaluation_v2(
+        frozen, requests, records, baseline_evaluation=baseline
+    )
+    assert (
+        evaluation.summary.coverage.unselected_response_count == baseline.counts.response_count - 60
+    )
+    for count in (0, 59):
+        shortened = frozen.model_copy(update={"reservations": frozen.reservations[:count]})
+        with pytest.raises(ValueError):
+            module.validate_city_cognition_evaluation_v2(
+                shortened, requests[:count], records[:count], baseline_evaluation=baseline
+            )
+    context, mobility, baseline = _same_minute_evidence()
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    frozen = module.build_city_cognition_input_v2(
+        context, requests, mode="mock", funded_response_limit=60
+    )
+    records = tuple(
+        module.build_city_cognition_terminal_record_v2(
+            r,
+            frozen,
+            selection_index=i,
+            source="mock",
+            result=module.build_city_mock_result_v2(r, policy=frozen.causal_contract.mock_policy),
+        )
+        for i, r in enumerate(requests)
+    )
+    evaluation = module.validate_city_cognition_evaluation_v2(
+        frozen, requests, records, baseline_evaluation=baseline
+    )
+    assert all(
+        r.baseline_state_update_cause_count == baseline.counts.response_count for r in records
+    )
+    assert evaluation.summary.coverage.eligible_response_count > 4
+
+
+def test_evaluation_rejects_valid_but_later_selection_substitution() -> None:
+    module = _module()
+    context, mobility, baseline = _dense_evidence(agent_count=2)
+    requests = module.build_city_cognition_requests_v2(context, mobility, baseline)
+    selected_ids = {r.causal_identity.baseline.baseline_response_id for r in requests}
+    original = next(
+        r for r in reversed(requests) if r.causal_identity.baseline.agent_id == "person-001"
+    )
+    later = next(
+        r
+        for r in baseline.records
+        if r.event_type == "spatial.response"
+        and r.agent_id == "person-001"
+        and r.event_id not in selected_ids
+    )
+    update = next(
+        r
+        for r in baseline.records
+        if r.event_type == "spatial.state-updated" and later.event_id in r.caused_by_event_ids
+    )
+    proposal = original.causal_identity.baseline.model_dump(mode="python")
+    proposal.update(
+        baseline_response_id=later.event_id,
+        notice_event_id=later.caused_by,
+        opportunity_id=later.opportunity_id,
+        baseline_state_update_event_id=update.event_id,
+        baseline_state_update_cause_count=len(update.caused_by_event_ids),
+        model_minute=later.model_minute,
+        millisecond_within_minute=later.millisecond_within_minute,
+        pre_minute_rule_state_sha256=later.state_before_sha256,
+    )
+    for name in proposal["rule_factors"]:
+        proposal["rule_factors"][name] = (
+            2
+            if name == "schema_version"
+            else later.sentiment_delta
+            if name == "baseline_sentiment_delta"
+            else later.recall_delta
+            if name == "baseline_recall_delta"
+            else getattr(later, name)
+        )
+    proposal["activity"] = next(
+        p.activity for p in mobility.frame(later.model_minute) if p.agent_id == later.agent_id
+    )
+    replacement = _rehash_request(original, baseline=proposal)
+    requests = tuple(
+        sorted(
+            (replacement if r == original else r for r in requests),
+            key=lambda r: (
+                r.causal_identity.baseline.model_minute,
+                r.causal_identity.baseline.agent_id,
+                r.causal_identity.baseline.campaign_id,
+                r.causal_identity.baseline.baseline_response_id,
+            ),
+        )
+    )
+    # The allocator accepts every local invariant and binds exact replacement IDs.
+    reservations = module.allocate_city_cognition_reservations_v2(
+        requests, mode="rules", funded_response_limit=60
+    )
+    frozen = module.build_city_cognition_input_v2(
+        context, requests, mode="rules", funded_response_limit=60
+    )
+    assert frozen.reservations == reservations
+    records = tuple(
+        module.build_city_cognition_terminal_record_v2(
+            r,
+            frozen,
+            selection_index=i,
+            source="rules",
+            result=module.build_city_rules_result_v2(r),
+        )
+        for i, r in enumerate(requests)
+    )
+    with pytest.raises(ValueError, match="exact canonical baseline selection"):
+        module.validate_city_cognition_evaluation_v2(
+            frozen, requests, records, baseline_evaluation=baseline
+        )
+
+
+@pytest.mark.parametrize(
+    "boundary", ["request", "input", "record", "baseline", "result", "policy", "evaluation"]
+)
+def test_task4_recursively_revalidates_constructed_nested_evidence(boundary) -> None:
+    module = _module()
+    _, baseline, frozen, requests, records = _terminal_evidence()
+    if boundary == "request":
+        requests = (
+            _bypass(
+                requests[0],
+                causal_identity=_bypass(
+                    requests[0].causal_identity,
+                    baseline=_bypass(requests[0].causal_identity.baseline, model_minute=True),
+                ),
+            ),
+            *requests[1:],
+        )
+    elif boundary == "input":
+        frozen = _bypass(
+            frozen,
+            reservations=(_bypass(frozen.reservations[0], funded=1), *frozen.reservations[1:]),
+        )
+    elif boundary == "record":
+        records = (
+            _bypass(records[0], result=_bypass(records[0].result, affect="invalid")),
+            *records[1:],
+        )
+    elif boundary == "baseline":
+        state = baseline.final_states[0]
+        baseline = _bypass(
+            baseline,
+            final_states=(_bypass(state, recall_strength=True), *baseline.final_states[1:]),
+        )
+    elif boundary == "result":
+        with pytest.raises(ValueError):
+            module.build_city_cognition_terminal_record_v2(
+                requests[0],
+                frozen,
+                selection_index=0,
+                source="rules",
+                result=_bypass(records[0].result, safety_flags=("invalid",)),
+            )
+        return
+    elif boundary == "policy":
+        policy = frozen.causal_contract.influence_policy
+        with pytest.raises(ValueError):
+            module.apply_city_cognition_influence_v1(
+                0.1,
+                0.1,
+                source="provider",
+                result=records[0].result,
+                policy=_bypass(
+                    policy,
+                    affect_adjustments=(
+                        _bypass(policy.affect_adjustments[0], weight=True),
+                        *policy.affect_adjustments[1:],
+                    ),
+                ),
+            )
+        return
+    else:
+        evaluation = module.validate_city_cognition_evaluation_v2(
+            frozen, requests, records, baseline_evaluation=baseline
+        )
+        with pytest.raises(ValueError):
+            tuple(
+                module.city_cognition_terminal_lines_v2(
+                    _bypass(
+                        evaluation, summary=_bypass(evaluation.summary, terminal_stream_bytes=True)
+                    )
+                )
+            )
+        return
+    with pytest.raises(ValueError):
+        module.validate_city_cognition_evaluation_v2(
+            frozen, requests, records, baseline_evaluation=baseline
+        )
 
 
 def _context(legacy, baseline):

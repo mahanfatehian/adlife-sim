@@ -3,25 +3,45 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from hashlib import sha256
-from typing import Literal
+from math import fsum, isfinite
+from typing import Literal, get_args
 
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
+    _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256,
+    _CITY_COGNITION_MOCK_POLICY_V1_SHA256,
+    _CITY_COGNITION_MOCK_VECTOR_V1,
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
+    CITY_COGNITION_DEFAULT_MOCK_POLICY_V1,
+    CityCognitionAppliedSourceV2,
+    CityCognitionAppliedVectorV2,
     CityCognitionBaselineProposalV2,
     CityCognitionCausalAgentV2,
     CityCognitionCausalCampaignV2,
     CityCognitionCausalContractV2,
     CityCognitionCausalRequestIdentityV2,
     CityCognitionEffectiveSettingsV2,
+    CityCognitionEvaluationV2,
+    CityCognitionFallbackReasonV2,
+    CityCognitionInfluencePolicyV1,
+    CityCognitionInitialRuleStateV2,
     CityCognitionInitialStateDocumentV2,
     CityCognitionInputV2,
+    CityCognitionMockPolicyV1,
     CityCognitionModeV2,
+    CityCognitionNeutralizationStatusV2,
     CityCognitionRequestV2,
     CityCognitionReservationV2,
+    CityCognitionResultV2,
     CityCognitionRuleFactorsV2,
     CityCognitionRunContextV2,
+    CityCognitionRuntimeFallbackReasonV2,
+    CityCognitionSourceV2,
+    CityCognitionSummaryV2,
+    CityCognitionTerminalRecordV2,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_response import (
@@ -515,3 +535,439 @@ def build_city_cognition_input_v2(
             checked, mode=mode, funded_response_limit=funded_response_limit
         ),
     )
+
+
+def build_city_rules_result_v2(request: CityCognitionRequestV2) -> CityCognitionResultV2:
+    """Return the exact frozen neutral signal for a validated causal request."""
+    request = revalidate_model(request, CityCognitionRequestV2, label="city cognition request")
+    return CityCognitionResultV2(
+        schema_version=2,
+        request_id=request.request_id,
+        affect="neutral",
+        relevance="medium",
+        credibility="medium",
+        salience="medium",
+        safety_flags=(),
+        disclosure=request.causal_identity.disclosure,
+    )
+
+
+def build_city_mock_result_v2(
+    request: CityCognitionRequestV2,
+    *,
+    policy: CityCognitionMockPolicyV1 = CITY_COGNITION_DEFAULT_MOCK_POLICY_V1,
+) -> CityCognitionResultV2:
+    """Map only the causal request ID through the frozen four digest bytes."""
+    request = revalidate_model(request, CityCognitionRequestV2, label="city cognition request")
+    policy = revalidate_model(policy, CityCognitionMockPolicyV1, label="city cognition mock policy")
+    if policy.fingerprint != _CITY_COGNITION_MOCK_POLICY_V1_SHA256:
+        raise ValueError("mock policy must match its historical canonical document")
+    digest = sha256((policy.digest_prefix + request.request_id).encode("utf-8")).digest()
+    return CityCognitionResultV2(
+        schema_version=2,
+        request_id=request.request_id,
+        affect=policy.affect_order[digest[0] % len(policy.affect_order)],
+        relevance=policy.relevance_order[digest[1] % len(policy.relevance_order)],
+        credibility=policy.credibility_order[digest[2] % len(policy.credibility_order)],
+        salience=policy.salience_order[digest[3] % len(policy.salience_order)],
+        safety_flags=(),
+        disclosure=request.causal_identity.disclosure,
+    )
+
+
+def build_city_fallback_result_v2(
+    request: CityCognitionRequestV2, *, reason: CityCognitionRuntimeFallbackReasonV2
+) -> CityCognitionResultV2:
+    if reason not in get_args(CityCognitionRuntimeFallbackReasonV2):
+        raise ValueError("fallback requires an exact runtime reason; budget-skipped is separate")
+    return build_city_rules_result_v2(request)
+
+
+def build_city_budget_skipped_result_v2(
+    request: CityCognitionRequestV2,
+) -> CityCognitionResultV2:
+    return build_city_rules_result_v2(request)
+
+
+def apply_city_cognition_influence_v1(
+    baseline_sentiment_delta: float,
+    baseline_recall_delta: float,
+    *,
+    source: CityCognitionAppliedSourceV2,
+    result: CityCognitionResultV2 | None,
+    policy: CityCognitionInfluencePolicyV1 = CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
+) -> CityCognitionAppliedVectorV2:
+    """Apply the frozen arithmetic to one complete, validated signal vector."""
+    policy = revalidate_model(
+        policy, CityCognitionInfluencePolicyV1, label="city cognition influence policy"
+    )
+    if policy.fingerprint != _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256:
+        raise ValueError("influence policy must match its historical canonical document")
+    for value, low, high in (
+        (baseline_sentiment_delta, -0.2, 0.2),
+        (baseline_recall_delta, 0.0, 0.3),
+    ):
+        if type(value) not in (int, float) or not low <= value <= high or not isfinite(value):
+            raise ValueError("baseline deltas must be finite bounded numbers, never booleans")
+    status: CityCognitionNeutralizationStatusV2 = "none"
+    if source == "unselected":
+        if result is not None:
+            raise ValueError("unselected responses cannot carry a result")
+        status = "unselected"
+    else:
+        if source not in get_args(CityCognitionSourceV2):
+            raise ValueError("unsupported applied source")
+        if result is None:
+            raise ValueError("selected responses require a result")
+        result = revalidate_model(result, CityCognitionResultV2, label="city cognition result")
+        categories = (result.affect, result.relevance, result.credibility, result.salience)
+        if source in {"rules", "fallback", "budget-skipped"}:
+            if categories != ("neutral", "medium", "medium", "medium") or result.safety_flags:
+                raise ValueError("identity outcomes require the exact neutral result")
+            status = source
+        elif source == "mock":
+            prefix, orders = _CITY_COGNITION_MOCK_VECTOR_V1
+            digest = sha256((prefix + result.request_id).encode("utf-8")).digest()
+            if (
+                categories != tuple(order[digest[i] % len(order)] for i, order in enumerate(orders))
+                or result.safety_flags
+            ):
+                raise ValueError("mock source requires its deterministic result")
+        if result.safety_flags:
+            status = "safety"
+        elif "uncertain" in categories:
+            status = "uncertain"
+    sentiment, recall = baseline_sentiment_delta, baseline_recall_delta
+    if status == "none":
+        assert result is not None
+        affect = {row.category: row.weight for row in policy.affect_adjustments}[result.affect]
+        relevance = {row.category: row.weight for row in policy.relevance_factors}[result.relevance]
+        credibility = {row.category: row.weight for row in policy.credibility_factors}[
+            result.credibility
+        ]
+        salience = {row.category: row.weight for row in policy.salience_factors}[result.salience]
+        sentiment = max(
+            policy.sentiment_minimum,
+            min(policy.sentiment_maximum, fsum((sentiment, affect)) * relevance * credibility),
+        )
+        recall = max(
+            policy.recall_minimum,
+            min(policy.recall_maximum, recall * relevance * credibility * salience),
+        )
+    return CityCognitionAppliedVectorV2(
+        schema_version=2,
+        source=source,
+        neutralization_status=status,
+        applied_sentiment_delta=sentiment,
+        applied_recall_delta=recall,
+    )
+
+
+def build_city_cognition_terminal_record_v2(
+    request: CityCognitionRequestV2,
+    cognition_input: CityCognitionInputV2,
+    *,
+    selection_index: int,
+    source: CityCognitionSourceV2,
+    result: CityCognitionResultV2,
+    attempt_count: int = 0,
+    reason: CityCognitionFallbackReasonV2 | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+) -> CityCognitionTerminalRecordV2:
+    """Bind one terminal outcome solely to its request and frozen run authority."""
+    request = revalidate_model(request, CityCognitionRequestV2, label="city cognition request")
+    frozen = revalidate_model(cognition_input, CityCognitionInputV2, label="city cognition input")
+    result = revalidate_model(result, CityCognitionResultV2, label="city cognition result")
+    identity = request.causal_identity
+    if (
+        request.run_input_sha256 != frozen.run_input_sha256
+        or identity.causal_contract_sha256 != frozen.causal_contract_sha256
+    ):
+        raise ValueError("terminal request does not match frozen run and causal contract")
+    if type(selection_index) is not int or not 0 <= selection_index < len(frozen.reservations):
+        raise ValueError("terminal selection index has no reservation")
+    reservation = frozen.reservations[selection_index]
+    if (reservation.request_id, reservation.request_record_sha256) != (
+        request.request_id,
+        request.request_record_sha256,
+    ):
+        raise ValueError("terminal request does not match its reservation")
+    allowed = (
+        {frozen.mode}
+        if frozen.mode in {"rules", "mock"}
+        else ({"provider", "cache", "fallback"} if reservation.funded else {"budget-skipped"})
+    )
+    if source not in allowed:
+        raise ValueError("terminal source does not match the frozen reservation")
+    settings, profile = frozen.effective_settings, frozen.provider_profile
+    if type(attempt_count) is not int:
+        raise ValueError("attempt count must be an exact integer")
+    if (
+        settings is not None
+        and source in {"provider", "fallback"}
+        and attempt_count > 1 + settings.transient_retries + settings.repair_attempts
+    ):
+        raise ValueError("attempt count exceeds frozen effective settings")
+    baseline = identity.baseline
+    contract = frozen.causal_contract
+    facts = {
+        field: getattr(baseline, field)
+        for field in CityCognitionBaselineProposalV2.model_fields
+        if field not in {"schema_version", "pre_minute_rule_state_sha256", "rule_factors"}
+    }
+    facts.update(
+        {
+            field: getattr(identity, field)
+            for field in (
+                "response_input_sha256",
+                "scenario_sha256",
+                "city_sha256",
+                "baseline_sha256",
+                "causal_contract_sha256",
+            )
+        }
+    )
+    facts.update(
+        {
+            field: getattr(contract, field)
+            for field in (
+                "prompt_contract_sha256",
+                "result_schema_contract_sha256",
+                "selection_policy_sha256",
+                "fallback_policy_sha256",
+                "mock_policy_sha256",
+                "influence_policy_sha256",
+            )
+        }
+    )
+    facts.update(
+        schema_version=2,
+        selection_index=selection_index,
+        request_id=request.request_id,
+        request_record_sha256=request.request_record_sha256,
+        run_input_sha256=request.run_input_sha256,
+        source=source,
+        result=result.model_dump(mode="python"),
+        attempt_count=attempt_count,
+        reason=reason,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        disclosure=contract.disclosure,
+        provider_profile_id=None if profile is None else profile.profile_id,
+        provider_revision_sha256=None if profile is None else profile.revision_sha256,
+        provider_profile_snapshot_sha256=None if profile is None else profile.fingerprint,
+        provider_protocol=None if profile is None else profile.protocol,
+        provider_effective_settings_sha256=None if settings is None else settings.fingerprint,
+    )
+    facts["record_hash"] = sha256(canonical_json(facts).encode("utf-8")).hexdigest()
+    return CityCognitionTerminalRecordV2.model_validate(facts)
+
+
+def _bind_requests_to_baseline(
+    requests: tuple[CityCognitionRequestV2, ...],
+    evaluation: SpatialResponseEvaluation,
+) -> int:
+    responses = sorted(
+        (r for r in evaluation.records if isinstance(r, SpatialRuleResponse)),
+        key=lambda r: (r.model_minute, r.agent_id, r.campaign_id, r.event_id),
+    )
+    updates: dict[str, SpatialStateUpdated] = {}
+    initial: dict[tuple[str, str], SpatialResponseState] = {}
+    for record in evaluation.records:
+        if isinstance(record, SpatialStateUpdated):
+            initial.setdefault((record.agent_id, record.campaign_id), record.previous_state)
+            for cause in record.caused_by_event_ids:
+                updates[cause] = record
+    for state in evaluation.final_states:
+        initial.setdefault((state.agent_id, state.campaign_id), state)
+    document = CityCognitionInitialStateDocumentV2(
+        schema_version=2,
+        model_id="spatial-cognition-initial-state-v2",
+        states=tuple(
+            CityCognitionInitialRuleStateV2(
+                schema_version=2,
+                agent_id=s.agent_id,
+                campaign_id=s.campaign_id,
+                brand_sentiment=s.brand_sentiment,
+                recall_strength=s.recall_strength,
+            )
+            for s in initial.values()
+        ),
+    )
+    if any(s.response_count != 0 or s.last_response_minute is not None for s in initial.values()):
+        raise ValueError("baseline initial state must have no response history")
+    counts: Counter[str] = Counter()
+    selected: list[SpatialRuleResponse] = []
+    for response in responses:
+        if counts[response.agent_id] < 4 and len(selected) < 60:
+            selected.append(response)
+            counts[response.agent_id] += 1
+    if tuple(r.causal_identity.baseline.baseline_response_id for r in requests) != tuple(
+        r.event_id for r in selected
+    ):
+        raise ValueError("requests do not match exact canonical baseline selection")
+    initial_by_key = {(s.agent_id, s.campaign_id): s for s in document.states}
+    for request, response in zip(requests, selected, strict=True):
+        identity = request.causal_identity
+        baseline = identity.baseline
+        update = updates[response.event_id]
+        if any(
+            getattr(identity, f) != getattr(evaluation, f)
+            for f in ("response_input_sha256", "scenario_sha256", "city_sha256")
+        ):
+            raise ValueError("request science does not match baseline evaluation")
+        if (
+            identity.initial_cognition_state_sha256 != document.fingerprint
+            or identity.initial_rule_state
+            != initial_by_key[response.agent_id, response.campaign_id]
+        ):
+            raise ValueError("request initial state does not match baseline evidence")
+        _validate_response_assumptions(response, identity.agent, identity.campaign)
+        # Activity was validated against mobility during Task 3. Here the supplied
+        # request retains that fact; every fact derivable from baseline is rebound.
+        expected = baseline.model_dump(mode="python")
+        for field in (
+            "agent_id",
+            "campaign_id",
+            "placement_id",
+            "channel",
+            "day_index",
+            "model_minute",
+            "millisecond_within_minute",
+        ):
+            expected[field] = getattr(response, field)
+        expected.update(
+            baseline_response_id=response.event_id,
+            notice_event_id=response.caused_by,
+            opportunity_id=response.opportunity_id,
+            baseline_state_update_event_id=update.event_id,
+            baseline_state_update_cause_count=len(update.caused_by_event_ids),
+            pre_minute_rule_state_sha256=response.state_before_sha256,
+            rule_factors={
+                field: 2
+                if field == "schema_version"
+                else response.sentiment_delta
+                if field == "baseline_sentiment_delta"
+                else response.recall_delta
+                if field == "baseline_recall_delta"
+                else getattr(response, field)
+                for field in CityCognitionRuleFactorsV2.model_fields
+            },
+        )
+        if canonical_json(baseline) != canonical_json(
+            CityCognitionBaselineProposalV2.model_validate(expected)
+        ):
+            raise ValueError("request proposal does not match complete baseline and group facts")
+    return len(responses)
+
+
+def validate_city_cognition_evaluation_v2(
+    cognition_input: CityCognitionInputV2,
+    requests: tuple[CityCognitionRequestV2, ...],
+    records: tuple[CityCognitionTerminalRecordV2, ...],
+    *,
+    baseline_evaluation: SpatialResponseEvaluation,
+) -> CityCognitionEvaluationV2:
+    """Prove exact selected evidence and construct the canonical frozen summary."""
+    frozen = revalidate_model(cognition_input, CityCognitionInputV2, label="city cognition input")
+    checked = _checked_requests(requests)
+    baseline = revalidate_model(
+        baseline_evaluation, SpatialResponseEvaluation, label="baseline evaluation"
+    )
+    eligible = _bind_requests_to_baseline(checked, baseline)
+    if type(records) is not tuple:
+        raise TypeError("city cognition records must be a tuple")
+    terminals = tuple(
+        revalidate_model(r, CityCognitionTerminalRecordV2, label="city cognition terminal")
+        for r in records
+    )
+    reservations = allocate_city_cognition_reservations_v2(
+        checked, mode=frozen.mode, funded_response_limit=frozen.funded_response_limit
+    )
+    if frozen.reservations != reservations or len(terminals) != len(checked):
+        raise ValueError("terminal/request/reservation evidence is incomplete")
+    for index, (request, record) in enumerate(zip(checked, terminals, strict=True)):
+        expected = build_city_cognition_terminal_record_v2(
+            request,
+            frozen,
+            selection_index=index,
+            source=record.source,
+            result=record.result,
+            attempt_count=record.attempt_count,
+            reason=record.reason,
+            prompt_tokens=record.prompt_tokens,
+            completion_tokens=record.completion_tokens,
+        )
+        if canonical_json(record) != canonical_json(expected):
+            raise ValueError("terminal does not match complete request and frozen input bindings")
+    stream = b"".join((canonical_json(r) + "\n").encode("utf-8") for r in terminals)
+    sources = Counter(r.source for r in terminals)
+    reasons = Counter(r.reason for r in terminals if r.reason is not None)
+
+    def uncertain(record: CityCognitionTerminalRecordV2) -> bool:
+        result = record.result
+        return "uncertain" in (result.affect, result.relevance, result.credibility, result.salience)
+
+    funded = min(len(checked), frozen.funded_response_limit)
+    contract = frozen.causal_contract
+    summary = CityCognitionSummaryV2.model_validate(
+        dict(
+            schema_version=2,
+            effect_scope=frozen.effect_scope,
+            mode=frozen.mode,
+            causal_contract_sha256=frozen.causal_contract_sha256,
+            mock_policy_sha256=contract.mock_policy_sha256,
+            influence_policy_sha256=contract.influence_policy_sha256,
+            coverage=dict(
+                schema_version=2,
+                eligible_response_count=eligible,
+                selected_request_count=len(checked),
+                funded_request_count=funded,
+                budget_skipped_count=len(checked) - funded,
+                unselected_response_count=eligible - len(checked),
+                applied_response_count=eligible,
+            ),
+            outcomes={"schema_version": 2}
+            | {s.replace("-", "_"): sources[s] for s in get_args(CityCognitionSourceV2)},
+            reasons={"schema_version": 2}
+            | {r.replace("-", "_"): reasons[r] for r in get_args(CityCognitionFallbackReasonV2)},
+            neutralization=dict(
+                schema_version=2,
+                uncertain_result_count=sum(uncertain(r) for r in terminals),
+                safety_neutralized_result_count=sum(bool(r.result.safety_flags) for r in terminals),
+                neutralized_response_count=eligible
+                - len(checked)
+                + sum(
+                    r.source in {"rules", "fallback", "budget-skipped"}
+                    or uncertain(r)
+                    or bool(r.result.safety_flags)
+                    for r in terminals
+                ),
+            ),
+            attempt_count=sum(r.attempt_count for r in terminals),
+            prompt_tokens=sum(r.prompt_tokens or 0 for r in terminals),
+            completion_tokens=sum(r.completion_tokens or 0 for r in terminals),
+            terminal_stream_sha256=sha256(stream).hexdigest(),
+            terminal_stream_bytes=len(stream),
+            terminal_record_count=len(terminals),
+            disclosure=contract.disclosure,
+        )
+    )
+    return CityCognitionEvaluationV2(
+        schema_version=2,
+        cognition_input_sha256=frozen.fingerprint,
+        run_input_sha256=frozen.run_input_sha256,
+        effect_scope=frozen.effect_scope,
+        mode=frozen.mode,
+        records=terminals,
+        summary=summary,
+    )
+
+
+def city_cognition_terminal_lines_v2(evaluation: CityCognitionEvaluationV2) -> Iterator[bytes]:
+    evaluation = revalidate_model(
+        evaluation, CityCognitionEvaluationV2, label="city cognition evaluation"
+    )
+    for record in evaluation.records:
+        yield (canonical_json(record) + "\n").encode("utf-8")
