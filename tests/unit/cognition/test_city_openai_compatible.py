@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import json
 import ssl
@@ -52,6 +53,22 @@ from tests.unit.city.test_city_cognition import _evidence, _input
 REMOTE_BASE_URL = "https://api.example.invalid/openai/v1"
 REMOTE_ADDRESS = "93.184.216.34"
 FAKE_CREDENTIAL = "sk-test-city-provider-secret"
+
+
+def test_v1_provider_reexports_the_shared_error_class_identities() -> None:
+    shared = importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+    for name in (
+        "CityProviderCallError",
+        "CityProviderAuthenticationError",
+        "CityProviderTimeoutError",
+        "CityProviderRateLimitError",
+        "CityProviderServerError",
+        "CityProviderUnavailableError",
+        "CityProviderResponseTooLargeError",
+        "CityProviderProtocolError",
+        "CityProviderTransportError",
+    ):
+        assert getattr(city_openai_compatible, name) is getattr(shared, name)
 
 
 def _adlife_traceback_local_rendering(error: BaseException) -> str:

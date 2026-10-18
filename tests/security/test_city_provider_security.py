@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import traceback
@@ -22,6 +23,22 @@ from tests.unit.cognition.test_city_openai_compatible import (
     _provider_with_factory,
     _result,
 )
+
+
+async def test_shared_transport_unexpected_diagnostic_does_not_escape_in_traceback() -> None:
+    from tests.unit.cognition.test_city_openai_compatible import _UnexpectedWriteFactory
+    from tests.unit.cognition.test_city_provider_transport import _transport
+
+    shared = importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+    transport, credential, _resolver, _factory = _transport(factory=_UnexpectedWriteFactory())
+    with pytest.raises(shared.CityProviderTransportError) as caught:
+        await transport.post_json({})
+    assert str(caught.value) == "city cognition provider transport failed unexpectedly"
+    assert FAKE_CREDENTIAL not in _traceback_local_rendering(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    await transport.aclose()
+    credential.clear()
 
 
 def _traceback_local_rendering(error: BaseException) -> str:

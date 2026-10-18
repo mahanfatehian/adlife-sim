@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -44,6 +45,38 @@ from adlife.core.domain.city_cognition import (
 )
 from adlife.core.simulation.city_cognition import build_city_cognition_requests
 from tests.unit.city.test_city_cognition import _evidence, _input, _provider_profile
+
+
+@pytest.mark.parametrize(
+    ("name", "reason", "attempts"),
+    [
+        ("CityProviderAuthenticationError", "authentication-refused", 1),
+        ("CityProviderTimeoutError", "timeout-exhausted", 3),
+        ("CityProviderRateLimitError", "rate-limit-exhausted", 3),
+        ("CityProviderServerError", "server-error-exhausted", 3),
+        ("CityProviderUnavailableError", "endpoint-resolution-refused", 3),
+        ("CityProviderResponseTooLargeError", "response-too-large", 1),
+        ("CityProviderProtocolError", "protocol-incompatible", 1),
+    ],
+)
+async def test_shared_transport_errors_keep_v1_service_retry_and_fallback(name, reason, attempts):
+    shared = importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+    context, requests = _requests()
+    cognition_input = _provider_input(context, requests)
+
+    async def refuse(request):
+        del request
+        raise getattr(shared, name)()
+
+    sleeps = _Sleeps()
+    provider = _Provider(refuse)
+    evaluation = await CityCognitionService(sleep=sleeps).resolve_many(
+        cognition_input, requests, provider=provider, cancellation=CityCognitionCancellation()
+    )
+    assert evaluation.records[0].reason == reason
+    assert evaluation.records[0].attempt_count == attempts
+    assert len(provider.calls) == attempts
+    assert sleeps.delays == ([0.25, 0.75] if attempts == 3 else [])
 
 
 def _requests(count: int = 1) -> tuple[object, tuple[CityCognitionRequestV1, ...]]:
