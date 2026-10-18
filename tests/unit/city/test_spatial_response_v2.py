@@ -154,6 +154,97 @@ def _rehash_event(record, **changes):
     return type(record).model_validate(facts | {"event_id": _hash(identity)})
 
 
+def test_rehashed_signed_zero_derived_baseline_cannot_enter_persisted_v2_evaluation():
+    module = _module()
+    baseline, frozen, signals = _evidence()
+    evaluation = module.apply_spatial_cognition_v2(baseline, frozen, signals)
+    facts = evaluation.model_dump(mode="python")
+    records = list(facts["records"])
+    original = records[0]
+    assert canonical_json(dict(value=original["baseline"]["frequency_fatigue"])) == '{"value":0.0}'
+    # Do not parse intermediate events: the evaluation must detect the forgery
+    # even when every altered event and trailing cause hash is internally valid.
+    original_id = original["event_id"]
+    original["baseline"]["frequency_fatigue"] = -0.0
+    identity = {k: v for k, v in original.items() if k != "event_id"}
+    identity["baseline"] = _hash(original["baseline"])
+    original["event_id"] = _hash(identity)
+    dual = records[-1]
+    dual["caused_by_event_ids"] = tuple(
+        original["event_id"] if cause == original_id else cause
+        for cause in dual["caused_by_event_ids"]
+    )
+    dual["event_id"] = _hash({k: v for k, v in dual.items() if k != "event_id"})
+    with pytest.raises(ValueError):
+        module.SpatialResponseEvaluationV2.model_validate(facts | {"records": tuple(records)})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["affordability", "frequency_fatigue", "value_match", "sentiment_delta", "recall_delta"],
+)
+def test_all_derived_rule_fields_require_canonical_signs_but_primitives_allow_negative_zero(field):
+    module = _module()
+    baseline, frozen, signals = _evidence()
+    applied = module.apply_spatial_cognition_v2(baseline, frozen, signals).records[0]
+    facts = applied.model_dump(mode="python", exclude={"event_id"})
+    facts.update(
+        source="cache",
+        neutralization_status="none",
+        terminal_record_hash="f" * 64,
+        unselected_marker=None,
+        applied_sentiment_delta=0.0,
+        applied_recall_delta=0.0,
+    )
+    facts["baseline"].update(
+        interest_match=0.0,
+        relative_price=1.25,
+        price_sensitivity=1.0,
+        novelty_seeking=-0.0,
+        advertising_skepticism=-0.0,
+        channel_recall_encoding=-0.0,
+        affordability=0.0,
+        frequency_fatigue=0.0,
+        value_match=0.0,
+        sentiment_delta=0.0,
+        recall_delta=0.0,
+    )
+    identity = dict(facts) | {"baseline": _hash(facts["baseline"])}
+    valid = module.SpatialAppliedResponseV2.model_validate(facts | {"event_id": _hash(identity)})
+    assert canonical_json(dict(v=valid.baseline.novelty_seeking)) == '{"v":-0.0}'
+    facts["baseline"][field] = -0.0
+    identity["baseline"] = _hash(facts["baseline"])
+    with pytest.raises(ValueError):
+        module.SpatialAppliedResponseV2.model_validate(facts | {"event_id": _hash(identity)})
+
+
+@pytest.mark.parametrize("responses,updates", [(0, 1), (1, 0), (1, 2)])
+@pytest.mark.parametrize("boundary", ["counts", "summary"])
+def test_standalone_counts_and_summary_require_nonempty_atomic_groups(responses, updates, boundary):
+    module = _module()
+    baseline, frozen, signals = _evidence()
+    evaluation = module.apply_spatial_cognition_v2(baseline, frozen, signals)
+    counts = dict(
+        schema_version=2,
+        baseline_response_count=responses,
+        applied_response_count=responses,
+        dual_state_update_count=updates,
+        roadside_response_count=responses,
+        phone_response_count=0,
+        campaign_count=1,
+        final_rule_state_count=1,
+        final_cognition_state_count=1,
+    )
+    with pytest.raises(ValueError):
+        if boundary == "counts":
+            module.SpatialResponseCountsV2.model_validate(counts)
+        else:
+            summary = module.summarize_spatial_response_artifact_v2(evaluation)
+            module.SpatialResponseArtifactSummaryV2.model_validate(
+                summary.model_dump(mode="python") | {"counts": counts}
+            )
+
+
 def test_v2_stream_embeds_each_baseline_then_places_one_update_last():
     import json
 

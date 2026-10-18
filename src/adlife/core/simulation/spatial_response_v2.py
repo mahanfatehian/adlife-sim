@@ -34,6 +34,7 @@ from adlife.core.simulation.spatial_response import (
     SpatialResponseState,
     SpatialRuleResponse,
     SpatialStateUpdated,
+    _clamp,
     _state_update_event_id,
     _updated_state,
 )
@@ -89,6 +90,35 @@ class _SpatialResponseModelV2(DomainModel):
             return revalidate_model(value, SpatialRuleResponse, label="embedded baseline response")
         if isinstance(value, SpatialResponseState):
             return revalidate_model(value, SpatialResponseState, label="embedded rule state")
+        return value
+
+    @field_validator("baseline", check_fields=False)
+    @classmethod
+    def canonical_rule_derivations(cls, value: SpatialRuleResponse) -> SpatialRuleResponse:
+        # Legacy validators use numeric equality. V2 identities require the exact
+        # derived representation while preserving signs in primitive inputs.
+        affordability = _clamp(1.25 - value.relative_price * value.price_sensitivity, 0.0, 1.0)
+        fatigue = min(1.0, value.prior_notices_today / value.frequency_cap_per_agent_per_day)
+        match = 0.55 * value.interest_match + 0.25 * value.novelty_seeking + 0.20 * affordability
+        expected = dict(
+            affordability=affordability,
+            frequency_fatigue=fatigue,
+            value_match=match,
+            sentiment_delta=_clamp(
+                0.18 * match - 0.12 * value.advertising_skepticism - 0.06 * fatigue, -0.2, 0.2
+            ),
+            recall_delta=_clamp(
+                0.22 * value.channel_recall_encoding
+                + 0.12 * value.novelty_seeking
+                - 0.08 * fatigue,
+                0.0,
+                0.3,
+            ),
+        )
+        if canonical_json({field: getattr(value, field) for field in expected}) != canonical_json(
+            expected
+        ):
+            raise ValueError("baseline derived rule values must match canonical V1 arithmetic")
         return value
 
     @field_validator("final_rule_states", "states", mode="before", check_fields=False)
@@ -262,6 +292,11 @@ class SpatialResponseCountsV2(_SpatialResponseModelV2):
             or self.final_rule_state_count != self.final_cognition_state_count
         ):
             raise ValueError("dual response counts disagree")
+        if self.baseline_response_count == 0:
+            if self.dual_state_update_count != 0:
+                raise ValueError("dual state updates require baseline responses")
+        elif not 1 <= self.dual_state_update_count <= self.baseline_response_count:
+            raise ValueError("dual state update count must describe nonempty response groups")
         return self
 
 
