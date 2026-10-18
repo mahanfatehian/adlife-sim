@@ -566,12 +566,13 @@
 
 - Extends `CityRunSchemaVersion` to literal 10 and changes `CityViewContext.response_evaluation`, `spatial_response_metrics`, response summary, and state documents to exact V1/V2 unions selected at context construction.
 - Keeps endpoints `/workbench-input`, `/cognition-summary`, `/cognition-records`, `/response-summary`, `/response-events`, `/response-state`, and `/spatial-response-metrics`; the workbench-input response is schema 3 for V9 and schema 4 for V10, while cognition/response projections use response `schema_version` 1 for V9 and 2 for V10.
+- `create_city_app` receives the complete immutable V10 context needed by the standalone viewer and exposes the same `/workbench-input`, `/cognition-summary`, `/cognition-records`, and preferred `/timeline` projections as the workbench saved-run surface; the standalone app must not depend on workbench-only controller state.
 
 - [ ] **Step 1: Add DTO contract tests.** Assert V2 summary/records revalidate all run/input/request/policy bindings and expose only typed non-secret values; assert the saved workbench-input route returns the runtime plan's exact `WorkbenchRunInputViewV4`; V1 views retain exact keys and values.
 
 - [ ] **Step 2: Add strict version tests.** Assert V9 cannot project V2, V10 cannot project V1, and V11/bool/float versions refuse before reading version-specific fields.
 
-- [ ] **Step 3: Add response endpoint tests.** Assert V10 response pages keep stream order as one or more `spatial.applied-response` records followed by one `spatial.dual-state-updated` record per canonical group; each applied record exposes its embedded `spatial.response` baseline without inventing a standalone baseline stream line. State pages expose separate rule/cognition tracks and purchase only on rule state.
+- [ ] **Step 3: Add response endpoint tests.** Assert V10 response pages keep stream order as one or more `spatial.applied-response` records followed by one `spatial.dual-state-updated` record per canonical group; each applied record exposes its embedded `spatial.response` baseline without inventing a standalone baseline stream line. State pages expose separate rule/cognition tracks and purchase only on rule state. Pagination may split a canonical minute group: a page-ending applied response is not corruption merely because its dual update begins the next page. Add exact boundary cases and verify `/timeline` uses the same immutable projection and preferred fast path.
 
 - [ ] **Step 4: Add cognition endpoint tests.** Assert terminal records bind the exact applied response, unselected responses have no terminal record, summaries expose coverage/policies/provenance, and no raw body/prompt/path/secret appears.
 
@@ -581,7 +582,7 @@
 
 - [ ] **Step 7: Add capability tests.** Expose exact effect scopes `explanation-only` and `bounded-signals-v1`, funded limits `[10, 20, 40, 60]`, schema pair `4 -> 10`, and the V2 compatibility-check requirement without exposing mutable contract constants for browser submission.
 
-- [ ] **Step 8: Add `city_view` tests.** Assert a V10 run launches the exact read-only context, JSON output remains disallowed, corrupt artifacts fail before Uvicorn starts, and no provider operation occurs.
+- [ ] **Step 8: Add `city_view` tests.** Assert a V10 run launches the exact read-only context, JSON output remains disallowed, corrupt artifacts fail before Uvicorn starts, and no provider operation occurs. Exercise the standalone app end to end and assert `/workbench-input`, `/cognition-summary`, `/cognition-records`, and `/timeline` return the exact V10 projections without workbench services.
 
 - [ ] **Step 9: Run the exact red node.**
 
@@ -591,7 +592,7 @@
 
 - [ ] **Step 10: Implement the four DTOs and builders.** Discriminate by manifest class first, revalidate complete V1/V2 source models, and return frozen path-free projections.
 
-- [ ] **Step 11: Implement V10 city-view context and endpoint dispatch.** Build indexes from canonical tuples, keep pagination bounded, and never repair or normalize persisted corruption in the adapter.
+- [ ] **Step 11: Implement V10 city-view context and endpoint dispatch.** Build indexes from canonical tuples, keep pagination bounded, add explicit standalone V10 DTO/context plumbing for every cognition route and `/timeline`, and never repair or normalize persisted corruption in the adapter.
 
 - [ ] **Step 12: Refactor workbench saved-run routes through exact builders.** Preserve exact V1 route semantics, dispatch the workbench-input route to V3 or V4 by manifest class, and add V2 cognition responses without union trial parsing.
 
@@ -694,15 +695,15 @@
 
 - [ ] **Step 2: Add the exact serializer matrix test.** Assert all eight legal scope/source pairs select schema 3 or 4 exactly. Schema 3 must retain its four-field cognition body and omit `effect_scope`; schema 4 must include `effect_scope="bounded-signals-v1"` and omit any browser-supplied policy hash, transport ceiling, aggregate token ceiling, credential, or endpoint.
 
-- [ ] **Step 3: Add scoped compatibility tests.** Record request bodies, prove a V1 success cannot authorize V2, prove effect/profile/settings/credential changes invalidate status, and prove stale delayed checks cannot re-enable submit.
+- [ ] **Step 3: Add scoped compatibility tests.** Record request bodies, prove a V1 success cannot authorize V2, prove effect/profile/settings/credential changes invalidate status, and prove stale delayed checks cannot re-enable submit. Keep V1 explanation compatibility presentation distinct from V2 signal compatibility, and advance one generation for every authority-affecting edit.
 
 - [ ] **Step 4: Add review/accepted-settings tests.** Assert the review names movement/attention/purchase as rules, signals as provider-or-fallback, live signals as not guaranteed reproducible, saved replay as frozen/offline, and verifies exact 3/9 or 4/10 worker receipts.
 
 - [ ] **Step 5: Add budget/cost copy tests.** Assert V10 displays 512 reserved output tokens and at most four HTTP attempts per funded request, warns that input tokens/vendor charges are outside the reservation, and never labels the value a spending limit.
 
-- [ ] **Step 6: Add credential lifecycle tests.** Assert credential fields clear on source/scope/profile/reset/navigation/submission/error; values never enter URL/history/DOM text/browser storage or later DTOs.
+- [ ] **Step 6: Add credential lifecycle tests.** Assert credential fields clear on source/scope/profile/reset/navigation/submission/error and every route/step transition; values never enter URL/history/DOM text/browser storage or later DTOs.
 
-- [ ] **Step 7: Add interaction/accessibility tests.** Cover keyboard/focus order, validation errors, double submit, cancel, and the exact V10 phase sequence `planning-cognition -> requesting-cognition -> applying-cognition` without relabelling V9 phases. Also cover delayed phase responses, a 390-pixel viewport, 200% zoom, forced colors, reduced motion, Persian labels, and concise nonduplicated copy.
+- [ ] **Step 7: Add interaction/accessibility tests.** Cover keyboard/focus order, field-error/focus routing for `cognition.effect_scope` and `cognition.funded_response_limit`, validation errors, double submit, cancel, and the exact V10 phase sequence `planning-cognition -> requesting-cognition -> applying-cognition` without relabelling V9 phases. Also cover delayed phase responses, a 390-pixel viewport, 200% zoom, forced colors, reduced motion, Persian labels, and concise nonduplicated copy.
 
 - [ ] **Step 8: Run the exact red node.**
 
@@ -714,7 +715,7 @@
 
 - [ ] **Step 10: Implement provider-panel state and scoped checks.** Increment one generation token on every authority-affecting change, abort/ignore stale results, and never infer effect scope from profile presence.
 
-- [ ] **Step 11: Implement exact schema serialization and validation review.** Derive outer schema from effect scope, accept only server-declared modes/limits, and compare worker receipts to the submitted immutable draft.
+- [ ] **Step 11: Implement exact schema serialization and validation review.** Derive outer schema from effect scope, accept only server-declared modes/limits, and compare worker receipts to the submitted immutable draft. Show saved profile `max_output_tokens` separately from the effective V2 value `min(profile.max_output_tokens, 128)` without rewriting the saved profile.
 
 - [ ] **Step 12: Implement focused responsive styles.** Reuse the existing design system, keep important state textual rather than color-only, remove redundant paragraphs, and add no animation beyond reduced-motion-safe existing behavior.
 
@@ -810,7 +811,8 @@
   });
   ```
 
-- `validateSummary(value)` and `validateRecords(value, summary)` return deeply frozen validated projections. `indexTerminalRecords(records)` returns a read-only `record_hash` lookup because every applied record binds `terminal_record_hash`, not request ID; a secondary request-ID view may be exposed only if it cannot weaken the primary hash binding. `presentationForAppliedResponse(applied, index)` resolves the exact `applied.terminal_record_hash`, then returns inert labels for baseline, signal/status, mapping, applied delta, and dual-state binding. `source="unselected"` must have no lookup.
+- `validateSummary(value)` and `validateRecords(value, summary)` return deeply frozen validated projections. `indexTerminalRecords(records)` returns a genuinely immutable `record_hash` lookup because every applied record binds `terminal_record_hash`, not request ID; `Object.freeze(new Map(...))` is insufficient because it leaves `.set()`/`.delete()` operational, so use an immutable wrapper/plain frozen object with no exposed mutators. A secondary request-ID view may be exposed only if it cannot weaken the primary hash binding. `presentationForAppliedResponse(applied, index)` resolves the exact `applied.terminal_record_hash`, then returns inert labels for baseline, signal/status, mapping, applied delta, and dual-state binding. `source="unselected"` must have no lookup.
+- Update every `app.js` compatibility gate explicitly: existing run versions `[7, 8, 9]`, persona versions `[8, 9]`, V9-only cognition, response/metric/state validators, API-base selection, boot dispatch, and the preferred `/timeline` path all require exact V10 branches rather than relaxed unions. Keep existing V1 explanation validators and browser assertions scoped and unchanged, and preserve the final-state label `final-end-of-run-not-scrubbed-minute`.
 
 - [ ] **Step 1: Add pure-helper contract tests.** Assert helpers index by unique terminal `record_hash`, resolve the applied record's exact `terminal_record_hash`, and reject extra/missing fields, wrong schemas, unknown enums, nonfinite values, duplicate record hashes/request IDs, reordered records, orphan/cross-run/cross-agent/cross-campaign/cross-minute/cross-policy bindings, request-ID-only matches with a wrong record hash, and a terminal for `unselected`.
 
@@ -846,7 +848,7 @@
 
 - [ ] **Step 11: Implement the inspector DOM and fetch orchestration.** Load V2 assets before `app.js`, preserve the V9 explanation panel, request only same-origin read-only pages, and render with `textContent`/created nodes.
 
-- [ ] **Step 12: Implement focused inspector styles and asset allowlisting.** Keep bounded DOM pages, clear track separation, direction isolation, accessible focus, and responsive layouts; add both assets to the exact allowlist.
+- [ ] **Step 12: Implement focused inspector styles and asset allowlisting.** Keep bounded DOM pages, clear track separation, direction isolation, accessible focus, and responsive layouts; add both `app-cognition-v2.js` and `app-cognition-v2.css` to `web.py:_ASSETS`' exact allowlist.
 
 - [ ] **Step 13: Run the focused green suite.**
 
@@ -945,7 +947,7 @@
 - Produces no new scientific contract. Public docs describe three exact modes, the provider authority boundary, offline/fresh-run replay distinction, credential rules, research limitations, and exact CLI/browser workflow.
 - Extends `smoke_release.py` and `smoke_frozen.py` to exercise schema-4/V10 rules, mock, and loopback provider paths, metrics, replay, inspector APIs, study, and report from installed artifacts only.
 
-- [ ] **Step 1: Add failing documentation assertions.** Require the exact three-mode matrix, V10 bounded categories, fixed influence mapping, rule-owned purchase proxy, persona exclusion, 10/20/40/60 funding, 512-token reservation, up-to-four attempts, provider cost caveat, live nondeterminism, frozen offline replay, unsigned hash-chain limitation, and no ChatGPT/Codex subscription/OAuth credential reuse.
+- [ ] **Step 1: Add failing documentation assertions.** Require the exact three-mode matrix, V10 bounded categories, fixed influence mapping, rule-owned purchase proxy, persona exclusion, 10/20/40/60 funding, 512-token reservation, up-to-four attempts, provider cost caveat, live nondeterminism, frozen offline replay, unsigned hash-chain limitation, and no ChatGPT/Codex subscription/OAuth credential reuse. Require `docs/investor-demo.md` to demonstrate the V10 spatial bounded-cognition flow instead of the superseded zone-engine, share, and zero-purchase narrative.
 
 - [ ] **Step 2: Add installed-resource tests.** Assert the wheel includes `app-cognition-v2.js`, `app-cognition-v2.css`, all existing city/workbench assets, report template/CSS, city packs, fictional persona/creative catalogs, and no source-checkout absolute path.
 
@@ -1237,11 +1239,11 @@
 
   Expected: no output.
 
-- [ ] **Step 10: Start an upgraded candidate on port 50051 without a visible terminal.** Use the same preview workspace and approved provider-origin argument, redirect stdout/stderr to temporary files outside the repository, retain the returned PID, and pass `-WindowStyle Hidden` if `Start-Process` is used.
+- [ ] **Step 10: Rediscover preview state and start an upgraded candidate on port 50051 without a visible terminal.** Query the current port-50050 listener PID and command line, resolve and validate its actual preview workspace beneath the intended owner-selected parent, and record its approved provider-origin argument; do not assume a dated path from an earlier session. Launch the candidate against that verified workspace/configuration, redirect stdout/stderr to temporary files outside the repository, retain the returned PID, and pass `-WindowStyle Hidden` if `Start-Process` is used.
 
 - [ ] **Step 11: Certify the candidate before touching port 50050.** Require HTTP 200 for `/`, `/api/workbench`, `/runs/001`, and `/api/runs/001/meta`; run a browser smoke for workbench controls, V9 run `001`, and a fresh V10 rules/mock fixture; require no console errors or external network request.
 
-- [ ] **Step 12: Resolve the existing port-50050 process safely.** Query the listener PID and command line, verify it is the intended AdLife preview using workspace `C:\your workspace\github\adlife-owner-preview-20261012-123157`, and refuse to stop an unrelated process.
+- [ ] **Step 12: Resolve the existing port-50050 process safely.** Query the listener PID and command line again, verify it is the intended AdLife preview using the exact absolute workspace and configuration recorded in Step 10, and refuse to stop an unrelated process or one whose identity changed during candidate certification.
 
 - [ ] **Step 13: Replace the preview with minimal downtime.** Stop only the verified old preview, launch the upgraded command on port 50050 in a hidden background process with redirected logs, and retain its PID. Do not open a visible PowerShell, cmd, or terminal window.
 

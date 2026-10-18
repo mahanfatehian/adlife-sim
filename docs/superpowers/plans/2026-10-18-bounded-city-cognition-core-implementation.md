@@ -1301,8 +1301,10 @@ git commit -m "test(cognition): prove v10 core invariants"
 
 **Files:**
 - Modify: `src/adlife/core/domain/city_run.py`
+- Modify: `src/adlife/city/workbench_runs.py`
 - Create: `tests/unit/city/test_city_run_v10_contract.py`
 - Modify: `tests/unit/city/test_city_run_contract.py`
+- Modify: `tests/unit/city/test_workbench_runs.py`
 
 **Interfaces:**
 - Consumes: `ConfigDict`, `CityCognitionInputV2`, `CityCognitionEvaluationV2`, V2 counts/hashes, and existing `_CityRunResponseManifestBase` semantics.
@@ -1397,6 +1399,8 @@ def parse_city_run_manifest_json(
 - V10 keeps inherited `response_count` as the baseline response count, `state_update_count` as dual-update count, and `final_state_count` as final rule-state count. Validator requires `response_count=baseline_response_count=applied_response_count=noticed_count`, `state_update_count=dual_state_update_count`, and `final_state_count=final_cognition_state_count=agent_count*response_campaign_count`.
 - `CityRunManifestDocument` gains V10; `parse_city_run_manifest_json` dispatches only exact integer `10`. It rejects `True`, `10.0`, `"10"`, `11`, V10 with V1 response/cognition, and every workbench/manifest pair except `4 -> 10`.
 - The historical parser refusal advances from unknown V10 to unknown V11, and the frozen canonical-byte regression gains explicit V8/V9 pins so the private-base split cannot change any V6-V9 public serialization unnoticed.
+- Until runtime Task 9 implements full schema-4/V10 loading, `_summary` must fail closed for V10 rather than presenting a partial workbench summary. Runtime Task 9 owns removal of this temporary guard and replacement of its regression test with exact `(4, 10)` summary admission.
+- The standalone receipt model validates every immutable, internally derivable policy identity, the LF-terminated cognition-summary digest, and the empty-allocation sentinel. Runtime loading remains responsible for reconstructing provider settings, nonempty budget allocations, and complete cross-artifact consistency from verified stored evidence.
 
 - [ ] **Step 1: Write the failing receipt test.** Add `test_v2_manifest_receipt_is_derived_only_from_validated_frozen_evidence`; assert every policy/input/budget/stream hash and count and assert incomplete provider binding or summary mismatch is refused.
 
@@ -1441,10 +1445,10 @@ Run: `uv run mypy src`
 - [ ] **Step 10: Inspect and commit only Task 7 files.**
 
 ```powershell
-git diff -- src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py
+git diff -- src/adlife/core/domain/city_run.py src/adlife/city/workbench_runs.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py tests/unit/city/test_workbench_runs.py
 git diff --check
 git status --short
-git add -- src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py
+git add -- src/adlife/core/domain/city_run.py src/adlife/city/workbench_runs.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py tests/unit/city/test_workbench_runs.py
 git diff --cached --check
 git commit -m "feat(city): define manifest v10"
 ```

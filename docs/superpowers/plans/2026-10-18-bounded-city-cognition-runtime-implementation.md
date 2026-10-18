@@ -77,13 +77,14 @@
 - Consumes: `CityEndpointPolicy`, `BoundProviderEndpoint`, `ResolvedCredential`, `SecretBuffer`, and `httpcore.AsyncNetworkBackend` from the existing V9 runtime.
 - Produces:
   - `class CityProviderHttpTransport`
-  - `CityProviderHttpTransport.__init__(*, endpoint_policy: CityEndpointPolicy, endpoint: BoundProviderEndpoint, credential: ResolvedCredential, attempt_timeout_seconds: int, max_wire_response_bytes: int, network_backend_factory: Callable[[], httpcore.AsyncNetworkBackend] | None = None) -> None`
+  - `CityProviderHttpTransport.__init__(*, endpoint_policy: CityEndpointPolicy, endpoint: BoundProviderEndpoint, credential: ResolvedCredential, attempt_timeout_seconds: int, max_content_length_bytes: int, max_wire_response_bytes: int, max_decoded_response_bytes: int, network_backend_factory: Callable[[], httpcore.AsyncNetworkBackend] | None = None) -> None`
   - `CityProviderHttpTransport.post_json(payload: Mapping[str, object]) -> Awaitable[bytes]`
   - `CityProviderHttpTransport.contains_bound_credential(value: str | bytes) -> bool`
   - `CityProviderHttpTransport.aclose() -> Awaitable[None]`
   - `CityProviderHttpTransport.is_closed: bool`
   - one definition each of `CityProviderCallError`, `CityProviderAuthenticationError`, `CityProviderTimeoutError`, `CityProviderRateLimitError`, `CityProviderServerError`, `CityProviderUnavailableError`, `CityProviderResponseTooLargeError`, `CityProviderProtocolError`, and `CityProviderTransportError`.
 - Preserves: `city_openai_compatible.py` re-exports those exact class objects and keeps `CityOpenAICompatibleProvider`'s constructor, methods, repr, close behavior, payloads, and exception behavior unchanged.
+- The extracted transport must preserve exact public exception identities, messages, and retry classifications; resolve DNS afresh for every call; connect to the numeric address while retaining the original Host header and TLS SNI; verify the peer before copying credentials into request headers; and disable redirects, environment proxies, and connection pooling. The content-length declaration, streamed wire counter, and decoded-body counter are independently parameterized and enforced. Transport owns a private credential copy, screens credential echoes, sanitizes traceback-local values, and scopes any third-party log suppression to the call without changing process-global logging state.
 
 - [ ] **Step 1: Write the shared-transport contract test**
 
@@ -184,6 +185,7 @@
   - the single definitions of `CityCognitionCacheCorruption`, `CityCognitionCacheConflict`, `CityCognitionCacheUnavailable`, and `CityCognitionCachePublicationError` used by both cache versions.
   - `CityCognitionCachePublicationError.__init__(potentially_committed: bool) -> None`, preserving the public boolean attribute and both existing constant messages exactly.
 - Preserves: `CityCognitionCache`, `CityCognitionCacheRecordV1`, `CITY_COGNITION_CACHE_KEY_VERSION`, the `city-cognition-cache` directory, V1 key derivation, canonical record bytes, and re-exported public exception identity.
+- Existing V1 fault-injection tests may patch `city_cache_module.os.lstat`, `_sync_directory`, `find_workbench_subdirectory`, or `verify_workbench_workspace`. Preserve forwarding seams where they remain part of the public test boundary, or deliberately retarget those patches to `city_cache_storage` while retaining the same failure and cleanup assertions; "unchanged V1 assertions" does not require stale module patch targets.
 
 - [ ] **Step 1: Write byte-storage path and publication tests**
 
@@ -303,9 +305,9 @@
 
   Assert model/profile binding, strict JSON schema, `stream=False`, no tools/reasoning, `max_tokens <= 128`, delimiter-neutralized campaign text, fixed/frozen seed behavior, and a repair prompt containing only a bounded reason code rather than raw provider text.
 
-- [ ] **Step 3: Write adversarial provider parser tests**
+- [ ] **Step 3: Write adversarial provider parser and admission tests**
 
-  Cover duplicate keys, extra result fields, wrong/missing request ID or disclosure, every invalid enum/flag, non-finite constants, root/content arrays, refusal, tool calls, non-`stop` finish reasons, content filtering/truncation, malformed UTF-8/JSON, response/body overflow, credential echo, fake authorization text, remote HTTP/userinfo, redirects, and DNS/peer drift. Every accepted result must be `CityCognitionResultV2`; every invalid answer must be a typed invalid attempt or sanitized transport error.
+  Cover duplicate keys, extra result fields, wrong/missing request ID or disclosure, every invalid enum/flag, non-finite constants, root/content arrays, refusal, tool calls, non-`stop` finish reasons, content filtering/truncation, malformed UTF-8/JSON, response/body overflow, credential echo, fake authorization text, remote HTTP/userinfo, redirects, and DNS/peer drift. Every accepted result must be exact-revalidated as `CityCognitionResultV2` inside a freshly validated `CityProviderAttemptV2`; every invalid answer must be a typed invalid attempt or sanitized transport error. Add a V1-provider/V2-service regression proving that a structurally similar object returned from the V1 path is rejected rather than trusted.
 
 - [ ] **Step 4: Extend the secret-redaction corpus**
 
@@ -319,7 +321,7 @@
 
 - [ ] **Step 6: Add the V2 core port without unioning it with V1**
 
-  Keep `CityCognitionProvider` unchanged and narrative-only. Export `CityCognitionProviderV2` separately so a V1 provider cannot satisfy V2 service admission through structural ambiguity.
+  Keep `CityCognitionProvider` unchanged and narrative-only. Export `CityCognitionProviderV2` separately for static typing and review clarity. Because both runtime-checkable protocols expose `call` and `repair_call`, protocol names alone do not prevent structural ambiguity at runtime: the V2 service must exact-revalidate every returned V2 attempt and result and reject V1-shaped output.
 
 - [ ] **Step 7: Implement the V2 projection, hash, messages, response format, and payloads**
 
@@ -882,7 +884,7 @@
 
 - [ ] **Step 5: Write maximum-size and exact-boundary storage tests**
 
-  Consume the core plan's certified upper-bound counts and maximum canonical record sizes; assert request/input/terminal/cognition-stream/summary/response-stream/dual-state/response-summary bounds remain within 8,192/131,072/8,192/1,048,576/16,384/2,147,483,648/8,388,608/131,072 respectively. Stream a representative 30-agent/7-day rules V10 run through the real serializer/store without retaining the response stream in memory. For each loader/writer, use bounded generated readers to prove exactly-at-limit acceptance and limit-plus-one refusal without creating a 2 GiB fixture on disk. The runtime test must fail if its enforcement constant differs from the core-certified bound or frozen specification.
+  Consume the core plan's certified admission limits and canonical record ceilings; assert request/input/terminal/cognition-stream/summary/response-stream/dual-state/response-summary bounds remain 8,192/131,072/8,192/1,048,576/16,384/2,147,483,648/8,388,608/131,072 respectively. Do not assert that all independent structural maxima are jointly admissible: the independent response-record maxima can total `2_311_310_880` bytes and therefore must be refused at the combined `2_147_483_648` stream boundary. Stream admitted representative 30-agent/7-day rules scenarios through the real serializer/store without retaining the response stream in memory. For each loader/writer, use bounded generated readers to prove exactly-at-limit acceptance and limit-plus-one refusal without creating a 2 GiB fixture on disk. The runtime test must fail if its enforcement constant differs from the core-certified bound or frozen specification.
 
 - [ ] **Step 6: Run the focused red nodes**
 
@@ -896,7 +898,7 @@
 
 - [ ] **Step 8: Add exact V10 load verification**
 
-  Read each file with its V2 limit, parse only its manifest-selected type, rebuild all science/evidence from frozen inputs, stream-compare large JSONL output, and reject any missing/extra/wrong-version/cross-bound content.
+  Read each file with its V2 limit, parse only its manifest-selected type, rebuild all science/evidence from frozen inputs, stream-compare large JSONL output, and reject any missing/extra/wrong-version/cross-bound content. Reconstruct and compare the complete manifest cognition receipt: verify internally derivable policy identities, the canonical LF-terminated summary digest, and the empty-allocation sentinel, then also verify provider settings, nonempty budget allocations, and every cross-artifact binding from the loaded inputs and sidecars. Do not trust hashes merely because they are self-consistent inside `run.json`.
 
 - [ ] **Step 9: Run V10 artifact/store/security tests**
 
@@ -975,6 +977,7 @@
   - `WorkbenchRunRepository.finalize_cognition_v2(prepared: PreparedCityScientificRunV2, evaluation: CityCognitionEvaluationV2) -> PreparedCityRun`.
   - V10 additions to `WorkbenchAcceptedSettings`, `WorkbenchRunSummary`, `_RunOperations`, and `WorkbenchJobPhase`.
 - V10 phases are exactly `planning-cognition`, `requesting-cognition`, and `applying-cognition`; V9 retains `selecting-explanations` and `requesting-explanations`.
+- This task replaces both earlier fail-closed handoff guards: remove the core plan's temporary `workbench_runs._summary` V10 refusal and replace `test_summary_explicitly_refuses_v10_until_workbench_runtime_support` with exact `(4, 10)` summary coverage; also replace Task 5's temporary schema-4 submission-refusal regression with the successful V10 dispatch and failure-boundary matrix below.
 
 - [ ] **Step 1: Write exact preflight-order tests**
 
@@ -1014,9 +1017,9 @@
 
   Add only the three V10 phases and typed V2 repository methods to `_RunOperations`. Keep V9 phase names and control flow exact.
 
-- [ ] **Step 9: Replace the temporary Task 5 refusal with exact V10 job dispatch**
+- [ ] **Step 9: Replace all temporary V10 refusals with exact V10 summary and job dispatch**
 
-  Branch by `WorkbenchRunInputV4`: preflight, ensure destination, prepare, request, apply, persist, verify. Pass `prepared.baseline_evaluation` to `CityCognitionServiceV2.resolve_many`. Check cancellation between every side-effect boundary; no provider-derived data becomes visible before pure finalization completes.
+  Admit only the exact `(workbench_input_schema_version, run_schema_version) == (4, 10)` pair in summaries. Branch by `WorkbenchRunInputV4`: preflight, ensure destination, prepare, request, apply, persist, verify. Pass `prepared.baseline_evaluation` to `CityCognitionServiceV2.resolve_many`. Check cancellation between every side-effect boundary; no provider-derived data becomes visible before pure finalization completes.
 
 - [ ] **Step 10: Run V10 repository/job/API/security tests**
 
