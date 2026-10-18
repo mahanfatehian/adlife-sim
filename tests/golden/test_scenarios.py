@@ -13,8 +13,10 @@ event, in order, with its payload - not incidental labels.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
+
+import pytest
 
 from adlife.adapters.cognition.mock import MOCK_MODEL_ID, MockCognitionProvider
 from adlife.adapters.output.jsonl import JsonlEventSink
@@ -134,9 +136,6 @@ async def test_rule_small_matches_committed_evidence(
     actual = _normalized_record(store, events_path)
 
     evidence = GOLDEN_DIR / "rule-small" / "record.json"
-    if not evidence.is_file():  # pragma: no cover - regenerate script writes it
-        evidence.parent.mkdir(parents=True, exist_ok=True)
-        evidence.write_bytes(actual)
     expected = evidence.read_bytes()
     # .gitattributes pins the record to LF, but a checkout made before that pin may
     # still hold CRLF; the comparison is about BEHAVIOUR, not a checkout artifact.
@@ -155,12 +154,36 @@ async def test_mock_small_matches_committed_evidence(
     actual = _normalized_record(store, events_path)
 
     evidence = GOLDEN_DIR / "mock-small" / "record.json"
-    if not evidence.is_file():  # pragma: no cover - regenerate script writes it
-        evidence.parent.mkdir(parents=True, exist_ok=True)
-        evidence.write_bytes(actual)
     expected = evidence.read_bytes()
     expected = expected.replace(b"\r\n", b"\n")
     assert actual == expected, (
         "the mock-small golden record changed; if this change is intended, run "
         "`uv run python scripts/regenerate_golden.py` and review the diff"
     )
+
+
+@pytest.mark.parametrize(
+    ("scenario_name", "scenario_test"),
+    [
+        ("rule-small", test_rule_small_matches_committed_evidence),
+        ("mock-small", test_mock_small_matches_committed_evidence),
+    ],
+    ids=["rule-small", "mock-small"],
+)
+async def test_scenarios_refuse_missing_committed_evidence(
+    scenario_name: str,
+    scenario_test: Callable[[Scenario, Path], Awaitable[None]],
+    valid_scenario: Scenario,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_golden_dir = tmp_path / "missing-evidence"
+    evidence = missing_golden_dir / scenario_name / "record.json"
+    monkeypatch.setitem(globals(), "GOLDEN_DIR", missing_golden_dir)
+
+    with pytest.raises(FileNotFoundError):
+        await scenario_test(valid_scenario, tmp_path)
+
+    assert not missing_golden_dir.exists()
+    assert not evidence.parent.exists()
+    assert not evidence.exists()
