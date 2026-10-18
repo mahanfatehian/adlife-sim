@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,338 @@ from adlife.core.ports.run_store import DuplicateRun
 from tests.unit.city.test_city_mobility import mobility_place_set
 from tests.unit.city.test_workbench_input import draft_data, draft_v3_data
 from tests.unit.city.test_workbench_validation import cognition_draft, persona_draft
+
+
+def _v2_prepare_api():
+    function = getattr(runs, "prepare_city_scientific_run_v2", None)
+    assert function is not None, "prepare_city_scientific_run_v2 is not implemented"
+    return function
+
+
+def _validated_v4(*, mode="rules", limit=60, profile=None, mutation=None, agents=3):
+    from adlife.city.workbench_input import WorkbenchRunDraftV4
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    document = draft_v4_data(mode=mode, limit=limit)
+    document["settings"]["agent_count"] = agents
+    document["population"]["personas"][0]["count"] = agents
+    if profile is not None:
+        document["cognition"].update(
+            provider_profile_id=profile.profile_id,
+            provider_revision_sha256=profile.revision_sha256,
+        )
+    if mutation is not None:
+        mutation(document)
+    return construct_workbench_run(WorkbenchRunDraftV4.model_validate_json(json.dumps(document)))
+
+
+def _v2_arguments(validated):
+    settings = validated.workbench_input.draft.settings
+    return dict(
+        run_id=settings.run_id,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        spatial_scenario=validated.scenario,
+        spatial_response=validated.response_input,
+        workbench_input=validated.workbench_input,
+    )
+
+
+def _bypass_v2(model, **updates):
+    return type(model).model_construct(
+        **({name: getattr(model, name) for name in type(model).model_fields} | updates)
+    )
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock"])
+def test_v2_preparation_freezes_exact_staging_and_offline_reservations(tmp_path, mode):
+    prepare = _v2_prepare_api()
+    validated = _validated_v4(mode=mode)
+    prepared = prepare(validated.pack, **_v2_arguments(validated))
+
+    assert type(prepared) is runs.PreparedCityScientificRunV2
+    assert [field.name for field in fields(prepared)] == [
+        "pack",
+        "mobility",
+        "spatial_scenario",
+        "opportunity_evaluation",
+        "attention_evaluation",
+        "response_input",
+        "baseline_evaluation",
+        "workbench_input",
+        "cognition_input",
+        "cognition_requests",
+    ]
+    assert not hasattr(prepared, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        prepared.cognition_requests = ()
+    for field in ("manifest", "directory", "path", "publish", "initial_state_document"):
+        assert not hasattr(prepared, field)
+    assert prepared.workbench_input == validated.workbench_input
+    assert prepared.workbench_input is not validated.workbench_input
+    frozen = prepared.cognition_input
+    assert frozen.schema_version == 2 and frozen.effect_scope == "bounded-signals-v1"
+    assert frozen.mode == mode and frozen.run_input_sha256 == validated.workbench_input.fingerprint
+    assert frozen.provider_profile is None and frozen.effective_settings is None
+    assert frozen.funded_response_limit == 60 and frozen.aggregate_output_token_ceiling == 0
+    assert len(prepared.cognition_requests) > 0
+    assert len(frozen.reservations) == len(prepared.cognition_requests)
+    assert [r.selection_index for r in frozen.reservations] == list(range(len(frozen.reservations)))
+    assert [(r.request_id, r.request_record_sha256) for r in frozen.reservations] == [
+        (r.request_id, r.request_record_sha256) for r in prepared.cognition_requests
+    ]
+    assert all(r.funded and r.reserved_output_tokens == 0 for r in frozen.reservations)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_v2_preparation_preserves_exact_v1_baseline_and_purchase_bytes():
+    from adlife.core.simulation.spatial_response import spatial_response_lines
+
+    prepare = _v2_prepare_api()
+    validated = _validated_v4()
+    prepared = prepare(validated.pack, **_v2_arguments(validated))
+    independent = runs.evaluate_spatial_responses(
+        validated.response_input,
+        validated.scenario,
+        prepared.opportunity_evaluation,
+        prepared.attention_evaluation,
+        agent_ids=tuple(a.agent_id for a in prepared.mobility.agents),
+    )
+    assert prepared.baseline_evaluation == independent
+    assert b"".join(spatial_response_lines(prepared.baseline_evaluation)) == b"".join(
+        spatial_response_lines(independent)
+    )
+    assert tuple(map(canonical_json, prepared.baseline_evaluation.final_states)) == tuple(
+        map(canonical_json, independent.final_states)
+    )
+    assert [s.purchase_intention for s in prepared.baseline_evaluation.final_states] == [
+        s.purchase_intention for s in independent.final_states
+    ]
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
+def test_v2_preparation_does_not_consult_provider_cache_credentials_or_storage(
+    tmp_path, monkeypatch, mode
+):
+    import os
+    import socket
+
+    from adlife.adapters.cognition.city_cache_storage import CityCognitionCacheByteStorage
+    from adlife.adapters.cognition.city_openai_compatible_v2 import CityOpenAICompatibleProviderV2
+
+    prepare = _v2_prepare_api()
+    profile = _provider_revision(tmp_path, mode=mode) if mode in {"local", "remote"} else None
+    validated = _validated_v4(mode=mode, profile=profile)
+    before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("preparation performed an external effect")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(socket, "getaddrinfo", forbidden)
+        patch.setattr(socket, "socket", forbidden)
+        patch.setattr(os, "getenv", forbidden)
+        patch.setattr(CityOpenAICompatibleProviderV2, "__init__", forbidden)
+        patch.setattr(CityCognitionCacheByteStorage, "__init__", forbidden)
+        patch.setattr(ProviderProfileRegistry, "__init__", forbidden)
+        patch.setattr(CityRunStore, "__init__", forbidden)
+        patch.setattr(Path, "open", forbidden)
+        patch.setattr(Path, "exists", forbidden)
+        prepared = prepare(validated.pack, provider_profile=profile, **_v2_arguments(validated))
+    assert prepared.cognition_requests
+    assert sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize("limit", [10, 20, 40, 60])
+@pytest.mark.parametrize("tokens", [96, 384])
+def test_v2_preparation_binds_profile_caps_output_and_reserves_whole_requests(
+    tmp_path, mode, limit, tokens
+):
+    prepare = _v2_prepare_api()
+    profile = _provider_revision(tmp_path, mode=mode, max_output_tokens=tokens)
+    validated = _validated_v4(mode=mode, limit=limit, profile=profile, agents=8)
+    prepared = prepare(validated.pack, provider_profile=profile, **_v2_arguments(validated))
+    frozen = prepared.cognition_input
+    assert canonical_json(frozen.provider_profile) == canonical_json(profile)
+    settings = frozen.effective_settings
+    assert settings.max_output_tokens == min(tokens, 128)
+    for field in (
+        "protocol",
+        "temperature",
+        "top_p",
+        "seed_policy",
+        "seed",
+        "attempt_timeout_seconds",
+        "transient_retries",
+        "repair_attempts",
+    ):
+        assert getattr(settings, field) == getattr(profile, field)
+    assert frozen.funded_response_limit == limit
+    assert frozen.aggregate_output_token_ceiling == limit * 512
+    assert frozen.max_output_tokens_per_attempt == 128
+    assert frozen.reservation_tokens_per_request == 512
+    assert [(r.funded, r.reserved_output_tokens) for r in frozen.reservations] == [
+        (index < limit, 512 if index < limit else 0)
+        for index in range(len(prepared.cognition_requests))
+    ]
+
+
+@pytest.mark.parametrize("case", ["missing", "offline", "mode", "revision", "profile-id", "nested"])
+def test_v2_preparation_refuses_profile_drift_before_simulation(tmp_path, monkeypatch, case):
+    prepare = _v2_prepare_api()
+    profile = _provider_revision(tmp_path)
+    validated = _validated_v4(
+        mode="rules" if case == "offline" else "local",
+        profile=(None if case in {"revision", "profile-id", "offline"} else profile),
+    )
+    supplied = None if case == "missing" else profile
+    if case == "mode":
+        supplied = _provider_revision(tmp_path, mode="remote")
+    elif case == "profile-id":
+        supplied = _provider_revision(tmp_path / "other", profile_id="other-provider")
+    elif case == "nested":
+        supplied = _bypass_v2(profile, max_output_tokens=True)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("profile was checked after mobility started")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    with pytest.raises(ValueError, match="provider profile"):
+        prepare(validated.pack, provider_profile=supplied, **_v2_arguments(validated))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("seed", True),
+        ("seed", -1),
+        ("seed", 2**63),
+        ("seed", 42.0),
+        ("agent_count", True),
+        ("agent_count", 0),
+        ("agent_count", 31),
+        ("days", True),
+        ("days", 0),
+        ("days", 8),
+        ("days", "2"),
+        ("run_id", "different-run"),
+        ("seed", 43),
+        ("agent_count", 2),
+        ("days", 1),
+    ],
+)
+def test_v2_preparation_refuses_scalar_and_execution_drift_before_simulation(
+    monkeypatch, field, value
+):
+    prepare = _v2_prepare_api()
+    validated = _validated_v4()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("invalid execution reached mobility")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    with pytest.raises(ValueError):
+        prepare(validated.pack, **(_v2_arguments(validated) | {field: value}))
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "schema3",
+        "pack",
+        "city",
+        "scenario",
+        "missing-scenario",
+        "response",
+        "places",
+        "creative",
+        "profile",
+        "state",
+    ],
+)
+def test_v2_preparation_refuses_wrong_versions_and_scientific_drift_before_simulation(
+    monkeypatch, case
+):
+    prepare = _v2_prepare_api()
+    validated = _validated_v4()
+    pack = validated.pack
+    arguments = _v2_arguments(validated)
+    if case == "schema3":
+        arguments["workbench_input"] = _validated_v3().workbench_input
+    elif case == "pack":
+        from tests.unit.city.test_city_pack import load_pack, pack_data
+
+        pack = load_pack(pack_data())
+    elif case == "scenario":
+        arguments["spatial_scenario"] = validated.scenario.model_copy(update={"name": "drift"})
+    elif case == "city":
+        pack = validated.pack.model_copy(update={"city_id": "different-fictional-city"})
+    elif case == "missing-scenario":
+        arguments["spatial_scenario"] = None
+    elif case == "response":
+        arguments["spatial_response"] = None
+    elif case == "places":
+        arguments["places"] = mobility_place_set()
+    elif case == "creative":
+        template = validated.workbench_input.creative_template.model_copy(
+            update={"message": "drift"}
+        )
+        arguments["workbench_input"] = validated.workbench_input.model_copy(
+            update={"creative_template": template}
+        )
+    elif case == "profile":
+        profile, *others = validated.response_input.profiles
+        traits = profile.traits.model_copy(update={"novelty_seeking": 0.1})
+        arguments["spatial_response"] = validated.response_input.model_copy(
+            update={"profiles": (profile.model_copy(update={"traits": traits}), *others)}
+        )
+    else:
+        state, *others = validated.response_input.initial_states
+        arguments["spatial_response"] = validated.response_input.model_copy(
+            update={
+                "initial_states": (state.model_copy(update={"purchase_intention": 0.9}), *others)
+            }
+        )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("invalid science reached mobility")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    with pytest.raises((TypeError, ValueError)):
+        prepare(pack, **arguments)
+
+
+def test_v2_preparation_refuses_nested_bypass_without_warnings_or_secret_context(monkeypatch):
+    prepare = _v2_prepare_api()
+    validated = _validated_v4()
+    secret = "Authorization: Bearer opaquevalue1234567890"
+    response = _bypass_v2(validated.response_input, profiles=(secret,))
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("malformed response reached mobility")
+
+    monkeypatch.setattr(runs, "CityMobility", forbidden)
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError) as caught:
+            prepare(validated.pack, **(_v2_arguments(validated) | {"spatial_response": response}))
+    assert captured == []
+    assert secret not in str(caught.value) and secret not in repr(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+def test_v2_preparation_preserves_programming_type_error(monkeypatch):
+    prepare = _v2_prepare_api()
+    validated = _validated_v4()
+
+    def defect(*_args, **_kwargs):
+        raise TypeError("implementation defect")
+
+    monkeypatch.setattr(runs, "revalidate_model", defect)
+    with pytest.raises(TypeError, match="implementation defect"):
+        prepare(validated.pack, **_v2_arguments(validated))
 
 
 def _validated(*, run_id: str = "launch-run", seed: int = 42, agents: int = 2, days: int = 2):

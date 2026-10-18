@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -16,6 +17,7 @@ from adlife.city.provider_profiles import ProviderProfileRevisionV1
 from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.workbench_binding import (
     build_city_cognition_run_context,
+    build_city_cognition_run_context_v2,
     validate_workbench_execution_binding,
 )
 from adlife.city.workbench_input import (
@@ -23,6 +25,7 @@ from adlife.city.workbench_input import (
     WorkbenchRunInputDocument,
     WorkbenchRunInputV2,
     WorkbenchRunInputV3,
+    WorkbenchRunInputV4,
 )
 from adlife.core.domain.city import CityPackDocument, CityPackV2
 from adlife.core.domain.city_cognition import (
@@ -40,6 +43,11 @@ from adlife.core.domain.city_cognition import (
     CityCognitionProviderProfileSnapshotV1,
     CityCognitionRequestV1,
 )
+from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionEvaluationV2,
+    CityCognitionInputV2,
+    CityCognitionRequestV2,
+)
 from adlife.core.domain.city_places import CityPlaceSet
 from adlife.core.domain.city_run import (
     CityRunManifest,
@@ -52,7 +60,9 @@ from adlife.core.domain.city_run import (
     CityRunManifestV7,
     CityRunManifestV8,
     CityRunManifestV9,
+    CityRunManifestV10,
     build_city_cognition_manifest_receipt,
+    build_city_cognition_manifest_receipt_v2,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
@@ -66,6 +76,11 @@ from adlife.core.simulation.city_cognition import (
     allocate_city_cognition_reservations,
     build_city_cognition_requests,
     validate_city_cognition_evaluation,
+)
+from adlife.core.simulation.city_cognition_v2 import (
+    build_city_cognition_input_v2,
+    build_city_cognition_requests_v2,
+    validate_city_cognition_evaluation_v2,
 )
 from adlife.core.simulation.city_mobility import CityMobility
 from adlife.core.simulation.city_trace import summarize_city_trace
@@ -86,6 +101,11 @@ from adlife.core.simulation.spatial_response import (
     SpatialResponseEvaluation,
     evaluate_spatial_responses,
     summarize_spatial_response_artifact,
+)
+from adlife.core.simulation.spatial_response_v2 import (
+    SpatialResponseEvaluationV2,
+    apply_spatial_cognition_v2,
+    summarize_spatial_response_artifact_v2,
 )
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -143,10 +163,10 @@ class PreparedCityRun:
     opportunity_evaluation: SpatialOpportunityEvaluation | None = None
     attention_evaluation: SpatialAttentionEvaluation | None = None
     response_input: SpatialResponseInput | None = None
-    response_evaluation: SpatialResponseEvaluation | None = None
+    response_evaluation: SpatialResponseEvaluation | SpatialResponseEvaluationV2 | None = None
     workbench_input: WorkbenchRunInputDocument | None = None
-    cognition_input: CityCognitionInputV1 | None = None
-    cognition_evaluation: CityCognitionEvaluationV1 | None = None
+    cognition_input: CityCognitionInputV1 | CityCognitionInputV2 | None = None
+    cognition_evaluation: CityCognitionEvaluationV1 | CityCognitionEvaluationV2 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +188,22 @@ class PreparedCityScientificRun:
     workbench_input: WorkbenchRunInputV3
     cognition_input: CityCognitionInputV1
     cognition_requests: tuple[CityCognitionRequestV1, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCityScientificRunV2:
+    """Unpublished rule baseline and frozen bounded-cognition admission evidence."""
+
+    pack: CityPackV2
+    mobility: CityMobility
+    spatial_scenario: SpatialCampaignScenario
+    opportunity_evaluation: SpatialOpportunityEvaluation
+    attention_evaluation: SpatialAttentionEvaluation
+    response_input: SpatialResponseInput
+    baseline_evaluation: SpatialResponseEvaluation
+    workbench_input: WorkbenchRunInputV4
+    cognition_input: CityCognitionInputV2
+    cognition_requests: tuple[CityCognitionRequestV2, ...]
 
 
 def _document_sha256(value: Mapping[str, object]) -> str:
@@ -562,6 +598,292 @@ def finalize_city_run(
     )
 
 
+def _freeze_city_provider_profile_v2(
+    workbench_input: WorkbenchRunInputV4,
+    provider_profile: ProviderProfileRevisionV1 | None,
+) -> CityCognitionProviderProfileSnapshotV1 | None:
+    """Copy the selected nonsecret revision without consulting its registry."""
+    cognition = workbench_input.draft.cognition
+    if cognition.mode in {"rules", "mock"}:
+        if provider_profile is not None:
+            raise ValueError("offline cognition cannot carry a provider profile")
+        return None
+    if provider_profile is None:
+        raise ValueError("provider cognition requires the selected provider profile")
+    if type(provider_profile) is not ProviderProfileRevisionV1:
+        raise TypeError("provider_profile must be a ProviderProfileRevisionV1")
+    checked = _value_free_revalidate(
+        provider_profile,
+        ProviderProfileRevisionV1,
+        label="provider profile",
+        refusal="provider profile failed validation",
+    )
+    snapshot: CityCognitionProviderProfileSnapshotV1 | None = None
+    with suppress(ValueError):
+        snapshot = CityCognitionProviderProfileSnapshotV1.model_validate(
+            checked.model_dump(mode="json", warnings="none")
+        )
+    if snapshot is None:
+        raise ValueError("provider profile failed validation") from None
+    if (
+        snapshot.mode != cognition.mode
+        or snapshot.profile_id != cognition.provider_profile_id
+        or snapshot.revision_sha256 != cognition.provider_revision_sha256
+    ):
+        raise ValueError("provider profile does not match the schema-4 run input")
+    return snapshot
+
+
+def prepare_city_scientific_run_v2(
+    pack: CityPackDocument,
+    *,
+    run_id: str,
+    seed: int,
+    agent_count: int,
+    days: int,
+    spatial_scenario: SpatialCampaignScenario,
+    spatial_response: SpatialResponseInput,
+    workbench_input: WorkbenchRunInputV4,
+    places: CityPlaceSet | None = None,
+    provider_profile: ProviderProfileRevisionV1 | None = None,
+) -> PreparedCityScientificRunV2:
+    """Prepare deterministic science and freeze all V2 requests before provider work."""
+    if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
+        raise ValueError("city run seed must be between 0 and 2^63-1")
+    if type(agent_count) is not int or not 1 <= agent_count <= 30:
+        raise ValueError("saved city runs require 1 to 30 agents")
+    if type(days) is not int or not 1 <= days <= 7:
+        raise ValueError("saved city runs require 1 to 7 days")
+    if type(workbench_input) is not WorkbenchRunInputV4:
+        raise TypeError("scientific city preparation requires a schema-4 workbench input")
+    if type(pack) is not CityPackV2:
+        raise TypeError("scientific city preparation requires a version 2 city pack")
+    if type(spatial_scenario) is not SpatialCampaignScenario:
+        raise TypeError("scientific city preparation requires a spatial scenario")
+    if type(spatial_response) is not SpatialResponseInput:
+        raise TypeError("scientific city preparation requires a spatial response input")
+
+    checked_pack = _value_free_revalidate(
+        pack,
+        CityPackV2,
+        label="scientific city pack",
+        refusal="scientific city pack failed validation",
+    )
+    checked_scenario = _value_free_revalidate(
+        spatial_scenario,
+        SpatialCampaignScenario,
+        label="scientific city scenario",
+        refusal="scientific city scenario failed validation",
+    )
+    checked_response = _value_free_revalidate(
+        spatial_response,
+        SpatialResponseInput,
+        label="scientific city response input",
+        refusal="scientific city response input failed validation",
+    )
+    checked_source = _value_free_revalidate(
+        workbench_input,
+        WorkbenchRunInputV4,
+        label="scientific workbench input",
+        refusal="scientific workbench input failed validation",
+    )
+    checked_workbench = _validated_workbench_input(
+        checked_source,
+        pack=checked_pack,
+        run_id=run_id,
+        seed=seed,
+        agent_count=agent_count,
+        days=days,
+        places=places,
+        spatial_scenario=checked_scenario,
+        spatial_response=checked_response,
+    )
+    if type(checked_workbench) is not WorkbenchRunInputV4:
+        raise TypeError("scientific city preparation requires a schema-4 workbench input")
+    snapshot = _freeze_city_provider_profile_v2(checked_workbench, provider_profile)
+    mobility = CityMobility(
+        checked_pack,
+        seed=seed,
+        agent_count=agent_count,
+        days=days,
+        places=places,
+    )
+    opportunities = evaluate_spatial_opportunities(mobility, checked_scenario)
+    attention = evaluate_spatial_attention(opportunities, seed=seed)
+    baseline = evaluate_spatial_responses(
+        checked_response,
+        checked_scenario,
+        opportunities,
+        attention,
+        agent_ids=tuple(agent.agent_id for agent in mobility.agents),
+    )
+    context = build_city_cognition_run_context_v2(
+        checked_workbench,
+        pack=checked_pack,
+        spatial_scenario=checked_scenario,
+        response_input=checked_response,
+        baseline_evaluation=baseline,
+    )
+    cognition = checked_workbench.draft.cognition
+    requests = build_city_cognition_requests_v2(
+        context,
+        mobility,
+        baseline,
+        causal_contract=cognition.causal_contract,
+    )
+    frozen = build_city_cognition_input_v2(
+        context,
+        requests,
+        mode=cognition.mode,
+        funded_response_limit=cognition.funded_response_limit,
+        provider_profile=snapshot,
+        causal_contract=cognition.causal_contract,
+    )
+    return PreparedCityScientificRunV2(
+        pack=checked_pack,
+        mobility=mobility,
+        spatial_scenario=checked_scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        response_input=checked_response,
+        baseline_evaluation=baseline,
+        workbench_input=checked_workbench,
+        cognition_input=frozen,
+        cognition_requests=requests,
+    )
+
+
+def finalize_city_run_v2(
+    prepared: PreparedCityScientificRunV2,
+    *,
+    cognition_input: CityCognitionInputV2,
+    cognition_evaluation: CityCognitionEvaluationV2,
+) -> PreparedCityRun:
+    """Validate frozen terminal evidence and derive complete unpublished V10 artifacts."""
+    if type(prepared) is not PreparedCityScientificRunV2:
+        raise TypeError("prepared must be a PreparedCityScientificRunV2")
+    if type(cognition_input) is not CityCognitionInputV2:
+        raise TypeError("cognition_input must be a CityCognitionInputV2")
+    if type(cognition_evaluation) is not CityCognitionEvaluationV2:
+        raise TypeError("cognition_evaluation must be a CityCognitionEvaluationV2")
+    checked_input = _value_free_revalidate(
+        cognition_input,
+        CityCognitionInputV2,
+        label="city cognition input",
+        refusal="city cognition input failed finalization validation",
+    )
+    checked_evaluation = _value_free_revalidate(
+        cognition_evaluation,
+        CityCognitionEvaluationV2,
+        label="city cognition evaluation",
+        refusal="city cognition evaluation failed finalization validation",
+    )
+    if checked_input != prepared.cognition_input:
+        raise ValueError("city cognition input does not match scientific preparation")
+    verified: CityCognitionEvaluationV2 | None = None
+    applied: SpatialResponseEvaluationV2 | None = None
+    try:
+        verified = validate_city_cognition_evaluation_v2(
+            checked_input,
+            prepared.cognition_requests,
+            checked_evaluation.records,
+            baseline_evaluation=prepared.baseline_evaluation,
+        )
+        if verified == checked_evaluation:
+            applied = apply_spatial_cognition_v2(
+                prepared.baseline_evaluation,
+                checked_input,
+                verified,
+            )
+    except ValueError:
+        pass
+    if verified is None or applied is None:
+        raise ValueError(
+            "city cognition evaluation does not match scientific preparation"
+        ) from None
+
+    trace = summarize_city_trace(prepared.mobility)
+    opportunity = summarize_spatial_opportunity_artifact(prepared.opportunity_evaluation)
+    attention = summarize_spatial_attention_artifact(prepared.attention_evaluation)
+    response = summarize_spatial_response_artifact_v2(applied)
+    settings = prepared.workbench_input.draft.settings
+    places = prepared.mobility.places
+    contract = checked_input.causal_contract
+    manifest = CityRunManifestV10(
+        schema_version=10,
+        run_id=settings.run_id,
+        package_version=__version__,
+        python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        city_sha256=prepared.pack.fingerprint,
+        agents_sha256=trace.agents_sha256,
+        trace_sha256=trace.trace_sha256,
+        scenario_sha256=prepared.spatial_scenario.fingerprint,
+        opportunity_stream_sha256=opportunity.stream_sha256,
+        opportunity_summary_sha256=sha256(
+            (canonical_json(opportunity) + "\n").encode()
+        ).hexdigest(),
+        opportunity_stream_bytes=opportunity.stream_bytes,
+        opportunity_count=opportunity.counts.opportunity_count,
+        attention_stream_sha256=attention.stream_sha256,
+        attention_summary_sha256=sha256((canonical_json(attention) + "\n").encode()).hexdigest(),
+        attention_stream_bytes=attention.stream_bytes,
+        impression_count=attention.counts.impression_count,
+        noticed_count=attention.counts.noticed_count,
+        spatial_response_schema_version=2,
+        spatial_response_model_id="spatial-response-v2",
+        response_input_sha256=prepared.response_input.fingerprint,
+        response_stream_sha256=response.stream_sha256,
+        response_state_sha256=response.state_document_sha256,
+        response_summary_sha256=sha256((canonical_json(response) + "\n").encode()).hexdigest(),
+        response_stream_bytes=response.stream_bytes,
+        response_count=response.counts.baseline_response_count,
+        state_update_count=response.counts.dual_state_update_count,
+        response_campaign_count=response.counts.campaign_count,
+        final_state_count=response.counts.final_rule_state_count,
+        baseline_response_count=response.counts.baseline_response_count,
+        applied_response_count=response.counts.applied_response_count,
+        dual_state_update_count=response.counts.dual_state_update_count,
+        final_cognition_state_count=response.counts.final_cognition_state_count,
+        rule_state_document_sha256=response.rule_state_document_sha256,
+        cognition_state_document_sha256=response.cognition_state_document_sha256,
+        influence_policy_id=contract.influence_policy.policy_id,
+        influence_policy_sha256=contract.influence_policy_sha256,
+        seed=settings.seed,
+        agent_count=settings.agent_count,
+        days=settings.days,
+        frame_count=trace.frame_count,
+        position_count=trace.position_count,
+        city_schema_version=prepared.pack.schema_version,
+        spatial_scenario_schema_version=prepared.spatial_scenario.schema_version,
+        spatial_opportunity_schema_version=prepared.opportunity_evaluation.schema_version,
+        spatial_attention_schema_version=prepared.attention_evaluation.schema_version,
+        spatial_attention_model_id=prepared.attention_evaluation.model_id,
+        place_schema_version=None if places is None else places.schema_version,
+        place_set_sha256=None if places is None else places.fingerprint,
+        place_assignments_sha256=(
+            None
+            if places is None
+            else _document_sha256(prepared.mobility.place_assignment_document())
+        ),
+        workbench_input_schema_version=4,
+        workbench_input_sha256=prepared.workbench_input.fingerprint,
+        cognition=build_city_cognition_manifest_receipt_v2(checked_input, verified),
+    )
+    return PreparedCityRun(
+        manifest=manifest,
+        pack=prepared.pack,
+        mobility=prepared.mobility,
+        spatial_scenario=prepared.spatial_scenario,
+        opportunity_evaluation=prepared.opportunity_evaluation,
+        attention_evaluation=prepared.attention_evaluation,
+        response_input=prepared.response_input,
+        response_evaluation=applied,
+        workbench_input=prepared.workbench_input,
+        cognition_input=checked_input,
+        cognition_evaluation=verified,
+    )
+
+
 def prepare_city_run(
     pack: CityPackDocument,
     *,
@@ -762,6 +1084,14 @@ def publish_city_run(prepared: PreparedCityRun, *, root: Path) -> StoredCityRun:
     """Publish already evaluated evidence through the no-clobber city store."""
     if not isinstance(prepared, PreparedCityRun):
         raise TypeError("prepared must be a PreparedCityRun")
+    # Task 8 replaces this handoff guard when manifest-selected V10 storage lands.
+    if (
+        isinstance(prepared.manifest, CityRunManifestV10)
+        or isinstance(prepared.response_evaluation, SpatialResponseEvaluationV2)
+        or isinstance(prepared.cognition_input, CityCognitionInputV2)
+        or isinstance(prepared.cognition_evaluation, CityCognitionEvaluationV2)
+    ):
+        raise TypeError("V2 city evidence requires V10 storage support")
     directory = CityRunStore(root).save(
         prepared.manifest,
         prepared.pack,
@@ -1167,10 +1497,13 @@ __all__ = [
     "CityReplayResult",
     "PreparedCityRun",
     "PreparedCityScientificRun",
+    "PreparedCityScientificRunV2",
     "create_city_run",
     "finalize_city_run",
+    "finalize_city_run_v2",
     "prepare_city_run",
     "prepare_city_scientific_run",
+    "prepare_city_scientific_run_v2",
     "publish_city_run",
     "replay_city_run",
 ]
