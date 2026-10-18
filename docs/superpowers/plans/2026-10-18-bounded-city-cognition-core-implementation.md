@@ -1302,7 +1302,7 @@ git commit -m "test(cognition): prove v10 core invariants"
 **Files:**
 - Modify: `src/adlife/core/domain/city_run.py`
 - Create: `tests/unit/city/test_city_run_v10_contract.py`
-- Test: `tests/unit/city/test_city_run_contract.py`
+- Modify: `tests/unit/city/test_city_run_contract.py`
 
 **Interfaces:**
 - Consumes: `ConfigDict`, `CityCognitionInputV2`, `CityCognitionEvaluationV2`, V2 counts/hashes, and existing `_CityRunResponseManifestBase` semantics.
@@ -1396,6 +1396,7 @@ def parse_city_run_manifest_json(
 
 - V10 keeps inherited `response_count` as the baseline response count, `state_update_count` as dual-update count, and `final_state_count` as final rule-state count. Validator requires `response_count=baseline_response_count=applied_response_count=noticed_count`, `state_update_count=dual_state_update_count`, and `final_state_count=final_cognition_state_count=agent_count*response_campaign_count`.
 - `CityRunManifestDocument` gains V10; `parse_city_run_manifest_json` dispatches only exact integer `10`. It rejects `True`, `10.0`, `"10"`, `11`, V10 with V1 response/cognition, and every workbench/manifest pair except `4 -> 10`.
+- The historical parser refusal advances from unknown V10 to unknown V11, and the frozen canonical-byte regression gains explicit V8/V9 pins so the private-base split cannot change any V6-V9 public serialization unnoticed.
 
 - [ ] **Step 1: Write the failing receipt test.** Add `test_v2_manifest_receipt_is_derived_only_from_validated_frozen_evidence`; assert every policy/input/budget/stream hash and count and assert incomplete provider binding or summary mismatch is refused.
 
@@ -1431,19 +1432,19 @@ Expected: PASS.
 
 - [ ] **Step 9: Run focused static checks.**
 
-Run: `uv run ruff format --check src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py`
+Run: `uv run ruff format --check src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py`
 
-Run: `uv run ruff check src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py`
+Run: `uv run ruff check src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py`
 
 Run: `uv run mypy src`
 
 - [ ] **Step 10: Inspect and commit only Task 7 files.**
 
 ```powershell
-git diff -- src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py
+git diff -- src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py
 git diff --check
 git status --short
-git add -- src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py
+git add -- src/adlife/core/domain/city_run.py tests/unit/city/test_city_run_v10_contract.py tests/unit/city/test_city_run_contract.py
 git diff --cached --check
 git commit -m "feat(city): define manifest v10"
 ```
