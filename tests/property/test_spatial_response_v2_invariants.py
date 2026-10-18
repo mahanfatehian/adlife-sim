@@ -377,6 +377,159 @@ def _representative_capacity_evidence():
     return scenario, opportunities, attention, evidence
 
 
+def _structural_capacity_high_water_documents():
+    """Valid standalone width witnesses, not a claimed single cross-bound run."""
+    from adlife.core.domain.city_cognition import (
+        MAX_CITY_COGNITION_USAGE_INTEGER,
+        CityCognitionProviderProfileSnapshotV1,
+        city_cognition_provider_profile_revision_sha256,
+    )
+    from adlife.core.domain.city_cognition_v2 import CityCognitionEvaluationV2, CityCognitionInputV2
+    from adlife.core.simulation.spatial_response import MAX_SPATIAL_RESPONSES, SpatialResponseState
+    from tests.unit.city.test_city_cognition_v2_contract import (
+        evaluation_data,
+        input_data,
+        profile_data,
+        rehash_record,
+        settings_data,
+        terminal_data,
+    )
+
+    module = _module()
+    glyph = chr(0x1F337)
+    profile_facts = profile_data("remote", tokens=384) | dict(
+        profile_id="p" * 64,
+        credential_slot_id="c" * 64,
+        origin_approval_id="o" * 64,
+        display_label=glyph * 80,
+        base_url="https://example.com/" + "x" * 2028,
+        model_id=glyph * 120,
+        temperature=1.2345678901234567e-300,
+        top_p=1.2345678901234567e-300,
+        seed_policy="fixed",
+        seed=2**63 - 1,
+    )
+    profile_facts["revision_sha256"] = city_cognition_provider_profile_revision_sha256(
+        profile_facts
+    )
+    profile = CityCognitionProviderProfileSnapshotV1.model_validate(profile_facts)
+    remote = CityCognitionInputV2.model_validate(
+        input_data("remote", count=60, limit=60)
+        | {"provider_profile": profile, "effective_settings": settings_data(profile_facts)}
+    )
+    records = []
+    for index in range(60):
+        facts = terminal_data("provider", index)
+        records.append(
+            rehash_record(
+                facts
+                | dict(
+                    result=facts["result"]
+                    | dict(
+                        affect="uncertain",
+                        relevance="uncertain",
+                        credibility="uncertain",
+                        salience="uncertain",
+                        safety_flags=("unsafe-content", "stereotype-risk", "unsupported-inference"),
+                    ),
+                    baseline_state_update_cause_count=MAX_SPATIAL_RESPONSES,
+                    campaign_id="c" * 80,
+                    placement_id="p" * 80,
+                    channel="roadside-billboard",
+                    activity="commute",
+                    day_index=6,
+                    model_minute=10079,
+                    millisecond_within_minute=59999,
+                    attempt_count=4,
+                    provider_profile_id="q" * 64,
+                    prompt_tokens=MAX_CITY_COGNITION_USAGE_INTEGER,
+                    completion_tokens=MAX_CITY_COGNITION_USAGE_INTEGER,
+                )
+            )
+        )
+    terminals = CityCognitionEvaluationV2.model_validate(
+        evaluation_data(tuple(records), "remote", MAX_SPATIAL_RESPONSES - len(records))
+    )
+    campaigns = tuple(f"c{i:02d}-" + "x" * 76 for i in range(20))
+    rules = []
+    cognitive = []
+    for agent in range(30):
+        for campaign in campaigns:
+            identity = dict(
+                agent_id=f"person-{agent:03d}",
+                campaign_id=campaign,
+                response_count=MAX_SPATIAL_RESPONSES,
+                last_response_minute=10079,
+            )
+            rules.append(
+                SpatialResponseState(
+                    **identity,
+                    brand_sentiment=-1.2345678901234567e-300,
+                    recall_strength=1.2345678901234567e-300,
+                    purchase_intention=1.2345678901234567e-300,
+                )
+            )
+            cognitive.append(
+                module.SpatialCognitionStateV2(
+                    schema_version=2,
+                    **identity,
+                    synthetic_sentiment=-1.2345678901234567e-300,
+                    synthetic_recall=1.2345678901234567e-300,
+                )
+            )
+    rule_document = module.SpatialRuleStateDocumentV2(
+        schema_version=2, model_id="spatial-rule-state-v2", states=tuple(rules)
+    )
+    cognition_document = module.SpatialCognitionStateDocumentV2(
+        schema_version=2, model_id="spatial-cognition-state-v2", states=tuple(cognitive)
+    )
+    hashes = dict(
+        response_input_sha256="a" * 64,
+        scenario_sha256="b" * 64,
+        city_sha256="c" * 64,
+        cognition_input_sha256="d" * 64,
+    )
+    scope = "synthetic-bounded-cognition-not-observed-behavior"
+    combined = module.SpatialResponseStateDocumentV2(
+        schema_version=2,
+        model_id="spatial-response-state-v2",
+        claim_scope=scope,
+        **hashes,
+        rule=rule_document,
+        cognition=cognition_document,
+    )
+    counts = module.SpatialResponseCountsV2(
+        schema_version=2,
+        baseline_response_count=MAX_SPATIAL_RESPONSES,
+        applied_response_count=MAX_SPATIAL_RESPONSES,
+        dual_state_update_count=MAX_SPATIAL_RESPONSES,
+        roadside_response_count=MAX_SPATIAL_RESPONSES // 2,
+        phone_response_count=MAX_SPATIAL_RESPONSES // 2,
+        campaign_count=len(campaigns),
+        final_rule_state_count=len(rules),
+        final_cognition_state_count=len(cognitive),
+    )
+    summary = module.SpatialResponseArtifactSummaryV2(
+        schema_version=2,
+        model_id="spatial-response-artifact-v2",
+        claim_scope=scope,
+        response_model_id="spatial-response-v2",
+        **hashes,
+        influence_policy_sha256=remote.causal_contract.influence_policy_sha256,
+        attention_seed=2**63 - 1,
+        stream_sha256="e" * 64,
+        stream_bytes=module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2,
+        state_document_sha256="f" * 64,
+        state_document_bytes=module.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2,
+        rule_state_document_sha256=sha256(canonical_json(rule_document).encode()).hexdigest(),
+        cognition_state_document_sha256=sha256(
+            canonical_json(cognition_document).encode()
+        ).hexdigest(),
+        counts=counts,
+    )
+    return remote, terminals, rule_document, cognition_document, combined, summary
+
+
 def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     from adlife.core.simulation.spatial_opportunity import MAX_SPATIAL_OPPORTUNITIES
     from adlife.core.simulation.spatial_response import (
@@ -401,8 +554,8 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     # Independent upstream phone/roadside maxima exceed the admitted opportunity cap.
     raw_candidates = 30 * 7 * (20 * 100 + 480 * 2)
     eligible = min(raw_candidates, MAX_SPATIAL_OPPORTUNITIES)
-    nonempty_groups = min(30 * 7 * 1440 * 20, eligible, MAX_SPATIAL_STATE_UPDATES)
-    assert eligible == nonempty_groups == MAX_SPATIAL_RESPONSES == 520_800
+    structural_group_ceiling = min(30 * 7 * 1440 * 20, eligible, MAX_SPATIAL_STATE_UPDATES)
+    assert eligible == structural_group_ceiling == MAX_SPATIAL_RESPONSES == 520_800
     assert len(signals.records) == 60 and signals.summary.coverage.funded_request_count == 60
     assert all(r.reserved_output_tokens == 0 for r in frozen.reservations)
     count = 0
@@ -463,12 +616,45 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     )
     assert (selected_size, unselected_size, dual_size) == (2292, 2284, 2154)
     independent_max_bytes = (
-        60 * selected_size + (eligible - 60) * unselected_size + nonempty_groups * dual_size
+        60 * selected_size
+        + (eligible - 60) * unselected_size
+        + structural_group_ceiling * dual_size
     )
     assert independent_max_bytes == 2_311_310_880
     assert independent_max_bytes > module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2
 
     assert module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 == 2_147_483_648
+    applied_bytes = 60 * selected_size + (eligible - 60) * unselected_size
+    assert applied_bytes == 1_189_507_680
+    admitted_groups = (module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 - applied_bytes) // dual_size
+    assert admitted_groups == 444_742 < structural_group_ceiling
+    admitted_bytes = applied_bytes + admitted_groups * dual_size
+    next_group_bytes = applied_bytes + (admitted_groups + 1) * dual_size
+    assert admitted_bytes == 2_147_481_948
+    assert module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 - admitted_bytes == 1700
+    assert next_group_bytes == 2_147_484_102
+    assert next_group_bytes - module.MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2 == 454
+
+    remote, terminals, rule_doc, cognition_doc, combined_doc, high_summary = (
+        _structural_capacity_high_water_documents()
+    )
+    assert len(remote.reservations) == 60
+    assert len(canonical_json(remote).encode()) == 24_796 < 131_072
+    terminal_sizes = tuple(map(len, cognition.city_cognition_terminal_lines_v2(terminals)))
+    assert len(terminal_sizes) == 60
+    assert (min(terminal_sizes), max(terminal_sizes), sum(terminal_sizes)) == (3090, 3091, 185_450)
+    assert max(terminal_sizes) <= 8192 and sum(terminal_sizes) <= 1_048_576
+    assert len(canonical_json(terminals.summary).encode()) == 1350 < 16_384
+    state_sizes = tuple(
+        len(canonical_json(doc).encode()) + 1 for doc in (rule_doc, cognition_doc, combined_doc)
+    )
+    assert state_sizes == (195_067, 171_072, 366_633)
+    assert max(state_sizes) < module.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2
+    assert (
+        len(canonical_json(high_summary).encode())
+        == 1351
+        < module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
+    )
     # Exercise the same inclusive counter with real small canonical payloads;
     # the analytical independent-max witness above needs no gigabyte allocation.
     small_baseline, small_input, small_signals = _evidence(mode="rules")
