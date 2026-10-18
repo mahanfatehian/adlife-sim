@@ -6,17 +6,21 @@ separate from full run provenance so descriptive changes cannot perturb inferenc
 
 from __future__ import annotations
 
+from collections import Counter
 from hashlib import sha256
 from typing import Annotated, Literal, Self, get_args, get_origin
 
 from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from adlife.core.domain.city_cognition import (
+    MAX_CITY_COGNITION_USAGE_INTEGER,
     CityCognitionCreativeSnapshotV1,
+    CityCognitionProviderProfileSnapshotV1,
     CityCognitionSafetyFlag,
     Hash,
     RequestId,
     _reject_user_labelled_secret_sequence,
+    _safe_text,
     _unique_sorted_text,
 )
 from adlife.core.domain.person import DomainModel
@@ -631,4 +635,544 @@ class CityCognitionRequestV2(_CityCognitionModelV2):
             raise ValueError("request record hash does not match complete request provenance")
         if len(canonical_json(self).encode("utf-8")) > 8192:
             raise ValueError("cognition request exceeds the canonical byte limit")
+        return self
+
+
+class CityProviderRepairContextV2(_CityCognitionModelV2):
+    """A bounded screened diagnostic, never raw provider content."""
+
+    schema_version: Literal[2]
+    reason_code: CityProviderRepairReasonV2
+    safe_excerpt: str = Field(min_length=1, max_length=240)
+
+    @field_validator("safe_excerpt")
+    @classmethod
+    def screened_excerpt(cls, value: str) -> str:
+        return _safe_text(value, provider_text=True)
+
+
+class CityProviderUsageV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    prompt_tokens: int = Field(ge=0, le=MAX_CITY_COGNITION_USAGE_INTEGER)
+    completion_tokens: int = Field(ge=0, le=MAX_CITY_COGNITION_USAGE_INTEGER)
+
+
+class CityProviderAttemptV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    status: Literal["valid", "invalid-result"]
+    result: CityCognitionResultV2 | None
+    repair_context: CityProviderRepairContextV2 | None
+    usage: CityProviderUsageV2 | None
+
+    @model_validator(mode="after")
+    def closed_status_matrix(self) -> Self:
+        if self.status == "valid":
+            valid = self.result is not None and self.repair_context is None
+        else:
+            valid = self.result is None and self.repair_context is not None
+        if not valid:
+            raise ValueError("provider attempt status fields are inconsistent")
+        return self
+
+
+class CityCognitionEffectiveSettingsV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    protocol: Literal["openai-chat-completions-json-schema-v1"]
+    temperature: float = Field(ge=0, le=2)
+    top_p: float = Field(gt=0, le=1)
+    seed_policy: Literal["omit", "fixed"]
+    seed: int | None = Field(ge=0, le=2**63 - 1)
+    max_output_tokens: int = Field(ge=1, le=128)
+    attempt_timeout_seconds: int = Field(ge=1, le=30)
+    transient_retries: int = Field(ge=0, le=2)
+    repair_attempts: int = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def coherent_seed(self) -> Self:
+        if (self.seed_policy == "fixed") != (self.seed is not None):
+            raise ValueError("effective provider seed must be present exactly for fixed policy")
+        return self
+
+
+class CityCognitionReservationV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    selection_index: int = Field(ge=0, lt=60)
+    request_id: RequestId
+    request_record_sha256: Hash
+    funded: bool
+    reserved_output_tokens: Literal[0, 512]
+
+    @model_validator(mode="after")
+    def coherent_unfunded_tokens(self) -> Self:
+        if not self.funded and self.reserved_output_tokens != 0:
+            raise ValueError("an unfunded request cannot reserve provider tokens")
+        return self
+
+
+class CityCognitionInputV2(_CityCognitionModelV2):
+    """Complete immutable policy, profile, and canonical funding admission facts."""
+
+    schema_version: Literal[2]
+    effect_scope: Literal["bounded-signals-v1"]
+    mode: CityCognitionModeV2
+    run_input_sha256: Hash
+    causal_contract: CityCognitionCausalContractV2
+    causal_contract_sha256: Hash
+    provider_profile: CityCognitionProviderProfileSnapshotV1 | None
+    effective_settings: CityCognitionEffectiveSettingsV2 | None
+    funded_response_limit: Literal[10, 20, 40, 60]
+    selected_requests_per_agent: Literal[4]
+    selected_requests_per_run: Literal[60]
+    concurrency_limit: Literal[4]
+    max_request_bytes: Literal[8192]
+    max_terminal_record_bytes: Literal[8192]
+    max_wire_response_bytes: Literal[1048576]
+    max_output_tokens_per_attempt: Literal[128]
+    reservation_tokens_per_request: Literal[512]
+    initial_attempts: Literal[1]
+    transient_retries_ceiling: Literal[2]
+    repair_attempts_ceiling: Literal[1]
+    attempt_timeout_seconds_ceiling: Literal[30]
+    aggregate_deadline_seconds: Literal[180]
+    aggregate_output_token_ceiling: int = Field(ge=0, le=30_720)
+    reservations: tuple[CityCognitionReservationV2, ...] = Field(max_length=60)
+
+    @model_validator(mode="after")
+    def coherent_mode_budget_and_profile(self) -> Self:
+        if self.causal_contract_sha256 != self.causal_contract.fingerprint:
+            raise ValueError("causal contract hash does not match its frozen document")
+        offline = self.mode in {"rules", "mock"}
+        if offline:
+            if (
+                self.provider_profile is not None
+                or self.effective_settings is not None
+                or self.aggregate_output_token_ceiling != 0
+                or self.funded_response_limit != 60
+            ):
+                raise ValueError(
+                    "rules and mock require local resolution without provider settings"
+                )
+        else:
+            profile = self.provider_profile
+            settings = self.effective_settings
+            if profile is None or settings is None or profile.mode != self.mode:
+                raise ValueError(
+                    "provider cognition requires a matching complete profile and settings"
+                )
+            expected_settings = {
+                field: getattr(profile, field)
+                for field in CityCognitionEffectiveSettingsV2.model_fields
+                if field != "schema_version"
+            }
+            expected_settings["schema_version"] = 2
+            expected_settings["max_output_tokens"] = min(profile.max_output_tokens, 128)
+            if settings != CityCognitionEffectiveSettingsV2.model_validate(expected_settings):
+                raise ValueError("effective settings do not match the capped frozen profile")
+            if self.aggregate_output_token_ceiling != self.funded_response_limit * 512:
+                raise ValueError("aggregate ceiling must reserve the configured funded limit")
+        if tuple(item.selection_index for item in self.reservations) != tuple(
+            range(len(self.reservations))
+        ):
+            raise ValueError("reservations must be canonical and contiguous")
+        for field in ("request_id", "request_record_sha256"):
+            if len({getattr(item, field) for item in self.reservations}) != len(self.reservations):
+                raise ValueError("reservations must reference unique requests and hashes")
+        for item in self.reservations:
+            expected_funded = offline or item.selection_index < self.funded_response_limit
+            expected_tokens = 0 if offline or not expected_funded else 512
+            if item.funded != expected_funded or item.reserved_output_tokens != expected_tokens:
+                raise ValueError("reservations do not match the canonical funding prefix")
+        if len(canonical_json(self).encode("utf-8")) > 131_072:
+            raise ValueError("cognition input exceeds the canonical byte limit")
+        return self
+
+
+def _is_uncertain(result: CityCognitionResultV2) -> bool:
+    return "uncertain" in (result.affect, result.relevance, result.credibility, result.salience)
+
+
+class CityCognitionTerminalRecordV2(_CityCognitionModelV2):
+    """One closed terminal outcome, content addressed with full run provenance."""
+
+    schema_version: Literal[2]
+    selection_index: int = Field(ge=0, lt=60)
+    request_id: RequestId
+    request_record_sha256: Hash
+    run_input_sha256: Hash
+    response_input_sha256: Hash
+    scenario_sha256: Hash
+    city_sha256: Hash
+    baseline_response_id: Hash
+    baseline_sha256: Hash
+    notice_event_id: Hash
+    opportunity_id: Hash
+    baseline_state_update_event_id: Hash
+    baseline_state_update_cause_count: int = Field(ge=1, le=520_800)
+    agent_id: _AgentId
+    campaign_id: _Identifier
+    placement_id: _Identifier
+    channel: Literal["roadside-billboard", "mobile-feed"]
+    activity: Literal["home", "commute", "work", "leisure"]
+    day_index: int = Field(ge=0, le=6)
+    model_minute: int = Field(ge=0, lt=10_080)
+    millisecond_within_minute: int = Field(ge=0, lt=60_000)
+    source: CityCognitionSourceV2
+    result: CityCognitionResultV2
+    attempt_count: int = Field(ge=0, le=4)
+    reason: CityCognitionFallbackReasonV2 | None
+    provider_profile_id: Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")] | None
+    provider_revision_sha256: Hash | None
+    provider_profile_snapshot_sha256: Hash | None
+    provider_protocol: Literal["openai-chat-completions-json-schema-v1"] | None
+    provider_effective_settings_sha256: Hash | None
+    causal_contract_sha256: Hash
+    prompt_contract_sha256: Hash
+    result_schema_contract_sha256: Hash
+    selection_policy_sha256: Hash
+    fallback_policy_sha256: Hash
+    mock_policy_sha256: Hash
+    influence_policy_sha256: Hash
+    prompt_tokens: int | None = Field(ge=0, le=MAX_CITY_COGNITION_USAGE_INTEGER)
+    completion_tokens: int | None = Field(ge=0, le=MAX_CITY_COGNITION_USAGE_INTEGER)
+    disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
+    record_hash: Hash
+
+    @property
+    def record_facts_sha256(self) -> str:
+        return sha256(
+            canonical_json(self.model_dump(mode="json", exclude={"record_hash"})).encode("utf-8")
+        ).hexdigest()
+
+    @model_validator(mode="after")
+    def coherent_terminal_source(self) -> Self:
+        if self.result.request_id != self.request_id:
+            raise ValueError("result does not match terminal request")
+        if self.day_index != self.model_minute // 1440:
+            raise ValueError("terminal day does not match model minute")
+        contract = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
+        if self.causal_contract_sha256 != contract.fingerprint or any(
+            getattr(self, field) != getattr(contract, field)
+            for field in (
+                "prompt_contract_sha256",
+                "result_schema_contract_sha256",
+                "selection_policy_sha256",
+                "fallback_policy_sha256",
+                "mock_policy_sha256",
+                "influence_policy_sha256",
+            )
+        ):
+            raise ValueError("terminal policies do not match the frozen causal contract")
+        profile_values = (
+            self.provider_profile_id,
+            self.provider_revision_sha256,
+            self.provider_profile_snapshot_sha256,
+            self.provider_protocol,
+            self.provider_effective_settings_sha256,
+        )
+        has_profile = all(value is not None for value in profile_values)
+        if any(value is not None for value in profile_values) and not has_profile:
+            raise ValueError("terminal provider binding must be wholly present or absent")
+        has_usage = self.prompt_tokens is not None and self.completion_tokens is not None
+        if (self.prompt_tokens is not None or self.completion_tokens is not None) and not has_usage:
+            raise ValueError("terminal usage must be wholly present or absent")
+        if self.source in {"rules", "mock"}:
+            valid = (
+                self.attempt_count == 0
+                and self.reason is None
+                and not has_profile
+                and not has_usage
+            )
+        elif self.source == "provider":
+            valid = self.attempt_count >= 1 and self.reason is None and has_profile
+        elif self.source == "cache":
+            valid = self.attempt_count == 0 and self.reason is None and has_profile
+        elif self.source == "fallback":
+            valid = self.reason is not None and self.reason != "budget-skipped" and has_profile
+        else:
+            valid = (
+                self.attempt_count == 0
+                and self.reason == "budget-skipped"
+                and has_profile
+                and not has_usage
+            )
+        if not valid:
+            raise ValueError(
+                "terminal source, attempts, reason, profile, or usage are inconsistent"
+            )
+        vector = (
+            self.result.affect,
+            self.result.relevance,
+            self.result.credibility,
+            self.result.salience,
+        )
+        if self.source in {"rules", "fallback", "budget-skipped"} and (
+            vector != ("neutral", "medium", "medium", "medium") or self.result.safety_flags
+        ):
+            raise ValueError(
+                "local identity and fallback outcomes require the exact neutral vector"
+            )
+        if self.source == "mock":
+            policy = CITY_COGNITION_DEFAULT_MOCK_POLICY_V1
+            digest = sha256((policy.digest_prefix + self.request_id).encode("utf-8")).digest()
+            expected_vector = (
+                policy.affect_order[digest[0] % 5],
+                policy.relevance_order[digest[1] % 4],
+                policy.credibility_order[digest[2] % 3],
+                policy.salience_order[digest[3] % 4],
+            )
+            if vector != expected_vector or self.result.safety_flags:
+                raise ValueError("mock result does not match the frozen deterministic policy")
+        if self.record_hash != self.record_facts_sha256:
+            raise ValueError("terminal record hash does not match its complete facts")
+        if len(canonical_json(self).encode("utf-8")) > 8192:
+            raise ValueError("terminal record exceeds the canonical byte limit")
+        return self
+
+
+class CityCognitionCoverageCountsV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    eligible_response_count: int = Field(ge=0, le=520_800)
+    selected_request_count: int = Field(ge=0, le=60)
+    funded_request_count: int = Field(ge=0, le=60)
+    budget_skipped_count: int = Field(ge=0, le=60)
+    unselected_response_count: int = Field(ge=0, le=520_800)
+    applied_response_count: int = Field(ge=0, le=520_800)
+
+    @model_validator(mode="after")
+    def coherent_coverage(self) -> Self:
+        if (
+            self.eligible_response_count
+            != self.selected_request_count + self.unselected_response_count
+            or self.selected_request_count != self.funded_request_count + self.budget_skipped_count
+            or self.applied_response_count != self.eligible_response_count
+        ):
+            raise ValueError("coverage cardinality equations do not match")
+        return self
+
+
+class CityCognitionOutcomeCountsV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    rules: int = Field(ge=0, le=60)
+    mock: int = Field(ge=0, le=60)
+    provider: int = Field(ge=0, le=60)
+    cache: int = Field(ge=0, le=60)
+    fallback: int = Field(ge=0, le=60)
+    budget_skipped: int = Field(ge=0, le=60)
+
+    @property
+    def total(self) -> int:
+        return (
+            self.rules
+            + self.mock
+            + self.provider
+            + self.cache
+            + self.fallback
+            + self.budget_skipped
+        )
+
+
+class CityCognitionReasonCountsV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    endpoint_resolution_refused: int = Field(ge=0, le=60)
+    authentication_refused: int = Field(ge=0, le=60)
+    timeout_exhausted: int = Field(ge=0, le=60)
+    rate_limit_exhausted: int = Field(ge=0, le=60)
+    server_error_exhausted: int = Field(ge=0, le=60)
+    response_too_large: int = Field(ge=0, le=60)
+    protocol_incompatible: int = Field(ge=0, le=60)
+    invalid_result: int = Field(ge=0, le=60)
+    budget_skipped: int = Field(ge=0, le=60)
+
+    @property
+    def total(self) -> int:
+        return (
+            self.endpoint_resolution_refused
+            + self.authentication_refused
+            + self.timeout_exhausted
+            + self.rate_limit_exhausted
+            + self.server_error_exhausted
+            + self.response_too_large
+            + self.protocol_incompatible
+            + self.invalid_result
+            + self.budget_skipped
+        )
+
+
+class CityCognitionNeutralizationCountsV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    neutralized_response_count: int = Field(ge=0, le=520_800)
+    uncertain_result_count: int = Field(ge=0, le=60)
+    safety_neutralized_result_count: int = Field(ge=0, le=60)
+
+
+class CityCognitionSummaryV2(_CityCognitionModelV2):
+    schema_version: Literal[2]
+    effect_scope: Literal["bounded-signals-v1"]
+    mode: CityCognitionModeV2
+    causal_contract_sha256: Hash
+    mock_policy_sha256: Hash
+    influence_policy_sha256: Hash
+    coverage: CityCognitionCoverageCountsV2
+    outcomes: CityCognitionOutcomeCountsV2
+    reasons: CityCognitionReasonCountsV2
+    neutralization: CityCognitionNeutralizationCountsV2
+    attempt_count: int = Field(ge=0, le=240)
+    prompt_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
+    completion_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
+    terminal_stream_sha256: Hash
+    terminal_stream_bytes: int = Field(ge=0, le=1_048_576)
+    terminal_record_count: int = Field(ge=0, le=60)
+    disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
+
+    @model_validator(mode="after")
+    def coherent_counts(self) -> Self:
+        if (
+            self.causal_contract_sha256 != CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2.fingerprint
+            or self.mock_policy_sha256 != CITY_COGNITION_MOCK_POLICY_V1_SHA256
+            or self.influence_policy_sha256 != CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256
+        ):
+            raise ValueError("summary policy hashes do not match the frozen contract")
+        coverage, outcomes, reasons, neutralization = (
+            self.coverage,
+            self.outcomes,
+            self.reasons,
+            self.neutralization,
+        )
+        if (
+            outcomes.total != coverage.selected_request_count
+            or self.terminal_record_count != coverage.selected_request_count
+            or outcomes.budget_skipped != coverage.budget_skipped_count
+            or reasons.budget_skipped != outcomes.budget_skipped
+            or reasons.total - reasons.budget_skipped != outcomes.fallback
+        ):
+            raise ValueError("summary outcome, reason, and coverage counts do not match")
+        if self.mode in {"rules", "mock"}:
+            if getattr(outcomes, self.mode) != outcomes.total or coverage.budget_skipped_count:
+                raise ValueError("offline summary outcomes do not match mode")
+        elif outcomes.rules or outcomes.mock:
+            raise ValueError("provider summary cannot carry offline outcomes")
+        if (
+            not outcomes.provider
+            <= self.attempt_count
+            <= 4 * (outcomes.provider + outcomes.fallback)
+        ):
+            raise ValueError("summary attempts do not match terminal attempt capacity")
+        usage_capacity = (
+            outcomes.provider + outcomes.cache + outcomes.fallback
+        ) * MAX_CITY_COGNITION_USAGE_INTEGER
+        if self.prompt_tokens > usage_capacity or self.completion_tokens > usage_capacity:
+            raise ValueError("summary usage exceeds provider-bearing outcome capacity")
+        diagnostics_capacity = outcomes.provider + outcomes.cache
+        uncertain = neutralization.uncertain_result_count
+        safety = neutralization.safety_neutralized_result_count
+        always_neutral = (
+            coverage.unselected_response_count
+            + outcomes.rules
+            + outcomes.fallback
+            + outcomes.budget_skipped
+        )
+        # Uncertain and safety diagnostic sets may overlap. A standalone summary
+        # can bound their union; the evaluation proves the exact union from records.
+        if (
+            uncertain > diagnostics_capacity
+            or safety > diagnostics_capacity
+            or not always_neutral + max(uncertain, safety)
+            <= neutralization.neutralized_response_count
+            <= always_neutral + min(uncertain + safety, diagnostics_capacity)
+        ):
+            raise ValueError("summary neutralization counts cannot describe the diagnostic union")
+        if len(canonical_json(self).encode("utf-8")) > 16_384:
+            raise ValueError("summary exceeds the canonical byte limit")
+        return self
+
+
+class CityCognitionEvaluationV2(_CityCognitionModelV2):
+    """Canonical stored terminal evidence; arrivals are normalized before parsing."""
+
+    schema_version: Literal[2]
+    cognition_input_sha256: Hash
+    run_input_sha256: Hash
+    effect_scope: Literal["bounded-signals-v1"]
+    mode: CityCognitionModeV2
+    records: tuple[CityCognitionTerminalRecordV2, ...] = Field(max_length=60)
+    summary: CityCognitionSummaryV2
+
+    @model_validator(mode="after")
+    def canonical_complete_records(self) -> Self:
+        if tuple(record.selection_index for record in self.records) != tuple(
+            range(len(self.records))
+        ):
+            raise ValueError("terminal records must be canonical and contiguous")
+        if self.records != tuple(
+            sorted(self.records, key=lambda record: (record.selection_index, record.request_id))
+        ):
+            raise ValueError("stored terminal records must preserve selection order")
+        for field in ("request_id", "request_record_sha256", "baseline_response_id"):
+            if len({getattr(record, field) for record in self.records}) != len(self.records):
+                raise ValueError(
+                    "terminal records must reference unique requests and baseline responses"
+                )
+        if any(record.run_input_sha256 != self.run_input_sha256 for record in self.records):
+            raise ValueError("terminal record does not match evaluation run input")
+        scientific_bindings = {
+            (record.response_input_sha256, record.scenario_sha256, record.city_sha256)
+            for record in self.records
+        }
+        provider_bindings = {
+            (
+                record.provider_profile_id,
+                record.provider_revision_sha256,
+                record.provider_profile_snapshot_sha256,
+                record.provider_protocol,
+                record.provider_effective_settings_sha256,
+            )
+            for record in self.records
+            if record.source not in {"rules", "mock"}
+        }
+        if len(scientific_bindings) > 1 or len(provider_bindings) > 1:
+            raise ValueError("terminal records contain mixed scientific or provider provenance")
+        allowed_sources = (
+            {self.mode}
+            if self.mode in {"rules", "mock"}
+            else {"provider", "cache", "fallback", "budget-skipped"}
+        )
+        if any(record.source not in allowed_sources for record in self.records):
+            raise ValueError("terminal source does not match evaluation mode")
+        if self.summary.mode != self.mode:
+            raise ValueError("summary mode does not match evaluation mode")
+        stream = b"".join(
+            (canonical_json(record) + "\n").encode("utf-8") for record in self.records
+        )
+        if len(stream) > 1_048_576:
+            raise ValueError("terminal stream exceeds the canonical byte limit")
+        sources = Counter(record.source for record in self.records)
+        reasons = Counter(record.reason for record in self.records if record.reason is not None)
+        for source in get_args(CityCognitionSourceV2):
+            if getattr(self.summary.outcomes, source.replace("-", "_")) != sources[source]:
+                raise ValueError("summary source counts do not match terminal records")
+        for reason in get_args(CityCognitionFallbackReasonV2):
+            if getattr(self.summary.reasons, reason.replace("-", "_")) != reasons[reason]:
+                raise ValueError("summary reason counts do not match terminal records")
+        uncertain = sum(_is_uncertain(record.result) for record in self.records)
+        safety = sum(bool(record.result.safety_flags) for record in self.records)
+        neutralized = self.summary.coverage.unselected_response_count + sum(
+            record.source in {"rules", "fallback", "budget-skipped"}
+            or _is_uncertain(record.result)
+            or bool(record.result.safety_flags)
+            for record in self.records
+        )
+        if (
+            self.summary.terminal_record_count != len(self.records)
+            or self.summary.attempt_count != sum(record.attempt_count for record in self.records)
+            or self.summary.prompt_tokens
+            != sum(record.prompt_tokens or 0 for record in self.records)
+            or self.summary.completion_tokens
+            != sum(record.completion_tokens or 0 for record in self.records)
+            or self.summary.terminal_stream_sha256 != sha256(stream).hexdigest()
+            or self.summary.terminal_stream_bytes != len(stream)
+            or self.summary.neutralization.uncertain_result_count != uncertain
+            or self.summary.neutralization.safety_neutralized_result_count != safety
+            or self.summary.neutralization.neutralized_response_count != neutralized
+        ):
+            raise ValueError("summary does not match canonical terminal evidence")
         return self
