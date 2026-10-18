@@ -466,6 +466,79 @@ def _local_provider_payload() -> dict[str, object]:
     }
 
 
+def test_app_injects_one_process_local_compatibility_registry(tmp_path, monkeypatch):
+    module = _module()
+    repositories = []
+    original = module.WorkbenchRunRepository
+
+    def repository(*args, **kwargs):
+        instance = original(*args, **kwargs)
+        repositories.append(instance)
+        return instance
+
+    monkeypatch.setattr(module, "WorkbenchRunRepository", repository)
+    first = module.create_city_workbench_app(prepare_workbench_workspace(tmp_path / "first"))
+    second = module.create_city_workbench_app(prepare_workbench_workspace(tmp_path / "second"))
+    assert (
+        first.state.provider_controller.compatibility_registry
+        is repositories[0].compatibility_registry
+    )
+    assert (
+        second.state.provider_controller.compatibility_registry
+        is repositories[1].compatibility_registry
+    )
+    assert (
+        first.state.provider_controller.compatibility_registry
+        is not second.state.provider_controller.compatibility_registry
+    )
+
+
+@pytest.mark.parametrize(
+    "payload,scope",
+    [
+        ({}, "explanation-only"),
+        ({"effect_scope": "explanation-only"}, "explanation-only"),
+        ({"effect_scope": "bounded-signals-v1"}, "bounded-signals-v1"),
+    ],
+)
+def test_compatibility_route_dispatches_exact_effect_scope(tmp_path, payload, scope):
+    from tests.unit.city.test_workbench_providers import _Provider, _ProviderV2
+
+    counts = [0, 0]
+
+    def v1(**kwargs):
+        counts[0] += 1
+        return _Provider(**kwargs)
+
+    def v2(**kwargs):
+        counts[1] += 1
+        return _ProviderV2(**kwargs)
+
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(tmp_path / "workspace"),
+        csrf_token=TOKEN,
+        provider_factory=v1,
+        provider_factory_v2=v2,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+        response = _secure_post(
+            client,
+            f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/check",
+            payload,
+        )
+        listed = client.get("/api/providers").json()["profiles"][0]
+    assert response.status_code == 200
+    assert counts == ([1, 0] if scope == "explanation-only" else [0, 1])
+    if scope == "explanation-only":
+        assert response.json() == {"status": "compatible", "reason_code": None}
+        assert listed["last_check"] == response.json()
+    else:
+        assert response.json()["effect_scope"] == scope
+        assert response.json()["status"] == "compatible"
+        assert listed["last_check"] is None
+
+
 def test_provider_routes_create_list_and_run_explicit_compatibility_check(
     tmp_path: Path,
 ) -> None:
@@ -1726,7 +1799,7 @@ def test_write_endpoints_return_value_free_typed_transport_refusals_before_mutat
     if case == "secret":
         payload["credentials"] = {"api_key": marker}
     elif case == "future-version":
-        payload["schema_version"] = 4
+        payload["schema_version"] = 5
     else:
         payload["schema_version"] = marker
     before = _snapshot(root)

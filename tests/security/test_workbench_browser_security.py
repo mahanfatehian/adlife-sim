@@ -30,6 +30,52 @@ from tests.unit.city.test_workbench_input import draft_v2_data
 
 
 @pytest.mark.parametrize(
+    "document,query",
+    [
+        (b"[]", ""),
+        (b"true", ""),
+        (b"null", ""),
+        (b'{"effect_scope":true}', ""),
+        (b'{"effect_scope":2}', ""),
+        (b'{"effect_scope":"private-browser-marker"}', ""),
+        (b'{"effect_scope":"bounded-signals-v1","schema_version":2}', ""),
+        (b'{"effect_scope":"bounded-signals-v1","settings":{}}', ""),
+        (
+            b'{"effect_scope":"bounded-signals-v1","causal_contract_sha256":"private-browser-marker"}',
+            "",
+        ),
+        (b'{"effect_scope":"bounded-signals-v1","effect_scope":"explanation-only"}', ""),
+        (b'{"effect_scope":"bounded-signals-v1"}', "?effect_scope=bounded-signals-v1"),
+    ],
+)
+def test_scoped_check_rejects_untrusted_body_before_controller(
+    tmp_path, monkeypatch, document, query
+):
+    from fastapi.testclient import TestClient
+
+    app = create_city_workbench_app(
+        prepare_workbench_workspace(tmp_path / "workspace"), csrf_token=web_helpers.TOKEN
+    )
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("rejected body reached controller")
+
+    monkeypatch.setattr(app.state.provider_controller, "check", forbidden)
+    with TestClient(app, base_url=web_helpers.ORIGIN) as client:
+        response = client.post(
+            "/api/providers/local-ollama/revisions/" + "a" * 64 + "/check" + query,
+            content=document,
+            headers={
+                "Origin": web_helpers.ORIGIN,
+                "X-AdLife-CSRF": web_helpers.TOKEN,
+                "Content-Type": "application/json",
+            },
+        )
+    assert response.status_code in {400, 422}
+    assert "private-browser-marker" not in response.text
+
+
+@pytest.mark.parametrize(
     "document",
     [
         b'{"credential":"private-browser-marker",',

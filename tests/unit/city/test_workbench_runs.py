@@ -28,6 +28,86 @@ def _module():
     return importlib.import_module("adlife.city.workbench_runs")
 
 
+@pytest.mark.parametrize("authorization", ["missing", "v1", "failed", "v2"])
+def test_schema4_preflight_requires_exact_compatibility_before_endpoint_or_credential(
+    tmp_path, authorization
+):
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+    from tests.unit.city.test_provider_profiles import _draft
+    from tests.unit.city.test_workbench_transport_v4 import compiled_v4
+
+    module = importlib.import_module("adlife.city.provider_compatibility")
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    profiles = ProviderProfileRegistry(workspace)
+    profile = profiles.create(_draft(profile_id="provider-main"))
+    validated = compiled_v4(
+        mode="local",
+        mutation=lambda payload: payload["cognition"].update(
+            provider_revision_sha256=profile.revision_sha256
+        ),
+    )
+    registry = module.WorkbenchProviderCompatibilityRegistry()
+    key = module.build_workbench_provider_compatibility_key(
+        profile, effect_scope="explanation-only" if authorization == "v1" else "bounded-signals-v1"
+    )
+    if authorization != "missing":
+        registry.record(
+            module.WorkbenchProviderCompatibilityRecord(
+                key=key,
+                status="incompatible" if authorization == "failed" else "compatible",
+                reason_code="invalid-result" if authorization == "failed" else None,
+            )
+        )
+    calls = []
+
+    class Endpoints:
+        def bind(self, profile):
+            calls.append("endpoint")
+            assert authorization == "v2", "compatibility must precede endpoint binding"
+            return "endpoint"
+
+    class Credentials:
+        def resolve(self, profile):
+            calls.append("credential")
+            assert calls == ["endpoint", "credential"]
+            return None
+
+    repository = _module().WorkbenchRunRepository(
+        workspace,
+        provider_registry=profiles,
+        endpoint_policy=Endpoints(),
+        credential_store=Credentials(),
+        compatibility_registry=registry,
+    )
+    if authorization == "v2":
+        operation = repository.preflight_cognition(validated)
+        assert operation.profile == profile and calls == ["endpoint", "credential"]
+    else:
+        with pytest.raises(module.WorkbenchProviderCompatibilityRequired):
+            repository.preflight_cognition(validated)
+        assert calls == []
+    assert not (workspace.root / "city-runs").exists()
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock"])
+def test_schema4_offline_preflight_bypasses_profiles_and_compatibility(tmp_path, mode):
+    from tests.unit.city.test_workbench_transport_v4 import compiled_v4
+
+    class Forbidden:
+        def __getattr__(self, name):
+            pytest.fail("offline preflight touched provider infrastructure")
+
+    repository = _module().WorkbenchRunRepository(
+        prepare_workbench_workspace(tmp_path / "state"),
+        provider_registry=Forbidden(),
+        endpoint_policy=Forbidden(),
+        credential_store=Forbidden(),
+        compatibility_registry=Forbidden(),
+    )
+    operation = repository.preflight_cognition(compiled_v4(mode=mode))
+    assert operation.profile is operation.endpoint is operation.credential is None
+
+
 def test_summary_explicitly_refuses_v10_until_workbench_runtime_support(tmp_path: Path) -> None:
     pack = _validated().pack
     stored = StoredCityRun(

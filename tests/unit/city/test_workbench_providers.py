@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import threading
 from collections.abc import Callable
@@ -45,6 +46,10 @@ from adlife.core.domain.city_cognition import (
     CityProviderAttemptV1,
     CityProviderRepairContextV1,
 )
+from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionResultV2,
+    CityProviderAttemptV2,
+)
 from adlife.core.simulation.city_cognition import build_city_mock_result
 from tests.unit.city.test_provider_profiles import _draft
 from tests.unit.cognition.test_city_openai_compatible import (
@@ -55,6 +60,314 @@ from tests.unit.cognition.test_city_openai_compatible import (
 )
 
 SECRET = "sk-test-workbench-provider-secret"
+
+
+class _ProviderV2:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.calls = 0
+        self.closed = False
+        self.mutation = None
+        self.close_action = None
+
+    async def call(self, request):
+        self.calls += 1
+        self.request = request
+        result = CityCognitionResultV2(
+            schema_version=2,
+            request_id=request.request_id,
+            affect="uncertain",
+            relevance="uncertain",
+            credibility="uncertain",
+            salience="uncertain",
+            safety_flags=("unsafe-content",),
+            disclosure="synthetic-bounded-cognition-not-observed-behavior",
+        )
+        attempt = CityProviderAttemptV2(
+            schema_version=2, status="valid", result=result, repair_context=None, usage=None
+        )
+        return attempt if self.mutation is None else self.mutation(attempt)
+
+    async def repair_call(self, *args, **kwargs):
+        pytest.fail("compatibility checks must never repair")
+
+    async def aclose(self):
+        self.closed = True
+        if self.close_action is not None:
+            self.close_action()
+
+
+def _forge(model, **updates):
+    return type(model).model_construct(
+        **{name: getattr(model, name) for name in type(model).model_fields} | updates
+    )
+
+
+def _scoped_controller(tmp_path, *, factory=None):
+    original, keyring, v1_providers = _controller(tmp_path)
+    providers = []
+
+    def create(**kwargs):
+        provider = _ProviderV2(**kwargs) if factory is None else factory(**kwargs)
+        providers.append(provider)
+        return provider
+
+    controller = WorkbenchProviderController(
+        original.registry,
+        original._policy,
+        credentials=original._credentials,
+        operations=original.operations,
+        provider_factory=original._factory,
+        provider_factory_v2=create,
+    )
+    return controller, keyring, v1_providers, providers
+
+
+async def test_v2_check_uses_exact_fixed_causal_probe_and_original_profile(tmp_path):
+    controller, _, v1_providers, providers = _scoped_controller(tmp_path)
+    profile = controller.registry.create(_draft())
+    root = controller.registry.workspace.root
+    before = {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+    outcome = await controller.check(
+        profile.profile_id, profile.revision_sha256, effect_scope="bounded-signals-v1"
+    )
+    assert outcome.status == "compatible"
+    assert outcome.effect_scope == "bounded-signals-v1"
+    assert outcome.reason_code is None
+    provider = providers[0]
+    assert provider.calls == 1 and provider.closed and v1_providers == []
+    input_ = provider.kwargs["cognition_input"]
+    request = provider.request
+    identity = request.causal_identity
+    baseline = identity.baseline
+    assert identity.agent.agent_id == "person-000"
+    assert identity.agent.interests == ("compatibility-probe",)
+    assert set(identity.agent.traits.model_dump().values()) == {0.5}
+    assert identity.initial_rule_state.brand_sentiment == 0
+    assert identity.initial_rule_state.recall_strength == 0
+    assert (baseline.campaign_id, baseline.placement_id) == ("compatibility-probe",) * 2
+    assert (baseline.day_index, baseline.model_minute, baseline.millisecond_within_minute) == (
+        0,
+        0,
+        0,
+    )
+    assert baseline.channel == "mobile-feed"
+    assert baseline.rule_factors.prior_notices_today == 0
+    assert baseline.rule_factors.frequency_cap_per_agent_per_day == 4
+    assert baseline.rule_factors.interest_match == 1
+    assert baseline.rule_factors.frequency_fatigue == 0
+    assert identity.campaign.relative_price == 1
+    assert identity.campaign.creative.template_id == "city-cognition-compatibility-probe-v2"
+    assert (
+        identity.campaign.creative.message
+        == "Return the required JSON object for this synthetic compatibility probe."
+    )
+    from hashlib import sha256
+
+    for name in ("run_input_sha256", "response_input_sha256", "scenario_sha256", "city_sha256"):
+        actual = getattr(request if name == "run_input_sha256" else identity, name)
+        assert (
+            actual
+            == sha256(("city-cognition-compatibility-probe-v2\0" + name).encode()).hexdigest()
+        )
+    assert input_.schema_version == 2
+    assert input_.provider_profile.model_dump() == profile.model_dump()
+    assert input_.effective_settings.max_output_tokens == 128
+    for name in (
+        "attempt_timeout_seconds",
+        "transient_retries",
+        "repair_attempts",
+        "temperature",
+        "top_p",
+        "seed",
+    ):
+        assert getattr(input_.effective_settings, name) == getattr(profile, name)
+    assert input_.funded_response_limit == 10 and len(input_.reservations) == 1
+    assert input_.reservations[0].funded and input_.reservations[0].reserved_output_tokens == 512
+    assert provider.kwargs["credential"].secret.cleared
+    assert controller.list().profiles[0].last_check is None
+    module = importlib.import_module("adlife.city.provider_compatibility")
+    key = module.build_workbench_provider_compatibility_key(
+        profile, effect_scope="bounded-signals-v1"
+    )
+    controller.compatibility_registry.require_success(key)
+    assert outcome.compatibility_key_sha256 == key.fingerprint
+    assert "result" not in outcome.model_dump() and "usage" not in outcome.model_dump()
+    assert {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    } == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda a: _forge(a, schema_version=1),
+        lambda a: _forge(a, result=_forge(a.result, request_id="cog-" + "f" * 64)),
+        lambda a: _forge(a, result=_forge(a.result, affect="private-provider-text")),
+        lambda a: _forge(a, result=_forge(a.result, disclosure="wrong")),
+        lambda a: CityProviderAttemptV1(
+            schema_version=1,
+            status="valid",
+            result=build_city_mock_result(
+                importlib.import_module("adlife.city.workbench_providers")._compatibility_request()
+            ),
+        ),
+    ],
+)
+async def test_v2_check_revalidates_attempt_and_result_before_authorization(tmp_path, mutation):
+    def factory(**kwargs):
+        provider = _ProviderV2(**kwargs)
+        provider.mutation = mutation
+        return provider
+
+    controller, _, _, providers = _scoped_controller(tmp_path, factory=factory)
+    profile = controller.registry.create(_draft())
+    result = await controller.check(
+        profile.profile_id, profile.revision_sha256, effect_scope="bounded-signals-v1"
+    )
+    assert result.status == "incompatible" and result.reason_code == "invalid-result"
+    assert providers[0].closed and providers[0].calls == 1
+    module = importlib.import_module("adlife.city.provider_compatibility")
+    with pytest.raises(module.WorkbenchProviderCompatibilityRequired):
+        controller.compatibility_registry.require_success(
+            module.build_workbench_provider_compatibility_key(
+                profile, effect_scope="bounded-signals-v1"
+            )
+        )
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+async def test_credential_replacement_invalidates_both_scopes_before_storage(tmp_path, ambiguous):
+    controller, keyring, _, _ = _scoped_controller(tmp_path)
+    profile = _remote(controller)
+    controller.store_credential(profile.profile_id, profile.revision_sha256, SecretBuffer(SECRET))
+    await controller.check(profile.profile_id, profile.revision_sha256)
+    await controller.check(
+        profile.profile_id, profile.revision_sha256, effect_scope="bounded-signals-v1"
+    )
+    module = importlib.import_module("adlife.city.provider_compatibility")
+    keys = [
+        module.build_workbench_provider_compatibility_key(profile, effect_scope=scope)
+        for scope in ("explanation-only", "bounded-signals-v1")
+    ]
+    other = controller.registry.create(_draft())
+    other_key = module.build_workbench_provider_compatibility_key(
+        other, effect_scope="bounded-signals-v1"
+    )
+    controller.compatibility_registry.record(
+        module.WorkbenchProviderCompatibilityRecord(key=other_key, status="compatible")
+    )
+    original = keyring.set_password
+
+    def store(*args):
+        assert all(controller.compatibility_registry.lookup(key) is None for key in keys)
+        original(*args)
+        if ambiguous:
+            raise RuntimeError(SECRET)
+
+    keyring.set_password = store
+    secret = SecretBuffer("replacement-value")
+    if ambiguous:
+        with pytest.raises(CityCredentialStoreError):
+            controller.store_credential(profile.profile_id, profile.revision_sha256, secret)
+    else:
+        controller.store_credential(profile.profile_id, profile.revision_sha256, secret)
+    assert secret.cleared
+    assert all(controller.compatibility_registry.lookup(key) is None for key in keys)
+    controller.compatibility_registry.require_success(other_key)
+    assert (
+        next(p for p in controller.list().profiles if p.profile_id == profile.profile_id).last_check
+        is None
+    )
+
+
+async def test_v1_check_mirrors_scope_without_changing_legacy_dto(tmp_path):
+    controller, _, providers, v2_providers = _scoped_controller(tmp_path)
+    profile = controller.registry.create(_draft())
+    outcome = await controller.check(profile.profile_id, profile.revision_sha256)
+    assert outcome.model_dump() == {"status": "compatible", "reason_code": None}
+    assert providers[0].kwargs["cognition_input"].effective_settings.max_output_tokens == 384
+    assert v2_providers == []
+    assert controller.list().profiles[0].last_check == outcome
+    module = importlib.import_module("adlife.city.provider_compatibility")
+    key = module.build_workbench_provider_compatibility_key(
+        profile, effect_scope="explanation-only"
+    )
+    controller.compatibility_registry.require_success(key)
+
+
+@pytest.mark.parametrize("scope", [None, True, 1, "unknown", [], {}])
+async def test_controller_refuses_invalid_scope_before_admission(tmp_path, monkeypatch, scope):
+    controller, _, _, _ = _scoped_controller(tmp_path)
+    monkeypatch.setattr(
+        controller.operations,
+        "begin_check",
+        lambda: pytest.fail("scope must validate before admission"),
+    )
+    with pytest.raises(ValueError):
+        await controller.check("unused", "0" * 64, effect_scope=scope)
+
+
+@pytest.mark.parametrize("action", ["cancel", "defect"])
+async def test_v2_check_publishes_only_after_close_and_credential_cleanup(tmp_path, action):
+    controller, _, _, providers = _scoped_controller(tmp_path)
+    profile = controller.registry.create(_draft())
+
+    def factory(**kwargs):
+        provider = _ProviderV2(**kwargs)
+
+        def close():
+            assert controller.compatibility_registry.lookup(key) is None
+            if action == "cancel":
+                controller.operations.cancel_check()
+            else:
+                raise TypeError(SECRET)
+
+        provider.close_action = close
+        providers.append(provider)
+        return provider
+
+    controller._factory_v2 = factory
+    module = importlib.import_module("adlife.city.provider_compatibility")
+    key = module.build_workbench_provider_compatibility_key(
+        profile, effect_scope="bounded-signals-v1"
+    )
+    with pytest.raises(
+        asyncio.CancelledError if action == "cancel" else CityProviderTransportError
+    ):
+        await controller.check(
+            profile.profile_id, profile.revision_sha256, effect_scope="bounded-signals-v1"
+        )
+    assert providers[0].closed and providers[0].kwargs["credential"].secret.cleared
+    assert controller.compatibility_registry.lookup(key) is None
+    lease = controller.operations.begin_job()
+    controller.operations.finish(lease)
+
+
+@pytest.mark.parametrize("scope", ["explanation-only", "bounded-signals-v1"])
+async def test_provider_without_cleanup_cannot_publish_compatibility(tmp_path, scope):
+    controller, _, _, _ = _scoped_controller(tmp_path)
+    profile = controller.registry.create(_draft())
+
+    class Unclosable:
+        async def call(self, request):
+            if scope == "explanation-only":
+                return CityProviderAttemptV1(
+                    schema_version=1, status="valid", result=build_city_mock_result(request)
+                )
+            return await _ProviderV2().call(request)
+
+    if scope == "explanation-only":
+        controller._factory = lambda **kwargs: Unclosable()
+    else:
+        controller._factory_v2 = lambda **kwargs: Unclosable()
+    with pytest.raises(CityProviderTransportError):
+        await controller.check(profile.profile_id, profile.revision_sha256, effect_scope=scope)
+    module = importlib.import_module("adlife.city.provider_compatibility")
+    key = module.build_workbench_provider_compatibility_key(profile, effect_scope=scope)
+    assert controller.compatibility_registry.lookup(key) is None
 
 
 class _Keyring:

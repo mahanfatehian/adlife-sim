@@ -34,6 +34,10 @@ from adlife.city.catalog import (
     CityCatalogError,
     UnknownCatalogCity,
 )
+from adlife.city.provider_compatibility import (
+    ProviderEffectScope,
+    WorkbenchProviderCompatibilityRegistry,
+)
 from adlife.city.provider_profiles import (
     InvalidProviderProfile,
     ProviderProfileConflict,
@@ -81,6 +85,7 @@ from adlife.city.workbench_personas import (
 )
 from adlife.city.workbench_providers import (
     WorkbenchCheckProviderFactory,
+    WorkbenchCheckProviderFactoryV2,
     WorkbenchOperationState,
     WorkbenchProviderBusy,
     WorkbenchProviderClosed,
@@ -444,6 +449,7 @@ def create_city_workbench_app(
     provider_runtime: ProviderRuntimePolicy | None = None,
     credential_store: CityCredentialStore | None = None,
     provider_factory: WorkbenchCheckProviderFactory | None = None,
+    provider_factory_v2: WorkbenchCheckProviderFactoryV2 | None = None,
 ) -> FastAPI:
     """Build one process-local control app after rechecking its pinned workspace."""
     verify_workbench_workspace(workspace)
@@ -455,12 +461,15 @@ def create_city_workbench_app(
     )
     endpoint_policy = CityEndpointPolicy(runtime)
     operations = WorkbenchOperationState()
+    compatibility_registry = WorkbenchProviderCompatibilityRegistry()
     providers = WorkbenchProviderController(
         provider_registry,
         runtime,
         credentials=credentials,
         operations=operations,
         provider_factory=provider_factory,
+        provider_factory_v2=provider_factory_v2,
+        compatibility_registry=compatibility_registry,
     )
     repository = WorkbenchRunRepository(
         workspace,
@@ -468,6 +477,7 @@ def create_city_workbench_app(
         provider_registry=provider_registry,
         credential_store=credentials,
         endpoint_policy=endpoint_policy,
+        compatibility_registry=compatibility_registry,
     )
     jobs = CityJobManager(repository, operations=operations)
     city_resolver = WorkbenchCityResolver(workspace)
@@ -1273,14 +1283,19 @@ def create_city_workbench_app(
     ) -> JSONResponse:
         _require_empty_query(request)
         payload = strict_json_object(await request.body())
-        if payload:
+        scope = payload.get("effect_scope", "explanation-only")
+        if set(payload) - {"effect_scope"} or scope not in (
+            "explanation-only",
+            "bounded-signals-v1",
+        ):
             return workbench_error(
                 422,
                 "invalid-fields",
                 "One or more request fields are invalid.",
                 {"request": "Unknown field."},
             )
-        result = await providers.check(profile_id, revision_id)
+        effect_scope: ProviderEffectScope = scope
+        result = await providers.check(profile_id, revision_id, effect_scope=effect_scope)
         return JSONResponse(content=result.model_dump(mode="json"))
 
     @app.post("/api/scenarios/validate")

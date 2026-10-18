@@ -26,6 +26,10 @@ from adlife.adapters.cognition.city_service import (
     CityCognitionCancellation,
     CityCognitionService,
 )
+from adlife.city.provider_compatibility import (
+    WorkbenchProviderCompatibilityRegistry,
+    build_workbench_provider_compatibility_key,
+)
 from adlife.city.provider_profiles import (
     ProviderProfileRegistry,
     ProviderProfileRevisionV1,
@@ -40,7 +44,7 @@ from adlife.city.runs import (
     prepare_city_scientific_run,
     publish_city_run,
 )
-from adlife.city.workbench_input import WorkbenchRunInputV3
+from adlife.city.workbench_input import WorkbenchRunInputV3, WorkbenchRunInputV4
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
@@ -342,10 +346,16 @@ class WorkbenchRunRepository:
         credential_store: CityCredentialStore | None = None,
         endpoint_policy: CityEndpointPolicy | None = None,
         cognition_service: CityCognitionService | None = None,
+        compatibility_registry: WorkbenchProviderCompatibilityRegistry | None = None,
     ) -> None:
         if not isinstance(workspace, WorkbenchWorkspace):
             raise TypeError("workspace must be a WorkbenchWorkspace")
         self._workspace = workspace
+        self.compatibility_registry = (
+            WorkbenchProviderCompatibilityRegistry()
+            if compatibility_registry is None
+            else compatibility_registry
+        )
         runtime = build_provider_runtime_policy() if provider_runtime is None else provider_runtime
         self._provider_registry = (
             ProviderProfileRegistry(workspace) if provider_registry is None else provider_registry
@@ -380,9 +390,9 @@ class WorkbenchRunRepository:
     ) -> WorkbenchCognitionOperation:
         """Resolve immutable provider inputs before inspecting a run destination."""
         if not isinstance(validated, ValidatedWorkbenchRun) or not isinstance(
-            validated.workbench_input, WorkbenchRunInputV3
+            validated.workbench_input, (WorkbenchRunInputV3, WorkbenchRunInputV4)
         ):
-            raise TypeError("cognition preflight requires a schema-3 workbench run")
+            raise TypeError("cognition preflight requires a schema-3 or schema-4 workbench run")
         cognition = validated.workbench_input.draft.cognition
         if cognition.mode in {"rules", "mock"}:
             return WorkbenchCognitionOperation(profile=None, endpoint=None, credential=None)
@@ -392,6 +402,13 @@ class WorkbenchRunRepository:
             cognition.provider_profile_id,
             cognition.provider_revision_sha256,
         )
+        if isinstance(validated.workbench_input, WorkbenchRunInputV4):
+            self.compatibility_registry.require_success(
+                build_workbench_provider_compatibility_key(
+                    profile,
+                    effect_scope="bounded-signals-v1",
+                )
+            )
         endpoint = self._endpoint_policy.bind(profile)
         credential = self._credential_store.resolve(profile)
         return WorkbenchCognitionOperation(
