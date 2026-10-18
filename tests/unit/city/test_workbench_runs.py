@@ -4,28 +4,66 @@ from __future__ import annotations
 
 import importlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from adlife.city.run_store import StoredCityRun
 from adlife.city.runs import create_city_run
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
     prepare_workbench_workspace,
 )
-from adlife.core.domain.city_run import CityRunManifestV10
 from adlife.core.ports.run_store import DuplicateRun, UnsafeRunLocation
-from adlife.core.simulation.city_mobility import CityMobility
 from tests.unit.city.test_city_run_preparation import _validated
-from tests.unit.city.test_city_run_v10_contract import _manifest_v10
 from tests.unit.city.test_workbench_validation import persona_draft
 
 
 def _module():
     return importlib.import_module("adlife.city.workbench_runs")
+
+
+def _provider_v2_case(tmp_path: Path, *, factory):
+    from adlife.city.provider_compatibility import (
+        WorkbenchProviderCompatibilityRecord,
+        WorkbenchProviderCompatibilityRegistry,
+        build_workbench_provider_compatibility_key,
+    )
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+    from tests.unit.city.test_city_run_preparation import _validated_v4
+    from tests.unit.city.test_provider_profiles import _draft
+
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    profiles = ProviderProfileRegistry(workspace)
+    profile = profiles.create(_draft(profile_id="provider-main"))
+    validated = _validated_v4(
+        mode="local",
+        limit=10,
+        profile=profile,
+        agents=1,
+    )
+    registry = WorkbenchProviderCompatibilityRegistry()
+    registry.record(
+        WorkbenchProviderCompatibilityRecord(
+            key=build_workbench_provider_compatibility_key(
+                profile,
+                effect_scope="bounded-signals-v1",
+            ),
+            status="compatible",
+            reason_code=None,
+        )
+    )
+    repository = _module().WorkbenchRunRepository(
+        workspace,
+        provider_registry=profiles,
+        compatibility_registry=registry,
+        provider_factory_v2=factory,
+    )
+    operation = repository.preflight_cognition_v2(validated)
+    staged = repository.prepare_scientific_v2(validated, operation)
+    return repository, operation, staged
 
 
 @pytest.mark.parametrize("authorization", ["missing", "v1", "failed", "v2"])
@@ -80,11 +118,11 @@ def test_schema4_preflight_requires_exact_compatibility_before_endpoint_or_crede
         compatibility_registry=registry,
     )
     if authorization == "v2":
-        operation = repository.preflight_cognition(validated)
+        operation = repository.preflight_cognition_v2(validated)
         assert operation.profile == profile and calls == ["endpoint", "credential"]
     else:
         with pytest.raises(module.WorkbenchProviderCompatibilityRequired):
-            repository.preflight_cognition(validated)
+            repository.preflight_cognition_v2(validated)
         assert calls == []
     assert not (workspace.root / "city-runs").exists()
 
@@ -104,20 +142,386 @@ def test_schema4_offline_preflight_bypasses_profiles_and_compatibility(tmp_path,
         credential_store=Forbidden(),
         compatibility_registry=Forbidden(),
     )
-    operation = repository.preflight_cognition(compiled_v4(mode=mode))
+    operation = repository.preflight_cognition_v2(compiled_v4(mode=mode))
     assert operation.profile is operation.endpoint is operation.credential is None
 
 
-def test_summary_explicitly_refuses_v10_until_workbench_runtime_support(tmp_path: Path) -> None:
-    pack = _validated().pack
-    stored = StoredCityRun(
-        manifest=CityRunManifestV10.model_validate_json(json.dumps(_manifest_v10())),
-        pack=pack,
-        mobility=CityMobility(pack, seed=42, agent_count=2, days=1),
-        directory=tmp_path / "city-test",
+def test_summary_projects_complete_verified_v10_cognition_evidence(tmp_path: Path) -> None:
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    staged, prepared, _directory = _saved_v10(
+        tmp_path,
+        mode="rules",
+        agents=1,
+        days=2,
+        run_id="summary-v10",
     )
-    with pytest.raises(ValueError, match="V10 workbench runtime support is not available yet"):
-        _module()._summary(stored)
+    stored = (
+        _module().WorkbenchRunRepository(prepare_workbench_workspace(tmp_path)).load("summary-v10")
+    )
+    summary = _module()._summary(stored)
+    cognition = prepared.cognition_evaluation.summary
+    coverage = cognition.coverage
+    outcomes = cognition.outcomes
+    neutralization = cognition.neutralization
+
+    assert summary.model_dump(mode="json") == {
+        "schema_version": 1,
+        "run_id": "summary-v10",
+        "run_schema_version": 10,
+        "workbench_input_schema_version": 4,
+        "city_id": stored.pack.city_id,
+        "city_schema_version": 2,
+        "city_sha256": stored.manifest.city_sha256,
+        "scenario_id": stored.spatial_scenario.scenario_id,
+        "scenario_sha256": stored.spatial_scenario.fingerprint,
+        "campaign_ids": ["fictional-launch"],
+        "channels": ["mobile-feed"],
+        "seed": "42",
+        "days": 2,
+        "agent_count": 1,
+        "frame_count": 2_880,
+        "opportunity_count": stored.manifest.opportunity_count,
+        "impression_count": stored.manifest.impression_count,
+        "noticed_count": stored.manifest.noticed_count,
+        "response_count": stored.manifest.response_count,
+        "effect_scope": "bounded-signals-v1",
+        "cognition_mode": "rules",
+        "provider_profile_id": None,
+        "provider_revision_sha256": None,
+        "funded_response_limit": 60,
+        "aggregate_output_token_ceiling": 0,
+        "eligible_response_count": coverage.eligible_response_count,
+        "selected_request_count": coverage.selected_request_count,
+        "funded_request_count": coverage.funded_request_count,
+        "budget_skipped_count": coverage.budget_skipped_count,
+        "unselected_response_count": coverage.unselected_response_count,
+        "applied_response_count": coverage.applied_response_count,
+        "rules_count": outcomes.rules,
+        "mock_count": outcomes.mock,
+        "provider_count": outcomes.provider,
+        "cache_count": outcomes.cache,
+        "fallback_count": outcomes.fallback,
+        "neutralized_response_count": neutralization.neutralized_response_count,
+        "uncertain_result_count": neutralization.uncertain_result_count,
+        "safety_neutralized_result_count": neutralization.safety_neutralized_result_count,
+        "inspector_url": "/runs/summary-v10",
+    }
+    assert summary.response_count == summary.applied_response_count
+    assert summary.selected_request_count == len(staged.cognition_requests)
+    assert summary.inspector_url == "/runs/summary-v10"
+
+
+def test_legacy_summary_json_shape_does_not_gain_v10_keys(tmp_path: Path) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    _saved_run(workspace.root, run_id="legacy-shape", workbench=True)
+    summary = _module().WorkbenchRunRepository(workspace).verified_summary("legacy-shape")
+    document = summary.model_dump(mode="json")
+    encoded = summary.model_dump_json()
+    for name in (
+        "workbench_input_schema_version",
+        "effect_scope",
+        "funded_response_limit",
+        "eligible_response_count",
+        "selected_request_count",
+        "funded_request_count",
+        "budget_skipped_count",
+        "unselected_response_count",
+        "applied_response_count",
+        "rules_count",
+        "mock_count",
+        "provider_count",
+        "cache_count",
+        "fallback_count",
+        "neutralized_response_count",
+        "uncertain_result_count",
+        "safety_neutralized_result_count",
+    ):
+        assert name not in document
+        assert f'"{name}"' not in encoded
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock"])
+def test_repository_v2_lifecycle_keeps_preparation_and_finalization_separate(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    from adlife.adapters.cognition.city_service import CityCognitionCancellation
+    from adlife.city.runs import PreparedCityRun, PreparedCityScientificRunV2
+    from tests.unit.city.test_city_run_preparation import _validated_v4
+
+    workspace = prepare_workbench_workspace(tmp_path / mode)
+    repository = _module().WorkbenchRunRepository(workspace)
+    validated = _validated_v4(
+        mode=mode,
+        agents=1,
+        mutation=lambda document: document["settings"].update(run_id=f"repository-{mode}-v10"),
+    )
+
+    operation = repository.preflight_cognition_v2(validated)
+    staged = repository.prepare_scientific_v2(validated, operation)
+    assert type(staged) is PreparedCityScientificRunV2
+    assert not (workspace.root / "city-runs").exists()
+
+    evaluation = repository.resolve_cognition_v2(
+        staged,
+        operation,
+        CityCognitionCancellation(),
+    )
+    assert evaluation.cognition_input_sha256 == staged.cognition_input.fingerprint
+    assert not isinstance(evaluation, PreparedCityRun)
+    prepared = repository.finalize_cognition_v2(staged, evaluation)
+    assert type(prepared) is PreparedCityRun
+    assert prepared.manifest.schema_version == 10
+    assert not (workspace.root / "city-runs").exists()
+
+    repository.publish(prepared)
+    restored = repository.load(prepared.manifest.run_id)
+    assert restored.cognition_input == prepared.cognition_input
+    assert restored.cognition_evaluation == prepared.cognition_evaluation
+    assert repository.verified_summary(prepared.manifest.run_id).run_schema_version == 10
+
+
+def test_repository_v2_provider_uses_exact_factory_service_baseline_and_clears_secret(
+    tmp_path: Path,
+) -> None:
+    from adlife.city.provider_compatibility import (
+        WorkbenchProviderCompatibilityRecord,
+        WorkbenchProviderCompatibilityRegistry,
+        build_workbench_provider_compatibility_key,
+    )
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+    from tests.integration.test_city_cognition_v2_pipeline import _terminal_evaluation
+    from tests.unit.city.test_city_run_preparation import _validated_v4
+    from tests.unit.city.test_provider_profiles import _draft
+
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    profiles = ProviderProfileRegistry(workspace)
+    profile = profiles.create(_draft(profile_id="provider-main"))
+    validated = _validated_v4(
+        mode="local",
+        limit=10,
+        profile=profile,
+        agents=1,
+        mutation=lambda document: document["settings"].update(run_id="provider-repository-v10"),
+    )
+    registry = WorkbenchProviderCompatibilityRegistry()
+    registry.record(
+        WorkbenchProviderCompatibilityRecord(
+            key=build_workbench_provider_compatibility_key(
+                profile, effect_scope="bounded-signals-v1"
+            ),
+            status="compatible",
+            reason_code=None,
+        )
+    )
+    factory_calls: list[dict[str, object]] = []
+    service_calls: list[dict[str, object]] = []
+
+    class Provider:
+        closed = False
+
+        async def call(self, request):  # pragma: no cover - fake service owns this provider
+            raise AssertionError("injected service must not call the provider")
+
+        async def repair_call(self, request, *, context):  # pragma: no cover
+            raise AssertionError("injected service must not repair")
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    provider = Provider()
+
+    def factory(**kwargs):
+        factory_calls.append(kwargs)
+        return provider
+
+    class Service:
+        evaluation = None
+
+        async def resolve_many(
+            self,
+            cognition_input,
+            requests,
+            *,
+            baseline_evaluation,
+            provider,
+            cancellation,
+        ):
+            service_calls.append(
+                {
+                    "cognition_input": cognition_input,
+                    "requests": requests,
+                    "baseline_evaluation": baseline_evaluation,
+                    "provider": provider,
+                    "cancellation": cancellation,
+                }
+            )
+            await provider.aclose()
+            return self.evaluation
+
+    service = Service()
+    repository = _module().WorkbenchRunRepository(
+        workspace,
+        provider_registry=profiles,
+        compatibility_registry=registry,
+        cognition_service_v2=service,
+        provider_factory_v2=factory,
+    )
+    operation = repository.preflight_cognition_v2(validated)
+    assert operation.credential is not None and not operation.credential.secret.cleared
+    staged = repository.prepare_scientific_v2(validated, operation)
+    service.evaluation = _terminal_evaluation(staged)
+
+    evaluation = repository.resolve_cognition_v2(
+        staged,
+        operation,
+        importlib.import_module(
+            "adlife.adapters.cognition.city_service"
+        ).CityCognitionCancellation(),
+    )
+
+    assert evaluation == service.evaluation
+    assert len(factory_calls) == len(service_calls) == 1
+    assert factory_calls[0]["cognition_input"] == staged.cognition_input
+    assert service_calls[0]["baseline_evaluation"] == staged.baseline_evaluation
+    assert service_calls[0]["provider"] is provider
+    assert provider.closed is True
+    assert operation.credential.secret.cleared is True
+
+
+def test_repository_v2_factory_defect_clears_operation_credential(tmp_path: Path) -> None:
+    from adlife.city.provider_compatibility import (
+        WorkbenchProviderCompatibilityRecord,
+        WorkbenchProviderCompatibilityRegistry,
+        build_workbench_provider_compatibility_key,
+    )
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+    from tests.unit.city.test_city_run_preparation import _validated_v4
+    from tests.unit.city.test_provider_profiles import _draft
+
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    profiles = ProviderProfileRegistry(workspace)
+    profile = profiles.create(_draft(profile_id="provider-main"))
+    validated = _validated_v4(mode="local", limit=10, profile=profile, agents=1)
+    registry = WorkbenchProviderCompatibilityRegistry()
+    registry.record(
+        WorkbenchProviderCompatibilityRecord(
+            key=build_workbench_provider_compatibility_key(
+                profile, effect_scope="bounded-signals-v1"
+            ),
+            status="compatible",
+            reason_code=None,
+        )
+    )
+
+    def broken_factory(**_kwargs):
+        raise RuntimeError("private provider factory defect")
+
+    repository = _module().WorkbenchRunRepository(
+        workspace,
+        provider_registry=profiles,
+        compatibility_registry=registry,
+        provider_factory_v2=broken_factory,
+    )
+    operation = repository.preflight_cognition_v2(validated)
+    staged = repository.prepare_scientific_v2(validated, operation)
+    with pytest.raises(RuntimeError, match="factory defect"):
+        repository.resolve_cognition_v2(
+            staged,
+            operation,
+            importlib.import_module(
+                "adlife.adapters.cognition.city_service"
+            ).CityCognitionCancellation(),
+        )
+    assert operation.credential is not None and operation.credential.secret.cleared
+
+
+def test_repository_v2_closes_invalid_factory_resource_before_clearing_secret(
+    tmp_path: Path,
+) -> None:
+    from adlife.adapters.cognition.city_service import CityCognitionCancellation
+
+    class InvalidProviderResource:
+        secret = None
+        closed_while_secret_live = False
+
+        async def aclose(self) -> None:
+            assert self.secret is not None
+            self.closed_while_secret_live = not self.secret.cleared
+
+    resource = InvalidProviderResource()
+    repository, operation, staged = _provider_v2_case(
+        tmp_path,
+        factory=lambda **_kwargs: resource,
+    )
+    assert operation.credential is not None
+    resource.secret = operation.credential.secret
+    with pytest.raises(TypeError, match="runtime contract"):
+        repository.resolve_cognition_v2(
+            staged,
+            operation,
+            CityCognitionCancellation(),
+        )
+    assert resource.closed_while_secret_live is True
+    assert operation.credential.secret.cleared
+
+
+@pytest.mark.parametrize("defect", ["cancellation", "binding"])
+def test_repository_v2_validation_defect_always_clears_operation_credential(
+    tmp_path: Path,
+    defect: str,
+) -> None:
+    from adlife.adapters.cognition.city_service import CityCognitionCancellation
+
+    repository, operation, staged = _provider_v2_case(
+        tmp_path,
+        factory=lambda **_kwargs: pytest.fail("validation defect reached the provider factory"),
+    )
+    assert operation.credential is not None
+    cancellation: object = CityCognitionCancellation()
+    if defect == "cancellation":
+        cancellation = object()
+    else:
+        assert operation.endpoint is not None
+        operation.endpoint = replace(
+            operation.endpoint,
+            base_url="http://127.0.0.1:9999/v1",
+        )
+
+    with pytest.raises((TypeError, ValueError)):
+        repository.resolve_cognition_v2(staged, operation, cancellation)
+    assert operation.credential.secret.cleared
+
+
+def test_repository_v2_rebinds_complete_endpoint_before_factory_use(tmp_path: Path) -> None:
+    from adlife.adapters.cognition.city_service import CityCognitionCancellation
+
+    factory_calls: list[object] = []
+
+    def forbidden_factory(**kwargs):
+        factory_calls.append(kwargs)
+        pytest.fail("fabricated endpoint reached the provider factory")
+
+    repository, operation, staged = _provider_v2_case(tmp_path, factory=forbidden_factory)
+    assert operation.endpoint is not None and operation.credential is not None
+    operation.endpoint = replace(
+        operation.endpoint,
+        hostname="169.254.169.254",
+        port=80,
+        base_path="/metadata",
+        host_header="169.254.169.254",
+        tls_server_hostname=None,
+    )
+
+    with pytest.raises(ValueError, match="frozen provider"):
+        repository.resolve_cognition_v2(
+            staged,
+            operation,
+            CityCognitionCancellation(),
+        )
+    assert factory_calls == []
+    assert operation.credential.secret.cleared
 
 
 def test_repository_schema2_preparation_does_not_publish(tmp_path: Path) -> None:

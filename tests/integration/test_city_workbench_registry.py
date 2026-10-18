@@ -63,6 +63,48 @@ def test_uploaded_city_v10_storage_fresh_load_needs_no_live_registry(tmp_path, m
     assert stored.cognition_input.run_input_sha256 == stored.workbench_input.fingerprint
 
 
+def test_uploaded_city_v10_job_survives_restart_in_verified_run_list(tmp_path):
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    root = tmp_path / "workspace"
+    city_id = "uploaded-v10-job-city"
+    app = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=_TOKEN,
+    )
+    with TestClient(app, base_url=_ORIGIN) as client:
+        upload = _upload(client, _document(city_id))
+        assert upload.status_code == 201
+        draft = draft_v4_data(mode="rules")
+        draft["city_id"] = city_id
+        draft["settings"].update(
+            run_id="uploaded-city-v10-job",
+            agent_count=1,
+            days=2,
+            seed="42",
+        )
+        draft["population"]["personas"][0]["count"] = 1
+        submitted = _post_json(client, "/api/jobs", draft)
+        assert submitted.status_code == 202
+        terminal = _await_job(client, submitted.json()["status_url"])
+        assert terminal["phase"] == "completed"
+        assert terminal["result"]["city_id"] == city_id
+        assert terminal["result"]["run_schema_version"] == 10
+
+    restarted = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=_TOKEN,
+    )
+    with TestClient(restarted, base_url=_ORIGIN) as client:
+        listed = client.get("/api/runs")
+    assert listed.status_code == 200
+    assert listed.json()["runs"] == [terminal["result"]]
+    stored = CityRunStore(root).load("uploaded-city-v10-job")
+    assert stored.pack.city_id == city_id
+    assert stored.manifest.schema_version == 10
+    assert stored.workbench_input.draft.city_id == city_id
+
+
 def _post_json(client: TestClient, path: str, payload: dict[str, Any]):
     return client.post(
         path,

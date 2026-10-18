@@ -123,6 +123,28 @@ def _scoped_controller(tmp_path, *, factory=None):
     return controller, keyring, v1_providers, providers
 
 
+def test_controller_preserves_a_falsey_injected_v2_factory(tmp_path):
+    original, _, _ = _controller(tmp_path)
+
+    class FalseyFactory:
+        def __bool__(self):
+            return False
+
+        def __call__(self, **_kwargs):
+            raise AssertionError("identity test must not construct a provider")
+
+    factory = FalseyFactory()
+    controller = WorkbenchProviderController(
+        original.registry,
+        original._policy,
+        credentials=original._credentials,
+        operations=original.operations,
+        provider_factory=original._factory,
+        provider_factory_v2=factory,
+    )
+    assert controller._factory_v2 is factory
+
+
 async def test_v2_check_uses_exact_fixed_causal_probe_and_original_profile(tmp_path):
     controller, _, v1_providers, providers = _scoped_controller(tmp_path)
     profile = controller.registry.create(_draft())

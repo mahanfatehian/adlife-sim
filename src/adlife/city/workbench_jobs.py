@@ -9,13 +9,17 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Literal, Protocol, Self
+from typing import Literal, Protocol, Self, cast
 
 from pydantic import Field, field_validator, model_validator
 
 from adlife.adapters.cognition.city_service import CityCognitionCancellation
 from adlife.city.run_store import StoredCityRun
-from adlife.city.runs import PreparedCityRun, PreparedCityScientificRun
+from adlife.city.runs import (
+    PreparedCityRun,
+    PreparedCityScientificRun,
+    PreparedCityScientificRunV2,
+)
 from adlife.city.workbench_input import WorkbenchRunInputV3, WorkbenchRunInputV4
 from adlife.city.workbench_providers import (
     WorkbenchOperationLease,
@@ -23,8 +27,13 @@ from adlife.city.workbench_providers import (
     WorkbenchProviderBusy,
     WorkbenchProviderClosed,
 )
-from adlife.city.workbench_runs import WorkbenchCognitionOperation, WorkbenchRunSummary
+from adlife.city.workbench_runs import (
+    WorkbenchCognitionOperation,
+    WorkbenchCognitionOperationV2,
+    WorkbenchRunSummary,
+)
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
+from adlife.core.domain.city_cognition_v2 import CityCognitionEvaluationV2
 from adlife.core.domain.person import DomainModel
 from adlife.core.ports.run_store import ISO_UTC_PATTERN
 
@@ -36,6 +45,9 @@ WorkbenchJobPhase = Literal[
     "simulating",
     "selecting-explanations",
     "requesting-explanations",
+    "planning-cognition",
+    "requesting-cognition",
+    "applying-cognition",
     "persisting",
     "verifying",
     "completed",
@@ -51,6 +63,9 @@ _CANCELLABLE_PHASES = frozenset(
         "simulating",
         "selecting-explanations",
         "requesting-explanations",
+        "planning-cognition",
+        "requesting-cognition",
+        "applying-cognition",
     }
 )
 _SEED_PATTERN = r"^(?:0|[1-9][0-9]{0,18})$"
@@ -102,8 +117,8 @@ class WorkbenchAcceptedSettings(DomainModel):
     """Bounded immutable scientific settings retained through every job phase."""
 
     schema_version: Literal[1] = 1
-    workbench_input_schema_version: Literal[1, 2, 3]
-    run_schema_version: Literal[7, 8, 9]
+    workbench_input_schema_version: Literal[1, 2, 3, 4]
+    run_schema_version: Literal[7, 8, 9, 10]
     city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     campaign_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
@@ -111,6 +126,10 @@ class WorkbenchAcceptedSettings(DomainModel):
     agent_count: int = Field(ge=1, le=30)
     days: int = Field(ge=1, le=7)
     response_mode: Literal["deterministic-rules"]
+    effect_scope: Literal["bounded-signals-v1"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     cognition_mode: Literal["rules", "mock", "local", "remote"] | None = None
     provider_profile_id: str | None = Field(
         default=None,
@@ -120,13 +139,24 @@ class WorkbenchAcceptedSettings(DomainModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
+    funded_response_limit: Literal[10, 20, 40, 60] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     aggregate_output_token_ceiling: int | None = Field(default=None, ge=0, le=92_160)
 
-    @field_validator("workbench_input_schema_version", "run_schema_version", mode="before")
+    @field_validator(
+        "workbench_input_schema_version",
+        "run_schema_version",
+        "funded_response_limit",
+        mode="before",
+    )
     @classmethod
     def exact_schema_versions(cls, value: object) -> object:
+        if value is None:
+            return value
         if type(value) is not int:
-            raise ValueError("accepted schema versions must be exact integers")
+            raise ValueError("accepted version and funding values must be exact integers")
         return value
 
     @model_validator(mode="after")
@@ -135,6 +165,7 @@ class WorkbenchAcceptedSettings(DomainModel):
             (1, 7),
             (2, 8),
             (3, 9),
+            (4, 10),
         ):
             raise ValueError("accepted workbench input and run schema versions do not match")
         cognition_fields = (
@@ -143,10 +174,34 @@ class WorkbenchAcceptedSettings(DomainModel):
             self.provider_revision_sha256,
             self.aggregate_output_token_ceiling,
         )
-        if self.workbench_input_schema_version != 3:
+        v10_fields = (self.effect_scope, self.funded_response_limit)
+        if self.workbench_input_schema_version not in {3, 4}:
             if any(value is not None for value in cognition_fields):
                 raise ValueError("pre-schema-3 settings cannot carry cognition configuration")
+            if any(value is not None for value in v10_fields):
+                raise ValueError("pre-schema-4 settings cannot carry bounded cognition fields")
             return self
+        if self.workbench_input_schema_version == 4:
+            if self.effect_scope != "bounded-signals-v1" or self.funded_response_limit is None:
+                raise ValueError("schema-4 settings require bounded cognition configuration")
+            if self.cognition_mode is None or self.aggregate_output_token_ceiling is None:
+                raise ValueError("schema-4 settings require cognition configuration")
+            provider_mode = self.cognition_mode in {"local", "remote"}
+            if provider_mode:
+                if self.provider_profile_id is None or self.provider_revision_sha256 is None:
+                    raise ValueError("schema-4 provider binding is incomplete")
+                if self.aggregate_output_token_ceiling != self.funded_response_limit * 512:
+                    raise ValueError("schema-4 provider funding ceiling is inconsistent")
+            elif (
+                self.provider_profile_id is not None
+                or self.provider_revision_sha256 is not None
+                or self.funded_response_limit != 60
+                or self.aggregate_output_token_ceiling != 0
+            ):
+                raise ValueError("offline schema-4 provider configuration is misplaced")
+            return self
+        if any(value is not None for value in v10_fields):
+            raise ValueError("schema-3 settings cannot carry bounded cognition fields")
         if self.cognition_mode is None or self.aggregate_output_token_ceiling is None:
             raise ValueError("schema-3 settings require cognition configuration")
         provider_mode = self.cognition_mode in {"local", "remote"}
@@ -172,15 +227,23 @@ def _summary_matches_accepted_settings(
 ) -> bool:
     return (
         summary.run_schema_version == settings.run_schema_version
+        and summary.workbench_input_schema_version
+        == (
+            settings.workbench_input_schema_version
+            if settings.workbench_input_schema_version == 4
+            else None
+        )
         and summary.city_id == settings.city_id
         and summary.scenario_id == settings.scenario_id
         and summary.campaign_ids == (settings.campaign_id,)
         and summary.seed == settings.seed
         and summary.agent_count == settings.agent_count
         and summary.days == settings.days
+        and summary.effect_scope == settings.effect_scope
         and summary.cognition_mode == settings.cognition_mode
         and summary.provider_profile_id == settings.provider_profile_id
         and summary.provider_revision_sha256 == settings.provider_revision_sha256
+        and summary.funded_response_limit == settings.funded_response_limit
         and summary.aggregate_output_token_ceiling == settings.aggregate_output_token_ceiling
     )
 
@@ -199,6 +262,22 @@ class WorkbenchJobView(DomainModel):
     can_cancel: bool
     error: WorkbenchJobFailure | None = None
     result: WorkbenchRunSummary | None = None
+
+    @field_validator("accepted_settings", mode="before")
+    @classmethod
+    def revalidate_accepted_settings(cls, value: object) -> WorkbenchAcceptedSettings:
+        if isinstance(value, WorkbenchAcceptedSettings):
+            value = value.model_dump(mode="python")
+        return WorkbenchAcceptedSettings.model_validate(value)
+
+    @field_validator("result", mode="before")
+    @classmethod
+    def revalidate_result(cls, value: object) -> WorkbenchRunSummary | None:
+        if value is None:
+            return None
+        if isinstance(value, WorkbenchRunSummary):
+            value = value.model_dump(mode="python")
+        return WorkbenchRunSummary.model_validate(value)
 
     @model_validator(mode="after")
     def coherent_state(self) -> Self:
@@ -234,6 +313,10 @@ class _RunOperations(Protocol):
         self, validated: ValidatedWorkbenchRun
     ) -> WorkbenchCognitionOperation: ...
 
+    def preflight_cognition_v2(
+        self, validated: ValidatedWorkbenchRun
+    ) -> WorkbenchCognitionOperationV2: ...
+
     def ensure_available(self, run_id: str) -> None: ...
 
     def prepare(self, validated: ValidatedWorkbenchRun) -> PreparedCityRun: ...
@@ -243,6 +326,12 @@ class _RunOperations(Protocol):
         validated: ValidatedWorkbenchRun,
         operation: WorkbenchCognitionOperation,
     ) -> PreparedCityScientificRun: ...
+
+    def prepare_scientific_v2(
+        self,
+        validated: ValidatedWorkbenchRun,
+        operation: WorkbenchCognitionOperationV2,
+    ) -> PreparedCityScientificRunV2: ...
 
     def select_explanations(
         self,
@@ -255,6 +344,19 @@ class _RunOperations(Protocol):
         prepared: PreparedCityScientificRun,
         operation: WorkbenchCognitionOperation,
         cancellation: CityCognitionCancellation,
+    ) -> PreparedCityRun: ...
+
+    def resolve_cognition_v2(
+        self,
+        prepared: PreparedCityScientificRunV2,
+        operation: WorkbenchCognitionOperationV2,
+        cancellation: CityCognitionCancellation,
+    ) -> CityCognitionEvaluationV2: ...
+
+    def finalize_cognition_v2(
+        self,
+        prepared: PreparedCityScientificRunV2,
+        evaluation: CityCognitionEvaluationV2,
     ) -> PreparedCityRun: ...
 
     def publish(self, prepared: PreparedCityRun) -> StoredCityRun: ...
@@ -290,6 +392,9 @@ def _failure(
         "simulating",
         "selecting-explanations",
         "requesting-explanations",
+        "planning-cognition",
+        "requesting-cognition",
+        "applying-cognition",
         "persisting",
         "verifying",
     ],
@@ -299,6 +404,9 @@ def _failure(
         "simulating",
         "selecting-explanations",
         "requesting-explanations",
+        "planning-cognition",
+        "requesting-cognition",
+        "applying-cognition",
     }:
         return WorkbenchJobFailure(
             code="evaluation-failed",
@@ -333,7 +441,9 @@ class CityJobManager:
         self._terminal_ids: deque[str] = deque()
         self._active_job_id: str | None = None
         self._operation_leases: dict[str, WorkbenchOperationLease] = {}
-        self._cognition_operations: dict[str, WorkbenchCognitionOperation] = {}
+        self._cognition_operations: dict[
+            str, WorkbenchCognitionOperation | WorkbenchCognitionOperationV2
+        ] = {}
         self._cancellations: dict[str, CityCognitionCancellation] = {}
         self._closed = False
 
@@ -381,13 +491,13 @@ class CityJobManager:
         self._transition_locked(record, phase)
         if self._active_job_id == record.job_id:
             self._active_job_id = None
-        lease = self._operation_leases.pop(record.job_id, None)
-        if lease is not None:
-            self._operations.finish(lease)
         operation = self._cognition_operations.pop(record.job_id, None)
         if operation is not None:
             operation.clear()
         self._cancellations.pop(record.job_id, None)
+        lease = self._operation_leases.pop(record.job_id, None)
+        if lease is not None:
+            self._operations.finish(lease)
         self._terminal_ids.append(record.job_id)
         while len(self._terminal_ids) > MAX_TERMINAL_JOBS:
             expired = self._terminal_ids.popleft()
@@ -396,10 +506,11 @@ class CityJobManager:
     def _rollback_submission_locked(
         self,
         job_id: str | None,
-        operation: WorkbenchCognitionOperation | None,
+        operation: WorkbenchCognitionOperation | WorkbenchCognitionOperationV2 | None,
         lease: WorkbenchOperationLease | None,
     ) -> None:
-        mapped_operation: WorkbenchCognitionOperation | None = None
+        mapped_operation: WorkbenchCognitionOperation | WorkbenchCognitionOperationV2 | None = None
+        mapped_lease: WorkbenchOperationLease | None = None
         if job_id is not None:
             self._records.pop(job_id, None)
             mapped_operation = self._cognition_operations.pop(job_id, None)
@@ -407,36 +518,52 @@ class CityJobManager:
             if self._active_job_id == job_id:
                 self._active_job_id = None
             mapped_lease = self._operation_leases.pop(job_id, None)
-            if mapped_lease is not None:
-                self._operations.finish(mapped_lease)
-                lease = None
-        if lease is not None:
-            self._operations.finish(lease)
         credential_owner = mapped_operation if mapped_operation is not None else operation
         if credential_owner is not None:
             credential_owner.clear()
+        if mapped_lease is not None:
+            self._operations.finish(mapped_lease)
+            lease = None
+        if lease is not None:
+            self._operations.finish(lease)
 
     def submit(self, validated: ValidatedWorkbenchRun) -> WorkbenchJobView:
         """Preflight and schedule one frozen request without waiting for evaluation."""
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
-        if isinstance(validated.workbench_input, WorkbenchRunInputV4):
-            raise WorkbenchJobSubmissionError("Schema-4 workbench execution is not available.")
-        run_id = validated.workbench_input.draft.settings.run_id
-        draft = validated.workbench_input.draft
-        cognition = (
-            validated.workbench_input.draft.cognition
-            if isinstance(validated.workbench_input, WorkbenchRunInputV3)
-            else None
-        )
-        input_schema_version = validated.workbench_input.schema_version
-        run_schema_version: Literal[7, 8, 9]
+        workbench_input = validated.workbench_input
+        run_id = workbench_input.draft.settings.run_id
+        draft = workbench_input.draft
+        cognition_mode = None
+        provider_profile_id = None
+        provider_revision_sha256 = None
+        aggregate_output_token_ceiling = None
+        effect_scope = None
+        funded_response_limit = None
+        if type(workbench_input) is WorkbenchRunInputV4:
+            cognition_v4 = workbench_input.draft.cognition
+            cognition_mode = cognition_v4.mode
+            provider_profile_id = cognition_v4.provider_profile_id
+            provider_revision_sha256 = cognition_v4.provider_revision_sha256
+            aggregate_output_token_ceiling = cognition_v4.aggregate_output_token_ceiling
+            effect_scope = cognition_v4.effect_scope
+            funded_response_limit = cognition_v4.funded_response_limit
+        elif type(workbench_input) is WorkbenchRunInputV3:
+            cognition_v3 = workbench_input.draft.cognition
+            cognition_mode = cognition_v3.mode
+            provider_profile_id = cognition_v3.provider_profile_id
+            provider_revision_sha256 = cognition_v3.provider_revision_sha256
+            aggregate_output_token_ceiling = cognition_v3.aggregate_output_token_ceiling
+        input_schema_version = workbench_input.schema_version
+        run_schema_version: Literal[7, 8, 9, 10]
         if input_schema_version == 1:
             run_schema_version = 7
         elif input_schema_version == 2:
             run_schema_version = 8
-        else:
+        elif input_schema_version == 3:
             run_schema_version = 9
+        else:
+            run_schema_version = 10
         accepted_settings = WorkbenchAcceptedSettings(
             workbench_input_schema_version=input_schema_version,
             run_schema_version=run_schema_version,
@@ -447,21 +574,19 @@ class CityJobManager:
             agent_count=draft.settings.agent_count,
             days=draft.settings.days,
             response_mode=draft.settings.response_mode,
-            cognition_mode=None if cognition is None else cognition.mode,
-            provider_profile_id=None if cognition is None else cognition.provider_profile_id,
-            provider_revision_sha256=(
-                None if cognition is None else cognition.provider_revision_sha256
-            ),
-            aggregate_output_token_ceiling=(
-                None if cognition is None else cognition.aggregate_output_token_ceiling
-            ),
+            effect_scope=effect_scope,
+            cognition_mode=cognition_mode,
+            provider_profile_id=provider_profile_id,
+            provider_revision_sha256=provider_revision_sha256,
+            funded_response_limit=funded_response_limit,
+            aggregate_output_token_ceiling=aggregate_output_token_ceiling,
         )
         with self._lock:
             if self._closed:
                 raise WorkbenchJobManagerClosed("The workbench worker is closed.")
             if self._active_job_id is not None:
                 raise WorkbenchJobBusy("Another workbench run is already active.")
-            operation: WorkbenchCognitionOperation | None = None
+            operation: WorkbenchCognitionOperation | WorkbenchCognitionOperationV2 | None = None
             lease: WorkbenchOperationLease | None = None
             job_id: str | None = None
             try:
@@ -473,7 +598,9 @@ class CityJobManager:
                     ) from None
                 except WorkbenchProviderClosed:
                     raise WorkbenchJobManagerClosed("The workbench worker is closed.") from None
-                if isinstance(validated.workbench_input, WorkbenchRunInputV3):
+                if type(workbench_input) is WorkbenchRunInputV4:
+                    operation = self._repository.preflight_cognition_v2(validated)
+                elif type(workbench_input) is WorkbenchRunInputV3:
                     operation = self._repository.preflight_cognition(validated)
                 self._repository.ensure_available(run_id)
                 job_id = self._new_job_id_locked()
@@ -523,6 +650,9 @@ class CityJobManager:
             "simulating",
             "selecting-explanations",
             "requesting-explanations",
+            "planning-cognition",
+            "requesting-cognition",
+            "applying-cognition",
             "persisting",
             "verifying",
         ],
@@ -556,12 +686,20 @@ class CityJobManager:
                 "simulating",
                 "selecting-explanations",
                 "requesting-explanations",
+                "planning-cognition",
+                "requesting-cognition",
+                "applying-cognition",
                 "persisting",
                 "verifying",
             ]
             match record.phase:
                 case "queued":
-                    phase = "simulating" if job_id in self._cognition_operations else "evaluating"
+                    if type(record.validated.workbench_input) is WorkbenchRunInputV4:
+                        phase = "planning-cognition"
+                    elif type(record.validated.workbench_input) is WorkbenchRunInputV3:
+                        phase = "simulating"
+                    else:
+                        phase = "evaluating"
                 case "evaluating":
                     phase = "evaluating"
                 case "simulating":
@@ -570,6 +708,12 @@ class CityJobManager:
                     phase = "selecting-explanations"
                 case "requesting-explanations":
                     phase = "requesting-explanations"
+                case "planning-cognition":
+                    phase = "planning-cognition"
+                case "requesting-cognition":
+                    phase = "requesting-cognition"
+                case "applying-cognition":
+                    phase = "applying-cognition"
                 case "persisting":
                     phase = "persisting"
                 case "verifying":
@@ -579,6 +723,16 @@ class CityJobManager:
             self._terminal_locked(record, "failed", error=_failure(phase))
 
     def _run_job_checked(self, job_id: str) -> None:
+        with self._lock:
+            record = self._records[job_id]
+            if type(record.validated.workbench_input) is WorkbenchRunInputV4:
+                is_v10 = True
+            else:
+                is_v10 = False
+        if is_v10:
+            self._run_v10_checked(job_id)
+            return
+
         with self._lock:
             record = self._records[job_id]
             if self._cancel_before_publication_locked(record):
@@ -598,33 +752,34 @@ class CityJobManager:
                 self._fail(job_id, "evaluating")
                 return
         else:
+            operation_v1 = cast(WorkbenchCognitionOperation, operation)
             assert cancellation is not None
             try:
-                scientific = self._repository.prepare_scientific(validated, operation)
+                scientific = self._repository.prepare_scientific(validated, operation_v1)
             except Exception:
-                operation.clear()
+                operation_v1.clear()
                 self._fail(job_id, "simulating")
                 return
 
             with self._lock:
                 record = self._records[job_id]
                 if self._cancel_before_publication_locked(record):
-                    operation.clear()
+                    operation_v1.clear()
                     self._cognition_operations.pop(job_id, None)
                     self._cancellations.pop(job_id, None)
                     return
                 self._transition_locked(record, "selecting-explanations")
             try:
-                self._repository.select_explanations(scientific, operation)
+                self._repository.select_explanations(scientific, operation_v1)
             except Exception:
-                operation.clear()
+                operation_v1.clear()
                 self._fail(job_id, "selecting-explanations")
                 return
 
             with self._lock:
                 record = self._records[job_id]
                 if self._cancel_before_publication_locked(record):
-                    operation.clear()
+                    operation_v1.clear()
                     self._cognition_operations.pop(job_id, None)
                     self._cancellations.pop(job_id, None)
                     return
@@ -632,11 +787,11 @@ class CityJobManager:
             try:
                 prepared = self._repository.resolve_cognition(
                     scientific,
-                    operation,
+                    operation_v1,
                     cancellation,
                 )
             except asyncio.CancelledError:
-                operation.clear()
+                operation_v1.clear()
                 with self._lock:
                     record = self._records[job_id]
                     if record.cancellation_requested:
@@ -649,14 +804,106 @@ class CityJobManager:
                         )
                 return
             except Exception:
-                operation.clear()
+                operation_v1.clear()
                 self._fail(job_id, "requesting-explanations")
                 return
             finally:
-                operation.clear()
+                operation_v1.clear()
                 with self._lock:
                     self._cognition_operations.pop(job_id, None)
                     self._cancellations.pop(job_id, None)
+
+        with self._lock:
+            record = self._records[job_id]
+            if self._cancel_before_publication_locked(record):
+                return
+            self._transition_locked(record, "persisting")
+
+        try:
+            self._repository.publish(prepared)
+        except Exception:
+            self._fail(job_id, "persisting")
+            return
+
+        with self._lock:
+            record = self._records[job_id]
+            self._transition_locked(record, "verifying")
+            run_id = record.run_id
+
+        try:
+            summary = self._repository.verified_summary(run_id)
+        except Exception:
+            self._fail(job_id, "verifying")
+            return
+        if (
+            not isinstance(summary, WorkbenchRunSummary)
+            or summary.run_id != run_id
+            or not _summary_matches_accepted_settings(summary, record.accepted_settings)
+        ):
+            self._fail(job_id, "verifying")
+            return
+
+        with self._lock:
+            record = self._records[job_id]
+            self._terminal_locked(record, "completed", result=summary)
+
+    def _run_v10_checked(self, job_id: str) -> None:
+        with self._lock:
+            record = self._records[job_id]
+            if self._cancel_before_publication_locked(record):
+                return
+            validated = record.validated
+            operation = self._cognition_operations.get(job_id)
+            cancellation = self._cancellations.get(job_id)
+            if not isinstance(operation, WorkbenchCognitionOperationV2) or cancellation is None:
+                raise TypeError("schema-4 job is missing its private V2 operation")
+            self._transition_locked(record, "planning-cognition")
+
+        try:
+            scientific = self._repository.prepare_scientific_v2(validated, operation)
+        except Exception:
+            self._fail(job_id, "planning-cognition")
+            return
+
+        with self._lock:
+            record = self._records[job_id]
+            if self._cancel_before_publication_locked(record):
+                return
+            self._transition_locked(record, "requesting-cognition")
+        try:
+            evaluation = self._repository.resolve_cognition_v2(
+                scientific,
+                operation,
+                cancellation,
+            )
+        except asyncio.CancelledError:
+            with self._lock:
+                record = self._records[job_id]
+                if record.cancellation_requested:
+                    self._terminal_locked(record, "cancelled")
+                else:
+                    self._terminal_locked(
+                        record,
+                        "failed",
+                        error=_failure("requesting-cognition"),
+                    )
+            return
+        except Exception:
+            self._fail(job_id, "requesting-cognition")
+            return
+        finally:
+            operation.clear()
+
+        with self._lock:
+            record = self._records[job_id]
+            if self._cancel_before_publication_locked(record):
+                return
+            self._transition_locked(record, "applying-cognition")
+        try:
+            prepared = self._repository.finalize_cognition_v2(scientific, evaluation)
+        except Exception:
+            self._fail(job_id, "applying-cognition")
+            return
 
         with self._lock:
             record = self._records[job_id]

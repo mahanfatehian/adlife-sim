@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -69,6 +70,47 @@ def test_v10_direct_storage_freezes_schema4_without_job_submission(tmp_path):
         spatial_scenario=restored.spatial_scenario,
         spatial_response=restored.response_input,
     )
+
+
+def test_v10_workbench_job_publishes_then_verifies_from_storage(tmp_path):
+    from adlife.city.workbench_jobs import CityJobManager
+    from tests.unit.city.test_workbench_transport_v4 import compiled_v4
+
+    workspace = prepare_workbench_workspace(tmp_path)
+    repository = WorkbenchRunRepository(workspace)
+    validated = compiled_v4(
+        mode="rules",
+        mutation=lambda payload: (
+            payload["settings"].update(
+                run_id="job-artifact-v10",
+                agent_count=1,
+                days=2,
+                seed=42,
+            ),
+            payload["population"]["personas"][0].update(count=1),
+        ),
+    )
+    manager = CityJobManager(repository)
+    try:
+        submitted = manager.submit(validated)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            terminal = manager.get(submitted.job_id)
+            if terminal.phase in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("V10 workbench job did not terminate")
+        assert terminal.phase == "completed"
+        assert terminal.result == repository.verified_summary("job-artifact-v10")
+        restored = CityRunStore(tmp_path).load("job-artifact-v10")
+        assert restored.manifest.schema_version == 10
+        assert restored.workbench_input == validated.workbench_input
+        assert restored.cognition_input is not None
+        assert restored.cognition_evaluation is not None
+        assert restored.response_evaluation is not None
+    finally:
+        manager.close()
 
 
 def _hashes(directory: Path) -> dict[str, str]:

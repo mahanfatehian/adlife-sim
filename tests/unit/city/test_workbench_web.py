@@ -469,16 +469,27 @@ def _local_provider_payload() -> dict[str, object]:
 def test_app_injects_one_process_local_compatibility_registry(tmp_path, monkeypatch):
     module = _module()
     repositories = []
+    repository_arguments = []
     original = module.WorkbenchRunRepository
 
+    def v2_factory(**_kwargs):
+        raise AssertionError("identity test must not construct a provider")
+
     def repository(*args, **kwargs):
+        repository_arguments.append(kwargs)
         instance = original(*args, **kwargs)
         repositories.append(instance)
         return instance
 
     monkeypatch.setattr(module, "WorkbenchRunRepository", repository)
-    first = module.create_city_workbench_app(prepare_workbench_workspace(tmp_path / "first"))
-    second = module.create_city_workbench_app(prepare_workbench_workspace(tmp_path / "second"))
+    first = module.create_city_workbench_app(
+        prepare_workbench_workspace(tmp_path / "first"),
+        provider_factory_v2=v2_factory,
+    )
+    second = module.create_city_workbench_app(
+        prepare_workbench_workspace(tmp_path / "second"),
+        provider_factory_v2=v2_factory,
+    )
     assert (
         first.state.provider_controller.compatibility_registry
         is repositories[0].compatibility_registry
@@ -491,6 +502,10 @@ def test_app_injects_one_process_local_compatibility_registry(tmp_path, monkeypa
         first.state.provider_controller.compatibility_registry
         is not second.state.provider_controller.compatibility_registry
     )
+    assert first.state.provider_controller._factory_v2 is v2_factory
+    assert second.state.provider_controller._factory_v2 is v2_factory
+    assert repository_arguments[0]["provider_factory_v2"] is v2_factory
+    assert repository_arguments[1]["provider_factory_v2"] is v2_factory
 
 
 @pytest.mark.parametrize(
@@ -1889,6 +1904,319 @@ def test_schema3_offline_job_publishes_one_verified_manifest_v9_run(
     assert capabilities.json()["active_job"] is None
     assert runs.json()["verified_total"] == 1
     assert (root / "city-runs" / payload["settings"]["run_id"] / "run.json").is_file()
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock"])
+def test_schema4_offline_api_job_publishes_freshly_verified_v10(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    client, root = _client(tmp_path)
+    payload = draft_v4_data(mode=mode)
+    payload["settings"].update(
+        run_id=f"api-{mode}-v10",
+        seed="42",
+        agent_count=1,
+        days=2,
+    )
+    payload["population"]["personas"][0]["count"] = 1
+
+    with client:
+        response = _secure_post(client, "/api/jobs", payload)
+        assert response.status_code == 202
+        terminal = _await_job(client, response.json()["status_url"])
+        listed = client.get("/api/runs").json()
+
+    assert terminal["phase"] == "completed"
+    assert terminal["accepted_settings"]["workbench_input_schema_version"] == 4
+    assert terminal["accepted_settings"]["run_schema_version"] == 10
+    assert terminal["accepted_settings"]["effect_scope"] == "bounded-signals-v1"
+    assert terminal["result"]["run_schema_version"] == 10
+    assert terminal["result"]["workbench_input_schema_version"] == 4
+    assert terminal["result"]["inspector_url"] == f"/runs/api-{mode}-v10"
+    assert listed["runs"][0] == terminal["result"]
+    stored = CityRunStore(root).load(f"api-{mode}-v10")
+    assert stored.manifest.schema_version == 10
+    assert stored.cognition_evaluation is not None
+
+
+def test_schema4_provider_job_requires_explicit_bounded_compatibility_without_leaks(
+    tmp_path: Path,
+) -> None:
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(tmp_path / "workspace"),
+        csrf_token=TOKEN,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+        payload = draft_v4_data(mode="local", limit=10)
+        payload["settings"].update(run_id="needs-v2-check", agent_count=1, days=2, seed="42")
+        payload["population"]["personas"][0]["count"] = 1
+        payload["cognition"].update(
+            provider_profile_id=profile["profile_id"],
+            provider_revision_sha256=profile["revision_sha256"],
+        )
+        response = _secure_post(client, "/api/jobs", payload)
+        capabilities = client.get("/api/workbench").json()
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "provider-compatibility-required",
+        "message": "A successful bounded-cognition provider compatibility check is required.",
+        "fields": {},
+    }
+    assert profile["revision_sha256"] not in response.text
+    assert capabilities["active_job"] is None
+
+
+def test_schema4_checked_provider_runs_with_the_same_v2_factory(tmp_path: Path) -> None:
+    from tests.unit.city.test_workbench_providers import _ProviderV2
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    providers = []
+
+    def factory(**kwargs):
+        provider = _ProviderV2(**kwargs)
+        providers.append(provider)
+        return provider
+
+    root = tmp_path / "workspace"
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+        provider_factory_v2=factory,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+        checked = _secure_post(
+            client,
+            f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/check",
+            {"effect_scope": "bounded-signals-v1"},
+        )
+        assert checked.status_code == 200
+        payload = draft_v4_data(mode="local", limit=10)
+        payload["settings"].update(
+            run_id="checked-provider-v10",
+            seed="42",
+            days=2,
+        )
+        payload["cognition"].update(
+            provider_profile_id=profile["profile_id"],
+            provider_revision_sha256=profile["revision_sha256"],
+        )
+        submitted = _secure_post(client, "/api/jobs", payload)
+        assert submitted.status_code == 202
+        terminal = _await_job(client, submitted.json()["status_url"])
+
+    assert terminal["phase"] == "completed"
+    assert terminal["result"]["provider_count"] > 0
+    assert len(providers) == 2
+    assert all(provider.closed for provider in providers)
+    assert all(provider.kwargs["credential"].secret.cleared for provider in providers)
+    assert CityRunStore(root).load("checked-provider-v10").manifest.schema_version == 10
+
+
+def test_schema4_api_provider_failure_completes_with_fallback_evidence(tmp_path: Path) -> None:
+    from adlife.adapters.cognition.city_provider_transport import CityProviderAuthenticationError
+    from tests.unit.city.test_workbench_providers import _ProviderV2
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    providers = []
+
+    class FailingProvider(_ProviderV2):
+        async def call(self, request):
+            self.calls += 1
+            self.request = request
+            raise CityProviderAuthenticationError()
+
+    def factory(**kwargs):
+        provider = _ProviderV2(**kwargs) if not providers else FailingProvider(**kwargs)
+        providers.append(provider)
+        return provider
+
+    root = tmp_path / "workspace"
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+        provider_factory_v2=factory,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+        checked = _secure_post(
+            client,
+            f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/check",
+            {"effect_scope": "bounded-signals-v1"},
+        )
+        assert checked.status_code == 200
+        payload = draft_v4_data(mode="local", limit=10)
+        payload["settings"].update(run_id="fallback-provider-v10", seed="42", days=2)
+        payload["cognition"].update(
+            provider_profile_id=profile["profile_id"],
+            provider_revision_sha256=profile["revision_sha256"],
+        )
+        submitted = _secure_post(client, "/api/jobs", payload)
+        assert submitted.status_code == 202
+        terminal = _await_job(client, submitted.json()["status_url"])
+
+    assert terminal["phase"] == "completed"
+    assert terminal["result"]["fallback_count"] > 0
+    assert terminal["result"]["provider_count"] == 0
+    assert len(providers) == 2 and all(provider.closed for provider in providers)
+    assert CityRunStore(root).load("fallback-provider-v10").manifest.schema_version == 10
+
+
+def test_schema4_api_enforces_funding_limit_as_budget_skipped_evidence(tmp_path: Path) -> None:
+    from tests.unit.city.test_workbench_providers import _ProviderV2
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    providers = []
+
+    def factory(**kwargs):
+        provider = _ProviderV2(**kwargs)
+        providers.append(provider)
+        return provider
+
+    root = tmp_path / "workspace"
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+        provider_factory_v2=factory,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+        checked = _secure_post(
+            client,
+            f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/check",
+            {"effect_scope": "bounded-signals-v1"},
+        )
+        assert checked.status_code == 200
+        payload = draft_v4_data(mode="local", limit=10)
+        payload["settings"].update(
+            run_id="budget-provider-v10",
+            seed="42",
+            agent_count=10,
+            days=2,
+        )
+        payload["population"]["personas"][0]["count"] = 10
+        payload["cognition"].update(
+            provider_profile_id=profile["profile_id"],
+            provider_revision_sha256=profile["revision_sha256"],
+        )
+        submitted = _secure_post(client, "/api/jobs", payload)
+        assert submitted.status_code == 202
+        terminal = _await_job(client, submitted.json()["status_url"])
+
+    result = terminal["result"]
+    assert terminal["phase"] == "completed"
+    assert result["funded_request_count"] == 10
+    assert result["budget_skipped_count"] == result["selected_request_count"] - 10
+    assert result["budget_skipped_count"] > 0
+    assert result["provider_count"] == 10
+    assert CityRunStore(root).load("budget-provider-v10").manifest.schema_version == 10
+
+
+def test_schema4_api_uses_prevalidated_v2_cache_records_without_provider_calls(
+    tmp_path: Path,
+) -> None:
+    from adlife.adapters.cognition.city_cache_v2 import CityCognitionCacheV2
+    from adlife.city import workbench_transport
+    from adlife.city.provider_profiles import ProviderProfileDraftV1, ProviderProfileRegistry
+    from adlife.city.workbench_runs import WorkbenchCognitionOperationV2, WorkbenchRunRepository
+    from tests.unit.city.test_workbench_providers import _ProviderV2
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+    from tests.unit.cognition.test_city_cache_v2 import _record
+
+    root = tmp_path / "workspace"
+    workspace = prepare_workbench_workspace(root)
+    registry = ProviderProfileRegistry(workspace)
+    profile = registry.create(ProviderProfileDraftV1.model_validate(_local_provider_payload()))
+    payload = draft_v4_data(mode="local", limit=10)
+    payload["settings"].update(run_id="cache-provider-v10", seed="42", days=2)
+    payload["cognition"].update(
+        provider_profile_id=profile.profile_id,
+        provider_revision_sha256=profile.revision_sha256,
+    )
+    validated = construct_workbench_run(workbench_transport.parse_workbench_http_draft(payload))
+    repository = WorkbenchRunRepository(workspace, provider_registry=registry)
+    staged = repository.prepare_scientific_v2(
+        validated,
+        WorkbenchCognitionOperationV2(profile=profile, endpoint=None, credential=None),
+    )
+    cache = CityCognitionCacheV2(workspace)
+    funded_ids = {
+        reservation.request_id
+        for reservation in staged.cognition_input.reservations
+        if reservation.funded
+    }
+    for request in staged.cognition_requests:
+        if request.request_id in funded_ids:
+            record = _record(request, staged.cognition_input)
+            cache.put(record.key, record)
+    assert funded_ids
+
+    providers = []
+
+    def factory(**kwargs):
+        provider = _ProviderV2(**kwargs)
+        providers.append(provider)
+        return provider
+
+    app = _module().create_city_workbench_app(
+        workspace,
+        csrf_token=TOKEN,
+        provider_factory_v2=factory,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        checked = _secure_post(
+            client,
+            f"/api/providers/{profile.profile_id}/revisions/{profile.revision_sha256}/check",
+            {"effect_scope": "bounded-signals-v1"},
+        )
+        assert checked.status_code == 200
+        submitted = _secure_post(client, "/api/jobs", payload)
+        assert submitted.status_code == 202
+        terminal = _await_job(client, submitted.json()["status_url"])
+
+    result = terminal["result"]
+    assert terminal["phase"] == "completed"
+    assert result["cache_count"] == len(funded_ids)
+    assert result["provider_count"] == 0
+    assert len(providers) == 2
+    assert providers[0].calls == 1 and providers[1].calls == 0
+    assert all(provider.closed for provider in providers)
+    assert CityRunStore(root).load("cache-provider-v10").manifest.schema_version == 10
+
+
+def test_endpoint_binding_submission_error_is_constant_and_value_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.adapters.cognition.city_endpoint_policy import CityEndpointBindingError
+
+    secret = "sk-private-endpoint-marker"
+    path = r"C:\private\endpoint-marker"
+
+    def refuse(*_args, **_kwargs):
+        error = CityEndpointBindingError()
+        error.add_note(f"{secret} {path}")
+        raise error
+
+    monkeypatch.setattr(_module().CityJobManager, "submit", refuse)
+    client, _root = _client(tmp_path)
+    with client:
+        response = _secure_post(client, "/api/jobs", _tiny_draft())
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "provider-endpoint-refused",
+        "message": "The provider profile is not allowed by the current startup policy.",
+        "fields": {},
+    }
+    assert secret not in response.text
+    assert path not in response.text
 
 
 @pytest.mark.parametrize("mode", ["rules", "mock"])

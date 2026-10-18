@@ -22,33 +22,105 @@ from tests.unit.city.test_city_run_preparation import _validated
 TERMINAL = {"completed", "failed", "cancelled"}
 
 
-def test_schema4_submission_is_disabled_before_any_side_effect(tmp_path, monkeypatch):
+def test_schema4_provider_check_precedes_destination_and_job_reservation(
+    tmp_path,
+    monkeypatch,
+):
+    from adlife.city.provider_compatibility import (
+        WorkbenchProviderCompatibilityRecord,
+        WorkbenchProviderCompatibilityRegistry,
+        build_workbench_provider_compatibility_key,
+    )
+    from adlife.city.provider_profiles import ProviderProfileRegistry
+    from tests.unit.city.test_provider_profiles import _draft
     from tests.unit.city.test_workbench_transport_v4 import compiled_v4
 
     jobs, runs = _modules()
-    validated = compiled_v4(mode="local")
-    repository = runs.WorkbenchRunRepository(prepare_workbench_workspace(tmp_path / "state"))
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    profiles = ProviderProfileRegistry(workspace)
+    profile = profiles.create(_draft(profile_id="provider-main"))
+    validated = compiled_v4(
+        mode="local",
+        limit=10,
+        mutation=lambda payload: (
+            payload["settings"].update(run_id="ordered-v10"),
+            payload["cognition"].update(provider_revision_sha256=profile.revision_sha256),
+        ),
+    )
+    registry = WorkbenchProviderCompatibilityRegistry()
+    registry.record(
+        WorkbenchProviderCompatibilityRecord(
+            key=build_workbench_provider_compatibility_key(
+                profile,
+                effect_scope="bounded-signals-v1",
+            ),
+            status="compatible",
+            reason_code=None,
+        )
+    )
+    repository = runs.WorkbenchRunRepository(
+        workspace,
+        provider_registry=profiles,
+        compatibility_registry=registry,
+    )
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+    events: list[str] = []
+    original_require = registry.require_success
+    original_bind = repository._endpoint_policy.bind
+    original_resolve = repository._credential_store.resolve
+    original_ensure = repository.ensure_available
+
+    def require_success(key):
+        events.append("compatibility")
+        return original_require(key)
+
+    class EndpointSpy:
+        def bind(self, candidate):
+            events.append("endpoint")
+            assert events == ["compatibility", "endpoint"]
+            return original_bind(candidate)
+
+    class CredentialSpy:
+        def resolve(self, candidate):
+            events.append("credential")
+            assert events == ["compatibility", "endpoint", "credential"]
+            return original_resolve(candidate)
+
+    def ensure(run_id):
+        events.append("destination")
+        assert events == ["compatibility", "endpoint", "credential", "destination"]
+        return original_ensure(run_id)
+
+    monkeypatch.setattr(registry, "require_success", require_success)
+    monkeypatch.setattr(repository, "_endpoint_policy", EndpointSpy())
+    monkeypatch.setattr(repository, "_credential_store", CredentialSpy())
+    monkeypatch.setattr(repository, "ensure_available", ensure)
     manager = jobs.CityJobManager(repository)
-    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+    original_job_id = manager._new_job_id_locked
 
-    def forbidden(*args, **kwargs):
-        raise AssertionError("schema-4 submission touched a side-effect boundary")
+    def new_job_id():
+        events.append("job-id")
+        assert events[-2:] == ["destination", "job-id"]
+        return original_job_id()
 
-    monkeypatch.setattr(manager._operations, "begin_job", forbidden)
-    monkeypatch.setattr(repository, "preflight_cognition", forbidden)
-    monkeypatch.setattr(repository._credential_store, "resolve", forbidden)
-    monkeypatch.setattr(repository, "ensure_available", forbidden)
-    monkeypatch.setattr(manager, "_new_job_id_locked", forbidden)
-    monkeypatch.setattr(manager._executor, "submit", forbidden)
+    monkeypatch.setattr(manager, "_new_job_id_locked", new_job_id)
     try:
-        with pytest.raises(jobs.WorkbenchJobSubmissionError) as error:
-            manager.submit(validated)
-        assert str(error.value) == "Schema-4 workbench execution is not available."
-        assert manager.active_job() is None
-        assert manager.recent_jobs() == ()
-        assert manager._operation_leases == {}
-        assert manager._cognition_operations == {}
-        assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+        submitted = manager.submit(validated)
+        events.append("scheduled")
+        assert submitted.phase == "queued"
+        assert events == [
+            "compatibility",
+            "endpoint",
+            "credential",
+            "destination",
+            "job-id",
+            "scheduled",
+        ]
+        assert deferred.call is not None
+        manager.cancel(submitted.job_id)
+        deferred.run()
+        assert _await_terminal(manager, submitted.job_id).phase == "cancelled"
     finally:
         manager.close()
 
@@ -491,7 +563,18 @@ def test_schema2_jobs_retain_and_verify_the_exact_accepted_schema_pair(
 
 @pytest.mark.parametrize(
     "input_version,run_version",
-    [(1, 8), (2, 7), (3, 8), (2, 9), (True, 7), (2.0, 8), (3, 9.0)],
+    [
+        (1, 8),
+        (2, 7),
+        (3, 8),
+        (2, 9),
+        (3, 10),
+        (4, 9),
+        (True, 7),
+        (2.0, 8),
+        (3, 9.0),
+        (4, "10"),
+    ],
 )
 def test_accepted_settings_refuse_crossed_or_coerced_schema_pairs(
     input_version, run_version
@@ -1227,3 +1310,602 @@ async def test_job_manager_shutdown_cancels_an_active_provider_check(tmp_path: P
     assert providers[0].closed
     assert providers[0].kwargs["credential"].secret.cleared
     assert controller.list().profiles[0].last_check is None
+
+
+def _schema4_validated(*, run_id: str, mode: str = "rules", limit: int | None = None):
+    from tests.unit.city.test_workbench_transport_v4 import compiled_v4
+
+    return compiled_v4(
+        mode=mode,
+        limit=limit,
+        mutation=lambda payload: (
+            payload["settings"].update(
+                run_id=run_id,
+                agent_count=1,
+                days=2,
+            ),
+            payload["population"]["personas"][0].update(count=1),
+        ),
+    )
+
+
+class _GatedCognitionRepositoryV2:
+    def __init__(self, real: Any) -> None:
+        self.real = real
+        self.failure_phase: str | None = None
+        self.failure_type: type[BaseException] = RuntimeError
+        self.planning_entered = threading.Event()
+        self.requesting_entered = threading.Event()
+        self.applying_entered = threading.Event()
+        self.persist_entered = threading.Event()
+        self.verify_entered = threading.Event()
+        self.allow_planning = threading.Event()
+        self.allow_requesting = threading.Event()
+        self.allow_applying = threading.Event()
+        self.allow_persist = threading.Event()
+        self.allow_verify = threading.Event()
+        self.published_bytes: dict[str, bytes] = {}
+
+    def preflight_cognition_v2(self, validated: Any):
+        return self.real.preflight_cognition_v2(validated)
+
+    def preflight_cognition(self, validated: Any):
+        raise AssertionError("schema-4 input reached the legacy preflight")
+
+    def ensure_available(self, run_id: str) -> None:
+        self.real.ensure_available(run_id)
+
+    def prepare(self, validated: Any):
+        raise AssertionError("schema-4 input reached legacy preparation")
+
+    def prepare_scientific_v2(self, validated: Any, operation: Any):
+        self.planning_entered.set()
+        if not self.allow_planning.wait(10):
+            raise RuntimeError("V2 planning gate timed out")
+        if self.failure_phase == "planning-cognition":
+            raise self.failure_type("private V2 planning defect")
+        return self.real.prepare_scientific_v2(validated, operation)
+
+    def prepare_scientific(self, validated: Any, operation: Any):
+        raise AssertionError("schema-4 input reached legacy scientific preparation")
+
+    def resolve_cognition_v2(self, prepared: Any, operation: Any, cancellation: Any):
+        self.requesting_entered.set()
+        if not self.allow_requesting.wait(10):
+            raise RuntimeError("V2 request gate timed out")
+        if self.failure_phase == "requesting-cognition":
+            raise self.failure_type("private V2 request defect")
+        return self.real.resolve_cognition_v2(prepared, operation, cancellation)
+
+    def resolve_cognition(self, prepared: Any, operation: Any, cancellation: Any):
+        raise AssertionError("schema-4 input reached legacy cognition")
+
+    def finalize_cognition_v2(self, prepared: Any, evaluation: Any):
+        self.applying_entered.set()
+        if not self.allow_applying.wait(10):
+            raise RuntimeError("V2 application gate timed out")
+        if self.failure_phase == "applying-cognition":
+            raise self.failure_type("private V2 application defect")
+        return self.real.finalize_cognition_v2(prepared, evaluation)
+
+    def publish(self, prepared: Any):
+        self.persist_entered.set()
+        if not self.allow_persist.wait(10):
+            raise RuntimeError("V10 persistence gate timed out")
+        if self.failure_phase == "persisting":
+            raise self.failure_type("private V10 persistence defect")
+        stored = self.real.publish(prepared)
+        self.published_bytes = {
+            path.name: path.read_bytes() for path in stored.directory.iterdir() if path.is_file()
+        }
+        return stored
+
+    def verified_summary(self, run_id: str):
+        self.verify_entered.set()
+        if not self.allow_verify.wait(10):
+            raise RuntimeError("V10 verification gate timed out")
+        if self.failure_phase == "verifying":
+            raise self.failure_type("private V10 verification defect")
+        return self.real.verified_summary(run_id)
+
+    def release_all(self) -> None:
+        self.allow_planning.set()
+        self.allow_requesting.set()
+        self.allow_applying.set()
+        self.allow_persist.set()
+        self.allow_verify.set()
+
+
+def test_schema4_success_uses_only_v2_paths_and_exact_phase_order(tmp_path: Path) -> None:
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    gated = _GatedCognitionRepositoryV2(runs.WorkbenchRunRepository(workspace))
+    manager = jobs.CityJobManager(gated)
+    try:
+        queued = manager.submit(_schema4_validated(run_id="phase-v10"))
+        assert queued.phase == "queued"
+        assert queued.accepted_settings.model_dump(mode="json") == {
+            "schema_version": 1,
+            "workbench_input_schema_version": 4,
+            "run_schema_version": 10,
+            "city_id": "fictional-grid-v2",
+            "scenario_id": "launch-study",
+            "campaign_id": "fictional-launch",
+            "seed": "42",
+            "agent_count": 1,
+            "days": 2,
+            "response_mode": "deterministic-rules",
+            "effect_scope": "bounded-signals-v1",
+            "cognition_mode": "rules",
+            "provider_profile_id": None,
+            "provider_revision_sha256": None,
+            "funded_response_limit": 60,
+            "aggregate_output_token_ceiling": 0,
+        }
+
+        assert gated.planning_entered.wait(5)
+        assert manager.get(queued.job_id).phase == "planning-cognition"
+        gated.allow_planning.set()
+        assert gated.requesting_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "requesting-cognition"
+        gated.allow_requesting.set()
+        assert gated.applying_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "applying-cognition"
+        gated.allow_applying.set()
+        assert gated.persist_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "persisting"
+        gated.allow_persist.set()
+        assert gated.verify_entered.wait(10)
+        assert manager.get(queued.job_id).phase == "verifying"
+        gated.allow_verify.set()
+
+        completed = _await_terminal(manager, queued.job_id)
+        assert completed.phase == "completed"
+        assert completed.result is not None
+        assert completed.result.run_schema_version == 10
+        assert completed.result.workbench_input_schema_version == 4
+        assert (
+            runs.WorkbenchRunRepository(workspace).load("phase-v10").manifest.schema_version == 10
+        )
+    finally:
+        gated.release_all()
+        manager.close()
+
+
+@pytest.mark.parametrize(
+    ("failure_phase", "error_code"),
+    [
+        ("persisting", "persistence-failed"),
+        ("verifying", "verification-failed"),
+    ],
+)
+def test_schema4_persistence_boundary_distinguishes_precommit_and_postcommit_failure(
+    tmp_path: Path,
+    failure_phase: str,
+    error_code: str,
+) -> None:
+    from adlife.city.run_store import CityRunStore
+
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    gated = _GatedCognitionRepositoryV2(runs.WorkbenchRunRepository(workspace))
+    gated.failure_phase = failure_phase
+    gated.release_all()
+    manager = jobs.CityJobManager(gated)
+    try:
+        submitted = manager.submit(_schema4_validated(run_id=f"fault-{failure_phase}-v10"))
+        terminal = _await_terminal(manager, submitted.job_id)
+        assert terminal.phase == "failed"
+        assert terminal.error is not None and terminal.error.code == error_code
+
+        run_directory = workspace.root / "city-runs" / terminal.run_id
+        if failure_phase == "persisting":
+            assert not run_directory.exists()
+            assert gated.published_bytes == {}
+        else:
+            assert gated.published_bytes
+            assert {
+                path.name: path.read_bytes() for path in run_directory.iterdir() if path.is_file()
+            } == gated.published_bytes
+            assert CityRunStore(workspace.root).load(terminal.run_id).manifest.schema_version == 10
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("workbench_input_schema_version", True),
+        ("run_schema_version", 10.0),
+        ("funded_response_limit", "60"),
+        ("aggregate_output_token_ceiling", False),
+    ],
+)
+def test_v10_accepted_settings_refuse_coerced_schema_and_count_tokens(field, value) -> None:
+    jobs, _ = _modules()
+    document = {
+        "workbench_input_schema_version": 4,
+        "run_schema_version": 10,
+        "city_id": "fictional-grid-v2",
+        "scenario_id": "launch-study",
+        "campaign_id": "fictional-launch",
+        "seed": "42",
+        "agent_count": 1,
+        "days": 1,
+        "response_mode": "deterministic-rules",
+        "effect_scope": "bounded-signals-v1",
+        "cognition_mode": "rules",
+        "funded_response_limit": 60,
+        "aggregate_output_token_ceiling": 0,
+    }
+    document[field] = value
+    with pytest.raises(ValidationError):
+        jobs.WorkbenchAcceptedSettings.model_validate(document)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"effect_scope": "explanation-only"},
+        {"cognition_mode": "rules", "provider_profile_id": "provider-main"},
+        {"cognition_mode": "mock", "provider_revision_sha256": "a" * 64},
+        {"cognition_mode": "local", "provider_profile_id": None},
+        {"cognition_mode": "local", "provider_revision_sha256": None},
+        {"cognition_mode": "remote", "aggregate_output_token_ceiling": 0},
+        {"cognition_mode": "local", "funded_response_limit": 20},
+        {"funded_response_limit": 20},
+    ],
+)
+def test_v10_accepted_settings_refuse_misplaced_provider_and_funding(updates) -> None:
+    jobs, _ = _modules()
+    document = {
+        "workbench_input_schema_version": 4,
+        "run_schema_version": 10,
+        "city_id": "fictional-grid-v2",
+        "scenario_id": "launch-study",
+        "campaign_id": "fictional-launch",
+        "seed": "42",
+        "agent_count": 1,
+        "days": 1,
+        "response_mode": "deterministic-rules",
+        "effect_scope": "bounded-signals-v1",
+        "cognition_mode": "rules",
+        "provider_profile_id": None,
+        "provider_revision_sha256": None,
+        "funded_response_limit": 60,
+        "aggregate_output_token_ceiling": 0,
+    }
+    if updates.get("cognition_mode") in {"local", "remote"}:
+        document.update(
+            provider_profile_id="provider-main",
+            provider_revision_sha256="a" * 64,
+            funded_response_limit=10,
+            aggregate_output_token_ceiling=5_120,
+        )
+    document.update(updates)
+    with pytest.raises(ValidationError):
+        jobs.WorkbenchAcceptedSettings.model_validate(document)
+
+
+def test_legacy_accepted_settings_json_shape_is_byte_stable() -> None:
+    jobs, _ = _modules()
+    settings = jobs.WorkbenchAcceptedSettings(
+        workbench_input_schema_version=1,
+        run_schema_version=7,
+        city_id="fictional-grid-v2",
+        scenario_id="launch-study",
+        campaign_id="fictional-launch",
+        seed="42",
+        agent_count=1,
+        days=1,
+        response_mode="deterministic-rules",
+    )
+    assert settings.model_dump_json() == (
+        '{"schema_version":1,"workbench_input_schema_version":1,'
+        '"run_schema_version":7,"city_id":"fictional-grid-v2",'
+        '"scenario_id":"launch-study","campaign_id":"fictional-launch",'
+        '"seed":"42","agent_count":1,"days":1,'
+        '"response_mode":"deterministic-rules","cognition_mode":null,'
+        '"provider_profile_id":null,"provider_revision_sha256":null,'
+        '"aggregate_output_token_ceiling":null}'
+    )
+    assert "effect_scope" not in settings.model_dump_json()
+    assert "funded_response_limit" not in settings.model_dump_json()
+
+
+def test_schema4_rollback_clears_operation_before_releasing_lease(monkeypatch) -> None:
+    jobs, _ = _modules()
+    providers = importlib.import_module("adlife.city.workbench_providers")
+    events: list[str] = []
+
+    class Operations(providers.WorkbenchOperationState):
+        def finish(self, lease):
+            events.append("finish")
+            super().finish(lease)
+
+    class Operation:
+        def clear(self) -> None:
+            events.append("clear")
+
+    class Repository:
+        def preflight_cognition_v2(self, validated):
+            return Operation()
+
+        def preflight_cognition(self, validated):
+            raise AssertionError("schema-4 used legacy preflight")
+
+        def ensure_available(self, run_id):
+            raise RuntimeError("destination refusal")
+
+    manager = jobs.CityJobManager(Repository(), operations=Operations())
+    try:
+        with pytest.raises(RuntimeError, match="destination refusal"):
+            manager.submit(_schema4_validated(run_id="cleanup-order"))
+        assert events == ["clear", "finish"]
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize(
+    "phase,release_before",
+    [
+        ("planning-cognition", ()),
+        ("requesting-cognition", ("planning",)),
+        ("applying-cognition", ("planning", "requesting")),
+    ],
+)
+def test_schema4_cancellation_wins_at_every_v2_phase(
+    tmp_path: Path,
+    phase: str,
+    release_before: tuple[str, ...],
+) -> None:
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / phase)
+    gated = _GatedCognitionRepositoryV2(runs.WorkbenchRunRepository(workspace))
+    manager = jobs.CityJobManager(gated)
+    submitted = manager.submit(_schema4_validated(run_id=f"cancel-{phase}"))
+    try:
+        for name in release_before:
+            getattr(gated, f"allow_{name}").set()
+            assert getattr(gated, f"{name}_entered").wait(10)
+        entered = getattr(gated, f"{phase.split('-')[0]}_entered")
+        assert entered.wait(10)
+        requested = manager.cancel(submitted.job_id)
+        assert requested.phase == phase
+        getattr(gated, f"allow_{phase.split('-')[0]}").set()
+        terminal = _await_terminal(manager, submitted.job_id)
+        assert terminal.phase == "cancelled"
+        assert terminal.error is None
+        assert not (workspace.root / "city-runs" / f"cancel-{phase}").exists()
+        assert not gated.persist_entered.is_set()
+    finally:
+        gated.release_all()
+        manager.close()
+
+
+@pytest.mark.parametrize(
+    "phase,failure_type",
+    [
+        ("planning-cognition", RuntimeError),
+        ("requesting-cognition", RuntimeError),
+        ("applying-cognition", RuntimeError),
+        ("planning-cognition", KeyboardInterrupt),
+        ("requesting-cognition", KeyboardInterrupt),
+        ("applying-cognition", KeyboardInterrupt),
+    ],
+)
+def test_schema4_v2_phase_faults_are_screened_and_release_all_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    failure_type: type[BaseException],
+) -> None:
+    jobs, runs = _modules()
+    workspace = prepare_workbench_workspace(tmp_path / f"{phase}-{failure_type.__name__}")
+    gated = _GatedCognitionRepositoryV2(runs.WorkbenchRunRepository(workspace))
+    gated.failure_phase = phase
+    gated.failure_type = failure_type
+    gated.release_all()
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+    manager = jobs.CityJobManager(gated)
+    try:
+        submitted = manager.submit(
+            _schema4_validated(run_id=f"fault-{phase[0]}-{failure_type.__name__.lower()[:3]}")
+        )
+        deferred.run()
+        terminal = _await_terminal(manager, submitted.job_id)
+        assert terminal.phase == "failed"
+        assert terminal.error is not None
+        assert terminal.error.model_dump(mode="json") == {
+            "code": "evaluation-failed",
+            "message": "The deterministic city evaluation failed.",
+        }
+        assert manager.active_job() is None
+        assert manager._operation_leases == {}
+        assert manager._cognition_operations == {}
+        assert manager._cancellations == {}
+        assert not (workspace.root / "city-runs").exists()
+    finally:
+        manager.close()
+
+
+def test_schema4_terminal_cleanup_clears_operation_before_releasing_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs, _ = _modules()
+    providers = importlib.import_module("adlife.city.workbench_providers")
+    events: list[str] = []
+
+    class Operations(providers.WorkbenchOperationState):
+        def finish(self, lease):
+            events.append("finish")
+            super().finish(lease)
+
+    class Operation:
+        def clear(self) -> None:
+            events.append("clear")
+
+    class Repository:
+        def preflight_cognition_v2(self, validated):
+            return Operation()
+
+        def ensure_available(self, run_id):
+            return None
+
+    deferred = _DeferredExecutor()
+    monkeypatch.setattr(jobs, "_new_worker_executor", lambda: deferred)
+    manager = jobs.CityJobManager(Repository(), operations=Operations())
+    submitted = manager.submit(_schema4_validated(run_id="terminal-cleanup-order"))
+    try:
+        manager.cancel(submitted.job_id)
+        deferred.run()
+        assert _await_terminal(manager, submitted.job_id).phase == "cancelled"
+        assert events == ["clear", "finish"]
+    finally:
+        manager.close()
+
+
+def test_nested_constructed_v10_settings_and_summary_are_revalidated(tmp_path: Path) -> None:
+    from adlife.city.run_store import CityRunStore
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    jobs, runs = _modules()
+    valid = jobs.WorkbenchAcceptedSettings(
+        workbench_input_schema_version=4,
+        run_schema_version=10,
+        city_id="fictional-grid-v2",
+        scenario_id="launch-study",
+        campaign_id="fictional-launch",
+        seed="42",
+        agent_count=1,
+        days=1,
+        response_mode="deterministic-rules",
+        effect_scope="bounded-signals-v1",
+        cognition_mode="rules",
+        funded_response_limit=60,
+        aggregate_output_token_ceiling=0,
+    )
+    settings_document = valid.model_dump(mode="python")
+    settings_document["run_schema_version"] = 9
+    forged_settings = jobs.WorkbenchAcceptedSettings.model_construct(**settings_document)
+    with pytest.raises(ValidationError):
+        jobs.WorkbenchJobView.model_validate(
+            {
+                "job_id": "job-" + "a" * 32,
+                "run_id": "nested-v10",
+                "accepted_settings": forged_settings,
+                "phase": "queued",
+                "created_at": "2026-10-18T00:00:00.000000Z",
+                "updated_at": "2026-10-18T00:00:00.000000Z",
+                "cancellation_requested": False,
+                "can_cancel": True,
+            }
+        )
+
+    _saved_v10(tmp_path, mode="rules", agents=1, days=2, run_id="nested-v10")
+    summary = runs._summary(CityRunStore(tmp_path).load("nested-v10"))
+    summary_document = summary.model_dump(mode="python")
+    summary_document["applied_response_count"] = summary.response_count + 1
+    forged_summary = runs.WorkbenchRunSummary.model_construct(**summary_document)
+    with pytest.raises(ValidationError):
+        jobs.WorkbenchJobView.model_validate(
+            {
+                "job_id": "job-" + "b" * 32,
+                "run_id": "nested-v10",
+                "accepted_settings": valid,
+                "phase": "completed",
+                "created_at": "2026-10-18T00:00:00.000000Z",
+                "updated_at": "2026-10-18T00:00:00.000000Z",
+                "cancellation_requested": False,
+                "can_cancel": False,
+                "result": forged_summary,
+            }
+        )
+
+    provider_settings = jobs.WorkbenchAcceptedSettings(
+        workbench_input_schema_version=4,
+        run_schema_version=10,
+        city_id="fictional-grid-v2",
+        scenario_id="launch-study",
+        campaign_id="fictional-launch",
+        seed="42",
+        agent_count=1,
+        days=1,
+        response_mode="deterministic-rules",
+        effect_scope="bounded-signals-v1",
+        cognition_mode="local",
+        provider_profile_id="provider-main",
+        provider_revision_sha256="c" * 64,
+        funded_response_limit=10,
+        aggregate_output_token_ceiling=5_120,
+    )
+    provider_summary = runs.WorkbenchRunSummary(
+        run_id="nested-provider-v10",
+        run_schema_version=10,
+        workbench_input_schema_version=4,
+        city_id="fictional-grid-v2",
+        city_schema_version=2,
+        city_sha256="a" * 64,
+        scenario_id="launch-study",
+        scenario_sha256="b" * 64,
+        campaign_ids=("fictional-launch",),
+        channels=("mobile-feed",),
+        seed="42",
+        days=1,
+        agent_count=1,
+        frame_count=1_440,
+        opportunity_count=12,
+        impression_count=12,
+        noticed_count=12,
+        response_count=12,
+        effect_scope="bounded-signals-v1",
+        cognition_mode="local",
+        provider_profile_id="provider-main",
+        provider_revision_sha256="c" * 64,
+        funded_response_limit=10,
+        aggregate_output_token_ceiling=5_120,
+        eligible_response_count=12,
+        selected_request_count=12,
+        funded_request_count=10,
+        budget_skipped_count=2,
+        unselected_response_count=0,
+        applied_response_count=12,
+        rules_count=0,
+        mock_count=0,
+        provider_count=10,
+        cache_count=0,
+        fallback_count=0,
+        neutralized_response_count=2,
+        uncertain_result_count=0,
+        safety_neutralized_result_count=0,
+        inspector_url="/runs/nested-provider-v10",
+    )
+    forged_documents = []
+    wrong_funding = provider_summary.model_dump(mode="python")
+    wrong_funding.update(
+        funded_request_count=9,
+        budget_skipped_count=3,
+        provider_count=9,
+        neutralized_response_count=3,
+    )
+    forged_documents.append(wrong_funding)
+    wrong_city = provider_summary.model_dump(mode="python")
+    wrong_city["city_schema_version"] = 1
+    forged_documents.append(wrong_city)
+    for index, document in enumerate(forged_documents):
+        forged = runs.WorkbenchRunSummary.model_construct(**document)
+        with pytest.raises(ValidationError):
+            jobs.WorkbenchJobView.model_validate(
+                {
+                    "job_id": "job-" + str(index) * 32,
+                    "run_id": "nested-provider-v10",
+                    "accepted_settings": provider_settings,
+                    "phase": "completed",
+                    "created_at": "2026-10-18T00:00:00.000000Z",
+                    "updated_at": "2026-10-18T00:00:00.000000Z",
+                    "cancellation_requested": False,
+                    "can_cancel": False,
+                    "result": forged,
+                }
+            )

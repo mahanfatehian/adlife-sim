@@ -29,6 +29,47 @@ from tests.unit.city import test_workbench_web as web_helpers
 from tests.unit.city.test_workbench_input import draft_v2_data
 
 
+def test_schema4_compatibility_refusal_is_value_free_and_keeps_no_active_job(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    from fastapi.testclient import TestClient
+
+    from adlife.city.provider_compatibility import WorkbenchProviderCompatibilityRequired
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    private = "sk-private-v10-compatibility-marker"
+    absolute_path = r"C:\private\v10-provider-marker.json"
+
+    def refuse(*_args, **_kwargs):
+        error = WorkbenchProviderCompatibilityRequired()
+        error.add_note(f"{private} {absolute_path}")
+        raise error
+
+    monkeypatch.setattr(workbench_web.CityJobManager, "submit", refuse)
+    app = create_city_workbench_app(
+        prepare_workbench_workspace(tmp_path / "workspace"),
+        csrf_token=web_helpers.TOKEN,
+    )
+    payload = draft_v4_data(mode="rules")
+    payload["settings"].update(run_id="screened-v10-refusal", agent_count=1, days=2, seed="42")
+    payload["population"]["personas"][0]["count"] = 1
+    with caplog.at_level(logging.ERROR), TestClient(app, base_url=web_helpers.ORIGIN) as client:
+        response = web_helpers._secure_post(client, "/api/jobs", payload)
+        capabilities = client.get("/api/workbench")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == {
+        "code": "provider-compatibility-required",
+        "message": "A successful bounded-cognition provider compatibility check is required.",
+        "fields": {},
+    }
+    assert private not in response.text + caplog.text
+    assert absolute_path not in response.text + caplog.text
+    assert capabilities.json()["active_job"] is None
+
+
 @pytest.mark.parametrize(
     "document,query",
     [

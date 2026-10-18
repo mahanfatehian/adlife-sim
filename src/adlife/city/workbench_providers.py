@@ -640,7 +640,9 @@ class WorkbenchProviderController:
             credentials if credentials is not None else OSKeyringCityCredentialStore(runtime_policy)
         )
         self._factory = provider_factory or CityOpenAICompatibleProvider
-        self._factory_v2 = provider_factory_v2 or CityOpenAICompatibleProviderV2
+        self._factory_v2 = (
+            CityOpenAICompatibleProviderV2 if provider_factory_v2 is None else provider_factory_v2
+        )
         self.compatibility_registry = (
             WorkbenchProviderCompatibilityRegistry()
             if compatibility_registry is None

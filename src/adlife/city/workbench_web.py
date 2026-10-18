@@ -24,7 +24,10 @@ from adlife.adapters.cognition.city_credentials import (
     CityCredentialStoreError,
     OSKeyringCityCredentialStore,
 )
-from adlife.adapters.cognition.city_endpoint_policy import CityEndpointPolicy
+from adlife.adapters.cognition.city_endpoint_policy import (
+    CityEndpointBindingError,
+    CityEndpointPolicy,
+)
 from adlife.adapters.cognition.city_openai_compatible import CityProviderTransportError
 from adlife.city.analysis import (
     metrics_for_stored_city_run,
@@ -37,6 +40,7 @@ from adlife.city.catalog import (
 from adlife.city.provider_compatibility import (
     ProviderEffectScope,
     WorkbenchProviderCompatibilityRegistry,
+    WorkbenchProviderCompatibilityRequired,
 )
 from adlife.city.provider_profiles import (
     InvalidProviderProfile,
@@ -480,6 +484,7 @@ def create_city_workbench_app(
         credential_store=credentials,
         endpoint_policy=endpoint_policy,
         compatibility_registry=compatibility_registry,
+        provider_factory_v2=provider_factory_v2,
     )
     jobs = CityJobManager(repository, operations=operations)
     city_resolver = WorkbenchCityResolver(workspace)
@@ -874,6 +879,28 @@ def create_city_workbench_app(
             409,
             "worker-unavailable",
             "The workbench worker is not accepting jobs.",
+        )
+
+    @app.exception_handler(WorkbenchProviderCompatibilityRequired)
+    async def provider_compatibility_required_handler(
+        _request: Request,
+        _error: WorkbenchProviderCompatibilityRequired,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-compatibility-required",
+            "A successful bounded-cognition provider compatibility check is required.",
+        )
+
+    @app.exception_handler(CityEndpointBindingError)
+    async def endpoint_binding_error_handler(
+        _request: Request,
+        _error: CityEndpointBindingError,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-endpoint-refused",
+            "The provider profile is not allowed by the current startup policy.",
         )
 
     @app.exception_handler(InvalidProviderProfile)

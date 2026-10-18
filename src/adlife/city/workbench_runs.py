@@ -6,26 +6,31 @@ import asyncio
 import os
 import stat
 from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
 from adlife.adapters.cognition.city_cache import CityCognitionCache
+from adlife.adapters.cognition.city_cache_v2 import CityCognitionCacheV2
 from adlife.adapters.cognition.city_credentials import (
     CityCredentialStore,
     OSKeyringCityCredentialStore,
     ResolvedCredential,
+    SecretBuffer,
 )
 from adlife.adapters.cognition.city_endpoint_policy import (
     BoundProviderEndpoint,
     CityEndpointPolicy,
 )
 from adlife.adapters.cognition.city_openai_compatible import CityOpenAICompatibleProvider
+from adlife.adapters.cognition.city_openai_compatible_v2 import CityOpenAICompatibleProviderV2
 from adlife.adapters.cognition.city_service import (
     CityCognitionCancellation,
     CityCognitionService,
 )
+from adlife.adapters.cognition.city_service_v2 import CityCognitionServiceV2
 from adlife.city.provider_compatibility import (
     WorkbenchProviderCompatibilityRegistry,
     build_workbench_provider_compatibility_key,
@@ -39,19 +44,30 @@ from adlife.city.run_store import CityRunStore, StoredCityRun
 from adlife.city.runs import (
     PreparedCityRun,
     PreparedCityScientificRun,
+    PreparedCityScientificRunV2,
     finalize_city_run,
+    finalize_city_run_v2,
     prepare_city_run,
     prepare_city_scientific_run,
+    prepare_city_scientific_run_v2,
     publish_city_run,
 )
 from adlife.city.workbench_input import WorkbenchRunInputV3, WorkbenchRunInputV4
+from adlife.city.workbench_providers import WorkbenchCheckProviderFactoryV2
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
+from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
+from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionEvaluationV2,
+    CityCognitionInputV2,
+)
+from adlife.core.domain.city_run import CityRunManifestV10
 from adlife.core.domain.person import DomainModel
+from adlife.core.ports.city_cognition import CityCognitionProviderV2
 from adlife.core.ports.run_store import (
     DuplicateRun,
     StorageError,
@@ -59,6 +75,8 @@ from adlife.core.ports.run_store import (
     validate_run_id,
 )
 from adlife.core.simulation.city_cognition import allocate_city_cognition_reservations
+from adlife.core.simulation.city_cognition_v2 import allocate_city_cognition_reservations_v2
+from adlife.core.simulation.spatial_response_v2 import SpatialResponseEvaluationV2
 
 MAX_DISCOVERY_CANDIDATES = 256
 MAX_RUN_PAGE_LIMIT = 100
@@ -77,7 +95,11 @@ class WorkbenchRunSummary(DomainModel):
 
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
-    run_schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8, 9]
+    run_schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    workbench_input_schema_version: Literal[4] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     city_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")
     city_schema_version: Literal[1, 2]
     city_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -98,20 +120,134 @@ class WorkbenchRunSummary(DomainModel):
     impression_count: int = Field(ge=0, le=520_800)
     noticed_count: int = Field(ge=0, le=520_800)
     response_count: int = Field(ge=0, le=520_800)
+    effect_scope: Literal["bounded-signals-v1"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     cognition_mode: Literal["rules", "mock", "local", "remote"] | None = None
     provider_profile_id: str | None = Field(
         default=None,
         pattern=r"^[a-z0-9][a-z0-9-]{0,63}$",
     )
     provider_revision_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
+    funded_response_limit: Literal[10, 20, 40, 60] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     aggregate_output_token_ceiling: int | None = Field(default=None, ge=0, le=92_160)
+    eligible_response_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=520_800,
+        exclude_if=lambda value: value is None,
+    )
+    selected_request_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    funded_request_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    budget_skipped_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    unselected_response_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=520_800,
+        exclude_if=lambda value: value is None,
+    )
+    applied_response_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=520_800,
+        exclude_if=lambda value: value is None,
+    )
+    rules_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    mock_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    provider_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    cache_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    fallback_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    neutralized_response_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=520_800,
+        exclude_if=lambda value: value is None,
+    )
+    uncertain_result_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
+    safety_neutralized_result_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=60,
+        exclude_if=lambda value: value is None,
+    )
     inspector_url: str = Field(pattern=r"^/runs/[a-z0-9][a-z0-9-]{0,39}$", max_length=46)
 
-    @field_validator("run_schema_version", "city_schema_version", mode="before")
+    @field_validator(
+        "run_schema_version",
+        "workbench_input_schema_version",
+        "city_schema_version",
+        "funded_response_limit",
+        "eligible_response_count",
+        "selected_request_count",
+        "funded_request_count",
+        "budget_skipped_count",
+        "unselected_response_count",
+        "applied_response_count",
+        "rules_count",
+        "mock_count",
+        "provider_count",
+        "cache_count",
+        "fallback_count",
+        "neutralized_response_count",
+        "uncertain_result_count",
+        "safety_neutralized_result_count",
+        mode="before",
+    )
     @classmethod
     def exact_schema_versions(cls, value: object) -> object:
+        if value is None:
+            return value
         if type(value) is not int:
-            raise ValueError("run summary schema versions must be exact integers")
+            raise ValueError("run summary version and count values must be exact integers")
         return value
 
     @field_validator("seed")
@@ -129,31 +265,33 @@ class WorkbenchRunSummary(DomainModel):
             raise ValueError("run summary schema 1 requires city schema 1")
         if self.run_schema_version == 2 and self.city_schema_version != 2:
             raise ValueError("run summary schema 2 requires city schema 2")
+        if self.run_schema_version == 10 and self.city_schema_version != 2:
+            raise ValueError("run summary schema 10 requires city schema 2")
         if self.campaign_ids != tuple(sorted(set(self.campaign_ids))):
             raise ValueError("run summary campaign identifiers must be unique and canonical")
         if self.channels != tuple(sorted(set(self.channels))):
             raise ValueError("run summary channels must be unique and canonical")
         if self.run_schema_version in {1, 2, 3} and self.opportunity_count != 0:
             raise ValueError("legacy run summary cannot carry opportunity evidence")
-        if self.run_schema_version in {5, 6, 7, 8, 9}:
+        if self.run_schema_version in {5, 6, 7, 8, 9, 10}:
             if self.impression_count != self.opportunity_count:
                 raise ValueError("run summary impressions must match opportunities")
         elif self.impression_count != 0 or self.noticed_count != 0:
             raise ValueError("run summary cannot carry unavailable attention evidence")
         if self.noticed_count > self.impression_count:
             raise ValueError("run summary notices cannot exceed impressions")
-        if self.run_schema_version in {6, 7, 8, 9}:
+        if self.run_schema_version in {6, 7, 8, 9, 10}:
             if self.response_count != self.noticed_count:
                 raise ValueError("run summary responses must match notices")
         elif self.response_count != 0:
             raise ValueError("run summary cannot carry unavailable response evidence")
         if (self.scenario_id is None) != (self.scenario_sha256 is None):
             raise ValueError("run summary scenario binding must be complete")
-        if self.run_schema_version in {4, 5, 6, 7, 8, 9} and self.scenario_id is None:
+        if self.run_schema_version in {4, 5, 6, 7, 8, 9, 10} and self.scenario_id is None:
             raise ValueError("spatial run summary requires a scenario")
-        if self.run_schema_version in {4, 5, 6, 7, 8, 9} and not self.campaign_ids:
+        if self.run_schema_version in {4, 5, 6, 7, 8, 9, 10} and not self.campaign_ids:
             raise ValueError("spatial run summary requires at least one campaign")
-        if self.run_schema_version in {4, 5, 6, 7, 8, 9} and not self.channels:
+        if self.run_schema_version in {4, 5, 6, 7, 8, 9, 10} and not self.channels:
             raise ValueError("spatial run summary requires at least one channel")
         if self.run_schema_version in {1, 2, 3} and (
             self.scenario_id is not None or self.campaign_ids or self.channels
@@ -165,10 +303,29 @@ class WorkbenchRunSummary(DomainModel):
             self.provider_revision_sha256,
             self.aggregate_output_token_ceiling,
         )
-        if self.run_schema_version != 9:
+        v10_fields = (
+            self.workbench_input_schema_version,
+            self.effect_scope,
+            self.funded_response_limit,
+            self.eligible_response_count,
+            self.selected_request_count,
+            self.funded_request_count,
+            self.budget_skipped_count,
+            self.unselected_response_count,
+            self.applied_response_count,
+            self.rules_count,
+            self.mock_count,
+            self.provider_count,
+            self.cache_count,
+            self.fallback_count,
+            self.neutralized_response_count,
+            self.uncertain_result_count,
+            self.safety_neutralized_result_count,
+        )
+        if self.run_schema_version not in {9, 10}:
             if any(value is not None for value in cognition_fields):
                 raise ValueError("pre-V9 run summary cannot carry cognition settings")
-        else:
+        elif self.run_schema_version == 9:
             if self.cognition_mode is None or self.aggregate_output_token_ceiling is None:
                 raise ValueError("V9 run summary requires cognition settings")
             provider_mode = self.cognition_mode in {"local", "remote"}
@@ -178,6 +335,114 @@ class WorkbenchRunSummary(DomainModel):
                 raise ValueError("V9 run summary provider binding is incomplete or misplaced")
             if not provider_mode and self.aggregate_output_token_ceiling != 0:
                 raise ValueError("offline V9 run summary cannot reserve provider tokens")
+        else:
+            if any(value is None for value in v10_fields):
+                raise ValueError("V10 run summary requires complete bounded cognition evidence")
+            if self.cognition_mode is None or self.aggregate_output_token_ceiling is None:
+                raise ValueError("V10 run summary requires cognition settings")
+            assert self.funded_response_limit is not None
+            provider_mode = self.cognition_mode in {"local", "remote"}
+            if provider_mode:
+                if self.provider_profile_id is None or self.provider_revision_sha256 is None:
+                    raise ValueError("V10 provider binding is incomplete")
+                if self.aggregate_output_token_ceiling != self.funded_response_limit * 512:
+                    raise ValueError("V10 provider funding ceiling is inconsistent")
+            elif (
+                self.provider_profile_id is not None
+                or self.provider_revision_sha256 is not None
+                or self.funded_response_limit != 60
+                or self.aggregate_output_token_ceiling != 0
+            ):
+                raise ValueError("offline V10 provider settings are misplaced")
+            assert self.eligible_response_count is not None
+            assert self.selected_request_count is not None
+            assert self.funded_request_count is not None
+            assert self.budget_skipped_count is not None
+            assert self.unselected_response_count is not None
+            assert self.applied_response_count is not None
+            assert self.rules_count is not None
+            assert self.mock_count is not None
+            assert self.provider_count is not None
+            assert self.cache_count is not None
+            assert self.fallback_count is not None
+            assert self.neutralized_response_count is not None
+            assert self.uncertain_result_count is not None
+            assert self.safety_neutralized_result_count is not None
+            expected_funded = (
+                min(self.selected_request_count, self.funded_response_limit)
+                if provider_mode
+                else self.selected_request_count
+            )
+            if (
+                self.workbench_input_schema_version != 4
+                or self.effect_scope != "bounded-signals-v1"
+                or self.eligible_response_count != self.response_count
+                or self.eligible_response_count
+                != self.selected_request_count + self.unselected_response_count
+                or self.selected_request_count
+                != self.funded_request_count + self.budget_skipped_count
+                or self.funded_request_count != expected_funded
+                or self.budget_skipped_count != self.selected_request_count - expected_funded
+                or self.applied_response_count != self.eligible_response_count
+                or self.rules_count
+                + self.mock_count
+                + self.provider_count
+                + self.cache_count
+                + self.fallback_count
+                + self.budget_skipped_count
+                != self.selected_request_count
+            ):
+                raise ValueError("V10 bounded cognition counts are inconsistent")
+            if self.cognition_mode == "rules" and (
+                self.rules_count != self.selected_request_count
+                or any(
+                    (
+                        self.mock_count,
+                        self.provider_count,
+                        self.cache_count,
+                        self.fallback_count,
+                        self.budget_skipped_count,
+                    )
+                )
+            ):
+                raise ValueError("V10 rules outcomes do not match mode")
+            if self.cognition_mode == "mock" and (
+                self.mock_count != self.selected_request_count
+                or any(
+                    (
+                        self.rules_count,
+                        self.provider_count,
+                        self.cache_count,
+                        self.fallback_count,
+                        self.budget_skipped_count,
+                    )
+                )
+            ):
+                raise ValueError("V10 mock outcomes do not match mode")
+            if provider_mode and (self.rules_count or self.mock_count):
+                raise ValueError("V10 provider outcomes cannot carry offline sources")
+            diagnostic_capacity = self.provider_count + self.cache_count
+            always_neutral = (
+                self.unselected_response_count
+                + self.rules_count
+                + self.fallback_count
+                + self.budget_skipped_count
+            )
+            if (
+                self.uncertain_result_count > diagnostic_capacity
+                or self.safety_neutralized_result_count > diagnostic_capacity
+                or not always_neutral
+                + max(self.uncertain_result_count, self.safety_neutralized_result_count)
+                <= self.neutralized_response_count
+                <= always_neutral
+                + min(
+                    self.uncertain_result_count + self.safety_neutralized_result_count,
+                    diagnostic_capacity,
+                )
+            ):
+                raise ValueError("V10 neutralization counts are inconsistent")
+        if self.run_schema_version != 10 and any(value is not None for value in v10_fields):
+            raise ValueError("pre-V10 run summary cannot carry V10 evidence")
         if self.inspector_url != f"/runs/{self.run_id}":
             raise ValueError("run summary inspector URL does not match its run identifier")
         return self
@@ -231,8 +496,6 @@ class WorkbenchRunPage(DomainModel):
 
 def _summary(stored: StoredCityRun) -> WorkbenchRunSummary:
     manifest = stored.manifest
-    if manifest.schema_version == 10:
-        raise ValueError("V10 workbench runtime support is not available yet")
     scenario = stored.spatial_scenario
     campaign_ids = (
         ()
@@ -245,6 +508,64 @@ def _summary(stored: StoredCityRun) -> WorkbenchRunSummary:
         else tuple(sorted({placement.channel for placement in scenario.placements}))
     )
     cognition_input = stored.cognition_input
+    cognition_evaluation = stored.cognition_evaluation
+    if manifest.schema_version == 10:
+        if (
+            type(manifest) is not CityRunManifestV10
+            or type(stored.workbench_input) is not WorkbenchRunInputV4
+            or type(cognition_input) is not CityCognitionInputV2
+            or type(cognition_evaluation) is not CityCognitionEvaluationV2
+            or type(stored.response_evaluation) is not SpatialResponseEvaluationV2
+        ):
+            raise ValueError("V10 run is missing complete bounded cognition evidence")
+        cognition_summary = cognition_evaluation.summary
+        coverage = cognition_summary.coverage
+        outcomes = cognition_summary.outcomes
+        neutralization = cognition_summary.neutralization
+        provider_profile = cognition_input.provider_profile
+        return WorkbenchRunSummary(
+            run_id=manifest.run_id,
+            run_schema_version=10,
+            workbench_input_schema_version=4,
+            city_id=stored.pack.city_id,
+            city_schema_version=stored.pack.schema_version,
+            city_sha256=manifest.city_sha256,
+            scenario_id=None if scenario is None else scenario.scenario_id,
+            scenario_sha256=None if scenario is None else scenario.fingerprint,
+            campaign_ids=campaign_ids,
+            channels=channels,
+            seed=str(manifest.seed),
+            days=manifest.days,
+            agent_count=manifest.agent_count,
+            frame_count=manifest.frame_count,
+            opportunity_count=manifest.opportunity_count,
+            impression_count=manifest.impression_count,
+            noticed_count=manifest.noticed_count,
+            response_count=manifest.response_count,
+            effect_scope=cognition_input.effect_scope,
+            cognition_mode=cognition_input.mode,
+            provider_profile_id=(None if provider_profile is None else provider_profile.profile_id),
+            provider_revision_sha256=(
+                None if provider_profile is None else provider_profile.revision_sha256
+            ),
+            funded_response_limit=cognition_input.funded_response_limit,
+            aggregate_output_token_ceiling=cognition_input.aggregate_output_token_ceiling,
+            eligible_response_count=coverage.eligible_response_count,
+            selected_request_count=coverage.selected_request_count,
+            funded_request_count=coverage.funded_request_count,
+            budget_skipped_count=coverage.budget_skipped_count,
+            unselected_response_count=coverage.unselected_response_count,
+            applied_response_count=coverage.applied_response_count,
+            rules_count=outcomes.rules,
+            mock_count=outcomes.mock,
+            provider_count=outcomes.provider,
+            cache_count=outcomes.cache,
+            fallback_count=outcomes.fallback,
+            neutralized_response_count=neutralization.neutralized_response_count,
+            uncertain_result_count=neutralization.uncertain_result_count,
+            safety_neutralized_result_count=(neutralization.safety_neutralized_result_count),
+            inspector_url=f"/runs/{manifest.run_id}",
+        )
     provider_profile = None if cognition_input is None else cognition_input.provider_profile
     return WorkbenchRunSummary(
         run_id=manifest.run_id,
@@ -279,6 +600,19 @@ def _summary(stored: StoredCityRun) -> WorkbenchRunSummary:
 @dataclass(slots=True)
 class WorkbenchCognitionOperation:
     """Private operation-scoped provider material, never exposed by job DTOs."""
+
+    profile: ProviderProfileRevisionV1 | None
+    endpoint: BoundProviderEndpoint | None
+    credential: ResolvedCredential | None
+
+    def clear(self) -> None:
+        if self.credential is not None:
+            self.credential.clear()
+
+
+@dataclass(slots=True)
+class WorkbenchCognitionOperationV2:
+    """Private V2 operation material held only until one job reaches a terminal state."""
 
     profile: ProviderProfileRevisionV1 | None
     endpoint: BoundProviderEndpoint | None
@@ -346,7 +680,9 @@ class WorkbenchRunRepository:
         credential_store: CityCredentialStore | None = None,
         endpoint_policy: CityEndpointPolicy | None = None,
         cognition_service: CityCognitionService | None = None,
+        cognition_service_v2: CityCognitionServiceV2 | None = None,
         compatibility_registry: WorkbenchProviderCompatibilityRegistry | None = None,
+        provider_factory_v2: WorkbenchCheckProviderFactoryV2 | None = None,
     ) -> None:
         if not isinstance(workspace, WorkbenchWorkspace):
             raise TypeError("workspace must be a WorkbenchWorkspace")
@@ -371,6 +707,14 @@ class WorkbenchRunRepository:
             if cognition_service is None
             else cognition_service
         )
+        self._cognition_service_v2 = (
+            CityCognitionServiceV2(cache=CityCognitionCacheV2(workspace))
+            if cognition_service_v2 is None
+            else cognition_service_v2
+        )
+        self._provider_factory_v2 = (
+            CityOpenAICompatibleProviderV2 if provider_factory_v2 is None else provider_factory_v2
+        )
 
     def _root(self) -> Path:
         return verify_workbench_workspace(self._workspace)
@@ -390,9 +734,9 @@ class WorkbenchRunRepository:
     ) -> WorkbenchCognitionOperation:
         """Resolve immutable provider inputs before inspecting a run destination."""
         if not isinstance(validated, ValidatedWorkbenchRun) or not isinstance(
-            validated.workbench_input, (WorkbenchRunInputV3, WorkbenchRunInputV4)
+            validated.workbench_input, WorkbenchRunInputV3
         ):
-            raise TypeError("cognition preflight requires a schema-3 or schema-4 workbench run")
+            raise TypeError("cognition preflight requires a schema-3 workbench run")
         cognition = validated.workbench_input.draft.cognition
         if cognition.mode in {"rules", "mock"}:
             return WorkbenchCognitionOperation(profile=None, endpoint=None, credential=None)
@@ -402,13 +746,6 @@ class WorkbenchRunRepository:
             cognition.provider_profile_id,
             cognition.provider_revision_sha256,
         )
-        if isinstance(validated.workbench_input, WorkbenchRunInputV4):
-            self.compatibility_registry.require_success(
-                build_workbench_provider_compatibility_key(
-                    profile,
-                    effect_scope="bounded-signals-v1",
-                )
-            )
         endpoint = self._endpoint_policy.bind(profile)
         credential = self._credential_store.resolve(profile)
         return WorkbenchCognitionOperation(
@@ -417,13 +754,56 @@ class WorkbenchRunRepository:
             credential=credential,
         )
 
+    def preflight_cognition_v2(
+        self,
+        validated: ValidatedWorkbenchRun,
+    ) -> WorkbenchCognitionOperationV2:
+        """Authorize an exact bounded-signals profile before resolving private material."""
+        if (
+            not isinstance(validated, ValidatedWorkbenchRun)
+            or type(validated.workbench_input) is not WorkbenchRunInputV4
+        ):
+            raise TypeError("V2 cognition preflight requires a schema-4 workbench run")
+        cognition = validated.workbench_input.draft.cognition
+        if cognition.mode in {"rules", "mock"}:
+            return WorkbenchCognitionOperationV2(
+                profile=None,
+                endpoint=None,
+                credential=None,
+            )
+        assert cognition.provider_profile_id is not None
+        assert cognition.provider_revision_sha256 is not None
+        profile = self._provider_registry.load(
+            cognition.provider_profile_id,
+            cognition.provider_revision_sha256,
+        )
+        self.compatibility_registry.require_success(
+            build_workbench_provider_compatibility_key(
+                profile,
+                effect_scope="bounded-signals-v1",
+            )
+        )
+        endpoint = self._endpoint_policy.bind(profile)
+        credential = None
+        try:
+            credential = self._credential_store.resolve(profile)
+            return WorkbenchCognitionOperationV2(
+                profile=profile,
+                endpoint=endpoint,
+                credential=credential,
+            )
+        except BaseException:
+            if credential is not None:
+                credential.clear()
+            raise
+
     def prepare(self, validated: ValidatedWorkbenchRun) -> PreparedCityRun:
         """Evaluate one already frozen workbench request without publishing it."""
         if not isinstance(validated, ValidatedWorkbenchRun):
             raise TypeError("validated must be a ValidatedWorkbenchRun")
         workbench_input = validated.workbench_input
-        if isinstance(workbench_input, WorkbenchRunInputV3):
-            raise ValueError("schema-3 workbench runs require cognition preparation")
+        if isinstance(workbench_input, (WorkbenchRunInputV3, WorkbenchRunInputV4)):
+            raise ValueError("schema-3 and schema-4 workbench runs require cognition preparation")
         self._root()
         settings = workbench_input.draft.settings
         return prepare_city_run(
@@ -461,6 +841,161 @@ class WorkbenchRunRepository:
             spatial_response=validated.response_input,
             workbench_input=validated.workbench_input,
             provider_profile=operation.profile,
+        )
+
+    def prepare_scientific_v2(
+        self,
+        validated: ValidatedWorkbenchRun,
+        operation: WorkbenchCognitionOperationV2,
+    ) -> PreparedCityScientificRunV2:
+        """Prepare immutable V2 science without provider, cache, or artifact I/O."""
+        if (
+            not isinstance(validated, ValidatedWorkbenchRun)
+            or type(validated.workbench_input) is not WorkbenchRunInputV4
+        ):
+            raise TypeError("V2 scientific preparation requires a schema-4 workbench run")
+        if not isinstance(operation, WorkbenchCognitionOperationV2):
+            raise TypeError("operation must be a WorkbenchCognitionOperationV2")
+        settings = validated.workbench_input.draft.settings
+        self._root()
+        return prepare_city_scientific_run_v2(
+            validated.pack,
+            run_id=settings.run_id,
+            seed=settings.seed,
+            agent_count=settings.agent_count,
+            days=settings.days,
+            spatial_scenario=validated.scenario,
+            spatial_response=validated.response_input,
+            workbench_input=validated.workbench_input,
+            provider_profile=operation.profile,
+        )
+
+    def _validate_v2_operation(
+        self,
+        prepared: PreparedCityScientificRunV2,
+        operation: WorkbenchCognitionOperationV2,
+    ) -> None:
+        if type(prepared) is not PreparedCityScientificRunV2:
+            raise TypeError("prepared must be a PreparedCityScientificRunV2")
+        if not isinstance(operation, WorkbenchCognitionOperationV2):
+            raise TypeError("operation must be a WorkbenchCognitionOperationV2")
+        frozen = CityCognitionInputV2.model_validate(
+            prepared.cognition_input.model_dump(mode="python")
+        )
+        provider_mode = frozen.mode in {"local", "remote"}
+        material_present = (
+            operation.profile is not None,
+            operation.endpoint is not None,
+            operation.credential is not None,
+        )
+        if provider_mode != all(material_present) or (not provider_mode and any(material_present)):
+            raise ValueError("V2 cognition operation does not match the frozen mode")
+        expected = allocate_city_cognition_reservations_v2(
+            prepared.cognition_requests,
+            mode=frozen.mode,
+            funded_response_limit=frozen.funded_response_limit,
+        )
+        if frozen.reservations != expected:
+            raise ValueError("V2 cognition funding does not match the frozen requests")
+        if not provider_mode:
+            return
+        assert operation.profile is not None
+        assert operation.endpoint is not None
+        assert operation.credential is not None
+        if (
+            type(operation.profile) is not ProviderProfileRevisionV1
+            or type(operation.endpoint) is not BoundProviderEndpoint
+            or type(operation.credential) is not ResolvedCredential
+            or type(operation.credential.secret) is not SecretBuffer
+        ):
+            raise ValueError("V2 cognition operation does not match the frozen provider")
+        snapshot = CityCognitionProviderProfileSnapshotV1.model_validate(
+            operation.profile.model_dump(mode="python")
+        )
+        rebound_endpoint = self._endpoint_policy.bind(operation.profile)
+        endpoint = operation.endpoint
+        credential = operation.credential
+        if (
+            frozen.provider_profile != snapshot
+            or frozen.effective_settings is None
+            or endpoint != rebound_endpoint
+            or endpoint.profile_id != operation.profile.profile_id
+            or endpoint.profile_revision_sha256 != operation.profile.revision_sha256
+            or endpoint.origin_approval_id != operation.profile.origin_approval_id
+            or endpoint.trust_class != operation.profile.mode
+            or endpoint.base_url != operation.profile.base_url
+            or credential.origin_approval_id != operation.profile.origin_approval_id
+            or credential.credential_slot_id != operation.profile.credential_slot_id
+            or credential.secret.cleared
+            or (operation.profile.mode == "local" and credential.source != "local-dummy")
+            or (
+                operation.profile.mode == "remote"
+                and credential.source not in {"environment", "keyring"}
+            )
+        ):
+            raise ValueError("V2 cognition operation does not match the frozen provider")
+
+    def resolve_cognition_v2(
+        self,
+        prepared: PreparedCityScientificRunV2,
+        operation: WorkbenchCognitionOperationV2,
+        cancellation: CityCognitionCancellation,
+    ) -> CityCognitionEvaluationV2:
+        """Resolve V2 terminal evidence while keeping provider ownership asynchronous."""
+        try:
+            self._validate_v2_operation(prepared, operation)
+            if not isinstance(cancellation, CityCognitionCancellation):
+                raise TypeError("cancellation must be a CityCognitionCancellation")
+
+            async def resolve() -> CityCognitionEvaluationV2:
+                provider: CityCognitionProviderV2 | None = None
+                if operation.profile is not None:
+                    assert operation.endpoint is not None
+                    assert operation.credential is not None
+                    candidate = self._provider_factory_v2(
+                        endpoint_policy=self._endpoint_policy,
+                        endpoint=operation.endpoint,
+                        cognition_input=prepared.cognition_input,
+                        credential=operation.credential,
+                    )
+                    close = getattr(candidate, "aclose", None)
+                    if not isinstance(candidate, CityCognitionProviderV2) or not callable(close):
+                        if callable(close):
+                            close_result = close()
+                            if not isawaitable(close_result):
+                                raise TypeError(
+                                    "V2 provider close does not implement the runtime contract"
+                                )
+                            await close_result
+                        raise TypeError("V2 provider does not implement the runtime contract")
+                    provider = candidate
+                return await self._cognition_service_v2.resolve_many(
+                    prepared.cognition_input,
+                    prepared.cognition_requests,
+                    baseline_evaluation=prepared.baseline_evaluation,
+                    provider=provider,
+                    cancellation=cancellation,
+                )
+
+            return asyncio.run(resolve())
+        finally:
+            if isinstance(operation, WorkbenchCognitionOperationV2):
+                operation.clear()
+
+    @staticmethod
+    def finalize_cognition_v2(
+        prepared: PreparedCityScientificRunV2,
+        evaluation: CityCognitionEvaluationV2,
+    ) -> PreparedCityRun:
+        """Purely apply complete validated V2 evidence to the frozen rule baseline."""
+        if type(prepared) is not PreparedCityScientificRunV2:
+            raise TypeError("prepared must be a PreparedCityScientificRunV2")
+        if type(evaluation) is not CityCognitionEvaluationV2:
+            raise TypeError("evaluation must be a CityCognitionEvaluationV2")
+        return finalize_city_run_v2(
+            prepared,
+            cognition_input=prepared.cognition_input,
+            cognition_evaluation=evaluation,
         )
 
     @staticmethod
@@ -628,6 +1163,8 @@ __all__ = [
     "MAX_DISCOVERY_CANDIDATES",
     "MAX_RUN_PAGE_LIMIT",
     "MAX_RUN_PAGE_OFFSET",
+    "WorkbenchCognitionOperation",
+    "WorkbenchCognitionOperationV2",
     "WorkbenchRunPage",
     "WorkbenchRunRepository",
     "WorkbenchRunSummary",
