@@ -7,15 +7,27 @@ import re
 from hashlib import sha256
 from typing import Annotated, Any, Literal, Self, TypeAlias
 
-from pydantic import AfterValidator, Field, field_validator, model_validator
+from pydantic import AfterValidator, ConfigDict, Field, field_validator, model_validator
 
 from adlife.core.domain.city_cognition import (
     MAX_CITY_COGNITION_INPUT_BYTES,
     MAX_CITY_COGNITION_REQUESTS,
     MAX_CITY_COGNITION_STREAM_BYTES,
+    MAX_CITY_COGNITION_USAGE_INTEGER,
     CityCognitionEvaluationV1,
     CityCognitionInputV1,
     CityCognitionOutcomeCountsV1,
+    Hash,
+)
+from adlife.core.domain.city_cognition_v2 import (
+    CityCognitionCoverageCountsV2,
+    CityCognitionEvaluationV2,
+    CityCognitionInputV2,
+    CityCognitionModeV2,
+    CityCognitionNeutralizationCountsV2,
+    CityCognitionOutcomeCountsV2,
+    CityCognitionReasonCountsV2,
+    CityCognitionSummaryV2,
 )
 from adlife.core.domain.person import DomainModel, contains_secret_or_email_text
 from adlife.core.domain.serialization import canonical_json
@@ -365,7 +377,7 @@ class CityRunManifestV5(DomainModel):
         return self
 
 
-class _CityRunResponseManifestBase(DomainModel):
+class _CityRunResponseManifestCommon(DomainModel):
     """Fields shared by response runs with and without workbench provenance."""
 
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -388,8 +400,8 @@ class _CityRunResponseManifestBase(DomainModel):
     attention_stream_bytes: int = Field(ge=0, le=1_073_741_824)
     impression_count: int = Field(ge=0, le=520_800)
     noticed_count: int = Field(ge=0, le=520_800)
-    spatial_response_schema_version: Literal[1]
-    spatial_response_model_id: Literal["spatial-response-v1"]
+    spatial_response_schema_version: int
+    spatial_response_model_id: str
     response_input_sha256: str = Field(pattern=_HASH_PATTERN)
     response_stream_sha256: str = Field(pattern=_HASH_PATTERN)
     response_state_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -424,7 +436,6 @@ class _CityRunResponseManifestBase(DomainModel):
         "spatial_scenario_schema_version",
         "spatial_opportunity_schema_version",
         "spatial_attention_schema_version",
-        "spatial_response_schema_version",
         mode="before",
     )
     @classmethod
@@ -475,6 +486,20 @@ class _CityRunResponseManifestBase(DomainModel):
         ):
             raise ValueError("spatial city run place binding must be complete when present")
         return self
+
+
+class _CityRunResponseManifestBase(_CityRunResponseManifestCommon):
+    """Historical exact V1 response pins shared by manifests V6 through V9."""
+
+    spatial_response_schema_version: Literal[1]
+    spatial_response_model_id: Literal["spatial-response-v1"]
+
+    @field_validator("spatial_response_schema_version", mode="before")
+    @classmethod
+    def exact_response_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("spatial schema versions must be integer 1")
+        return value
 
 
 class CityRunManifestV6(_CityRunResponseManifestBase):
@@ -724,6 +749,286 @@ def build_city_cognition_manifest_receipt(
     )
 
 
+class CityCognitionManifestReceiptV2(DomainModel):
+    """Bounded policy and terminal evidence for a causal cognition run."""
+
+    model_config = ConfigDict(hide_input_in_errors=True, revalidate_instances="always")
+
+    cognition_input_sha256: Hash
+    cognition_input_bytes: int = Field(ge=1, le=131_073)
+    causal_contract_sha256: Hash
+    request_schema_version: Literal[2]
+    result_schema_version: Literal[2]
+    effect_scope: Literal["bounded-signals-v1"]
+    mode: CityCognitionModeV2
+    prompt_contract_version: Literal[2]
+    prompt_contract_sha256: Hash
+    result_schema_contract_version: Literal[2]
+    result_schema_contract_sha256: Hash
+    selection_policy_version: Literal[2]
+    selection_policy_sha256: Hash
+    fallback_policy_version: Literal[2]
+    fallback_policy_sha256: Hash
+    mock_policy_version: Literal[1]
+    mock_policy_sha256: Hash
+    influence_policy_version: Literal[1]
+    influence_policy_sha256: Hash
+    provider_profile_snapshot_sha256: Hash | None
+    provider_revision_sha256: Hash | None
+    effective_settings_sha256: Hash
+    budget_allocation_sha256: Hash
+    funded_response_limit: Literal[10, 20, 40, 60]
+    coverage: CityCognitionCoverageCountsV2
+    outcomes: CityCognitionOutcomeCountsV2
+    reasons: CityCognitionReasonCountsV2
+    neutralization: CityCognitionNeutralizationCountsV2
+    attempt_count: int = Field(ge=0, le=240)
+    prompt_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
+    completion_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
+    terminal_stream_sha256: Hash
+    terminal_stream_bytes: int = Field(ge=0, le=1_048_576)
+    terminal_record_count: int = Field(ge=0, le=60)
+    summary_sha256: Hash
+
+    @field_validator(
+        "request_schema_version",
+        "result_schema_version",
+        "prompt_contract_version",
+        "result_schema_contract_version",
+        "selection_policy_version",
+        "fallback_policy_version",
+        mode="before",
+    )
+    @classmethod
+    def exact_v2_versions(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("city cognition V2 receipt versions must be integer 2")
+        return value
+
+    @field_validator("mock_policy_version", "influence_policy_version", mode="before")
+    @classmethod
+    def exact_v1_policy_versions(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("city cognition receipt policy versions must be integer 1")
+        return value
+
+    @field_validator("funded_response_limit", mode="before")
+    @classmethod
+    def exact_funded_limit(cls, value: object) -> object:
+        if type(value) is not int or value not in {10, 20, 40, 60}:
+            raise ValueError("funded_response_limit must be integer 10, 20, 40, or 60")
+        return value
+
+    @model_validator(mode="after")
+    def complete_receipt(self) -> Self:
+        summary_fields = set(CityCognitionSummaryV2.model_fields) - {"schema_version", "disclosure"}
+        receipt_fields = self.model_dump(mode="json")
+        CityCognitionSummaryV2.model_validate_json(
+            canonical_json(
+                {name: receipt_fields[name] for name in summary_fields}
+                | {
+                    "schema_version": 2,
+                    "disclosure": "synthetic-bounded-cognition-not-observed-behavior",
+                }
+            )
+        )
+        offline = self.mode in {"rules", "mock"}
+        if (self.provider_profile_snapshot_sha256 is None) != offline or (
+            self.provider_revision_sha256 is None
+        ) != offline:
+            raise ValueError(
+                "city cognition receipt requires a complete mode-specific provider binding"
+            )
+        if offline and self.funded_response_limit != 60:
+            raise ValueError("offline cognition requires the complete local funded limit")
+        if self.coverage.funded_request_count != min(
+            self.coverage.selected_request_count, self.funded_response_limit
+        ):
+            raise ValueError("receipt funding does not match the canonical prefix")
+        if self.terminal_record_count == 0:
+            if self.terminal_stream_bytes or self.terminal_stream_sha256 != sha256(b"").hexdigest():
+                raise ValueError("empty cognition receipt requires empty stream bytes")
+        elif self.terminal_stream_bytes == 0:
+            raise ValueError("nonempty cognition receipt requires stream bytes")
+        return self
+
+
+def build_city_cognition_manifest_receipt_v2(
+    cognition_input: CityCognitionInputV2,
+    cognition_evaluation: CityCognitionEvaluationV2,
+) -> CityCognitionManifestReceiptV2:
+    """Derive receipt facts only from deeply revalidated frozen V2 evidence."""
+    if type(cognition_input) is not CityCognitionInputV2:
+        raise TypeError("cognition_input must be a CityCognitionInputV2")
+    if type(cognition_evaluation) is not CityCognitionEvaluationV2:
+        raise TypeError("cognition_evaluation must be a CityCognitionEvaluationV2")
+    try:
+        checked_input = CityCognitionInputV2.model_validate_json(
+            json.dumps(
+                cognition_input.model_dump(mode="json", warnings="none"),
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+        )
+        checked_evaluation = CityCognitionEvaluationV2.model_validate_json(
+            json.dumps(
+                cognition_evaluation.model_dump(mode="json", warnings="none"),
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+        )
+    except ValueError:
+        raise ValueError("city cognition V2 evidence failed receipt validation") from None
+    if (
+        checked_evaluation.cognition_input_sha256 != checked_input.fingerprint
+        or checked_evaluation.run_input_sha256 != checked_input.run_input_sha256
+        or checked_evaluation.effect_scope != checked_input.effect_scope
+        or checked_evaluation.mode != checked_input.mode
+        or len(checked_evaluation.records) != len(checked_input.reservations)
+    ):
+        raise ValueError("city cognition V2 evaluation does not match its frozen input")
+    profile, settings = checked_input.provider_profile, checked_input.effective_settings
+    for record, reservation in zip(
+        checked_evaluation.records, checked_input.reservations, strict=True
+    ):
+        if settings is not None and record.attempt_count > (
+            1 + settings.transient_retries + settings.repair_attempts
+        ):
+            raise ValueError("city cognition terminal attempts exceed frozen effective settings")
+        if (
+            record.selection_index != reservation.selection_index
+            or record.request_id != reservation.request_id
+            or record.request_record_sha256 != reservation.request_record_sha256
+            or (record.source == "budget-skipped") == reservation.funded
+            or record.provider_profile_id != (None if profile is None else profile.profile_id)
+            or record.provider_revision_sha256
+            != (None if profile is None else profile.revision_sha256)
+            or record.provider_profile_snapshot_sha256
+            != (None if profile is None else profile.fingerprint)
+            or record.provider_protocol != (None if profile is None else profile.protocol)
+            or record.provider_effective_settings_sha256
+            != (None if settings is None else settings.fingerprint)
+        ):
+            raise ValueError(
+                "city cognition terminals do not match frozen funding and provider bindings"
+            )
+    contract, summary = checked_input.causal_contract, checked_evaluation.summary
+    facts = {
+        name: getattr(contract, name)
+        for name in (
+            "prompt_contract_version",
+            "prompt_contract_sha256",
+            "result_schema_contract_sha256",
+            "selection_policy_version",
+            "selection_policy_sha256",
+            "fallback_policy_version",
+            "fallback_policy_sha256",
+            "mock_policy_version",
+            "mock_policy_sha256",
+            "influence_policy_version",
+            "influence_policy_sha256",
+        )
+    }
+    facts.update(
+        {
+            name: getattr(summary, name)
+            for name in (
+                "coverage",
+                "outcomes",
+                "reasons",
+                "neutralization",
+                "attempt_count",
+                "prompt_tokens",
+                "completion_tokens",
+                "terminal_stream_sha256",
+                "terminal_stream_bytes",
+                "terminal_record_count",
+            )
+        }
+    )
+    facts.update(
+        cognition_input_sha256=checked_input.fingerprint,
+        cognition_input_bytes=len((canonical_json(checked_input) + "\n").encode("utf-8")),
+        causal_contract_sha256=checked_input.causal_contract_sha256,
+        request_schema_version=2,
+        result_schema_version=2,
+        effect_scope=checked_input.effect_scope,
+        mode=checked_input.mode,
+        result_schema_contract_version=contract.result_schema_version,
+        provider_profile_snapshot_sha256=None if profile is None else profile.fingerprint,
+        provider_revision_sha256=None if profile is None else profile.revision_sha256,
+        effective_settings_sha256=(
+            settings.fingerprint
+            if settings is not None
+            else sha256(canonical_json({"effective_settings": None}).encode("utf-8")).hexdigest()
+        ),
+        budget_allocation_sha256=sha256(
+            canonical_json(
+                {
+                    "aggregate_output_token_ceiling": checked_input.aggregate_output_token_ceiling,
+                    "reservations": [
+                        item.model_dump(mode="json", warnings="none")
+                        for item in checked_input.reservations
+                    ],
+                }
+            ).encode("utf-8")
+        ).hexdigest(),
+        funded_response_limit=checked_input.funded_response_limit,
+        summary_sha256=sha256((canonical_json(summary) + "\n").encode("utf-8")).hexdigest(),
+    )
+    return CityCognitionManifestReceiptV2.model_validate(facts)
+
+
+class CityRunManifestV10(_CityRunResponseManifestCommon):
+    """A schema-4 workbench run with frozen causal and dual-state evidence."""
+
+    model_config = ConfigDict(hide_input_in_errors=True, revalidate_instances="always")
+
+    schema_version: Literal[10]
+    spatial_response_schema_version: Literal[2]
+    spatial_response_model_id: Literal["spatial-response-v2"]
+    workbench_input_schema_version: Literal[4]
+    workbench_input_sha256: Hash
+    baseline_response_count: int = Field(ge=0, le=520_800)
+    applied_response_count: int = Field(ge=0, le=520_800)
+    dual_state_update_count: int = Field(ge=0, le=520_800)
+    final_cognition_state_count: int = Field(ge=1, le=600)
+    rule_state_document_sha256: Hash
+    cognition_state_document_sha256: Hash
+    influence_policy_id: Literal["city-cognition-influence-v1"]
+    influence_policy_sha256: Hash
+    cognition: CityCognitionManifestReceiptV2
+
+    @field_validator("spatial_response_schema_version", mode="before")
+    @classmethod
+    def exact_response_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("spatial_response_schema_version must be integer 2")
+        return value
+
+    @field_validator("workbench_input_schema_version", mode="before")
+    @classmethod
+    def exact_workbench_input_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 4:
+            raise ValueError("workbench_input_schema_version must be integer 4")
+        return value
+
+    @model_validator(mode="after")
+    def complete_dual_state_bindings(self) -> Self:
+        if (
+            self.response_count != self.baseline_response_count
+            or self.response_count != self.applied_response_count
+            or self.response_count != self.cognition.coverage.eligible_response_count
+            or self.state_update_count != self.dual_state_update_count
+            or self.final_state_count != self.final_cognition_state_count
+            or self.influence_policy_sha256 != self.cognition.influence_policy_sha256
+        ):
+            raise ValueError("V10 response, dual-state, and cognition bindings do not match")
+        return self
+
+
 CityRunManifestDocument: TypeAlias = (
     CityRunManifest
     | CityRunManifestV2
@@ -734,6 +1039,7 @@ CityRunManifestDocument: TypeAlias = (
     | CityRunManifestV7
     | CityRunManifestV8
     | CityRunManifestV9
+    | CityRunManifestV10
 )
 
 
@@ -784,11 +1090,14 @@ def parse_city_run_manifest_json(document: str | bytes) -> CityRunManifestDocume
         return CityRunManifestV8.model_validate_json(normalized)
     if version == 9:
         return CityRunManifestV9.model_validate_json(normalized)
+    if version == 10:
+        return CityRunManifestV10.model_validate_json(normalized)
     raise ValueError("unsupported city run manifest schema_version")
 
 
 __all__ = [
     "CityCognitionManifestReceiptV1",
+    "CityCognitionManifestReceiptV2",
     "CityRunManifest",
     "CityRunManifestDocument",
     "CityRunManifestV2",
@@ -799,8 +1108,10 @@ __all__ = [
     "CityRunManifestV7",
     "CityRunManifestV8",
     "CityRunManifestV9",
+    "CityRunManifestV10",
     "CityTraceSummary",
     "PackageVersion",
     "build_city_cognition_manifest_receipt",
+    "build_city_cognition_manifest_receipt_v2",
     "parse_city_run_manifest_json",
 ]

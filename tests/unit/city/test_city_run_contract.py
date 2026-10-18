@@ -541,10 +541,10 @@ def test_v7_manifest_refuses_invalid_workbench_bindings(field: str, value: objec
         model.model_validate({**valid_manifest_v7(), field: value})
 
 
-def test_manifest_parser_refuses_unknown_version_after_v9() -> None:
+def test_manifest_parser_refuses_unknown_version_after_v10() -> None:
     with pytest.raises(ValueError, match="unsupported"):
         city_run.parse_city_run_manifest_json(
-            json.dumps({**valid_manifest_v9(), "schema_version": 10})
+            json.dumps({**valid_manifest_v9(), "schema_version": 11})
         )
 
 
@@ -800,6 +800,18 @@ def test_v6_manifest_preserves_complete_mobility_attention_and_place_invariants(
             valid_manifest_v7,
             2054,
             "e04bcaa1da05e798c34d6272c97a663a704ecebc667fa4238f2e964bea768798",
+        ),
+        (
+            city_run.CityRunManifestV8,
+            valid_manifest_v8,
+            2054,
+            "d453e1b3268097372bcd75da5ae266634970f1fe6808abb3caca9a414e82cda0",
+        ),
+        (
+            city_run.CityRunManifestV9,
+            valid_manifest_v9,
+            3411,
+            "c9c314444b18f619cb51583235f3f1cbe646333d6ac2f5b5e09e52ffcc231947",
         ),
     ],
 )
