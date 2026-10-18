@@ -136,6 +136,21 @@ def test_city_cognition_domain_contract_does_not_import_simulation_models() -> N
     assert not imported
 
 
+def test_city_cognition_v2_domain_contract_does_not_import_simulation_models() -> None:
+    module_path = CORE / "domain" / "city_cognition_v2.py"
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+    assert not {
+        name
+        for name, _ in _imported_names(tree, package="adlife.core.domain")
+        if name == "adlife.core.simulation" or name.startswith("adlife.core.simulation.")
+    }
+    assert {
+        CORE / "domain" / "city_cognition_v2.py",
+        CORE / "simulation" / "city_cognition_v2.py",
+        CORE / "simulation" / "spatial_response_v2.py",
+    } <= set(_core_modules())
+
+
 @pytest.mark.parametrize("module_path", _core_modules(), ids=lambda path: path.name)
 def test_a_core_module_imports_nothing_outside_the_simulation_core(module_path: Path) -> None:
     tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))

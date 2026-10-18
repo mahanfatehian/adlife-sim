@@ -888,25 +888,36 @@ def validate_city_cognition_evaluation_v2(
     *,
     baseline_evaluation: SpatialResponseEvaluation,
 ) -> CityCognitionEvaluationV2:
-    """Prove exact selected evidence and construct the canonical frozen summary."""
+    """Validate complete bound arrivals before normalizing their persisted order."""
+    if type(records) is not tuple:
+        raise TypeError("city cognition records must be a tuple")
+    if len(records) > 60:
+        raise ValueError("too many city cognition terminal arrivals")
     frozen = revalidate_model(cognition_input, CityCognitionInputV2, label="city cognition input")
     checked = _checked_requests(requests)
     baseline = revalidate_model(
         baseline_evaluation, SpatialResponseEvaluation, label="baseline evaluation"
     )
     eligible = _bind_requests_to_baseline(checked, baseline)
-    if type(records) is not tuple:
-        raise TypeError("city cognition records must be a tuple")
     terminals = tuple(
         revalidate_model(r, CityCognitionTerminalRecordV2, label="city cognition terminal")
         for r in records
     )
+    indices = {record.selection_index for record in terminals}
+    if len(indices) != len(terminals) or len({record.request_id for record in terminals}) != len(
+        terminals
+    ):
+        raise ValueError("terminal arrivals require unique selection indices and request IDs")
+    if indices != set(range(len(checked))):
+        raise ValueError("terminal arrival indices must cover the complete selected requests")
     reservations = allocate_city_cognition_reservations_v2(
         checked, mode=frozen.mode, funded_response_limit=frozen.funded_response_limit
     )
     if frozen.reservations != reservations or len(terminals) != len(checked):
         raise ValueError("terminal/request/reservation evidence is incomplete")
-    for index, (request, record) in enumerate(zip(checked, terminals, strict=True)):
+    for record in terminals:
+        index = record.selection_index
+        request = checked[index]
         expected = build_city_cognition_terminal_record_v2(
             request,
             frozen,
@@ -920,6 +931,9 @@ def validate_city_cognition_evaluation_v2(
         )
         if canonical_json(record) != canonical_json(expected):
             raise ValueError("terminal does not match complete request and frozen input bindings")
+    terminals = tuple(
+        sorted(terminals, key=lambda record: (record.selection_index, record.request_id))
+    )
     stream = b"".join((canonical_json(r) + "\n").encode("utf-8") for r in terminals)
     sources = Counter(r.source for r in terminals)
     reasons = Counter(r.reason for r in terminals if r.reason is not None)

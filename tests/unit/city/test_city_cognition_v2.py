@@ -374,11 +374,14 @@ def test_evaluation_rejects_duplicate_or_cross_bound_terminal_records() -> None:
     for bad in (
         records[1:],
         (*records, records[0]),
-        tuple(reversed(records)),
         (records[0], *records[:-1]),
     ):
         with pytest.raises(ValueError):
             validate(frozen, requests, bad, baseline_evaluation=baseline)
+    assert (
+        validate(frozen, requests, tuple(reversed(records)), baseline_evaluation=baseline)
+        == evaluation
+    )
     with pytest.raises(ValueError):
         type(evaluation).model_validate(
             evaluation.model_dump(mode="python") | {"records": tuple(reversed(records))}
