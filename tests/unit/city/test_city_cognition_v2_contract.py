@@ -1619,3 +1619,60 @@ def test_v2_evaluation_counts_sixty_records_and_complete_cached_usage() -> None:
     parsed = module().CityCognitionEvaluationV2.model_validate(evaluation_data((cache,), "remote"))
     assert parsed.summary.attempt_count == 0
     assert parsed.summary.completion_tokens == 2147483647
+
+
+@pytest.mark.parametrize(
+    "boundary", ["contract", "input", "terminal", "mock-terminal", "summary", "evaluation"]
+)
+@pytest.mark.parametrize("replacement", ["unavailable", "future"])
+def test_v2_historical_evidence_ignores_rebound_public_defaults(
+    boundary: str, replacement: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m = module()
+    record = terminal_data("mock" if boundary == "mock-terminal" else "provider")
+    evaluation = evaluation_data((record,), "mock" if boundary == "mock-terminal" else "local")
+    frozen_input = input_data("local")
+    model, data = {
+        "contract": (m.CityCognitionCausalContractV2, frozen_input["causal_contract"]),
+        "input": (m.CityCognitionInputV2, frozen_input),
+        "terminal": (m.CityCognitionTerminalRecordV2, record),
+        "mock-terminal": (m.CityCognitionTerminalRecordV2, record),
+        "summary": (m.CityCognitionSummaryV2, evaluation["summary"]),
+        "evaluation": (m.CityCognitionEvaluationV2, evaluation),
+    }[boundary]
+    historical = model.model_validate(data)
+    wire = historical.model_dump_json()
+    expected = historical.model_dump(mode="json")
+    for name, value in tuple(vars(m).items()):
+        if name.startswith("CITY_COGNITION_"):
+            changed = None
+            if replacement == "future":
+                changed = "future-policy" if isinstance(value, str) else object()
+            monkeypatch.setattr(m, name, changed)
+    assert model.model_validate_json(wire).model_dump(mode="json") == expected
+    assert model.model_validate(historical).model_dump(mode="json") == expected
+
+
+def test_v2_historical_mock_hash_refuses_a_rebound_future_digest_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    m = module()
+    historical = terminal_data("mock")
+    assert m.CityCognitionTerminalRecordV2.model_validate(historical).result.affect == "skeptical"
+    future_prefix = "city-cognition-mock-signal-future\0"
+    future = m.CityCognitionMockPolicyV1.model_construct(
+        **(m.CITY_COGNITION_DEFAULT_MOCK_POLICY_V1.model_dump() | {"digest_prefix": future_prefix})
+    )
+    raw = sha256((future_prefix + historical["request_id"]).encode()).digest()
+    future_result = historical["result"] | dict(
+        affect=("annoyed", "skeptical", "neutral", "curious", "positive")[raw[0] % 5],
+        relevance=("none", "low", "medium", "high")[raw[1] % 4],
+        credibility=("low", "medium", "high")[raw[2] % 3],
+        salience=("none", "low", "medium", "high")[raw[3] % 4],
+    )
+    assert future_result != historical["result"]
+    forged = rehash_record(historical | {"result": future_result})
+    assert forged["mock_policy_sha256"] == historical["mock_policy_sha256"]
+    monkeypatch.setattr(m, "CITY_COGNITION_DEFAULT_MOCK_POLICY_V1", future)
+    with pytest.raises(ValidationError, match="mock result"):
+        m.CityCognitionTerminalRecordV2.model_validate(forged)
