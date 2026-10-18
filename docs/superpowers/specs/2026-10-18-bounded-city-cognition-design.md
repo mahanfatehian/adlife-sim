@@ -676,8 +676,20 @@ V2 freezes these canonical decoded-document ceilings:
 | dual response state document | 8,388,608 |
 | response summary | 131,072 |
 
-Serialization and loading enforce the same limit. Maximum-size construction tests prove
-the permitted 30-agent, 7-day run fits before the constants are accepted.
+Serialization and loading enforce the same combined canonical-document admission limits.
+Individually valid maximum-length fields need not be jointly admissible: a complete
+internal request exceeding 8,192 canonical UTF-8 bytes is refused, not truncated. The same
+rule applies to every document ceiling above.
+
+At 30 agents and 7 days, raw field-valid directed-city scenarios may produce up to the
+analyzed 621,600 frequency-capped opportunity candidates:
+`30 * 7 * (20 * 100 phone + 480 * 2 roadside)`. A directed road may occur on both daily
+legs. Existing opportunity, attention, and baseline evaluation admission caps limit their
+opportunity/response counts to 520,800; counts above that limit are deterministically
+refused, not truncated. V10 capacity proofs must use validated, admitted upstream
+evaluations and jointly admissible document fields, rather than assume every structurally
+valid raw scenario fits. These admission constraints preserve all frozen ceilings and
+existing V1/V9 behavior.
 
 The store stages and verifies every file, flushes required data, and publishes `run.json`
 last through the existing no-clobber atomic contract. Failure or cancellation before that
