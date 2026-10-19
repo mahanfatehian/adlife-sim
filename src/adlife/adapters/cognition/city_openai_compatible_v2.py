@@ -27,6 +27,7 @@ from adlife.adapters.cognition.city_provider_transport import (
     CityProviderProtocolError,
     CityProviderTransportError,
     CityProviderUnavailableError,
+    validated_check_attempt_timeout_seconds,
 )
 from adlife.core.domain.city_cognition import MAX_CITY_COGNITION_USAGE_INTEGER
 from adlife.core.domain.city_cognition_v2 import (
@@ -268,7 +269,14 @@ class CityOpenAICompatibleProviderV2:
         cognition_input: CityCognitionInputV2,
         credential: ResolvedCredential,
         network_backend_factory: Callable[[], httpcore.AsyncNetworkBackend] | None = None,
+        check_attempt_timeout_seconds: int | None = None,
     ) -> None:
+        """Bind one frozen input; only an explicit compatibility check may extend its deadline.
+
+        ``check_attempt_timeout_seconds`` replaces the frozen per-attempt transport
+        timeout for this provider instance alone. Funded runs never pass it, so their
+        attempts keep the frozen effective settings.
+        """
         failure = ""
         try:
             self._initialize(
@@ -277,6 +285,7 @@ class CityOpenAICompatibleProviderV2:
                 cognition_input=cognition_input,
                 credential=credential,
                 network_backend_factory=network_backend_factory,
+                check_attempt_timeout_seconds=check_attempt_timeout_seconds,
             )
             return
         except CityEndpointBindingError:
@@ -288,6 +297,7 @@ class CityOpenAICompatibleProviderV2:
         # Forged endpoint/credential metadata can itself contain a secret. Discard
         # the complete initialization frame, including the uninitialized instance.
         del self, endpoint_policy, endpoint, cognition_input, credential, network_backend_factory
+        del check_attempt_timeout_seconds
         if failure == "binding":
             raise CityEndpointBindingError from None
         if failure == "input":
@@ -302,6 +312,7 @@ class CityOpenAICompatibleProviderV2:
         cognition_input: CityCognitionInputV2,
         credential: ResolvedCredential,
         network_backend_factory: Callable[[], httpcore.AsyncNetworkBackend] | None,
+        check_attempt_timeout_seconds: int | None,
     ) -> None:
         checked_input = None
         if (
@@ -352,12 +363,15 @@ class CityOpenAICompatibleProviderV2:
             )
         if not credential_is_bound:
             raise CityEndpointBindingError from None
+        check_timeout = validated_check_attempt_timeout_seconds(check_attempt_timeout_seconds)
         self._endpoint, self._cognition_input, self._closed = endpoint, checked_input, False
         self._transport = CityProviderHttpTransport(
             endpoint_policy=endpoint_policy,
             endpoint=endpoint,
             credential=credential,
-            attempt_timeout_seconds=settings.attempt_timeout_seconds,
+            attempt_timeout_seconds=(
+                settings.attempt_timeout_seconds if check_timeout is None else check_timeout
+            ),
             max_content_length_bytes=checked_input.max_wire_response_bytes,
             max_wire_response_bytes=checked_input.max_wire_response_bytes,
             max_decoded_response_bytes=checked_input.max_wire_response_bytes,

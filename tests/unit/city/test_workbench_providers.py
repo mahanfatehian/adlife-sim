@@ -5,6 +5,7 @@ import importlib
 import json
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -925,20 +926,144 @@ async def test_check_refuses_and_clears_a_misbound_resolved_credential(
     assert providers == []
 
 
-async def test_deadline_interrupts_hanging_attempt_and_closes_provider(tmp_path: Path) -> None:
+@pytest.mark.parametrize("trust", ["local", "remote"])
+async def test_deadline_interrupts_hanging_attempt_and_closes_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trust: str
+) -> None:
+    module = importlib.import_module("adlife.city.workbench_providers")
+    monkeypatch.setattr(module, "_LOCAL_CHECK_DEADLINE_SECONDS", 0.3)
+    monkeypatch.setattr(module, "_REMOTE_CHECK_DEADLINE_SECONDS", 0.3)
+
     def factory(**kwargs: object) -> _Provider:
         provider = _Provider(**kwargs)
         provider.release = asyncio.Event()
         return provider
 
     controller, _, providers = _controller(tmp_path, provider_factory=factory)
-    local = controller.create(_draft())
-    result = await asyncio.wait_for(controller.check(local.profile_id, local.revision_sha256), 12)
+    if trust == "local":
+        profile = controller.create(_draft())
+    else:
+        profile = _remote(controller)
+        controller.store_credential(
+            profile.profile_id, profile.revision_sha256, SecretBuffer(SECRET)
+        )
+    result = await asyncio.wait_for(
+        controller.check(profile.profile_id, profile.revision_sha256), 12
+    )
     assert result.status == "incompatible"
     assert result.reason_code == "timeout-exhausted"
     assert providers[0].closed
     assert providers[0].calls == 1
     assert providers[0].kwargs["credential"].secret.cleared
+
+
+def test_check_deadlines_keep_remote_short_and_wait_out_a_cold_local_model() -> None:
+    module = importlib.import_module("adlife.city.workbench_providers")
+    assert module._REMOTE_CHECK_DEADLINE_SECONDS == 10
+    # A 7B local model loads in about 12 s from the OS file cache and in up to about
+    # 100 s on the first load after a reboot; cancelling the request aborts the load.
+    assert 100 <= module._LOCAL_CHECK_DEADLINE_SECONDS <= 120
+    assert module._check_deadline_seconds("remote") == module._REMOTE_CHECK_DEADLINE_SECONDS
+    assert module._check_deadline_seconds("local") == module._LOCAL_CHECK_DEADLINE_SECONDS
+
+
+class _SlowLoadProvider(_Provider):
+    """Answers like a local model server that first loads the model into memory."""
+
+    async def call(self, request: CityCognitionRequestV1) -> CityProviderAttemptV1:
+        await asyncio.sleep(0.6)
+        return await super().call(request)
+
+
+class _SlowLoadProviderV2(_ProviderV2):
+    async def call(self, request):
+        await asyncio.sleep(0.6)
+        return await super().call(request)
+
+
+@pytest.mark.parametrize("scope", ["explanation-only", "bounded-signals-v1"])
+async def test_local_check_outlasts_a_cold_model_load_beyond_the_remote_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scope: str
+) -> None:
+    module = importlib.import_module("adlife.city.workbench_providers")
+    monkeypatch.setattr(module, "_REMOTE_CHECK_DEADLINE_SECONDS", 0.2)
+    monkeypatch.setattr(module, "_LOCAL_CHECK_DEADLINE_SECONDS", 5)
+    original, _, v1_providers = _controller(tmp_path, provider_factory=_SlowLoadProvider)
+    v2_providers: list[_ProviderV2] = []
+
+    def factory_v2(**kwargs: object) -> _ProviderV2:
+        provider = _SlowLoadProviderV2(**kwargs)
+        v2_providers.append(provider)
+        return provider
+
+    controller = WorkbenchProviderController(
+        original.registry,
+        original._policy,
+        credentials=original._credentials,
+        operations=original.operations,
+        provider_factory=original._factory,
+        provider_factory_v2=factory_v2,
+    )
+    local = controller.create(_draft())
+    remote = _remote(controller)
+    controller.store_credential(remote.profile_id, remote.revision_sha256, SecretBuffer(SECRET))
+    local_result = await controller.check(
+        local.profile_id, local.revision_sha256, effect_scope=scope
+    )
+    remote_result = await controller.check(
+        remote.profile_id, remote.revision_sha256, effect_scope=scope
+    )
+    assert (local_result.status, local_result.reason_code) == ("compatible", None)
+    assert (remote_result.status, remote_result.reason_code) == (
+        "incompatible",
+        "timeout-exhausted",
+    )
+    providers = v1_providers if scope == "explanation-only" else v2_providers
+    assert len(providers) == 2
+    assert all(provider.closed for provider in providers)
+    assert all(provider.kwargs["credential"].secret.cleared for provider in providers)
+
+
+@pytest.mark.parametrize("scope", ["explanation-only", "bounded-signals-v1"])
+def test_default_check_providers_extend_only_the_local_transport_deadline(
+    tmp_path: Path, scope: str
+) -> None:
+    module = importlib.import_module("adlife.city.workbench_providers")
+    controller, _, _ = _controller(tmp_path)
+    view = controller.create(_draft())
+    local = controller.registry.load(view.profile_id, view.revision_sha256)
+    remote = _remote(controller)
+    controller.store_credential(remote.profile_id, remote.revision_sha256, SecretBuffer(SECRET))
+    for profile in (local, remote):
+        endpoint = controller._endpoint_policy.bind(profile)
+        credential = controller._credentials.resolve(profile)
+        if scope == "explanation-only":
+            request = module._compatibility_request()
+            cognition_input = module._compatibility_input(profile, request)
+            snapshot = cognition_input.provider_profile
+            endpoint = replace(endpoint, profile_revision_sha256=snapshot.revision_sha256)
+            create = module._check_provider_v1
+        else:
+            _request, cognition_input = module._compatibility_probe_v2(profile)
+            create = module._check_provider_v2
+        provider = create(
+            endpoint_policy=controller._endpoint_policy,
+            endpoint=endpoint,
+            cognition_input=cognition_input,
+            credential=credential,
+        )
+        frozen_timeout = cognition_input.effective_settings.attempt_timeout_seconds
+        expected = (
+            module._LOCAL_CHECK_DEADLINE_SECONDS if profile.mode == "local" else frozen_timeout
+        )
+        assert provider._transport._attempt_timeout_seconds == expected
+        asyncio.run(provider.aclose())
+        credential.secret.clear()
+    default = WorkbenchProviderController(
+        controller.registry, controller._policy, credentials=controller._credentials
+    )
+    assert default._factory is module._check_provider_v1
+    assert default._factory_v2 is module._check_provider_v2
 
 
 async def test_cancellation_during_provider_close_does_not_save_success(tmp_path: Path) -> None:

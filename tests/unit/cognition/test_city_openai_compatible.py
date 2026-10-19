@@ -1208,6 +1208,78 @@ async def test_nested_unicode_escaped_credential_echo_is_unsafe_not_repairable(
     await provider.aclose()
 
 
+class _SlowStream(_ScriptedStream):
+    """A provider that answers only after a model-load delay."""
+
+    def __init__(self, response: bytes, *, delay: float) -> None:
+        super().__init__(response)
+        self._delay: float | None = delay
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        if self._delay is not None:
+            delay, self._delay = self._delay, None
+            await asyncio.sleep(delay)
+        return await super().read(max_bytes, timeout)
+
+
+class _SlowBackendFactory(_BackendFactory):
+    def __init__(self, responses: Iterable[bytes], *, delay: float) -> None:
+        super().__init__(responses)
+        self._delay = delay
+
+    def __call__(self) -> httpcore.AsyncNetworkBackend:
+        backend = _ScriptedBackend(_SlowStream(self._responses.pop(0), delay=self._delay))
+        self.backends.append(backend)
+        return backend
+
+
+@pytest.mark.parametrize("override", [None, 3])
+async def test_check_timeout_override_extends_only_this_transport_deadline(
+    override: int | None,
+) -> None:
+    request, cognition_input, policy, endpoint, _resolver = _case(timeout=1)
+    factory = _SlowBackendFactory(
+        (_http_response(_completion(json.dumps(_result(request.request_id)))),), delay=1.5
+    )
+    credential = _remote_credential(cognition_input)
+    provider = CityOpenAICompatibleProvider(
+        endpoint_policy=policy,
+        endpoint=endpoint,
+        cognition_input=cognition_input,
+        credential=credential,
+        network_backend_factory=factory,
+        check_attempt_timeout_seconds=override,
+    )
+    try:
+        if override is None:
+            # Runs keep the frozen one-second attempt deadline of this profile.
+            with pytest.raises(CityProviderTimeoutError):
+                await provider.call(request)
+        else:
+            attempt = await provider.call(request)
+            assert attempt.status == "valid"
+        settings = cognition_input.effective_settings
+        assert settings is not None and settings.attempt_timeout_seconds == 1
+    finally:
+        await provider.aclose()
+        credential.secret.clear()
+
+
+@pytest.mark.parametrize("override", [0, 121, -1, True, 1.5, "30"])
+def test_check_timeout_override_refuses_unbounded_or_coerced_values(override: object) -> None:
+    _request, cognition_input, policy, endpoint, _resolver = _case()
+    credential = _remote_credential(cognition_input)
+    with pytest.raises(ValueError, match="check timeout"):
+        CityOpenAICompatibleProvider(
+            endpoint_policy=policy,
+            endpoint=endpoint,
+            cognition_input=cognition_input,
+            credential=credential,
+            check_attempt_timeout_seconds=override,  # type: ignore[arg-type]
+        )
+    credential.secret.clear()
+
+
 class _FailingBackend(_ScriptedBackend):
     def __init__(self) -> None:
         pass

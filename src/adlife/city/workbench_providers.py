@@ -16,7 +16,7 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from threading import RLock
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
@@ -102,6 +102,58 @@ from adlife.core.simulation.city_cognition_v2 import (
 )
 from adlife.core.simulation.spatial_attention import spatial_attention_event_id
 from adlife.core.simulation.spatial_opportunity import spatial_opportunity_id
+
+# A compatibility check is one explicit operator action with its own deadline. A remote
+# origin keeps the short deadline. A loopback model server may first have to load the
+# model into memory (about 12 s for a 7B model from the OS file cache and up to about
+# 100 s on the first load after a reboot), and cancelling the request aborts that load,
+# so a local-trust origin gets one longer attempt. Funded runs keep their frozen
+# per-attempt timeout; only the check transport is extended.
+_REMOTE_CHECK_DEADLINE_SECONDS: Final = 10
+_LOCAL_CHECK_DEADLINE_SECONDS: Final = 120
+
+
+def _check_deadline_seconds(trust_class: Literal["local", "remote"]) -> float:
+    return (
+        _LOCAL_CHECK_DEADLINE_SECONDS if trust_class == "local" else _REMOTE_CHECK_DEADLINE_SECONDS
+    )
+
+
+def _check_attempt_timeout(endpoint: BoundProviderEndpoint) -> int | None:
+    """Only a local-trust check outlasts the frozen per-attempt transport timeout."""
+    return _LOCAL_CHECK_DEADLINE_SECONDS if endpoint.trust_class == "local" else None
+
+
+def _check_provider_v1(
+    *,
+    endpoint_policy: CityEndpointPolicy,
+    endpoint: BoundProviderEndpoint,
+    cognition_input: CityCognitionInputV1,
+    credential: ResolvedCredential,
+) -> CityOpenAICompatibleProvider:
+    return CityOpenAICompatibleProvider(
+        endpoint_policy=endpoint_policy,
+        endpoint=endpoint,
+        cognition_input=cognition_input,
+        credential=credential,
+        check_attempt_timeout_seconds=_check_attempt_timeout(endpoint),
+    )
+
+
+def _check_provider_v2(
+    *,
+    endpoint_policy: CityEndpointPolicy,
+    endpoint: BoundProviderEndpoint,
+    cognition_input: CityCognitionInputV2,
+    credential: ResolvedCredential,
+) -> CityOpenAICompatibleProviderV2:
+    return CityOpenAICompatibleProviderV2(
+        endpoint_policy=endpoint_policy,
+        endpoint=endpoint,
+        cognition_input=cognition_input,
+        credential=credential,
+        check_attempt_timeout_seconds=_check_attempt_timeout(endpoint),
+    )
 
 
 class WorkbenchProviderBusy(RuntimeError):
@@ -639,9 +691,9 @@ class WorkbenchProviderController:
         self._credentials = (
             credentials if credentials is not None else OSKeyringCityCredentialStore(runtime_policy)
         )
-        self._factory = provider_factory or CityOpenAICompatibleProvider
+        self._factory = provider_factory or _check_provider_v1
         self._factory_v2 = (
-            CityOpenAICompatibleProviderV2 if provider_factory_v2 is None else provider_factory_v2
+            _check_provider_v2 if provider_factory_v2 is None else provider_factory_v2
         )
         self.compatibility_registry = (
             WorkbenchProviderCompatibilityRegistry()
@@ -739,7 +791,11 @@ class WorkbenchProviderController:
         *,
         effect_scope: ProviderEffectScope = "explanation-only",
     ) -> WorkbenchProviderCheckResult | WorkbenchProviderCheckResultV2:
-        """Perform one explicit ten-second check; cancellation is never a success."""
+        """Perform one explicit bounded check; cancellation is never a success.
+
+        The deadline is ten seconds for a remote origin and two minutes for a
+        local-trust origin, whose model server may still be loading the model.
+        """
         if effect_scope not in ("explanation-only", "bounded-signals-v1"):
             raise ValueError("provider effect scope is invalid")
         lease = self.operations.begin_check()
@@ -780,6 +836,7 @@ class WorkbenchProviderController:
                 assert credential is not None
                 cancellation.raise_if_cancelled()
                 try:
+                    deadline = _check_deadline_seconds(endpoint.trust_class)
                     if effect_scope == "bounded-signals-v1":
                         request_v2, input_v2 = _compatibility_probe_v2(profile)
                         provider_v2 = self._factory_v2(
@@ -789,7 +846,9 @@ class WorkbenchProviderController:
                             credential=credential,
                         )
                         provider = provider_v2
-                        result = await self._attempt_v2(provider_v2, request_v2, cancellation)
+                        result = await self._attempt_v2(
+                            provider_v2, request_v2, cancellation, deadline=deadline
+                        )
                     else:
                         request = _compatibility_request()
                         cognition_input = _compatibility_input(profile, request)
@@ -804,7 +863,9 @@ class WorkbenchProviderController:
                             credential=credential,
                         )
                         provider = provider_v1
-                        result = await self._attempt(provider_v1, request, cancellation)
+                        result = await self._attempt(
+                            provider_v1, request, cancellation, deadline=deadline
+                        )
                 except CityProviderCallError as error:
                     result = WorkbenchProviderCheckResult(
                         status="incompatible", reason_code=error.reason_code
@@ -883,11 +944,13 @@ class WorkbenchProviderController:
         provider: CityCognitionProviderV2,
         request: CityCognitionRequestV2,
         cancellation: CityCognitionCancellation,
+        *,
+        deadline: float,
     ) -> WorkbenchProviderCheckResult:
         task = cancellation._run_if_active(lambda: asyncio.create_task(provider.call(request)))
         cancelled = asyncio.create_task(cancellation.wait())
         try:
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(deadline):
                 done, _ = await asyncio.wait((task, cancelled), return_when=asyncio.FIRST_COMPLETED)
                 if cancelled in done:
                     raise asyncio.CancelledError("provider check was cancelled")
@@ -927,11 +990,13 @@ class WorkbenchProviderController:
         provider: _CheckProvider,
         request: CityCognitionRequestV1,
         cancellation: CityCognitionCancellation,
+        *,
+        deadline: float,
     ) -> WorkbenchProviderCheckResult:
         task = cancellation._run_if_active(lambda: asyncio.create_task(provider.call(request)))
         cancelled = asyncio.create_task(cancellation.wait())
         try:
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(deadline):
                 done, _ = await asyncio.wait((task, cancelled), return_when=asyncio.FIRST_COMPLETED)
                 if cancelled in done:
                     raise asyncio.CancelledError("provider check was cancelled")

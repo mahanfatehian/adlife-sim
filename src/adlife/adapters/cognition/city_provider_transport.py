@@ -29,6 +29,9 @@ from adlife.adapters.cognition.city_endpoint_policy import (
 from adlife.core.domain.city_cognition import CityCognitionRuntimeFallbackReason
 from adlife.core.domain.serialization import canonical_json
 
+# An explicit compatibility check may wait longer than a frozen run attempt for a
+# loopback model server that is still loading its model; this bounds that override.
+MAX_CITY_PROVIDER_CHECK_ATTEMPT_TIMEOUT_SECONDS = 120
 _JSON_CONTENT_TYPES = frozenset({"application/json"})
 _TRANSIENT_SERVER_STATUSES = frozenset({500, 502, 503, 504})
 _AUTHENTICATION_STATUSES = frozenset({401, 403})
@@ -121,6 +124,18 @@ class CityProviderTransportError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("city cognition provider transport failed unexpectedly")
+
+
+def validated_check_attempt_timeout_seconds(value: object) -> int | None:
+    """Admit an explicit compatibility-check attempt deadline; runs never pass one."""
+    if value is None:
+        return None
+    if type(value) is not int or not 1 <= value <= MAX_CITY_PROVIDER_CHECK_ATTEMPT_TIMEOUT_SECONDS:
+        raise ValueError(
+            "city provider check timeout must be an integer from 1 to "
+            f"{MAX_CITY_PROVIDER_CHECK_ATTEMPT_TIMEOUT_SECONDS} seconds"
+        )
+    return value
 
 
 @dataclass(frozen=True, slots=True)

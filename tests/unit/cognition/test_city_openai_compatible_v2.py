@@ -426,3 +426,55 @@ async def test_v2_uses_shared_transport_refusals(kind) -> None:
     if kind == "peer":
         assert factory.backends[0].stream.writes == []
     await provider.aclose()
+
+
+@pytest.mark.parametrize("override", [None, 3])
+async def test_check_timeout_override_extends_only_this_v2_transport_deadline(override) -> None:
+    module = _module()
+    from tests.unit.cognition.test_city_openai_compatible import _profile, _SlowBackendFactory
+
+    request, frozen = _provider_case(profile=_profile(timeout=1))
+    _, _, policy, endpoint, _ = _case(timeout=1)
+    factory = _SlowBackendFactory(
+        (_http_response(_completion(json.dumps(_result(request.request_id)))),), delay=1.5
+    )
+    credential = _remote_credential(frozen)
+    provider = module.CityOpenAICompatibleProviderV2(
+        endpoint_policy=policy,
+        endpoint=endpoint,
+        cognition_input=frozen,
+        credential=credential,
+        network_backend_factory=factory,
+        check_attempt_timeout_seconds=override,
+    )
+    try:
+        if override is None:
+            # Funded runs keep the frozen one-second attempt deadline of this profile.
+            from adlife.adapters.cognition.city_provider_transport import CityProviderTimeoutError
+
+            with pytest.raises(CityProviderTimeoutError):
+                await provider.call(request)
+        else:
+            attempt = await provider.call(request)
+            assert attempt.status == "valid"
+        assert frozen.effective_settings.attempt_timeout_seconds == 1
+    finally:
+        await provider.aclose()
+        credential.secret.clear()
+
+
+@pytest.mark.parametrize("override", [0, 121, -1, True, 1.5, "30"])
+def test_check_timeout_override_refuses_unbounded_or_coerced_v2_values(override) -> None:
+    module = _module()
+    _request, frozen = _provider_case()
+    _, _, policy, endpoint, _ = _case()
+    credential = _remote_credential(frozen)
+    with pytest.raises(ValueError, match="failed validation"):
+        module.CityOpenAICompatibleProviderV2(
+            endpoint_policy=policy,
+            endpoint=endpoint,
+            cognition_input=frozen,
+            credential=credential,
+            check_attempt_timeout_seconds=override,
+        )
+    credential.secret.clear()

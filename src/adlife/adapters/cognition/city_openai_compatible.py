@@ -43,6 +43,7 @@ from adlife.adapters.cognition.city_provider_transport import (
     CityProviderTimeoutError,
     CityProviderTransportError,
     CityProviderUnavailableError,
+    validated_check_attempt_timeout_seconds,
 )
 from adlife.core.domain.city_cognition import (
     MAX_CITY_COGNITION_USAGE_INTEGER,
@@ -391,7 +392,14 @@ class CityOpenAICompatibleProvider:
         cognition_input: CityCognitionInputV1,
         credential: ResolvedCredential,
         network_backend_factory: Callable[[], httpcore.AsyncNetworkBackend] | None = None,
+        check_attempt_timeout_seconds: int | None = None,
     ) -> None:
+        """Bind one frozen input; only an explicit compatibility check may extend its deadline.
+
+        ``check_attempt_timeout_seconds`` replaces the frozen per-attempt transport
+        timeout for this provider instance alone. Runs never pass it, so their attempts
+        keep the frozen effective settings.
+        """
         checked_input: CityCognitionInputV1 | None = None
         if type(endpoint_policy) is not CityEndpointPolicy:
             raise CityEndpointBindingError from None
@@ -445,6 +453,7 @@ class CityOpenAICompatibleProvider:
             raise CityEndpointBindingError from None
         if network_backend_factory is not None and not callable(network_backend_factory):
             raise TypeError("network_backend_factory must be callable")
+        check_timeout = validated_check_attempt_timeout_seconds(check_attempt_timeout_seconds)
         self._endpoint = endpoint
         self._cognition_input = checked_input
         self._closed = False
@@ -452,7 +461,9 @@ class CityOpenAICompatibleProvider:
             endpoint_policy=endpoint_policy,
             endpoint=endpoint,
             credential=credential,
-            attempt_timeout_seconds=settings.attempt_timeout_seconds,
+            attempt_timeout_seconds=(
+                settings.attempt_timeout_seconds if check_timeout is None else check_timeout
+            ),
             max_content_length_bytes=MAX_CITY_COGNITION_WIRE_RESPONSE_BYTES,
             max_wire_response_bytes=MAX_CITY_COGNITION_WIRE_RESPONSE_BYTES,
             max_decoded_response_bytes=MAX_CITY_COGNITION_WIRE_RESPONSE_BYTES,
