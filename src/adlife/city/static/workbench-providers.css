@@ -3,7 +3,9 @@
 }
 
 .explanation-heading {
+  flex-wrap: wrap;
   align-items: end;
+  row-gap: 6px;
 }
 
 .explanation-heading h2 {
@@ -14,8 +16,13 @@
   max-width: 62ch;
   margin: 8px 0 0;
   color: #b6c7c4;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
+}
+
+/* Projector legibility: model-assistance guidance is read aloud during demos. */
+.explanations-section .field-help {
+  font-size: 11px;
 }
 
 .explanation-path {
@@ -37,31 +44,60 @@
   transform: rotate(45deg);
 }
 
-.explanation-path > .field {
+.explanation-path > .field,
+.operation-grid > .field {
   margin-top: 0;
 }
 
-.provider-settings {
+.operation-grid {
+  align-items: start;
+  gap: 14px;
+}
+
+.explanations-section[data-effect-scope="bounded-signals-v1"] .explanation-path {
+  border-left-color: var(--amber);
+}
+
+.explanations-section[data-effect-scope="bounded-signals-v1"] .explanation-path::before {
+  border-color: var(--amber);
+}
+
+.provider-settings,
+.bounded-settings,
+.explanation-budget {
   min-width: 0;
   margin-top: 14px;
   padding-top: 2px;
 }
 
+.bounded-settings > .field,
+.explanation-budget > .field {
+  margin-top: 0;
+}
+
+.provider-empty-hint {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--amber);
+  color: var(--paper);
+  background: rgba(225, 183, 95, .07);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .provider-receipt {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
   margin-top: 10px;
   border: 1px solid var(--line);
-  background: rgba(6, 20, 26, .55);
+  background: var(--line);
 }
 
 .provider-receipt > div {
   min-width: 0;
   padding: 10px 11px;
-}
-
-.provider-receipt > div + div {
-  border-left: 1px solid var(--line);
+  background: #0a1c23;
 }
 
 .provider-receipt span,
@@ -134,6 +170,11 @@
   min-width: 0;
 }
 
+.provider-check-row > .button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .provider-credential-controls .field {
   margin-top: 0;
 }
@@ -149,25 +190,69 @@
   margin: 8px 0 0;
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
 .provider-check-row .provider-action-status {
   margin: 0;
+  color: var(--paper);
+}
+
+.provider-check-row .provider-action-status:empty {
+  min-height: 0;
+}
+
+.provider-check-scope {
+  margin: 0 0 4px;
+  color: var(--paper);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+}
+
+.explanations-section[data-effect-scope="bounded-signals-v1"] .provider-check-row {
+  border-left: 3px solid var(--amber);
+}
+
+.explanations-section[data-effect-scope="bounded-signals-v1"] .provider-check-scope {
+  color: var(--amber);
+}
+
+.provider-check-hint {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--amber);
+  overflow-wrap: anywhere;
+  color: var(--paper);
+  background: rgba(225, 183, 95, .07);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.provider-check-hint code {
+  display: block;
+  margin-top: 4px;
+  color: var(--amber);
+  font-size: 11px;
 }
 
 .provider-cost-warning,
 .provider-product-login-note {
   margin: 8px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
 .provider-cost-warning {
   padding-left: 10px;
   border-left: 2px solid var(--amber);
+}
+
+#bounded-cost-disclosure {
+  color: #c9d6d3;
+  font-size: 12px;
 }
 
 .explanation-boundary {
@@ -179,14 +264,36 @@
 
 .explanation-boundary strong {
   color: var(--mint);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .explanation-boundary p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.55;
+}
+
+.cognition-boundary {
+  border-left: 3px solid var(--mint-deep);
+}
+
+.cognition-boundary #cognition-boundary-text {
+  color: var(--paper);
+  font-size: 13px;
+}
+
+.explanations-section[data-effect-scope="bounded-signals-v1"] .cognition-boundary {
+  border-left-color: var(--amber);
+  background: rgba(225, 183, 95, .055);
+}
+
+.explanations-section[data-effect-scope="bounded-signals-v1"] .cognition-boundary strong {
+  color: var(--amber);
+}
+
+.cognition-boundary .boundary-disclosure {
+  font-size: 12px;
 }
 
 @media (max-width: 700px) {
@@ -194,14 +301,18 @@
     grid-template-columns: 1fr;
   }
 
-  .provider-receipt > div + div {
-    border-top: 1px solid var(--line);
-    border-left: 0;
-  }
-
   .provider-check-row {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (forced-colors: active) {
+  .cognition-boundary,
+  .provider-empty-hint,
+  .provider-check-hint,
+  .provider-receipt > div {
+    border: 1px solid CanvasText;
   }
 }
 
