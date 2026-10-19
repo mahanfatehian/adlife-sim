@@ -43,6 +43,11 @@ from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city import CityPackV2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import UnsafeRunLocation
 from tests.unit.city.test_workbench_input import (
@@ -433,9 +438,12 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
                 "default_provider_funded_response_limit": 20,
                 "offline_funded_response_limit": 60,
                 "selected_requests_per_run": 60,
-                "reserved_output_tokens_per_request": 512,
-                "max_output_tokens_per_attempt": 128,
-                "max_http_attempts_per_request": 4,
+                # The frozen output budget is a runtime constant; never pin its value here.
+                "reserved_output_tokens_per_request": (
+                    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                ),
+                "max_output_tokens_per_attempt": CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+                "max_http_attempts_per_request": CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
                 "compatibility_check_required_modes": ["local", "remote"],
             },
         },
@@ -493,6 +501,15 @@ def test_bounded_capabilities_follow_runtime_models_and_expose_no_contract_autho
     assert (
         bounded["reserved_output_tokens_per_request"]
         == get_args(fields["reservation_tokens_per_request"].annotation)[0]
+    )
+    assert (
+        bounded["max_output_tokens_per_attempt"]
+        == get_args(fields["max_output_tokens_per_attempt"].annotation)[0]
+    )
+    # A whole funded request reserves its worst case: every attempt at the per-attempt cap.
+    assert (
+        bounded["reserved_output_tokens_per_request"]
+        == bounded["max_http_attempts_per_request"] * bounded["max_output_tokens_per_attempt"]
     )
     assert bounded["max_http_attempts_per_request"] == sum(
         get_args(fields[name].annotation)[0]
