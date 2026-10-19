@@ -256,7 +256,8 @@ selects a schema:
 **Explanation only.** `rules` is the offline default with a zero output-token ceiling.
 `mock` is deterministic and offline. `local` and `remote` require an exact immutable
 provider-profile revision plus an
-aggregate ceiling from 1,536 through 92,160 tokens in 1,536-token steps. The numeric response
+aggregate ceiling from 1,536 through 92,160 tokens in 1,536-token steps; the browser proposes
+15,360, which funds 10 explanations. The numeric response
 mode remains deterministic rules in every case. Provider explanations are noncausal and
 cannot change movement, exposure, attention, response values, campaign state, budget,
 purchase probability, metrics, events, or identities.
