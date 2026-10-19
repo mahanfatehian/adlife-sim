@@ -1511,3 +1511,95 @@ def test_check_outcomes_are_stated_and_a_refused_local_model_points_at_its_id(
         page.locator("#cognition-effect-scope").select_option(BOUNDED)
         expect(scope).to_have_text("Bounded-signal contract · required before start")
         expect(status).to_have_text("")
+
+
+def test_library_and_job_facts_keep_cache_apart_and_read_plainly(tmp_path: Path) -> None:
+    from tests.security.test_workbench_browser_security import _job_documents
+
+    funded = LIMITS["funded_response_limits"][0]
+    v10 = _library_summary("library-local-v10").model_dump(mode="json")
+    v10.update(
+        run_schema_version=10,
+        workbench_input_schema_version=4,
+        opportunity_count=30,
+        impression_count=30,
+        noticed_count=funded + 8,
+        response_count=funded + 8,
+        effect_scope=BOUNDED,
+        cognition_mode="local",
+        provider_profile_id="local-lab",
+        provider_revision_sha256=LOCAL_REVISION,
+        funded_response_limit=funded,
+        aggregate_output_token_ceiling=funded * RESERVED,
+        eligible_response_count=funded + 8,
+        selected_request_count=funded + 8,
+        funded_request_count=funded,
+        budget_skipped_count=8,
+        unselected_response_count=0,
+        applied_response_count=funded + 8,
+        rules_count=0,
+        mock_count=0,
+        provider_count=funded - 4,
+        cache_count=3,
+        fallback_count=1,
+        neutralized_response_count=9,
+        uncertain_result_count=0,
+        safety_neutralized_result_count=0,
+    )
+    v9 = _library_summary("library-local-v9").model_dump(mode="json")
+    v9.update(
+        run_schema_version=9,
+        cognition_mode="local",
+        provider_profile_id="local-lab",
+        provider_revision_sha256=LOCAL_REVISION,
+        aggregate_output_token_ceiling=10 * V9_TOKENS_PER_EXPLANATION,
+    )
+    v7 = _library_summary("library-legacy-v7").model_dump(mode="json")
+    page_document = {
+        "schema_version": 1,
+        "offset": 0,
+        "limit": 20,
+        "returned_count": 3,
+        "verified_total": 3,
+        "scanned_count": 3,
+        "corrupt_count": 0,
+        "truncated": False,
+        "runs": [v10, v9, v7],
+    }
+    settings, job = _job_documents()
+    settings.update(
+        agent_count=1,
+        days=1,
+        cognition_mode="local",
+        provider_profile_id="local-lab",
+        provider_revision_sha256=LOCAL_REVISION,
+        aggregate_output_token_ceiling=10 * V9_TOKENS_PER_EXPLANATION,
+    )
+    job.update(phase="requesting-explanations")
+
+    def active(route: Route) -> None:
+        response = route.fetch()
+        document = response.json()
+        document["active_job"] = job
+        route.fulfill(response=response, json=document)
+
+    with _session(tmp_path) as (page, base_url, _root):
+        page.route("**/api/workbench", active)
+        page.route(f"**/api/jobs/{job['job_id']}", lambda route: _fulfill(route, job))
+        page.route("**/api/runs?offset=0&limit=20", lambda route: _fulfill(route, page_document))
+        page.goto(base_url, wait_until="domcontentloaded")
+        # The resumed job opens the run step and states its facts in words.
+        expect(page.locator("#panel-run")).to_be_visible(timeout=15_000)
+        facts = page.locator("#job-settings")
+        expect(facts).to_contain_text("Population1 person · 1 day")
+        expect(facts).to_contain_text("ExplanationsLocal model · 10 funded explanations")
+
+        page.locator("#stage-inspect").click()
+        cards = page.locator("#run-library .run-card")
+        expect(cards).to_have_count(3)
+        expect(cards.nth(0)).to_contain_text(
+            f"Signals{funded + 8} selected · {funded - 4} model · 3 cached · 8 budget-skipped"
+            " · 1 fallback"
+        )
+        expect(cards.nth(1)).to_contain_text("ExplanationsLocal model · 10 funded explanations")
+        expect(cards.nth(2)).not_to_contain_text("Explanations")

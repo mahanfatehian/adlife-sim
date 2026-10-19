@@ -1511,7 +1511,10 @@
   function renderValidation(documentValue, selection) {
     setText("review-run", documentValue.run.run_id);
     setText("review-seed", documentValue.run.seed);
-    setText("review-population", `${documentValue.run.agent_count} synthetic people · ${documentValue.run.days} model days`);
+    setText(
+      "review-population",
+      `${plural(documentValue.run.agent_count, "synthetic person", "synthetic people")} · ${plural(documentValue.run.days, "model day")}`,
+    );
     setText("review-placements", documentValue.scenario.channels.join(" + "));
     setText("review-input-hash", documentValue.hashes.input_sha256);
     setText("review-city-hash", documentValue.hashes.city_sha256);
@@ -1912,6 +1915,30 @@
       : `${source} · offline, up to ${state.boundedCapability.selected_requests_per_run} selected`;
   }
 
+  /** Library wording keeps fresh model answers apart from verified cache reuse. */
+  function boundedLibraryFact(run) {
+    if (!isProviderMode(run.cognition_mode)) return `${run.selected_request_count} selected · offline`;
+    const parts = [`${run.selected_request_count} selected`, `${run.provider_count} model`];
+    if (run.cache_count > 0) parts.push(`${run.cache_count} cached`);
+    if (run.budget_skipped_count > 0) parts.push(`${run.budget_skipped_count} budget-skipped`);
+    parts.push(`${run.fallback_count} fallback`);
+    return parts.join(" · ");
+  }
+
+  /** One V9 output-token reservation step funds exactly one selected explanation. */
+  const V9_TOKENS_PER_EXPLANATION = 1536;
+
+  function explanationFact(mode, ceiling) {
+    const source = COGNITION_MODE_LABELS.get(mode) || "Unavailable";
+    if (!isProviderMode(mode)) return `${source} · offline`;
+    const funded = Number.isInteger(ceiling) ? ceiling / V9_TOKENS_PER_EXPLANATION : 0;
+    return `${source} · ${plural(funded, "funded explanation")}`;
+  }
+
+  function plural(count, singular, pluralForm = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : pluralForm}`;
+  }
+
   function acceptsJobProgress(job) {
     const previous = state.activeJob;
     return !(
@@ -1937,7 +1964,11 @@
     appendFact(facts, "Run", job.run_id);
     appendFact(facts, "City", settings.city_id);
     appendFact(facts, "Campaign", settings.campaign_id);
-    appendFact(facts, "Population", `${settings.agent_count} · ${settings.days} days`);
+    appendFact(
+      facts,
+      "Population",
+      `${plural(settings.agent_count, "person", "people")} · ${plural(settings.days, "day")}`,
+    );
     appendFact(facts, "Seed", settings.seed);
     appendFact(facts, "Simulation", "Deterministic rules");
     if (bounded) {
@@ -1949,7 +1980,7 @@
         "Explanations",
         settings.cognition_mode === null || settings.cognition_mode === undefined
           ? "Legacy run"
-          : settings.cognition_mode,
+          : explanationFact(settings.cognition_mode, settings.aggregate_output_token_ceiling),
       );
     }
     const cancel = byId("cancel-job");
@@ -2269,12 +2300,12 @@
         if (run.run_schema_version === BOUNDED_RUN_SCHEMA) {
           const source = COGNITION_MODE_LABELS.get(run.cognition_mode);
           appendFact(facts, "Cognition", `Bounded · ${source}`);
+          appendFact(facts, "Signals", boundedLibraryFact(run));
+        } else if (run.run_schema_version === 9) {
           appendFact(
             facts,
-            "Signals",
-            isProviderMode(run.cognition_mode)
-              ? `${run.selected_request_count} selected · ${run.provider_count + run.cache_count} model · ${run.fallback_count} fallback`
-              : `${run.selected_request_count} selected · offline`,
+            "Explanations",
+            explanationFact(run.cognition_mode, run.aggregate_output_token_ceiling),
           );
         }
         const link = makeElement("a", "View timeline and results", "button primary");

@@ -396,7 +396,7 @@ code { color: #b5dded; font: 500 9px Consolas, monospace; }
 .schedule-heading h3 { margin: 0; font-size: 12px; }
 .schedule-rows { margin-top: 9px; }
 .schedule-row { display: grid; grid-template-columns: 58px 1fr 1fr 42px; gap: 7px; align-items: end; margin-top: 7px; }
-.schedule-row label { color: var(--muted); font-size: 9px; }
+.schedule-row label { color: var(--muted); font-size: 11px; }
 .schedule-row label span { display: block; margin-bottom: 4px; }
 .schedule-row input { min-height: 40px; }
 .remove-window { width: 42px; min-height: 40px; padding: 0; border: 1px solid rgba(241, 154, 120, .42); color: var(--coral); background: transparent; cursor: pointer; }
@@ -436,17 +436,18 @@ code { color: #b5dded; font: 500 9px Consolas, monospace; }
 
 .library-summary,
 .pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.library-summary { padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.library-summary { padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .run-library { min-height: 150px; }
 .empty-library { padding: 35px 10px; color: var(--muted); text-align: center; font-size: 12px; }
 .run-card { margin-top: 12px; padding: 16px; border: 1px solid var(--line); background: rgba(255, 255, 255, .02); }
 .run-card header { display: flex; justify-content: space-between; gap: 10px; }
 .run-card h2 { margin: 0; font-size: 18px; font-weight: 650; }
-.run-card header span { color: var(--mint); font: 700 9px Consolas, monospace; }
+.run-card header span { color: var(--mint); font: 700 10px Consolas, monospace; }
 .run-card dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 13px 0; }
 .run-card dl div { padding-top: 7px; border-top: 1px solid var(--line); }
-.run-card dt { color: var(--muted); font-size: 8px; }
-.run-card dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 10px; }
+.run-card dt { color: var(--muted); font-size: 10px; }
+.run-card dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 12px; }
+.run-card-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .pagination { margin-top: 16px; }
 .pagination > span { color: var(--muted); font: 700 9px Consolas, monospace; }
 
