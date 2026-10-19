@@ -9,6 +9,7 @@ import re
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, get_args
 
@@ -1715,3 +1716,47 @@ def test_library_and_job_facts_keep_cache_apart_and_read_plainly(tmp_path: Path)
         expect(
             cards.nth(2).get_by_role("button", name="Run again with these inputs")
         ).to_have_count(0)
+
+
+def _utc_stamp(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def test_job_panel_states_elapsed_and_total_time_while_the_model_answers(tmp_path: Path) -> None:
+    """A long requesting phase shows that time is passing; a finished job shows its total."""
+    from tests.security.test_workbench_browser_security import _job_documents
+
+    settings, job = _job_documents()
+    settings.update(
+        agent_count=1,
+        days=1,
+        cognition_mode="local",
+        provider_profile_id="local-lab",
+        provider_revision_sha256=LOCAL_REVISION,
+        aggregate_output_token_ceiling=10 * V9_TOKENS_PER_EXPLANATION,
+    )
+    started = datetime.now(UTC) - timedelta(seconds=27)
+    job.update(
+        phase="requesting-explanations",
+        created_at=_utc_stamp(started),
+        updated_at=_utc_stamp(started + timedelta(seconds=1)),
+    )
+
+    def active(route: Route) -> None:
+        response = route.fetch()
+        document = response.json()
+        document["active_job"] = job
+        route.fulfill(response=response, json=document)
+
+    with _session(tmp_path) as (page, base_url, _root):
+        page.route("**/api/workbench", active)
+        page.route(f"**/api/jobs/{job['job_id']}", lambda route: _fulfill(route, job))
+        page.goto(base_url, wait_until="domcontentloaded")
+        elapsed = page.locator("#job-settings > div", has_text="Elapsed")
+        expect(elapsed).to_have_count(1, timeout=15_000)
+        seconds = int(elapsed.locator("dd").inner_text().removesuffix(" s"))
+        assert 27 <= seconds <= 60
+        # Every later poll re-reads the clock, so the presenter sees the wait move.
+        expect(elapsed.locator("dd")).not_to_have_text(f"{seconds} s", timeout=10_000)
+        # Wall-clock time is operational only: it never enters a draft or an artifact.
+        assert "Duration" not in page.locator("#job-settings").inner_text()

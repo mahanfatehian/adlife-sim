@@ -1949,6 +1949,34 @@
     return `${count} ${count === 1 ? singular : pluralForm}`;
   }
 
+  const ISO_UTC = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
+
+  function utcMilliseconds(value) {
+    const match = typeof value === "string" ? ISO_UTC.exec(value) : null;
+    if (match === null) return null;
+    const [, year, month, day, hour, minute, second, fraction = "0"] = match;
+    return Date.UTC(
+      Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second),
+      Math.floor(Number(`0.${fraction}`) * 1000),
+    );
+  }
+
+  /**
+   * Wall-clock seconds since the worker accepted the job (until it ended, once terminal).
+   * Operational only: it is shown, never stored, and never enters a draft or an artifact.
+   */
+  function jobSeconds(job) {
+    const started = utcMilliseconds(job.created_at);
+    const ended = TERMINAL_PHASES.has(job.phase) ? utcMilliseconds(job.updated_at) : Date.now();
+    if (started === null || ended === null) return null;
+    const seconds = Math.round((ended - started) / 1000);
+    return seconds >= 0 && seconds < 3600 ? seconds : null;
+  }
+
+  function secondsText(seconds) {
+    return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+  }
+
   function acceptsJobProgress(job) {
     const previous = state.activeJob;
     return !(
@@ -1992,6 +2020,11 @@
           ? "Legacy run"
           : explanationFact(settings.cognition_mode, settings.aggregate_output_token_ceiling),
       );
+    }
+    // A long requesting phase visibly moves on every poll; a finished job states its total.
+    const seconds = jobSeconds(job);
+    if (seconds !== null) {
+      appendFact(facts, TERMINAL_PHASES.has(job.phase) ? "Duration" : "Elapsed", secondsText(seconds));
     }
     const cancel = byId("cancel-job");
     cancel.hidden = !job.can_cancel;

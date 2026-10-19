@@ -3830,6 +3830,8 @@ def test_run_again_restores_every_saved_input_with_a_sibling_run_id(tmp_path: Pa
             original = posted[-1]
             page.locator("#start-run").click()
             expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
+            # A finished job states its total wall-clock time from the worker's own timestamps.
+            expect(page.locator("#job-settings > div", has_text="Duration")).to_have_count(1)
 
             page.locator("#reset-draft").click()
             expect(page.locator("#scenario-name")).to_have_value("Synthetic city study")
