@@ -134,7 +134,10 @@ timed-out, or invalid answers become typed neutral fallbacks; selected requests 
 funded 10, 20, 40, or 60 are budget-skipped and neutral. Each funded request reserves 1,024
 output tokens: at most 4 HTTP attempts of up to 256 output tokens each; input tokens and
 vendor charges are outside that reservation. Rules and mock sources are offline: rules apply
-the exact neutral vector and mock derives a deterministic vector from each request.
+the exact neutral vector and mock derives a deterministic vector from each request. A remote
+source needs an API credential for a startup-approved endpoint; a ChatGPT or Codex
+subscription, product login, or OAuth token is not accepted, and no credential enters a
+prompt or artifact.
 
 A general-purpose model brings its own tendencies. In rehearsal a local `qwen2.5:7b-instruct`
 gave nearly the same vector (neutral affect, high relevance and credibility) to most

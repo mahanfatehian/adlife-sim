@@ -158,7 +158,11 @@ In bounded AI cognition the model only chooses closed appraisal categories for a
 noticed; AdLife maps them through a fixed policy into a separate synthetic cognition state,
 and movement, attention, baseline responses, and the purchase-intention proxy stay
 rule-owned. A Mock run saves in a few seconds; a funded local run of the rehearsed demo
-configuration takes about 30 seconds. Inspect the saved run in the browser, then:
+configuration takes about 30 seconds. Each funded request reserves 1,024 output tokens: at
+most 4 HTTP attempts of up to 256 output tokens each; input tokens and vendor charges are
+not included. A remote endpoint must be approved with `--provider-origin` and needs its own
+API key; a ChatGPT or Codex subscription or OAuth token is not accepted. Inspect the saved
+run in the browser, then:
 
 ```bash
 uv run adlife city-metrics ./workbench <run-id> --layer response

@@ -1796,13 +1796,38 @@ def _public_documents() -> dict[str, str]:
 
 def test_bounded_cognition_public_contract_is_documented() -> None:
     """The public documents state the whole V10 contract the browser capability publishes."""
-    from adlife.city.workbench_web import _bounded_cognition_capabilities
+    from adlife.city.workbench_input import WorkbenchCognitionDraftV4
 
     readme = _read("README.md")
     assert _table_row(readme, "**Bounded AI cognition**") is not None, (
         "bounded cognition mode matrix is missing"
     )
-    capability = _bounded_cognition_capabilities()
+
+    def materialized_limit(mode: str) -> int:
+        # The schema-4 draft model owns the default funded limit for an omitted value.
+        provider = mode in ("local", "remote")
+        draft = WorkbenchCognitionDraftV4.model_validate(
+            {
+                "effect_scope": "bounded-signals-v1",
+                "mode": mode,
+                "provider_profile_id": "documentation-probe" if provider else None,
+                "provider_revision_sha256": "0" * 64 if provider else None,
+            }
+        )
+        return int(draft.funded_response_limit)
+
+    capability = {
+        "funded_response_limits": list(
+            typing.get_args(
+                WorkbenchCognitionDraftV4.model_fields["funded_response_limit"].annotation
+            )
+        ),
+        "default_provider_funded_response_limit": materialized_limit("local"),
+        "offline_funded_response_limit": materialized_limit("mock"),
+        "reserved_output_tokens_per_request": CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+        "max_http_attempts_per_request": CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+        "max_output_tokens_per_attempt": CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    }
     public = _squash("\n".join(_public_documents().values()))
 
     for field in ("affect", "relevance", "credibility", "salience"):
@@ -1875,6 +1900,7 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
         "docs/investor-demo.md",
         "docs/methodology/model-card.md",
         "docs/methodology/limitations.md",
+        "docs/quickstart.md",
     ):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
@@ -2235,6 +2261,8 @@ def test_model_card_states_the_v10_llm_role_and_its_limits() -> None:
         "stereotype-risk",
         "budget-skipped",
         "input tokens and vendor charges are outside that reservation",
+        "chatgpt or codex subscription",
+        "oauth token is not accepted",
     )
     _assert_terms_share_paragraph(
         section,
@@ -2322,6 +2350,9 @@ def test_quickstart_reaches_the_bounded_cognition_workbench() -> None:
     assert "uv run adlife city-metrics ./workbench <run-id> --layer response" in section
     assert "uv run adlife city-replay ./workbench <run-id>" in section
     assert "[docs/investor-demo.md](investor-demo.md)" in section
+    _assert_terms_share_paragraph(
+        section, "chatgpt or codex subscription", "oauth token is not accepted"
+    )
     # The demo script is no longer the zone-engine one-command demonstration.
     assert "the one-command demonstration used in" not in quickstart
 
