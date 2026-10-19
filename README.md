@@ -19,6 +19,17 @@ campaign input and compare seed-matched synthetic runs under common random numbe
 difference is a contrast inside this model, not automatically a causal effect; changed opportunity
 structure and changed numeric response assumptions are classified explicitly.
 
+A separate, opt-in city track runs fictional agents on a street map in a local browser workbench.
+Its **bounded AI cognition** mode lets a language model choose a few closed appraisal categories
+for an ad an agent noticed; AdLife maps them through a fixed policy into a separate synthetic
+cognition state, while movement, attention, baseline responses, and the purchase-intention proxy
+stay rule-owned.
+
+> **Live demonstration:** [docs/investor-demo.md](docs/investor-demo.md) is the two-part
+> SETUP and SIMULATION script for presenting the city workbench with bounded AI cognition from a
+> local Ollama `qwen2.5:7b-instruct` model, including the offline fallback when no model is
+> available.
+
 ---
 
 ## Scientific scope
@@ -94,8 +105,9 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
 | Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
 | Verified offline, content-addressed city catalog with three `fictional-fixture` entries | Foundation complete; zero rights-reviewed real-city entries |
-| Browser-operated local city workbench, immutable schema-v9 cognition evidence, workspace V2 city-pack upload, verified run library, and run-scoped inspection | Local single-operator slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
+| Browser-operated local city workbench, immutable schema-v9 and schema-v10 cognition evidence, workspace V2 city-pack upload, verified run library, and run-scoped inspection | Local single-operator slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
 | Optional OpenAI-compatible noncausal explanations with approved origins, protected credentials, deterministic fallback, and frozen replay | Complete for the local workbench; authentication and OAuth are not implemented |
+| Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, verified saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
@@ -233,11 +245,14 @@ resume polling the same active process through `/api/workbench` and its frozen
 library rediscovers fully verified run artifacts at
 `<workspace>/city-runs/<run-id>/`.
 
-Default browser workbench runs submit schema-3 and create schema-v9 city artifacts. Rules is
+Default browser workbench runs submit schema-3 and create schema-v9 city artifacts; choosing
+Operation `Bounded AI cognition` submits schema 4 and creates a schema-v10 artifact. Rules is
 the offline default with a zero explanation budget; mock is also offline and requires no
 credential. Schema-2/schema-v8 fictional-persona and schema-1/schema-v7 homogeneous-cohort
-requests remain compatible. All retain schema-v6 scientific
-evidence and add canonical `inputs/workbench.json`, bound by
+requests remain compatible. Schema-v7 through schema-v9 retain schema-v6 scientific
+evidence; schema-v10 keeps the same opportunity and attention evidence and a rule baseline
+computed by the same equations, stored in its dual-state `spatial-response-v2` form. All of
+them add canonical `inputs/workbench.json`, bound by
 `workbench_input_sha256`, so the accepted city, creative snapshot, campaign,
 population assumptions, and settings are frozen for load and replay. The scoped inspector
 freshly verifies the artifact when the page opens and exposes its read-only model-clock
@@ -253,11 +268,22 @@ that viewer starts, while older schema capabilities retain their compatible indi
 reads. This removes repeated reconstruction without changing any persisted result; a new
 page load re-verifies current files and refuses inconsistent changes.
 
-### Optional explanation providers
+### Model assistance: AI explanation and bounded AI cognition
 
-The workbench can attach bounded prose explanations to response events after the
-deterministic simulation has completed. Start it with explicit server-side endpoint policy;
-the fixed `local-ollama` loopback approval is always available:
+The RUN step's **Model assistance** section keeps provider location separate from provider
+authority. **Operation** decides what a model may do, and with it the exact saved schema;
+**Source** decides where the output comes from: `Rules — offline`, `Mock — reproducible demo`,
+`Local compatible model`, or `Remote compatible model`. The presence of a provider profile
+never selects a schema. The three modes are:
+
+| Mode | Workbench choice | Request / saved run | What the model may change | Network and credentials |
+| --- | --- | --- | --- | --- |
+| **Rules** | Source `Rules — offline` (the default) | schema 3 / V9 with `Explanation only`, or schema 4 / V10 with `Bounded AI cognition` (exact neutral vector) | nothing; no model is called | none |
+| **AI explanation** | Operation `Explanation only` with a Mock, Local, or Remote source | schema 3 / V9 | noncausal prose beside already-computed responses; no number, event, or state | Mock is offline; Local and Remote call one startup-approved endpoint |
+| **Bounded AI cognition** | Operation `Bounded AI cognition` with a Mock, Local, or Remote source | schema 4 / V10 | closed appraisal categories that AdLife maps through the frozen `city-cognition-influence-v1` policy into a separate synthetic cognition state only | Mock is offline; Local and Remote require a passing bounded-signal compatibility check |
+
+Start the workbench with explicit server-side endpoint policy; the fixed `local-ollama`
+loopback approval (`http://127.0.0.1:11434/v1`) is always available:
 
 ```bash
 uv run adlife city-workbench --workspace ./workbench \
@@ -275,13 +301,13 @@ an API credential. There is no OAuth flow in this local profile.
 
 The provider implements a deliberately narrow OpenAI-compatible Chat Completions subset. It
 makes bounded, non-streaming requests to the startup-approved `/chat/completions` target and
-accepts only the strict explanation schema. Provider prose is a **noncausal annotation**: it
+accepts only the strict explanation or bounded-signal result schema. Invalid, unavailable,
+oversized, timed-out, or unsafe answers become typed deterministic fallbacks.
+
+**AI explanation (schema 3 / V9).** Provider prose is a **noncausal annotation**: it
 cannot change movement, exposure, attention, deterministic response values, campaign state,
 budget, purchase probability, or metrics, and it cannot create events or identities. The
 rules engine computes those facts first; the provider can only explain the frozen evidence.
-Invalid, unavailable, oversized, timed-out, or unsafe answers become typed deterministic
-fallbacks.
-
 Schema-v9 freezes the explanation request and every terminal outcome as
 `inputs/cognition.json`, `outputs/cognition.jsonl`, and
 `outputs/cognition-summary.json`, with hashes and counts in the manifest. Live provider
@@ -289,6 +315,51 @@ explanations are nondeterministic; frozen schema-v9 replay is deterministic and 
 provider call. The saved-run inspector labels provider/cache, rules, mock, fallback, and
 budget-skipped records separately and renders each explanation beside its matching computed
 response.
+
+**Bounded AI cognition (schema 4 / V10).** Rules first compute movement, opportunities,
+attention, and every deterministic baseline response. AdLife then selects, in stable order,
+at most 4 noticed responses per agent and 60 per run, and asks the source for one closed result
+per selected response: `affect`, `relevance`, `credibility`, and `salience` categories plus
+optional `safety_flags`. There is no provider prose and no provider-authored number. AdLife,
+not the model, maps the categories through the frozen `city-cognition-influence-v1` tables into
+bounded deltas on a separate synthetic cognition sentiment/recall track. Movement, attention,
+the baseline responses and rule state, budgets, and the purchase-intention proxy never read
+that track. An `uncertain` category or any safety flag keeps the answer auditable but applies
+the exact neutral vector to the whole result. Name, age, occupation, background, and MBTI
+never reach the causal prompt.
+
+Local and remote sources fund 10, 20 (default), 40, or 60 of the selected requests; the rest
+are recorded as budget-skipped neutral signals. Rules and mock resolve every selected request
+offline and reserve no tokens. Each funded request reserves 1,024 output tokens: at most 4
+HTTP attempts of up to 256 output tokens each, so 60 funded requests reserve 61,440 output
+tokens. Input tokens and vendor charges are not included, and the reservation is not a
+spending limit. A provider run first needs a passing bounded-signal compatibility check for
+that exact profile revision; an explanation check does not count.
+
+Schema-v10 freezes the complete non-secret cognition input in `inputs/cognition.json`, one
+terminal record per selected request in `outputs/cognition.jsonl`, the outcome counts in
+`outputs/cognition-summary.json`, and the final rule and cognition states in
+`outputs/response-state.json`, all bound by the manifest. Live provider signals are
+nondeterministic, even at temperature 0 with a fixed seed; frozen schema-v10 replay reapplies
+the saved signals and performs no provider call, cache read, keyring or environment lookup, or
+network request. The saved-run inspector shows each response's trace (deterministic baseline,
+signal or neutral status, fixed mapping, applied cognition delta, atomic rule/cognition state
+update) with source badges, coverage, and profile/model/contract provenance.
+`city-metrics --layer response` prints the rule baseline, with the uncalibrated
+purchase-intention proxy, separately from provider-dependent cognition, which is exploratory
+and not a campaign effect. The categories are synthetic model output, not private thoughts,
+observed behavior, validated psychology, or a prediction.
+
+Not yet done for schema-v10 runs:
+
+- `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now;
+  V6-V9 runs keep those commands. The default attention-layer `city-compare` pairs a V10 run
+  only with another V10 run.
+- No paired-cognition protocol freezes compatible signals across study arms, so
+  provider-dependent cognition is never reported as a campaign effect.
+- The wheel and frozen-executable release smoke checks do not yet exercise V10 runs.
+- V10 is an unreleased artifact schema: runs written by earlier development builds are
+  refused and must be created again.
 
 This local profile still does not authenticate users, qualify a real-city/worldwide catalog,
 download reports, operate comparisons or paired studies in the browser, calibrate
@@ -360,14 +431,15 @@ adds no cognition, memory, social propagation, budget mutation, purchase event, 
 change.
 
 `city-replay` recomputes and verifies every layer without changing the source. For verified
-schema-v5, schema-v6, schema-v7, schema-v8, and schema-v9 runs, `city-view` shows read-only
-current-minute opportunity and current-minute attention evidence on the map and in bounded
-evidence rails; schema-v6, schema-v7, schema-v8, and schema-v9 also show response records and complete end-of-run
-campaign state. It also renders
+schema-v5, schema-v6, schema-v7, schema-v8, schema-v9, and schema-v10 runs, `city-view` shows
+read-only current-minute opportunity and current-minute attention evidence on the map and in
+bounded evidence rails; schema-v6 through schema-v10 also show response records and complete
+end-of-run campaign state, which schema-v10 keeps as separate rule and cognition states. It
+also renders
 the verified full-run response ledger, keeping planned rule deltas separate from committed
 state and retaining exact receipt provenance without changing the scrubbed timeline or
 source run. The existing `/api/spatial-metrics` ledger and default `city-metrics` output
-remain attention-only for all four schema versions under
+remain attention-only for every one of these schema versions under
 `synthetic-metrics-not-observed-outcomes`. Schema-v6, schema-v7, schema-v8, and schema-v9 add the separate
 `spatial-response-metrics-v1` projection under
 `synthetic-response-metrics-not-observed-outcomes`, selected with `--layer response` or read
@@ -389,7 +461,10 @@ the normalized placement/channel opportunity structure differs, the result is ex
 `opportunity-confounded`, not a channel effect. Every comparison carries a non-causal,
 unobserved claim scope: attention comparisons use
 `synthetic-comparison-not-causal-or-observed-effect`, while response comparisons use
-`synthetic-response-comparison-not-causal-or-observed-effect`.
+`synthetic-response-comparison-not-causal-or-observed-effect`. For schema-v10,
+`city-metrics --layer response` instead emits the separate `spatial-response-metrics-v2`
+document with a rule-baseline family and a provider-dependent cognition family, while
+`city-compare --layer response` refuses V10 runs.
 
 Bounded C4b evidence is also complete: `city-study` analyzes an explicit definition of
 2–100 already committed, seed-matched run pairs as `spatial-paired-study-v1`, and
@@ -397,8 +472,8 @@ Bounded C4b evidence is also complete: `city-study` analyzes an explicit definit
 the experimental unit; the analysis never pools agents or events across seeds. Its
 `synthetic-study-not-observed-or-causal-effect` results describe deterministic simulator-seed
 variation, not population confidence. Older schema-v4 artifacts remain opportunity-only.
-Broader C3/C4 social and purchase integration, authentication, provider/OAuth
-configuration, browser comparison/report operation, calibrated real-city behavior and
+Broader C3/C4 social and purchase integration, authentication, OAuth, browser
+comparison/report operation, V10 studies and reports, calibrated real-city behavior and
 external validity remain open. Nothing here
 claims observed device use, viewability, attention, traffic, people, purchases, sales, or
 causal effects.
@@ -410,8 +485,9 @@ terminal window for you.
 `city-run` always freezes a bounded mobility trace with all-minute integrity evidence;
 schema-v5 spatial runs additionally persist opportunity and attention evidence, schema-v6
 runs add the bounded response/state layer above, schema-v7/schema-v8 workbench runs add immutable
-accepted-input provenance, and schema-v9 adds frozen noncausal explanations without changing
-that scientific model. `city-replay` verifies
+accepted-input provenance, schema-v9 adds frozen noncausal explanations without changing
+that scientific model, and schema-v10 adds frozen bounded cognition signals that change only
+a separate cognition state. `city-replay` verifies
 the selected contract without changing source artifacts, and `city-view` opens its verified
 mobility projection plus persisted evidence in the same read-only local timeline.
 
@@ -492,7 +568,7 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | [docs/methodology/model-card.md](docs/methodology/model-card.md) | Intended and excluded use, risks, validity status |
 | [docs/methodology/experiment-protocol.md](docs/methodology/experiment-protocol.md) | The pre-registered comparison and sensitivity protocol |
 | [docs/methodology/limitations.md](docs/methodology/limitations.md) | What the model cannot support |
-| [docs/investor-demo.md](docs/investor-demo.md) | A five-minute demonstration script |
+| [docs/investor-demo.md](docs/investor-demo.md) | The live two-part demo script: SETUP (workbench, local model, compatibility check) and SIMULATION (bounded AI cognition run, inspector, metrics, offline replay) |
 
 ---
 
@@ -517,9 +593,9 @@ execution is reproducible event for event. Every stochastic decision is drawn
 from a keyed random oracle scoped to its agent and purpose, so a change in evaluation order cannot
 change an outcome. Every campaign run persists a manifest recording the code version, scenario fingerprint,
 provider, and seed, and `adlife replay` re-executes a stored run and verifies the event stream matches
-the recorded one. Live provider explanations are nondeterministic; frozen schema-v9 replay
-uses the recorded validated cognition and makes no provider call. Wall-clock metadata is
-not part of event equality.
+the recorded one. Live provider explanations and bounded cognition signals are
+nondeterministic; frozen schema-v9 and schema-v10 replay use the recorded validated cognition
+and make no provider call. Wall-clock metadata is not part of event equality.
 The recipe is in [docs/reproducibility.md](docs/reproducibility.md).
 
 ---

@@ -19,6 +19,7 @@ import yaml
 
 from adlife import __version__
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2,
     CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
     CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
@@ -1770,10 +1771,19 @@ _RESERVATION_SENTENCE = re.compile(
     r"to ([\d,]+) output tokens each"
 )
 _AGGREGATE_SENTENCE = re.compile(r"(\d+) funded requests reserve ([\d,]+) output tokens")
+_SELECTION_SENTENCE = re.compile(r"at most (\d+) noticed responses per agent and (\d+) per run")
 
 
 def _integer(text: str) -> int:
     return int(text.replace(",", ""))
+
+
+def _table_row(text: str, first_cell: str) -> str | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.strip("|").split("|")[0].strip() == first_cell:
+            return stripped
+    return None
 
 
 def _public_documents() -> dict[str, str]:
@@ -1802,9 +1812,73 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
                 int(count) == max(_FUNDED_RESPONSE_LIMITS)
                 and _integer(reserved) == CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
             )
-    for required in ("CHANGELOG.md",):
+    for required in ("CHANGELOG.md", "README.md"):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
+
+
+def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
+    policy = CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2
+    documented: set[str] = set()
+    for name, text in _public_documents().items():
+        for per_agent, per_run in _SELECTION_SENTENCE.findall(_squash(text)):
+            documented.add(name)
+            assert int(per_agent) == policy.selected_requests_per_agent, name
+            assert int(per_run) == policy.selected_requests_per_run, name
+    assert "README.md" in documented, "README omits the V10 selection caps"
+
+
+def test_readme_presents_the_three_mode_matrix_and_the_live_demo() -> None:
+    readme = _read("README.md")
+    rows = {
+        label: _table_row(readme, f"**{label}**")
+        for label in ("Rules", "AI explanation", "Bounded AI cognition")
+    }
+    assert all(rows.values()), "bounded cognition mode matrix is missing"
+    rules, explanation, bounded = (
+        typing.cast(str, rows[label])
+        for label in ("Rules", "AI explanation", "Bounded AI cognition")
+    )
+    assert "schema 3 / V9" in explanation and "noncausal" in explanation
+    assert "schema 4 / V10" in bounded
+    assert "city-cognition-influence-v1" in bounded and "compatibility check" in bounded
+    assert "separate synthetic cognition state" in bounded
+    assert "no model is called" in rules
+
+    # The demo script is linked prominently, before the first section break.
+    introduction = readme.split("\n---\n", maxsplit=1)[0]
+    assert "[docs/investor-demo.md](docs/investor-demo.md)" in introduction
+    assert "SETUP" in introduction and "SIMULATION" in introduction
+
+    status = next(line for line in readme.splitlines() if "manifest V10" in line)
+    assert status.startswith("|") and "Planned" not in status
+    _assert_terms_share_paragraph(
+        readme,
+        *(str(limit) for limit in _FUNDED_RESPONSE_LIMITS),
+        "budget-skipped",
+        "input tokens and vendor charges are not included",
+    )
+    _assert_terms_share_paragraph(
+        readme,
+        "uncertain",
+        "safety flag",
+        "exact neutral vector",
+        "name, age, occupation, background, and mbti never reach the causal prompt",
+    )
+    _assert_terms_share_paragraph(
+        readme,
+        "live provider signals are nondeterministic",
+        "frozen schema-v10 replay",
+        "no provider call",
+    )
+    _assert_terms_share_paragraph(
+        readme,
+        "city-compare --layer response",
+        "city-study",
+        "city-report",
+        "refuse v10 runs for now",
+        "v6-v9 runs keep those commands",
+    )
 
 
 def test_changelog_records_bounded_cognition_without_overclaiming() -> None:
