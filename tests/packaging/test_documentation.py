@@ -2260,6 +2260,20 @@ def test_experiment_protocol_registers_v10_cognition_as_exploratory() -> None:
         assert command in addendum, command
 
 
+def test_quickstart_reaches_the_bounded_cognition_workbench() -> None:
+    quickstart = _read("docs", "quickstart.md")
+    section = _section(quickstart, "## 10. The city workbench with bounded AI cognition")
+    assert "uv run adlife city-workbench --workspace ./workbench --port 8765" in section
+    bounded_rows = [line for line in section.splitlines() if line.startswith("| `Bounded AI")]
+    assert len(bounded_rows) == 2 and all("schema-v10" in row for row in bounded_rows)
+    assert any("ollama pull qwen2.5:7b-instruct" in row for row in bounded_rows)
+    assert "uv run adlife city-metrics ./workbench <run-id> --layer response" in section
+    assert "uv run adlife city-replay ./workbench <run-id>" in section
+    assert "[docs/investor-demo.md](investor-demo.md)" in section
+    # The demo script is no longer the zone-engine one-command demonstration.
+    assert "the one-command demonstration used in" not in quickstart
+
+
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
     policy = CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2
     documented: set[str] = set()

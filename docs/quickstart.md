@@ -1,7 +1,8 @@
 # Quickstart: zero to self-contained report
 
 After installing dependencies, the study workflows below run offline in rules or mock
-mode: no API key, no account, no provider network access.
+mode: no API key, no account, no provider network access. Only the optional local model in
+section 10 talks to a model, and only over loopback.
 
 ## 0. Install
 
@@ -123,7 +124,8 @@ uv run adlife demo --seed 7 --dir ./my-demo
 ```
 
 Twenty agents, three simulated days, mock provider, packaged campaigns, temp directory by
-default — the one-command demonstration used in [docs/investor-demo.md](investor-demo.md).
+default — the one-command zone-engine demonstration. The live presentation script for the
+city workbench is [docs/investor-demo.md](investor-demo.md); see section 10.
 
 ## 9. Check your installation
 
@@ -134,6 +136,39 @@ uv run adlife doctor --offline
 Reports versions, packaged resources, provider availability (mock/rules always; live
 providers only without `--offline`), storage writability, and the console encoding. On a
 Windows console that is not UTF-8, doctor says so and suggests `set PYTHONUTF8=1`.
+
+## 10. The city workbench with bounded AI cognition
+
+The separate city track runs fictional agents on a street map in a local browser workbench:
+
+```bash
+uv run adlife city-workbench --workspace ./workbench --port 8765
+```
+
+Open `http://127.0.0.1:8765` yourself and follow `CITY -> CAMPAIGN -> RUN -> INSPECT`. In
+RUN, the **Model assistance** section separates **Operation** from **Source**:
+
+| Operation | Source | Saved run | Needs |
+| --- | --- | --- | --- |
+| `Explanation only` | Rules (default), Mock, Local, or Remote | schema-v9 | nothing for Rules or Mock |
+| `Bounded AI cognition` | `Mock — reproducible demo` or `Rules — offline` | schema-v10 | nothing; fully offline |
+| `Bounded AI cognition` | `Local compatible model` | schema-v10 | Ollama with `ollama pull qwen2.5:7b-instruct`, a saved profile, and a passing **Check compatibility** |
+
+In bounded AI cognition the model only chooses closed appraisal categories for ads an agent
+noticed; AdLife maps them through a fixed policy into a separate synthetic cognition state,
+and movement, attention, baseline responses, and the purchase-intention proxy stay
+rule-owned. A Mock run saves in a few seconds; a funded local run of the rehearsed demo
+configuration takes about 30 seconds. Inspect the saved run in the browser, then:
+
+```bash
+uv run adlife city-metrics ./workbench <run-id> --layer response
+uv run adlife city-replay ./workbench <run-id>
+```
+
+`city-metrics` prints the rule baseline separately from the exploratory cognition family,
+and `city-replay` reproduces the saved run offline without calling the model. The
+step-by-step presentation script, with Windows PowerShell commands, expected output,
+timings, and troubleshooting, is [docs/investor-demo.md](investor-demo.md).
 
 ## Output contract
 
