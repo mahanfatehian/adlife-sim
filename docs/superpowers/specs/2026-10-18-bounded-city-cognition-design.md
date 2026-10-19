@@ -205,6 +205,25 @@ provider signal. With it, 44 real requests produced no spurious flag, while crea
 invite a stereotype or contain harmful content were still flagged. The neutralization rule
 itself is unchanged.
 
+The same frozen contract also asks for an appraisal from the agent's point of view: each
+category is a separate judgment over the supplied interests, traits, initial rule state,
+campaign, context, and rule factors, "not a formula", using the full range of every category
+and choosing neutral or medium only when the facts genuinely point both ways. It gives
+qualitative anchors for both ends of each scale that name the relevant inputs (interest
+overlap for relevance; advertising skepticism and brand sentiment for credibility; relative
+price against price sensitivity and affordability, novelty, and repetition for affect;
+channel recall encoding, novelty, activity, and prior notices for salience), sets no numeric
+cutoffs, never mentions `uncertain`, and states that the appraisal never removes a safety flag
+that applies. Without it the same local model returned one vector (neutral, high, high,
+medium) for 89% of 73 varied requests and moved the targeted category in 3% of one-input
+counterfactual pairs. With it, the 73 requests produced 17 distinct vectors, relevance followed
+interest overlap (Spearman 0.82), credibility followed advertising skepticism (-0.70), and 62%
+of targeted categories in held-out pairs moved the expected way (1.5% the wrong way); 284
+pooled requests were 97.9% valid on the first attempt with no spurious flag, no `uncertain`
+answer, and at most 147 output tokens. Brand sentiment remains mostly ignored and price moves
+affect in only about half of the pairs. This wording is part of the prompt-contract hash, so
+it is frozen with every V10 run like the rest of the contract.
+
 ## Surrounding V2 contracts
 
 The result is only one part of the authority boundary. The V2 family has these exact

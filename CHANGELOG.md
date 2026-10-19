@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network access. Live provider signals are nondeterministic. A ChatGPT or Codex
   subscription, product login or OAuth token is not accepted as a provider credential. V10 is
   an unreleased artifact schema: V10 runs written by earlier development builds, before the
-  final output budget and safety-flag prompt guidance, are refused and must be recreated.
+  final output budget and the safety-flag and appraisal prompt guidance, are refused and must
+  be recreated.
 - **V10 inspection, read-only views and metrics (2026-10-19)** — the saved-run inspector at
   `/runs/{run_id}` and in `adlife city-view` verifies V10 evidence, then shows coverage, a
   source and effect badge for every response, the per-response trace (deterministic
@@ -49,13 +50,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   V10 run.
 - **Run again from a saved run (2026-10-19)** — the inspector and the run library offer
   **Run again with these inputs**, which reopens the workbench at RUN with a schema-v8 or later
-  run's verified inputs and a suggested new run ID; the saved run is never changed. A reopened
-  page shows the bounded-signal check this server process already recorded for the selected
-  revision instead of asking for it again, and refused fields now open their own step.
+  run's verified inputs and a suggested new run ID; the saved run is never changed. The
+  reopened RUN step shows the bounded-signal check this server process already recorded for
+  the selected revision instead of asking for it again (a plain reload still asks), and refused
+  fields now open their own step.
 - **Two-part live demonstration script** — [docs/investor-demo.md](docs/investor-demo.md) is
   now the SETUP and SIMULATION script for presenting bounded AI cognition through a local
   Ollama `qwen2.5:7b-instruct` model, with the offline mock/rules fallback and
   troubleshooting.
+- **Backup demo workspace (2026-10-19)** — `scripts/demo_workspace.py --base-url
+  http://127.0.0.1:<port>` seeds a running workbench with ready-to-open runs through the same
+  loopback API the browser uses: a V10 bounded-cognition run from the mock source and a V9
+  explanation-only run from rules, plus, with `--with-llm`, a V10 run with 10 funded requests
+  from a local Ollama model after it warms the model, reuses or creates the `local-ollama`
+  profile revision and passes the bounded-signal check. Each invocation takes new numbered
+  run IDs, so a saved run is never overwritten; the script refuses any non-loopback URL and
+  never prints the page's security token.
 - **Optional city response explanations (2026-10-17)** — schema-3 workbench requests now
   publish schema-v9 runs with noncausal rules, mock, local, or remote explanations. Exact
   provider profiles are immutable; remote origins require startup approval; credentials
@@ -151,6 +161,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neutralization rule itself is unchanged. A local compatibility check now waits up to 120
   seconds for a model that is still loading (remote checks keep 10 seconds); run attempts
   keep their frozen 30-second timeout.
+- **Varied bounded signals from a local model (2026-10-19)** — with the earlier wording a
+  local `qwen2.5:7b-instruct` returned one vector (neutral, high, high, medium) for 89% of 73
+  varied requests, and changing one causal input moved the targeted category in 3% of
+  counterfactual pairs, so the cognition track was close to a fixed uplift. The bounded-signal
+  prompt (`city-cognition-signal-prompt-v2`; same ID, result schema and safety-flag wording)
+  now asks for a separate judgment per category from the agent's point of view, with
+  qualitative anchors that name the supplied inputs and no numeric cutoffs. In a live check
+  the same model gave 17 distinct vectors for the 73 requests, relevance followed interest
+  overlap (Spearman 0.82) and credibility followed advertising skepticism (-0.70), and 62% of
+  targeted categories in held-out pairs moved the expected way (1.5% the wrong way); 284
+  pooled requests were 97.9% valid on the first attempt with no spurious safety flag.
+  Initial brand sentiment remains largely ignored and price moves affect in only about half
+  of the pairs; see the model card. Every V10 run freezes the prompt text and hash, so V10
+  runs saved with the earlier wording are refused and must be recreated.
 - **V9 explanations from real providers (2026-10-19)** — a real 10-digit `created`
   timestamp in a provider response envelope matched the persona phone/national-ID screen,
   so every schema-v9 explanation fell back. The whole raw response body is now screened only
@@ -162,6 +186,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10 seconds, as the registry already did.
 - **Workbench cognition field errors (2026-10-19)** — server-side cognition validation errors
   now name their exact `cognition.*` fields, so the browser highlights the matching control.
+- **Counts, labels and help text (2026-10-19)** — a count of exactly one now reads in the
+  singular in the workbench (audience and persona totals, map summary, funding, cost
+  disclosure and job panel), the inspector, and the human output of `city-run` and
+  `city-replay`; JSON output is unchanged. The run-step field is now labelled
+  `Baseline responses` (`Rules engine (offline)`), and its help says the rules compute every
+  baseline response while model assistance only explains results or supplies bounded signals
+  for the separate cognition track. `city-compare --help` now says the attention layer accepts
+  schema-v5 through schema-v10 runs and the response layer schema-v6 through schema-v9. The
+  job panel's phase badge shows the readable phase (`REQUESTING COGNITION`) instead of its
+  identifier, the inspector writes reserved output tokens with thousands separators, and the
+  selected agent's map label is drawn above its opportunity and notice rings.
 - **Verified timeline interaction and causal presentation** — the run-scoped workbench
   inspector now obtains each frame and its bounded evidence/state pages through one GET-only
   projection from one freshly verified run context. The legacy viewer exposes the same

@@ -18,6 +18,8 @@
     return node;
   };
   const fieldId = path => `persona-${path.replace("traits.", "trait-").replace("initial_state.", "initial-").replaceAll("_", "-")}`;
+  // A count with its noun, singular only for exactly one; an unknown count keeps the plural.
+  const countNoun = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
 
   class PersonaEditor {
     static nextPersonaId(personas) {
@@ -208,7 +210,7 @@
         if (p.mbti !== null) heading.append(element("span", p.mbti, "persona-row-mbti"));
         const definition = element(
           "span",
-          `${p.persona_id} · ${p.count ?? "?"} people`,
+          `${p.persona_id} · ${countNoun(p.count ?? "?", "person", "people")}`,
           "persona-row-definition",
         );
         const preview = element(
@@ -223,7 +225,7 @@
       this.root.querySelector("#persona-add").disabled = full;
       this.root.querySelector("#persona-duplicate").disabled = full;
       this.root.querySelector("#persona-remove").disabled = this.personas.length === 1;
-      this.root.querySelector("#persona-total").textContent = `${this.personas.length} definitions · ${this.total() ?? "invalid"} people`;
+      this.root.querySelector("#persona-total").textContent = `${countNoun(this.personas.length, "definition", "definitions")} · ${countNoun(this.total() ?? "invalid", "person", "people")}`;
     }
 
     field(parent, path, label, value, type = "text", min = null, max = null) {

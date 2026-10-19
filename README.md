@@ -29,6 +29,8 @@ stay rule-owned.
 > SETUP and SIMULATION script for presenting the city workbench with bounded AI cognition from a
 > local Ollama `qwen2.5:7b-instruct` model, including the offline fallback when no model is
 > available.
+>
+> Backup: `scripts/demo_workspace.py` seeds a running workbench with ready-to-open runs; see [Backup: seed a demo workspace](docs/investor-demo.md#backup-seed-a-demo-workspace).
 
 ---
 

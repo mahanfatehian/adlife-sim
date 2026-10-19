@@ -10,7 +10,7 @@ import typer
 from adlife.city.run_store import CityRunStore
 from adlife.city.runs import replay_city_run
 from adlife.cli.errors import CommandError, command_boundary, output_format
-from adlife.cli.output import emit_result
+from adlife.cli.output import count_noun, emit_result
 from adlife.core.ports.run_store import UnsafeRunLocation, validate_run_id
 
 
@@ -185,15 +185,23 @@ def command(
             )
     if output_format() == "human":
         suffix = ""
+        opportunities = (
+            ""
+            if result.opportunity_count is None
+            else count_noun(
+                result.opportunity_count, "synthetic opportunity", "synthetic opportunities"
+            )
+        )
         if result.impression_count is not None and result.noticed_count is not None:
             suffix = (
-                f", {result.opportunity_count} synthetic opportunities, "
-                f"{result.impression_count} impressions, {result.noticed_count} notices"
+                f", {opportunities}, {count_noun(result.impression_count, 'impression')}, "
+                f"{count_noun(result.noticed_count, 'notice')}"
             )
         elif result.opportunity_count is not None:
-            suffix = f", {result.opportunity_count} synthetic opportunities"
+            suffix = f", {opportunities}"
         lines = [
-            f"city replay identical: {result.run_id} ({result.frame_count} minute frames{suffix})"
+            f"city replay identical: {result.run_id} "
+            f"({count_noun(result.frame_count, 'minute frame')}{suffix})"
         ]
         if result.response_model_id is not None:
             human_response_values = (
@@ -227,16 +235,22 @@ def command(
                     or result.cognition_terminal_stream_sha256 is None
                     or result.cognition_terminal_stream_bytes is None
                     or result.cognition_summary_sha256 is None
+                    or result.response_stream_bytes is None
                 ):
                     raise RuntimeError("V10 replay result is missing bounded cognition evidence")
+                baseline = count_noun(
+                    result.baseline_response_count, "rule-owned baseline response"
+                )
+                applied = count_noun(
+                    result.applied_response_count, "bounded sentiment/recall application"
+                )
+                dual = count_noun(result.dual_state_update_count, "dual state update")
                 lines.extend(
                     (
-                        f"response evidence: {result.baseline_response_count} rule-owned "
-                        f"baseline responses, {result.applied_response_count} bounded "
-                        "sentiment/recall applications, "
-                        f"{result.dual_state_update_count} dual state updates",
-                        f"state evidence: {result.final_rule_state_count} rule states, "
-                        f"{result.final_cognition_state_count} cognition states; "
+                        f"response evidence: {baseline}, {applied}, {dual}",
+                        "state evidence: "
+                        f"{count_noun(result.final_rule_state_count, 'rule state')}, "
+                        f"{count_noun(result.final_cognition_state_count, 'cognition state')}; "
                         "purchase intention remains rule-owned",
                         f"response contract: {result.response_model_id}; "
                         f"{result.response_claim_scope}",
@@ -247,32 +261,40 @@ def command(
                         f"({coverage.funded_request_count} funded, "
                         f"{coverage.budget_skipped_count} budget-skipped), "
                         f"{coverage.unselected_response_count} unselected; "
-                        f"{result.cognition_terminal_record_count} frozen terminals",
+                        f"{count_noun(result.cognition_terminal_record_count, 'frozen terminal')}",
                         f"response input SHA-256: {result.response_input_sha256}",
                         f"response stream SHA-256: {result.response_stream_sha256} "
-                        f"({result.response_stream_bytes} bytes)",
+                        f"({count_noun(result.response_stream_bytes, 'byte')})",
                         f"response state SHA-256: {result.response_state_sha256}",
                         f"rule state SHA-256: {result.rule_state_document_sha256}",
                         f"cognition state SHA-256: {result.cognition_state_document_sha256}",
                         f"response summary SHA-256: {result.response_summary_sha256}",
                         f"cognition terminal SHA-256: "
                         f"{result.cognition_terminal_stream_sha256} "
-                        f"({result.cognition_terminal_stream_bytes} bytes)",
+                        f"({count_noun(result.cognition_terminal_stream_bytes, 'byte')})",
                         f"cognition summary SHA-256: {result.cognition_summary_sha256}",
                     )
                 )
             else:
+                if (
+                    result.response_count is None
+                    or result.state_update_count is None
+                    or result.response_campaign_count is None
+                    or result.final_state_count is None
+                    or result.response_stream_bytes is None
+                ):
+                    raise RuntimeError("spatial replay result is missing response evidence")
                 lines.extend(
                     (
-                        f"response evidence: {result.response_count} rule responses, "
-                        f"{result.state_update_count} state updates, "
-                        f"{result.response_campaign_count} campaigns, "
-                        f"{result.final_state_count} final campaign states",
+                        f"response evidence: {count_noun(result.response_count, 'rule response')}, "
+                        f"{count_noun(result.state_update_count, 'state update')}, "
+                        f"{count_noun(result.response_campaign_count, 'campaign')}, "
+                        f"{count_noun(result.final_state_count, 'final campaign state')}",
                         f"response contract: {result.response_model_id}; "
                         f"{result.response_claim_scope}",
                         f"response input SHA-256: {result.response_input_sha256}",
                         f"response stream SHA-256: {result.response_stream_sha256} "
-                        f"({result.response_stream_bytes} bytes)",
+                        f"({count_noun(result.response_stream_bytes, 'byte')})",
                         f"response state SHA-256: {result.response_state_sha256}",
                         f"response summary SHA-256: {result.response_summary_sha256}",
                     )

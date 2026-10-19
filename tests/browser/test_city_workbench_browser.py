@@ -220,6 +220,24 @@ def _near_limit_city_pack_upload(city_id: str) -> bytes:
     ).encode("utf-8")
 
 
+def _wait_for_route_handler(page, delivered, *, what: str, timeout_s: float = 10.0) -> None:
+    """Pump Playwright events until a Python route handler has recorded what it saw.
+
+    Playwright schedules a route handler as a task, after the page has issued the request,
+    so the page may already show its next state while the handler has not run. Never index
+    a handler's records right after the UI reacts; let the dispatcher deliver them first.
+    """
+    deadline = time.monotonic() + timeout_s
+    while not delivered():
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"the route handler never recorded {what}")
+        page.wait_for_timeout(20)
+
+
+def _is_credential_post(request) -> bool:
+    return request.method == "POST" and urlparse(request.url).path.endswith("/credential")
+
+
 def _persona_population(page):
     return page.locator("#persona-editor").evaluate("root => root.editor.serialize()")
 
@@ -373,6 +391,52 @@ def test_explanations_panel_creates_exact_profile_and_emits_schema_three(
             playwright.stop()
 
 
+def test_one_person_one_agent_and_one_explanation_read_in_the_singular(tmp_path: Path) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            persona_total = page.locator("#persona-total")
+            expect(persona_total).to_have_text("1 definition · 20 people")
+            page.locator("#persona-count").fill("1")
+            expect(persona_total).to_have_text("1 definition · 1 person")
+            expect(page.locator("#persona-roster .persona-row-definition")).to_have_text(
+                "persona-001 · 1 person"
+            )
+            page.locator("#campaign-continue").click()
+            status = page.locator("#persona-count-status")
+            expect(status).to_have_text(
+                "1 person assigned in the audience · 20 run agents · counts must match"
+            )
+            page.locator("#agent-count").fill("1")
+            expect(status).to_have_text("1 person assigned in the audience · 1 run agent")
+
+            page.locator("#cognition-mode").select_option("local")
+            page.locator("#provider-create-details").evaluate("node => { node.open = true; }")
+            page.locator("#provider-profile-id").fill("local-single")
+            page.locator("#provider-label").fill("Local single explanation")
+            page.locator("#provider-model").fill("fictional-local-model")
+            page.locator("#provider-create-submit").click()
+            expect(page.locator("#provider-profile")).to_be_enabled(timeout=10_000)
+            page.locator("#cognition-budget").fill("1536")
+            page.locator("#cognition-budget").dispatch_event("input")
+            expect(page.locator("#cognition-budget-status")).to_have_text(
+                "1 selected response funded · up to 59 budget-skipped."
+            )
+            page.locator("#validate-run").click()
+            expect(page.locator("#validation-review")).to_be_visible(timeout=15_000)
+            expect(page.locator("#review-funding")).to_have_text(
+                "1,536 output-token reservation · 1 explanation funded"
+            )
+            expect(page.locator("#review-population")).to_have_text(
+                "1 synthetic person · 2 model days"
+            )
+        finally:
+            browser.close()
+            playwright.stop()
+
+
 def test_remote_credential_is_transient_after_success_refusal_and_network_failure(
     tmp_path: Path,
 ) -> None:
@@ -438,11 +502,33 @@ def test_remote_credential_is_transient_after_success_refusal_and_network_failur
             expect(page.locator("#provider-profile")).to_have_value(f"remote-demo/{'a' * 64}")
             expect(page.locator("#provider-credential")).to_have_attribute("autocomplete", "off")
 
-            for index, secret in enumerate(secrets, start=1):
+            # Each attempt ends on its own outcome; the "Saving…" status and the cleared field
+            # appear before the request even reaches the route handler, so they prove nothing.
+            outcomes = (
+                "Credential saved on the server.",
+                "Secure credential storage is unavailable.",
+                "The local workbench did not respond. Check that it is still running.",
+            )
+            for index, (secret, outcome) in enumerate(zip(secrets, outcomes, strict=True), start=1):
                 page.locator("#provider-credential").fill(secret)
-                page.locator("#provider-save-credential").click()
+                with page.expect_request(_is_credential_post) as sent:
+                    page.locator("#provider-save-credential").click()
+                assert json.loads(sent.value.post_data or "") == {"credential": secret}
+                assert secret not in sent.value.url
+                assert all(secret not in value for value in sent.value.headers.values())
                 expect(page.locator("#provider-credential")).to_have_value("", timeout=10_000)
-                expect(page.locator("#provider-credential-status")).not_to_have_text("")
+                expect(page.locator("#provider-credential-status")).to_have_text(
+                    outcome, timeout=10_000
+                )
+                # The control unlocks only in the attempt's finally block, after every clear.
+                expect(page.locator("#provider-save-credential")).to_be_enabled(timeout=10_000)
+                expect(page.locator("#provider-credential")).to_have_value("")
+                _wait_for_route_handler(
+                    page,
+                    lambda count=index: len(credential_bodies) >= count,
+                    what=f"credential attempt {index}",
+                )
+                assert len(credential_bodies) == index
                 snapshot = page.evaluate(
                     """secret => ({
                       text: document.body.textContent.includes(secret),
@@ -1995,6 +2081,9 @@ def test_stale_city_pack_upload_response_cannot_replace_the_newer_selection(
                         "buffer": second_document,
                     }
                 )
+            # The first handler records its upload only after its own server fetch returns,
+            # which can be after the newer upload has already been answered.
+            _wait_for_route_handler(page, lambda: len(held) == 1, what="the held stale upload")
             assert len(held) == 1
             accepted = current_upload.value.json()
             assert accepted["city_id"] == "current-upload-city"
@@ -2004,7 +2093,9 @@ def test_stale_city_pack_upload_response_cannot_replace_the_newer_selection(
             expect(page.locator("#city-select")).to_have_value("current-upload-city")
 
             stale_route, stale_response = held.pop()
-            stale_route.fulfill(response=stale_response)
+            # Deliver the stale answer to the page before asserting that it changed nothing.
+            with page.expect_response("**/api/catalog/cities/upload"):
+                stale_route.fulfill(response=stale_response)
             page.wait_for_timeout(300)
 
             expect(page.locator("#city-select")).to_have_value("current-upload-city")

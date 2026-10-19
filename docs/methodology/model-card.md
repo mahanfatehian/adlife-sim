@@ -140,9 +140,20 @@ subscription, product login, or OAuth token is not accepted, and no credential e
 prompt or artifact.
 
 A general-purpose model brings its own tendencies. In rehearsal a local `qwen2.5:7b-instruct`
-gave nearly the same vector (neutral affect, high relevance and credibility) to most
-responses, and before its prompt stated when each safety flag applies it flagged about 95% of
-ordinary answers. The resulting cognition evidence is therefore provider-dependent and
+flagged about 95% of ordinary answers until the prompt stated when each safety flag applies,
+and it then gave nearly the same vector (neutral affect, high relevance and credibility) to
+almost every response: changing one causal input moved the targeted category in 3% of
+counterfactual pairs. The prompt contract now asks for a separate judgment per category from
+the agent's point of view, with qualitative anchors that name the supplied inputs and no
+numeric cutoffs. On 73 varied requests the same model then gave 17 distinct vectors;
+relevance followed interest overlap (Spearman 0.82) and credibility followed advertising
+skepticism (-0.70); in held-out one-input pairs 62% of targeted categories moved the expected
+way and 1.5% moved the wrong way. It still largely ignores initial brand sentiment, price
+moves affect in only about half of the pairs, credibility is rarely `high`, and 1-3% of
+answers mis-copy the request ID and go through the single repair attempt. Safety flags are
+kept: a stereotype-inviting or harmful creative is still flagged and neutralized. These
+measurements describe one model on this machine, not a validated psychological instrument.
+The resulting cognition evidence is therefore provider-dependent and
 exploratory: `city-metrics` reports it beside, never inside, the rule baseline, and it is not a
 campaign effect. `city-compare --layer response`, `city-study`, and `city-report` refuse V10
 runs until a paired-cognition protocol exists. Live provider signals are nondeterministic;

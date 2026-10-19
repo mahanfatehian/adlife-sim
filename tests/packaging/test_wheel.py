@@ -337,6 +337,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/jobs/{job_id}/cancel",
         "/api/persona-templates",
         "/api/providers",
+        "/api/providers/{profile_id}/revisions/{revision_id}/bounded-check",
         "/api/providers/{profile_id}/revisions/{revision_id}/check",
         "/api/providers/{profile_id}/revisions/{revision_id}/credential",
         "/api/runs",
@@ -354,6 +355,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/assets/workbench-providers.js",
         "/assets/workbench-providers.css",
         "/runs/{run_id}",
+        "/runs/{run_id}/reuse",
         "/static/{asset_name}",
     }
     assert guard.with_name(smoke_release._NETWORK_GUARD_LOG).is_file()

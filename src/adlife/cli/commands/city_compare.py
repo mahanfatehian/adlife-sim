@@ -72,20 +72,34 @@ def _response_delta_line(
     return "; ".join(parts)
 
 
+_RUN_ID_SCHEMAS = (
+    "schema-v5 through schema-v10 for --layer attention, "
+    "schema-v6 through schema-v9 for --layer response."
+)
+
+
 @command_boundary
 def command(
     root: Annotated[Path, typer.Argument(help="Root containing city-runs/.")],
     control_run_id: Annotated[
         str,
-        typer.Argument(help="Control schema-v5 through schema-v10 city run ID."),
+        typer.Argument(help=f"Control city run ID: {_RUN_ID_SCHEMAS}"),
     ],
     treatment_run_id: Annotated[
         str,
-        typer.Argument(help="Treatment schema-v5 through schema-v10 city run ID."),
+        typer.Argument(help=f"Treatment city run ID: {_RUN_ID_SCHEMAS}"),
     ],
     layer: Annotated[
         Literal["attention", "response"],
-        typer.Option("--layer", help="Metric evidence layer to compare."),
+        typer.Option(
+            "--layer",
+            help=(
+                "Metric evidence layer to compare. attention accepts schema-v5 through "
+                "schema-v10 runs; a schema-v10 run pairs only with another schema-v10 run. "
+                "response accepts schema-v6 through schema-v9 runs only; for a schema-v10 "
+                "run use city-metrics --layer response."
+            ),
+        ),
     ] = "attention",
 ) -> None:
     """Emit treatment-minus-control metrics for two matched saved city runs."""

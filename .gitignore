@@ -22,5 +22,7 @@ reports/
 
 # Local study folders are personal sandboxes, not part of the package
 demo-study/
+# The live-demo workbench workspace from docs/investor-demo.md
+demo-workbench/
 
 .freebuff/

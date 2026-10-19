@@ -747,8 +747,9 @@
     if (!state.personaEditor) return;
     const total = state.personaEditor.total();
     const mismatch = total !== Number(byId("agent-count").value);
+    const agents = byId("agent-count").value || "?";
     setText("persona-count-status", total === null ? "Enter valid audience counts before validation." :
-      `${total} people assigned in the audience · ${byId("agent-count").value || "?"} run agents${mismatch ? " · counts must match" : ""}`);
+      `${plural(total, "person", "people")} assigned in the audience · ${agents} ${Number(agents) === 1 ? "run agent" : "run agents"}${mismatch ? " · counts must match" : ""}`);
     byId("persona-use-total").hidden = !mismatch || total === null || total > 30;
   }
 
@@ -1398,7 +1399,7 @@
     setText("map-status", "Verified pack");
     setText(
       "map-summary",
-      `${state.cityDetail.display_name} contains ${pack.roads.length} roads and ${pack.nodes.length} nodes. City-pack geometry only; no live map or traffic feed.`,
+      `${state.cityDetail.display_name} contains ${plural(pack.roads.length, "road")} and ${plural(pack.nodes.length, "node")}. City-pack geometry only; no live map or traffic feed.`,
     );
     const items = pack.roads.map((road) => makeElement("li", `${road.road_id}: ${road.kind}, ${road.directions.join(" / ")}`));
     byId("map-road-list").replaceChildren(...items);
@@ -1921,7 +1922,7 @@
   function boundedJobFact(settings) {
     const source = COGNITION_MODE_LABELS.get(settings.cognition_mode);
     return isProviderMode(settings.cognition_mode)
-      ? `${source} · ${settings.funded_response_limit} funded responses`
+      ? `${source} · ${plural(settings.funded_response_limit, "funded response")}`
       : `${source} · offline, up to ${state.boundedCapability.selected_requests_per_run} selected`;
   }
 
@@ -1993,7 +1994,7 @@
     state.activeJob = job;
     if (!TERMINAL_PHASES.has(job.phase)) state.lastActivePhase = job.phase;
     byId("job-panel").hidden = false;
-    setText("job-phase", job.phase.toUpperCase());
+    setText("job-phase", (PHASE_LABELS.get(job.phase) ?? job.phase).toUpperCase());
     renderPhaseTrack(job);
     const settings = job.accepted_settings;
     const bounded = settings.workbench_input_schema_version === BOUNDED_WORKBENCH_SCHEMA;

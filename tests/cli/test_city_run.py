@@ -40,6 +40,11 @@ def _write_response_input(
     return path
 
 
+def _n(count: int, singular: str, plural: str | None = None) -> str:
+    """The expected human count: one noun reads singular, every other count plural."""
+    return f"{count} {singular if count == 1 else plural or f'{singular}s'}"
+
+
 def test_city_run_creates_saved_artifact_with_clean_json(tmp_path: Path) -> None:
     pack = _pack(tmp_path)
     result = CliRunner().invoke(
@@ -432,23 +437,27 @@ def test_city_run_persists_v6_response_study_with_exact_json_and_human_contract(
     assert human.exit_code == 0, human.output
     assert human.stderr == ""
     human_manifest = CityRunStore(tmp_path).load("response-human").manifest
+    opportunities = _n(
+        human_manifest.opportunity_count, "synthetic opportunity", "synthetic opportunities"
+    )
     assert human.stdout.splitlines() == [
         "saved city run: response-human "
-        f"({human_manifest.frame_count} verified minute frames, "
-        f"{human_manifest.opportunity_count} synthetic opportunities, "
-        f"{human_manifest.impression_count} impressions, "
-        f"{human_manifest.noticed_count} notices)",
-        f"response evidence: {human_manifest.response_count} rule responses, "
-        f"{human_manifest.state_update_count} state updates, "
-        f"{human_manifest.response_campaign_count} campaigns, "
-        f"{human_manifest.final_state_count} final campaign states",
+        f"({_n(human_manifest.frame_count, 'verified minute frame')}, "
+        f"{opportunities}, "
+        f"{_n(human_manifest.impression_count, 'impression')}, "
+        f"{_n(human_manifest.noticed_count, 'notice')})",
+        f"response evidence: {_n(human_manifest.response_count, 'rule response')}, "
+        f"{_n(human_manifest.state_update_count, 'state update')}, "
+        f"{_n(human_manifest.response_campaign_count, 'campaign')}, "
+        f"{_n(human_manifest.final_state_count, 'final campaign state')}",
         "response contract: spatial-response-v1; synthetic-response-not-observed-behavior",
         f"response input SHA-256: {human_manifest.response_input_sha256}",
         f"response stream SHA-256: {human_manifest.response_stream_sha256} "
-        f"({human_manifest.response_stream_bytes} bytes)",
+        f"({_n(human_manifest.response_stream_bytes, 'byte')})",
         f"response state SHA-256: {human_manifest.response_state_sha256}",
         f"response summary SHA-256: {human_manifest.response_summary_sha256}",
     ]
+    assert ", 2 campaigns, " in human.stdout
 
 
 def test_city_run_help_exposes_response_dependency() -> None:

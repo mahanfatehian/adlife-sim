@@ -70,6 +70,41 @@ _V10_KEYS = {
 }
 
 
+def _n(count: int, singular: str, plural: str | None = None) -> str:
+    """The expected human count: one noun reads singular, every other count plural."""
+    return f"{count} {singular if count == 1 else plural or f'{singular}s'}"
+
+
+def _replay_summary_line(run_id: str, manifest) -> str:
+    return (
+        f"city replay identical: {run_id} "
+        f"({_n(manifest.frame_count, 'minute frame')}, "
+        f"{_n(manifest.opportunity_count, 'synthetic opportunity', 'synthetic opportunities')}, "
+        f"{_n(manifest.impression_count, 'impression')}, "
+        f"{_n(manifest.noticed_count, 'notice')})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("count", "singular", "plural", "expected"),
+    [
+        (0, "campaign", None, "0 campaigns"),
+        (1, "campaign", None, "1 campaign"),
+        (2, "campaign", None, "2 campaigns"),
+        (1, "synthetic opportunity", "synthetic opportunities", "1 synthetic opportunity"),
+        (3, "synthetic opportunity", "synthetic opportunities", "3 synthetic opportunities"),
+        (1, "byte", None, "1 byte"),
+    ],
+)
+def test_city_replay_counts_read_singular_only_for_one(
+    count: int, singular: str, plural: str | None, expected: str
+) -> None:
+    from adlife.cli.output import count_noun
+
+    named = count_noun(count, singular) if plural is None else count_noun(count, singular, plural)
+    assert named == expected
+
+
 def _create_response_run(root: Path, *, run_id: str = "response-study"):
     pack = load_pack(pack_data())
     scenario = _scenario(
@@ -201,13 +236,7 @@ def test_city_replay_reports_verified_spatial_provenance(tmp_path: Path) -> None
         ["city-replay", str(tmp_path), "spatial-study"],
     )
     assert human.exit_code == 0, human.output
-    assert human.stdout.splitlines() == [
-        "city replay identical: spatial-study "
-        f"({stored.manifest.frame_count} minute frames, "
-        f"{stored.manifest.opportunity_count} synthetic opportunities, "
-        f"{stored.manifest.impression_count} impressions, "
-        f"{stored.manifest.noticed_count} notices)"
-    ]
+    assert human.stdout.splitlines() == [_replay_summary_line("spatial-study", stored.manifest)]
     assert human.stderr == ""
 
 
@@ -274,23 +303,26 @@ def test_city_replay_v6_reports_exact_json_and_human_response_receipts_without_m
     )
 
     assert human.exit_code == 0, human.output
-    assert human.stdout.splitlines() == [
-        "city replay identical: response-study "
-        f"({stored.manifest.frame_count} minute frames, "
-        f"{stored.manifest.opportunity_count} synthetic opportunities, "
-        f"{stored.manifest.impression_count} impressions, "
-        f"{stored.manifest.noticed_count} notices)",
-        f"response evidence: {stored.manifest.response_count} rule responses, "
-        f"{stored.manifest.state_update_count} state updates, "
-        f"{stored.manifest.response_campaign_count} campaigns, "
-        f"{stored.manifest.final_state_count} final campaign states",
+    lines = human.stdout.splitlines()
+    assert lines == [
+        _replay_summary_line("response-study", stored.manifest),
+        f"response evidence: {_n(stored.manifest.response_count, 'rule response')}, "
+        f"{_n(stored.manifest.state_update_count, 'state update')}, "
+        f"{_n(stored.manifest.response_campaign_count, 'campaign')}, "
+        f"{_n(stored.manifest.final_state_count, 'final campaign state')}",
         "response contract: spatial-response-v1; synthetic-response-not-observed-behavior",
         f"response input SHA-256: {stored.manifest.response_input_sha256}",
         f"response stream SHA-256: {stored.manifest.response_stream_sha256} "
-        f"({stored.manifest.response_stream_bytes} bytes)",
+        f"({_n(stored.manifest.response_stream_bytes, 'byte')})",
         f"response state SHA-256: {stored.manifest.response_state_sha256}",
         f"response summary SHA-256: {stored.manifest.response_summary_sha256}",
     ]
+    # This fixture has exactly one notice, response, update and campaign: each reads singular.
+    assert lines[0].endswith(", 1 notice)")
+    assert lines[1] == (
+        "response evidence: 1 rule response, 1 state update, 1 campaign, "
+        f"{stored.manifest.final_state_count} final campaign states"
+    )
     assert human.stderr == ""
     assert _artifact_inventory(stored.directory) == before
 
@@ -380,23 +412,24 @@ def test_v9_replay_preserves_exact_json_bytes_and_human_wording(tmp_path: Path) 
 
     human = CliRunner().invoke(app, ["city-replay", str(tmp_path), "exact-v9"])
     assert human.exit_code == 0, human.output
-    assert human.stdout.splitlines() == [
-        "city replay identical: exact-v9 "
-        f"({stored.manifest.frame_count} minute frames, "
-        f"{stored.manifest.opportunity_count} synthetic opportunities, "
-        f"{stored.manifest.impression_count} impressions, "
-        f"{stored.manifest.noticed_count} notices)",
-        f"response evidence: {stored.manifest.response_count} rule responses, "
-        f"{stored.manifest.state_update_count} state updates, "
-        f"{stored.manifest.response_campaign_count} campaigns, "
-        f"{stored.manifest.final_state_count} final campaign states",
+    lines = human.stdout.splitlines()
+    assert lines == [
+        _replay_summary_line("exact-v9", stored.manifest),
+        f"response evidence: {_n(stored.manifest.response_count, 'rule response')}, "
+        f"{_n(stored.manifest.state_update_count, 'state update')}, "
+        f"{_n(stored.manifest.response_campaign_count, 'campaign')}, "
+        f"{_n(stored.manifest.final_state_count, 'final campaign state')}",
         "response contract: spatial-response-v1; synthetic-response-not-observed-behavior",
         f"response input SHA-256: {stored.manifest.response_input_sha256}",
         f"response stream SHA-256: {stored.manifest.response_stream_sha256} "
-        f"({stored.manifest.response_stream_bytes} bytes)",
+        f"({_n(stored.manifest.response_stream_bytes, 'byte')})",
         f"response state SHA-256: {stored.manifest.response_state_sha256}",
         f"response summary SHA-256: {stored.manifest.response_summary_sha256}",
     ]
+    # A V9 run carries one campaign, which the human receipt must not call "1 campaigns".
+    assert stored.manifest.response_campaign_count == 1
+    assert ", 1 campaign, " in lines[1]
+    assert "1 campaigns" not in human.stdout
     assert human.stderr == ""
 
 
@@ -490,37 +523,34 @@ def test_v10_replay_json_separates_rule_and_cognition_evidence(
 
     human = CliRunner().invoke(app, ["city-replay", str(tmp_path), "bounded-v10"])
     assert human.exit_code == 0, human.output
+    manifest = prepared.manifest
+    coverage = manifest.cognition.coverage
     assert human.stdout.splitlines() == [
-        "city replay identical: bounded-v10 "
-        f"({prepared.manifest.frame_count} minute frames, "
-        f"{prepared.manifest.opportunity_count} synthetic opportunities, "
-        f"{prepared.manifest.impression_count} impressions, "
-        f"{prepared.manifest.noticed_count} notices)",
-        f"response evidence: {prepared.manifest.baseline_response_count} rule-owned baseline "
-        f"responses, {prepared.manifest.applied_response_count} bounded sentiment/recall "
-        "applications, "
-        f"{prepared.manifest.dual_state_update_count} dual state updates",
-        f"state evidence: {prepared.manifest.final_state_count} rule states, "
-        f"{prepared.manifest.final_cognition_state_count} cognition states; "
+        _replay_summary_line("bounded-v10", manifest),
+        f"response evidence: {_n(manifest.baseline_response_count, 'rule-owned baseline response')}"
+        f", {_n(manifest.applied_response_count, 'bounded sentiment/recall application')}, "
+        f"{_n(manifest.dual_state_update_count, 'dual state update')}",
+        f"state evidence: {_n(manifest.final_state_count, 'rule state')}, "
+        f"{_n(manifest.final_cognition_state_count, 'cognition state')}; "
         "purchase intention remains rule-owned",
         "response contract: spatial-response-v2; synthetic-bounded-cognition-not-observed-behavior",
         "cognition contract: bounded synthetic cognition (mode: local; effect scope: "
         "bounded-signals-v1); frozen offline replay",
-        f"cognition evidence: {prepared.manifest.cognition.coverage.selected_request_count} "
-        f"selected ({prepared.manifest.cognition.coverage.funded_request_count} funded, "
-        f"{prepared.manifest.cognition.coverage.budget_skipped_count} budget-skipped), "
-        f"{prepared.manifest.cognition.coverage.unselected_response_count} unselected; "
-        f"{prepared.manifest.cognition.terminal_record_count} frozen terminals",
-        f"response input SHA-256: {prepared.manifest.response_input_sha256}",
-        f"response stream SHA-256: {prepared.manifest.response_stream_sha256} "
-        f"({prepared.manifest.response_stream_bytes} bytes)",
-        f"response state SHA-256: {prepared.manifest.response_state_sha256}",
-        f"rule state SHA-256: {prepared.manifest.rule_state_document_sha256}",
-        f"cognition state SHA-256: {prepared.manifest.cognition_state_document_sha256}",
-        f"response summary SHA-256: {prepared.manifest.response_summary_sha256}",
-        f"cognition terminal SHA-256: {prepared.manifest.cognition.terminal_stream_sha256} "
-        f"({prepared.manifest.cognition.terminal_stream_bytes} bytes)",
-        f"cognition summary SHA-256: {prepared.manifest.cognition.summary_sha256}",
+        f"cognition evidence: {coverage.selected_request_count} "
+        f"selected ({coverage.funded_request_count} funded, "
+        f"{coverage.budget_skipped_count} budget-skipped), "
+        f"{coverage.unselected_response_count} unselected; "
+        f"{_n(manifest.cognition.terminal_record_count, 'frozen terminal')}",
+        f"response input SHA-256: {manifest.response_input_sha256}",
+        f"response stream SHA-256: {manifest.response_stream_sha256} "
+        f"({_n(manifest.response_stream_bytes, 'byte')})",
+        f"response state SHA-256: {manifest.response_state_sha256}",
+        f"rule state SHA-256: {manifest.rule_state_document_sha256}",
+        f"cognition state SHA-256: {manifest.cognition_state_document_sha256}",
+        f"response summary SHA-256: {manifest.response_summary_sha256}",
+        f"cognition terminal SHA-256: {manifest.cognition.terminal_stream_sha256} "
+        f"({_n(manifest.cognition.terminal_stream_bytes, 'byte')})",
+        f"cognition summary SHA-256: {manifest.cognition.summary_sha256}",
     ]
     assert human.stderr == ""
     assert secret not in human.output

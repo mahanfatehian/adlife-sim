@@ -52,6 +52,11 @@ def emit_result(document: Any, *, fmt: str | None = None) -> None:
             print(line, flush=True)
 
 
+def count_noun(value: int, singular: str, plural: str | None = None) -> str:
+    """Name a human count with its noun: "1 campaign", "0 campaigns", "2 campaigns"."""
+    return f"{value} {singular if value == 1 else plural or f'{singular}s'}"
+
+
 def info(message: str) -> None:
     """A diagnostic that must never corrupt a machine-readable stdout."""
     if output_format() in {"json", "jsonl"}:
@@ -68,4 +73,12 @@ def warn(message: str) -> None:
         print(f"warning: {message}", file=sys.stderr)
 
 
-__all__ = ["color_enabled", "emit_json", "emit_jsonl", "emit_result", "info", "warn"]
+__all__ = [
+    "color_enabled",
+    "count_noun",
+    "emit_json",
+    "emit_jsonl",
+    "emit_result",
+    "info",
+    "warn",
+]

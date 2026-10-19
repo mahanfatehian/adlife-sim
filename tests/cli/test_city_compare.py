@@ -19,12 +19,58 @@ from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run, _s
 from tests.unit.city.test_city_pack import load_pack, pack_data
 
 
-def test_city_compare_help_lists_v10_for_both_run_ids():
-    result = CliRunner().invoke(app, ["city-compare", "--help"], terminal_width=200)
+def _help_text(*arguments: str) -> str:
+    result = CliRunner().invoke(app, [*arguments, "--help"], terminal_width=200)
     assert result.exit_code == 0, result.output
-    help_text = " ".join(strip_ansi(result.output).replace("│", " ").split())
+    return " ".join(strip_ansi(result.output).replace("│", " ").split())
+
+
+def test_city_compare_help_states_the_schemas_each_layer_accepts():
+    help_text = _help_text("city-compare")
+    # Both run IDs reach schema-v10 only through the attention layer.
     for arm in ("Control", "Treatment"):
-        assert f"{arm} schema-v5 through schema-v10 city run ID." in help_text
+        assert (
+            f"{arm} city run ID: schema-v5 through schema-v10 for --layer attention, "
+            "schema-v6 through schema-v9 for --layer response."
+        ) in help_text
+        assert f"{arm} schema-v5 through schema-v10 city run ID." not in help_text
+    assert (
+        "Metric evidence layer to compare. attention accepts schema-v5 through schema-v10 "
+        "runs; a schema-v10 run pairs only with another schema-v10 run. response accepts "
+        "schema-v6 through schema-v9 runs only; for a schema-v10 run use city-metrics "
+        "--layer response."
+    ) in help_text
+    assert "[default: attention]" in help_text
+
+
+def test_city_compare_short_help_in_the_command_list_is_unchanged():
+    assert (
+        "city-compare Emit treatment-minus-control metrics for two matched saved city runs."
+        in _help_text()
+    )
+
+
+def test_city_compare_v10_pair_matches_the_documented_layer_support(tmp_path: Path) -> None:
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    _, prepared, directory = _saved_v10(tmp_path, mode="mock")
+    run_id = prepared.manifest.run_id
+    before = _artifact_bytes(directory)
+    runner = CliRunner()
+    base = ["--format", "json", "city-compare", str(tmp_path), run_id, run_id]
+
+    attention = runner.invoke(app, base)
+    assert attention.exit_code == 0, attention.output
+    document = json.loads(attention.stdout)
+    assert document["classification"] == "matched-opportunity-structure"
+    assert document["control"]["source_run_schema_version"] == 10
+
+    response = runner.invoke(app, [*base, "--layer", "response"])
+    assert response.exit_code == 4, response.output
+    error = json.loads(response.stdout)["error"]
+    assert "schema-v6, v7, v8 or v9" in error["message"]
+    assert "Traceback" not in response.output
+    assert _artifact_bytes(directory) == before
 
 
 @pytest.mark.parametrize("layer", ["attention", "response"])

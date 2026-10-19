@@ -23,8 +23,12 @@ will differ on other hardware.
   rehearsal's cached answers (shown as **Cache**) and its run IDs.
 - Pick a free port. This script uses `50050`; see [Troubleshooting](#troubleshooting) if it
   is taken.
+- On a projector, zoom the browser to 125% (Ctrl and +). Both pages reflow at that zoom
+  without sideways scrolling, and the small labels in the inspector's sidebar become readable.
 - If no model is available on the day, use the offline path in
   [Without a working model](#without-a-working-model-mock-and-rules).
+- For finished runs to fall back on, seed them with one command once the workbench is
+  running; see [Backup: seed a demo workspace](#backup-seed-a-demo-workspace).
 
 ## Part 1 — SETUP
 
@@ -53,7 +57,7 @@ Expected: eight `PASS` lines (package, Python, resources, writable storage, SQLi
 UTF-8 console, offline rule/mock providers, and no network) ending with
 `8/8 checks passed`. The command makes no network request.
 
-### 3. Warm the local model (3-12 seconds; about 100 seconds on the first load after a reboot)
+### 3. Warm the local model (3-30 seconds; about 100 seconds on the first load after a reboot)
 
 ```powershell
 ollama run qwen2.5:7b-instruct --keepalive 30m hello
@@ -105,6 +109,9 @@ product login, or OAuth token is not accepted. A remote check allows 10 seconds 
 4. The hint `No local profile yet` opens **Create an immutable profile** with Approved
    endpoint `local-ollama`, Profile ID `local-ollama`, Display name `Local Ollama`, and Model
    ID `qwen2.5:7b-instruct` already filled in. Click **Save profile revision**.
+   If the workspace already holds that profile (for example after
+   [seeding backup runs](#backup-seed-a-demo-workspace)), the hint does not appear and
+   **Exact profile revision** already offers it: select it and go on to step 6.
 
 Expected: **Exact profile revision** shows `Local Ollama · qwen2.5:7b-instruct · <revision>`,
 Credential `Available on server`, and Output tokens
@@ -120,10 +127,10 @@ the page says
 Expected: `Bounded-signal contract confirmed.`, and the row heading reads
 `Bounded-signal contract · confirmed for this revision`. The check sends one fixed synthetic
 probe under the exact V10 prompt and result contract and discards the answer. The result lives
-only in the server process: a page reopened in the same workbench session shows
-`confirmed earlier in this workbench session`, but you must check again after restarting the
-workbench or after changing Operation, Source, or profile. At most 5 checks may start per
-minute.
+only in the server process. **↻ Run again with these inputs** reopens RUN with
+`confirmed earlier in this workbench session`, but a reloaded or newly opened page asks for
+the check again (one click, about 2 seconds), and so do restarting the workbench and changing
+Operation, Source, or profile. At most 5 checks may start per minute.
 
 Say: *"This proves the model can return the strict closed-category result AdLife requires.
 It does not prove the model is right about anything."*
@@ -163,7 +170,8 @@ biographies, and MBTI are descriptive only: they never reach the model or the eq
 ### 9. RUN settings and model assistance (1 minute)
 
 1. Run settings: Run ID `demo-v10-001` (use a new ID for every run), Synthetic people `8`,
-   Model days `1`, Seed `42`. Response mode stays `Rules engine (offline)`.
+   Model days `1`, Seed `42`. Baseline responses stays `Rules engine (offline)`: the rules
+   compute every baseline response, and the model only feeds the separate cognition track.
 2. Model assistance: Operation `Bounded AI cognition`, Source `Local compatible model`, the
    `Local Ollama` profile revision, and Funded responses `10 requests` (the default is 20).
 3. Read the funding text aloud: `The first 10 of up to 60 selected responses go to the model;
@@ -181,7 +189,7 @@ intention, or make purchases."*
 
 ### 10. Validate and review (30 seconds)
 
-Click **Validate study** (1-2 seconds). Expected: `Validated. Review the immutable binding
+Click **Validate study** (under a second). Expected: `Validated. Review the immutable binding
 receipt before starting.` The review shows Operation `Bounded AI cognition`, Model source
 `Local model · Local Ollama · qwen2.5:7b-instruct · rev …`, Funding
 `10 funded of up to 60 selected · 10,240 output tokens reserved`, Compatibility
@@ -215,11 +223,11 @@ Click **Inspect run**.
 
 The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 seconds).
 
-1. **Map and timeline.** Press ▶ or drag the **City timeline**: fictional agents move along
-   roads through the model day. For the current minute, the sidebar lists the phone
-   opportunities, **Modeled attention** (noticed or ignored, from a fixed 0.5 draw), and
-   **Responses & bounded cognition**; choose a person to follow one agent. Say: *"All of this
-   is rule-owned and identical on every rerun."*
+1. **Map and timeline.** Press ▶ or drag the timeline slider under **Model time** at the
+   bottom of the page: fictional agents move along roads through the model day. For the
+   current minute, the sidebar lists the phone opportunities, **Modeled attention** (noticed
+   or ignored, from a fixed 0.5 draw), and **Responses & bounded cognition**; choose a person
+   to follow one agent. Say: *"All of this is rule-owned and identical on every rerun."*
 2. **Bounded AI cognition signals panel.** Model `qwen2.5:7b-instruct` with its profile
    revision; tiles Eligible 18, Selected 18, Funded 10, Unselected 0, Provider 10, Cache 0,
    Fallback 0, Budget skipped 8; `How the 18 eligible responses were resolved`
@@ -228,8 +236,8 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    counts); the authority pipeline Rule
    baseline → Signal or neutral → Fixed mapping → Applied delta → Dual-state commit; and the
    prompt, result-schema, and influence-policy hashes. **Provider usage** reports what the
-   model actually did, kept apart from the reservation; one rehearsal read
-   `10 HTTP attempts in this run · 6,745 prompt + 1,400 completion tokens`, against 10,240
+   model actually did, kept apart from the reservation; the rehearsal read
+   `10 HTTP attempts in this run · 10,018 prompt + 1,415 completion tokens`, against 10,240
    reserved output tokens. A model failure would show here as Fallback with its reason.
 3. **Saved signal timeline.** Open it, keep **Show** on `All selected requests (18)`, and
    click the first entry, `#1 · DAY 01 · 07:04`, `PERSON-005 · FICTIONAL-LAUNCH`. The page
@@ -239,13 +247,17 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    | Stage | What it showed |
    | --- | --- |
    | 1 Deterministic baseline (rule-owned) | sentiment Δ +0.0398, recall Δ +0.254 |
-   | 2 Provider signal | affect `neutral`, relevance `high`, credibility `high`, salience `medium`, with that request's usage (`1 HTTP attempt` and its prompt and completion tokens) |
-   | 3 `city-cognition-influence-v1` mapping | sentiment (0.0398 + 0) × 1.15 × 1.10 = +0.0503; recall 0.254 × 1.15 × 1.10 × 1.00 = 0.3213, clamped to 0.3 |
-   | 4 Applied cognition delta | sentiment Δ +0.0503, recall Δ +0.3, cognition track only |
-   | 5 Atomic rule/cognition state update | rule sentiment 0 → 0.0398, cognition sentiment 0 → 0.0503 |
+   | 2 Provider signal | affect `curious`, relevance `high`, credibility `medium`, salience `high`, with that request's usage (`1 HTTP attempt · 992 prompt + 137 completion tokens`) |
+   | 3 `city-cognition-influence-v1` mapping | sentiment (0.0398 + 0.02) × 1.15 × 1.00 = +0.0687; recall 0.254 × 1.15 × 1.00 × 1.15 = 0.3359, clamped to 0.3 |
+   | 4 Applied cognition delta | sentiment Δ +0.0687, recall Δ +0.3, cognition track only |
+   | 5 Atomic rule/cognition state update | rule sentiment 0 → 0.0398, cognition sentiment 0 → 0.0687 |
 
    The baseline numbers are rule-owned and identical on every run of this configuration;
-   the model's categories, and therefore stages 2-5, can differ in a live run. Then set
+   the model's categories, and therefore stages 2-5, can differ in a live run. In rehearsal
+   both personas shared the campaign's technology interest and had moderate advertising
+   skepticism, so every funded answer chose relevance `high` and credibility `medium`, while
+   affect (`curious` or `skeptical`) and salience (`high` or `medium`) changed with the agent
+   and the moment; step 15 adds a persona the model judges very differently. Then set
    **Show** to `Budget skipped (8)` and open an entry: the neutral vector leaves the applied
    delta exactly equal to the baseline.
 4. **Final states.** Under **Final campaign state**, each agent has a `RULE TRACK ·
@@ -253,7 +265,8 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    SYNTHETIC` card with sentiment and recall only plus its `VS RULE TRACK` gap (or
    `IDENTICAL TO THE RULE TRACK` when every signal was neutral). Purchase intention never
    reads the cognition track.
-5. **Metrics.** Open **Response metrics**: the rule-baseline tables keep the uncalibrated
+5. **Metrics.** Scroll the sidebar to **Response metrics** (open by default; clicking its
+   heading hides it): the rule-baseline tables keep the uncalibrated
    purchase-intention proxy, and the cognition metrics are labelled exploratory.
 
 ### 13. Metrics from the command line (about 6 seconds)
@@ -271,11 +284,12 @@ rule-owned proxy, not a probability or a forecast; purchases are not modeled`, t
 `Provider-dependent cognition (exploratory, not a campaign effect)` with
 `signal source: local; effect scope bounded-signals-v1; funded response limit 10`, the
 profile, model, and revision, `coverage: eligible responses 18; selected 18; funded 10;
-budget-skipped 8; unselected 0`, the source and category counts (the output states how many
-categories are fixed neutral vectors rather than model choices), applied means, the synthetic
-cognition state, provenance hashes, and a disclosure. In rehearsal the model mostly chose
-high relevance and credibility, so mean synthetic sentiment ended at 0.076 against 0.065 on
-the rule track; live values differ from run to run.
+budget-skipped 8; unselected 0; funded coverage 10/18=0.555556`, the source and category
+counts (the output states how many categories are fixed neutral vectors rather than model
+choices), applied means, the synthetic cognition state, provenance hashes, and a
+disclosure. In rehearsal the model chose high
+relevance and medium credibility for every funded response, so mean synthetic sentiment
+ended at 0.082 against 0.065 on the rule track; live values can differ from run to run.
 
 ### 14. Offline replay (about 6-8 seconds)
 
@@ -284,13 +298,15 @@ uv run adlife city-replay .\demo-workbench demo-v10-001
 ```
 
 Expected: `city replay identical: demo-v10-001 (1440 minute frames, 32 synthetic
-opportunities, 32 impressions, 18 notices)`, then `18 rule-owned baseline responses, 18
-bounded sentiment/recall applications, 18 dual state updates`, `8 rule states, 8 cognition
-states; purchase intention remains rule-owned`, `cognition contract: bounded synthetic
-cognition (mode: local; effect scope: bounded-signals-v1); frozen offline replay`, and the
-evidence hashes. Replay regenerates the rule layers, revalidates every saved signal against
-its request, reapplies the fixed mapping, and requires exact equality without calling the
-model. To prove it, quit Ollama from the system tray and run the command again, or add
+opportunities, 32 impressions, 18 notices)`, then `response evidence: 18 rule-owned baseline
+responses, 18 bounded sentiment/recall applications, 18 dual state updates`, `state
+evidence: 8 rule states, 8 cognition states; purchase intention remains rule-owned`,
+`response contract: spatial-response-v2; synthetic-bounded-cognition-not-observed-behavior`,
+`cognition contract: bounded synthetic cognition (mode: local; effect scope:
+bounded-signals-v1); frozen offline replay`, `cognition evidence: 18 selected (10 funded, 8
+budget-skipped), 0 unselected; 18 frozen terminals`, and the evidence hashes. Replay
+regenerates the rule layers, revalidates every saved signal against its request, reapplies
+the fixed mapping, and requires exact equality without calling the model. To prove it, quit Ollama from the system tray and run the command again, or add
 `--format json` after `adlife` and point at `"identical": true`. Restart Ollama before any
 further live run.
 
@@ -305,6 +321,17 @@ further live run.
   first run and 8 from the model (about 30 seconds), and Provider usage reads
   `8 HTTP attempts in this run` with `10 cached answers reused without a call`. Use a
   different seed or a fresh workspace when every answer should be a live provider call.
+- **A persona the model judges differently.** Click **↻ Run again with these inputs**, open
+  **CAMPAIGN**, choose `Fictional Veyra` under **Fictional starting point**, click **Add
+  persona**, and set it to 4 people (`3 definitions · 12 people`). Set Synthetic people to
+  `12` and Funded responses to `20 requests`, use a new Run ID, validate, and start (about
+  50 seconds). Veyra's interests (books, cooking) miss the campaign's targets, and her
+  advertising skepticism (0.75) and price sensitivity (0.8) are high. In rehearsal all 8 of
+  her answers read `skeptical`, relevance `medium`, credibility `low`, salience `low`, while
+  the Lumo and Nuvin agents kept relevance `high` and credibility `medium`. Open the saved
+  signal timeline and compare a Veyra entry with a Lumo entry. Some answers may come from
+  the cache of the first run, and an answer that fails validation shows as **Fallback**
+  with its reason (1 of 20 did in rehearsal).
 - **Mock.** Repeat with Source `Mock — reproducible demo` and Run ID `demo-mock-001`. It needs
   no profile or check, finishes in about 3-10 seconds, and fills all 18 signals from the
   offline deterministic mock.
@@ -317,9 +344,65 @@ If Ollama or the remote endpoint is unavailable, run Part 2 with Source
 `Mock — reproducible demo`. Funded responses shows `60 · all selected, resolved offline`,
 the review lists `Mock (offline)` and `Up to 60 selected · resolved offline · no
 reservation`, and no profile, credential, or compatibility check is needed. The run makes no
-network call, is identical on rerun, and the inspector, metrics, and replay steps work
-unchanged with `mock` instead of `local`. Say plainly that mock categories come from a fixed
-hash rule (`city-cognition-mock-signal-v1`), not a model.
+network call, is identical on rerun, and the inspector, metrics, and replay steps work the
+same way with `mock` instead of `local`, except that every selected request is funded:
+metrics read `funded response limit 60`, `provider: none (signals resolved offline)`, and
+`funded 18; budget-skipped 0`, and replay reports `18 selected (18 funded, 0
+budget-skipped)`. Say plainly that mock categories come from a fixed hash rule
+(`city-cognition-mock-signal-v1`), not a model.
+
+## Backup: seed a demo workspace
+
+If the local model is slow on the day, or you would rather open finished runs than wait,
+seed backup runs before the presentation. Keep the workbench from step 4 running, open a
+second PowerShell window in the repository folder, and run one of:
+
+```powershell
+uv run python scripts/demo_workspace.py --base-url http://127.0.0.1:50050
+uv run python scripts/demo_workspace.py --base-url http://127.0.0.1:50050 --with-llm
+```
+
+The script drives the running workbench through the same loopback API the browser uses: it
+reads the page's security token, validates and starts each study, and waits for its job.
+Every run is therefore an ordinary verified saved run, listed under INSPECT. Each one uses the
+Part 2 study (`Fictional Grid City V2`, the `Lumen Pocket` creative, `Fictional Lumo` and
+`Fictional Nuvin` with 4 people each, 1 model day):
+
+| Run ID | Operation · Source | Saved as |
+| --- | --- | --- |
+| `backup-v10-mock-001` | `Bounded AI cognition` · `Mock — reproducible demo` | Workbench schema 4 → run V10 |
+| `backup-v9-rules-001` | `Explanation only` · `Rules — offline` | Workbench schema 3 → run V9 |
+| `backup-v10-local-001` | `Bounded AI cognition` · `Local compatible model`, `10 requests` funded; only with `--with-llm` | Workbench schema 4 → run V10 |
+
+It prints one line per run with its run ID, phase, source counts, and inspector URL, with
+progress lines starting `demo_workspace:` in between. Expected after about 10 seconds:
+
+```text
+backup-v10-mock-001  completed  V10 bounded/mock  rules=0 mock=19 provider=0 cache=0 fallback=0 budget-skipped=0  http://127.0.0.1:50050/runs/backup-v10-mock-001
+backup-v9-rules-001  completed  V9 explanation-only/rules  rules=19 mock=0 provider=0 cache=0 fallback=0 budget-skipped=0  http://127.0.0.1:50050/runs/backup-v9-rules-001
+```
+
+With `--with-llm` the script then warms the model in Ollama for 30 minutes (`--model` picks
+another installed model), reuses or creates the same `local-ollama` profile revision that
+**Save profile revision** creates in step 5, passes the bounded-signal compatibility check,
+and starts the local run. Its line follows about 30 seconds later with a warm model, reading
+`provider=10` and `budget-skipped=9`; a cold model adds 12-100 seconds of loading first.
+
+- Each invocation takes the next number (`-002`, `-003`, ...), so a saved run is never
+  overwritten; `--run-prefix` replaces `backup`. `--with-llm` also creates the two offline
+  runs again, and all three share that invocation's number: after an earlier offline
+  seeding, the local run is `backup-v10-local-002`.
+- The script uses seed 1 instead of Part 2's 42, so its counts differ slightly (19 eligible
+  responses instead of 18), and a later live `demo-v10-001` run in the same workspace still
+  asks the model instead of reusing these answers as **Cache**. Running `--with-llm` again
+  with the same seed does reuse them (`cache=10`); pass another `--seed` for new model calls.
+- The script's check counts only inside this server process: **↻ Run again with these
+  inputs** on the seeded local run shows it as confirmed, but a newly opened page still
+  needs its own **Check compatibility** click in step 6.
+- It talks only to `127.0.0.1` or `localhost`, needs no credential, and never prints the
+  page's security token. Any failure ends with a one-line `demo_workspace: error:` message
+  and exit code 1; a mistyped option prints the usage and `demo_workspace.py: error:` with
+  exit code 2.
 
 ## Troubleshooting
 
@@ -334,8 +417,8 @@ hash rule (`city-cognition-mock-signal-v1`), not a model.
 | Responses listed as `Set aside · safety flag` or `Set aside · uncertain answer` | The model set a safety flag or answered `uncertain` | Working as designed: the categories stay visible as recorded but not applied, and the whole vector is neutral. The `Uncertain or safety neutralized` filter lists them. |
 | Sources show **Cache** instead of **Provider** | Same inputs, seed, and profile revision as an earlier run in this workspace | Use a new seed or a fresh workspace folder. |
 | `Start was refused: A saved run already uses this ID. Choose a new run ID.` | A saved run in this workspace has that ID; runs are never overwritten | Enter a new Run ID such as `demo-v10-002`, validate again, or use **↻ Run again with these inputs**, which suggests a free one. |
-| `ERROR: [Errno 10048] error while attempting to bind on address ('127.0.0.1', 50050)` right after the `city workbench:` line | Another process already uses the port | Use another port such as `--port 50051`, or find the owner with `Get-NetTCPConnection -LocalPort 50050 -State Listen`. |
-| `[winerror 10013] an attempt was made to access a socket in a way forbidden by its access permissions` | The port is in a Windows-reserved range | List the ranges with `netsh interface ipv4 show excludedportrange protocol=tcp` and pick a port outside them. |
+| `ERROR: [Errno 10048] error while attempting to bind on address ('127.0.0.1', 50050)` right after the `city workbench:` line | Another process already uses the port | Find the owner with `Get-NetTCPConnection -LocalPort 50050 -State Listen`. Do not just try the next number: on the development laptop, system services hold 50051 and 50052. Check a candidate first: `Get-NetTCPConnection -LocalPort 48080 -ErrorAction SilentlyContinue` prints nothing for a free port, and the port must lie outside every range in the next row's command. Then start with, for example, `--port 48080` and use that port in every URL, including the backup script's `--base-url`. |
+| `[winerror 10013] an attempt was made to access a socket in a way forbidden by its access permissions` | The port is in a Windows-reserved range | List the ranges with `netsh interface ipv4 show excludedportrange protocol=tcp` and pick a port outside them. Hyper-V and WSL reserve such ranges inside the dynamic range 49152-65535, and the ranges can move after a restart, so check again on the day; a port below 49152, such as 48080, normally stays clear of them. |
 | `workbench workspace is unsafe or unavailable` | The workspace path is a link, junction, or file, or uses an 8.3 short name | Use a plain folder such as `.\demo-workbench`. |
 | The run library reports unavailable entries withheld | A run was written by an earlier development build of the unreleased V10 format, or a file was changed | Create a fresh run; damaged or incompatible runs are refused, never repaired. |
 | A V10 page shows `Bounded cognition inspector assets are unavailable` | An incomplete or outdated installation | Run `uv sync` again and restart the workbench. |
@@ -354,8 +437,8 @@ hash rule (`city-cognition-mock-signal-v1`), not a model.
   requests are neutral and labelled, so every response is accounted for.
 - Each funded request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256
   output tokens each. Input tokens and vendor charges are outside that reservation.
-- Live model answers are not reproducible; saved runs are. `city-replay` reapplies the frozen
-  signals offline and must match every saved byte of evidence.
+- Live model answers are not guaranteed to be reproducible; saved runs are. `city-replay`
+  reapplies the frozen signals offline and must match every saved byte of evidence.
 - The cognition evidence is exploratory: it is not validated psychology, not a prediction about
   any person, and not a sales forecast or campaign effect. Comparisons, studies, and reports
   of V10 runs are not supported yet.

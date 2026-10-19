@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import sys
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -163,6 +164,16 @@ def _busy_phone(document: dict[str, Any]) -> None:
     )
 
 
+def _single_response(document: dict[str, Any]) -> None:
+    """One fictional person notices the campaign exactly once (seed 42), so counts are one."""
+    document["settings"]["seed"] = 42
+    document["scenario"]["phone"].update(
+        opportunity_probability_per_minute=1.0,
+        frequency_cap_per_agent_per_day=1,
+        eligible_activities=["home", "commute", "work", "leisure"],
+    )
+
+
 def _mixed_v10(root: Path, *, run_id: str) -> None:
     """Exercise every applied status with the real pure pipeline and no storage shim."""
     root.mkdir(parents=True, exist_ok=True)
@@ -232,6 +243,7 @@ def _build_run(name: str, root: Path, run_id: str) -> None:
         "cache": {"mode": "remote", "source": "cache"},
         "fallback": {"mode": "local", "source": "fallback"},
         "empty": {"mode": "mock", "empty": True},
+        "single": {"mode": "mock", "agents": 1, "mutation": _single_response},
     }[name]
     _saved_v10(root, run_id=run_id, **options)
 
@@ -1723,10 +1735,11 @@ def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
             assert facts["model"] == profile.model_id
             assert facts["revision"] == profile.revision_sha256
             # The output budget comes from the run's frozen input, never a browser constant.
+            # Token counts use the same thousands separators as the RUN page and its receipt.
             assert facts["funded-limit"] == (
-                f"{limit} · {cognition_input.aggregate_output_token_ceiling} reserved output "
-                f"tokens ({cognition_input.reservation_tokens_per_request} per request, at most "
-                f"{cognition_input.max_output_tokens_per_attempt} per attempt)"
+                f"{limit} · {cognition_input.aggregate_output_token_ceiling:,} reserved output "
+                f"tokens ({cognition_input.reservation_tokens_per_request:,} per request, at most "
+                f"{cognition_input.max_output_tokens_per_attempt:,} per attempt)"
             )
             expect(model_line).to_have_text(
                 f"Model{profile.model_id}profile {profile.profile_id} · revision "
@@ -1776,7 +1789,8 @@ def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
         expect(shortcut).to_contain_text(
             f"{coverage.selected_request_count} saved "
             f"{'request' if coverage.selected_request_count == 1 else 'requests'}"
-            f" · {coverage.eligible_response_count} eligible responses"
+            f" · {coverage.eligible_response_count} eligible "
+            f"{'response' if coverage.eligible_response_count == 1 else 'responses'}"
         )
         shortcut.focus()
         page.keyboard.press("Enter")
@@ -1927,7 +1941,13 @@ def test_v10_hostile_text_stays_inert_and_controls_stay_accessible(
         expect(page.locator("#bounded-signal-index")).to_have_attribute("open", "")
         filter_select = page.locator("#bounded-signal-filter")
         filter_select.focus()
-        page.keyboard.press("ArrowDown")
+        expect(filter_select).to_be_focused()
+        if sys.platform == "darwin":
+            # A focused macOS select opens its native menu on ArrowDown instead of moving
+            # the selection, so choose the option the way that platform's menu commits it.
+            filter_select.select_option("provider")
+        else:
+            page.keyboard.press("ArrowDown")
         expect(filter_select).to_have_value("provider")
         provider_rows = page.locator("#bounded-signal-list .bounded-signal-jump")
         assert provider_rows.count() == run.stored.cognition_evaluation.summary.outcomes.provider
@@ -2342,6 +2362,36 @@ def test_v10_run_without_eligible_responses_renders_an_honest_empty_state(
         expect(
             page.locator('#bounded-cognition-metrics [data-metric="funded-coverage"] small')
         ).to_have_text("0 funded / 0 eligible")
+        assert session.page_errors == [] and session.console_errors == []
+
+
+@pytest.mark.parametrize("server", ["workbench", "standalone"])
+def test_v10_run_with_one_response_reads_every_count_in_the_singular(
+    browser: Browser, saved_runs: Callable[[str], SavedRun], server: Server
+) -> None:
+    run = saved_runs("single")
+    coverage = run.stored.cognition_evaluation.summary.coverage
+    assert coverage.eligible_response_count == coverage.selected_request_count == 1
+    with inspector(browser, run, server=server) as session:
+        page = session.page
+        expect(page.locator("#bounded-cognition-panel")).to_be_visible()
+        expect(page.locator("#error-banner")).to_be_hidden()
+        expect(page.locator("#bounded-cognition-outcomes-title")).to_have_text(
+            "How the 1 eligible response was resolved"
+        )
+        expect(page.locator("#bounded-signal-count")).to_have_text("1 of 1 request")
+        expect(page.locator("#bounded-cognition-shortcut")).to_contain_text(
+            "1 saved request · 1 eligible response"
+        )
+        expect(page.locator("#bounded-cognition-neutralization")).to_contain_text(
+            " of 1 eligible response · uncertain results "
+        )
+        metrics = page.locator("#bounded-cognition-metrics")
+        expect(metrics).to_be_visible()
+        for key in ("mean-applied-sentiment", "mean-applied-recall"):
+            expect(metrics.locator(f'[data-metric="{key}"] small')).to_have_text(
+                re.compile(r" / 1 applied response$")
+            )
         assert session.page_errors == [] and session.console_errors == []
 
 

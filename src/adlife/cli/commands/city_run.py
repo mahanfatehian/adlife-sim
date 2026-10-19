@@ -17,7 +17,7 @@ from adlife.city.response_loader import (
 from adlife.city.runs import create_city_run
 from adlife.city.spatial_loader import SpatialCampaignError, load_spatial_campaign_scenario
 from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
-from adlife.cli.output import emit_result
+from adlife.cli.output import count_noun, emit_result
 from adlife.core.domain.city_run import (
     CityRunManifestV3,
     CityRunManifestV4,
@@ -171,31 +171,39 @@ def command(
         )
     if output_format() == "human":
         suffix = ""
+        opportunities = (
+            count_noun(
+                manifest.opportunity_count, "synthetic opportunity", "synthetic opportunities"
+            )
+            if isinstance(manifest, CityRunManifestV4 | CityRunManifestV5 | CityRunManifestV6)
+            else ""
+        )
         if isinstance(manifest, CityRunManifestV5 | CityRunManifestV6):
             suffix = (
-                f", {manifest.opportunity_count} synthetic opportunities, "
-                f"{manifest.impression_count} impressions, {manifest.noticed_count} notices"
+                f", {opportunities}, {count_noun(manifest.impression_count, 'impression')}, "
+                f"{count_noun(manifest.noticed_count, 'notice')}"
             )
         elif isinstance(manifest, CityRunManifestV4):
-            suffix = f", {manifest.opportunity_count} synthetic opportunities"
+            suffix = f", {opportunities}"
         lines = [
             f"saved city run: {manifest.run_id} "
-            f"({manifest.frame_count} verified minute frames{suffix})"
+            f"({count_noun(manifest.frame_count, 'verified minute frame')}{suffix})"
         ]
         if isinstance(manifest, CityRunManifestV6):
             if stored.response_evaluation is None:
                 raise RuntimeError("completed response city run is missing response evidence")
             lines.extend(
                 (
-                    f"response evidence: {manifest.response_count} rule responses, "
-                    f"{manifest.state_update_count} state updates, "
-                    f"{manifest.response_campaign_count} campaigns, "
-                    f"{manifest.final_state_count} final campaign states",
+                    "response evidence: "
+                    f"{count_noun(manifest.response_count, 'rule response')}, "
+                    f"{count_noun(manifest.state_update_count, 'state update')}, "
+                    f"{count_noun(manifest.response_campaign_count, 'campaign')}, "
+                    f"{count_noun(manifest.final_state_count, 'final campaign state')}",
                     f"response contract: {manifest.spatial_response_model_id}; "
                     f"{stored.response_evaluation.claim_scope}",
                     f"response input SHA-256: {manifest.response_input_sha256}",
                     f"response stream SHA-256: {manifest.response_stream_sha256} "
-                    f"({manifest.response_stream_bytes} bytes)",
+                    f"({count_noun(manifest.response_stream_bytes, 'byte')})",
                     f"response state SHA-256: {manifest.response_state_sha256}",
                     f"response summary SHA-256: {manifest.response_summary_sha256}",
                 )

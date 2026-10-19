@@ -658,6 +658,28 @@ def test_reuse_page_serves_the_shell_with_only_a_portable_run_id(tmp_path: Path)
     assert _artifact_snapshot(root) == before
 
 
+def test_run_settings_name_the_rule_engine_as_owner_of_every_baseline_response(
+    tmp_path: Path,
+) -> None:
+    """The fixed rule-engine field must not read as a rival to the model source below it."""
+    client, _root = _client(tmp_path)
+    with client:
+        page = client.get("/")
+
+    assert page.status_code == 200
+    html = page.text
+    assert '<label for="response-mode">Baseline responses</label>' in html
+    assert 'id="response-mode" type="text" value="Rules engine (offline)" readonly' in html
+    assert ">Response mode<" not in html
+    help_text = re.search(r'<small id="response-mode-help"[^>]*>([^<]*)</small>', html)
+    assert help_text is not None
+    assert help_text.group(1) == (
+        "The rule engine computes movement, ad exposure, attention, and every baseline response "
+        "offline. Model assistance below never replaces them: it can only explain saved results "
+        "or supply bounded signals for a separate cognition track."
+    )
+
+
 def test_recorded_bounded_check_is_read_only_exact_and_scope_bound(tmp_path: Path) -> None:
     """A reopened page may read, never run, the process-local bounded-signal check."""
     from tests.unit.city.test_workbench_providers import _Provider, _ProviderV2

@@ -75,6 +75,9 @@
 
   const byId = (id) => document.getElementById(id);
   const formatCount = (value) => Number(value).toLocaleString("en-US");
+  /** A count with its noun, singular only for exactly one: "1 request", "10 requests". */
+  const countNoun = (count, singular, plural = `${singular}s`) =>
+    `${formatCount(count)} ${count === 1 ? singular : plural}`;
 
   function isObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -562,7 +565,7 @@
           const option = document.createElement("option");
           option.value = String(value);
           option.textContent = provider
-            ? `${value} requests${value === capability.default_provider_funded_response_limit ? " (default)" : ""}`
+            ? `${countNoun(value, "request")}${value === capability.default_provider_funded_response_limit ? " (default)" : ""}`
             : `${value} · all selected, resolved offline`;
           return option;
         }));
@@ -582,14 +585,17 @@
       }
       setText(
         "cognition-funded-status",
-        limit < selected
-          ? `The first ${limit} of up to ${selected} selected responses go to the model; the rest are recorded as budget-skipped neutral signals.`
-          : `Every selected response (up to ${selected}) goes to the model.`,
+        limit >= selected
+          ? `Every selected response (up to ${selected}) goes to the model.`
+          : limit === 1
+            ? `Only the first of up to ${selected} selected responses goes to the model; the rest are recorded as budget-skipped neutral signals.`
+            : `The first ${limit} of up to ${selected} selected responses go to the model; the rest are recorded as budget-skipped neutral signals.`,
       );
       const reserved = capability.reserved_output_tokens_per_request;
+      const attempts = capability.max_http_attempts_per_request;
       setText(
         "bounded-cost-disclosure",
-        `Each funded request reserves ${formatCount(reserved)} output tokens: at most ${capability.max_http_attempts_per_request} HTTP attempts of up to ${formatCount(capability.max_output_tokens_per_attempt)} output tokens each. ${limit} requests reserve ${formatCount(limit * reserved)} output tokens. Input tokens and vendor charges are not included; this is a reservation, not a spending limit.`,
+        `Each funded request reserves ${formatCount(reserved)} output tokens: at most ${countNoun(attempts, "HTTP attempt")} of up to ${formatCount(capability.max_output_tokens_per_attempt)} output tokens each. ${countNoun(limit, "request")} ${limit === 1 ? "reserves" : "reserve"} ${formatCount(limit * reserved)} output tokens. Input tokens and vendor charges are not included; this is a reservation, not a spending limit.`,
       );
       disclosure.hidden = false;
     }
@@ -759,7 +765,7 @@
       const skipped = 60 - funded;
       setText(
         "cognition-budget-status",
-        `${funded} selected responses funded · up to ${skipped} budget-skipped.`,
+        `${countNoun(funded, "selected response")} funded · up to ${skipped} budget-skipped.`,
       );
     }
 
@@ -1183,7 +1189,7 @@
           : `Up to ${capability.selected_requests_per_run} selected · resolved offline · no reservation`;
       } else {
         funding = provider
-          ? `${formatCount(cognition.aggregate_output_token_ceiling)} output-token reservation · ${cognition.aggregate_output_token_ceiling / 1536} explanations funded`
+          ? `${formatCount(cognition.aggregate_output_token_ceiling)} output-token reservation · ${countNoun(cognition.aggregate_output_token_ceiling / 1536, "explanation")} funded`
           : "None · offline";
       }
       const sourceLabel = MODE_LABELS[mode];

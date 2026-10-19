@@ -479,7 +479,10 @@ def test_scoped_compatibility_checks_bind_scope_profile_and_generation(tmp_path:
         )
         page.locator("#cognition-mode").select_option("mock")
         page.locator("#cognition-mode").select_option("local")
-        page.evaluate("window.__holdChecks = false; window.__releaseChecks()")
+        # The stale answer must reach the page before "it was ignored" means anything.
+        with page.expect_response(lambda response: response.url.endswith("/check")) as stale:
+            page.evaluate("window.__holdChecks = false; window.__releaseChecks()")
+        assert stale.value.ok
         expect(page.locator("#provider-check")).to_be_enabled()
         page.wait_for_timeout(200)
         expect(status).to_have_text("")
@@ -685,6 +688,29 @@ def test_server_compatibility_refusal_requires_a_fresh_bounded_check(tmp_path: P
         page.locator("#provider-check").click()
         expect(status).to_have_text("Bounded-signal contract confirmed.")
         expect(page.locator("#start-run")).to_be_enabled()
+
+
+def test_rule_engine_field_names_the_baseline_beside_a_bounded_model_source(
+    tmp_path: Path,
+) -> None:
+    """The fixed rule engine and the model source read as two owners, never rival modes."""
+    with _session(tmp_path) as (page, base_url, _root):
+        _providers(page, _provider_document())
+        _to_run_step(page, base_url)
+        _choose(page, BOUNDED, "local")
+        expect(page.locator("#explanation-source-label")).to_have_text(
+            "Bounded cognition · Local model"
+        )
+        field = page.locator("#response-mode")
+        expect(field).to_have_value("Rules engine (offline)")
+        expect(field).to_have_accessible_name("Baseline responses")
+        expect(field).to_have_accessible_description(
+            "The rule engine computes movement, ad exposure, attention, and every baseline "
+            "response offline. Model assistance below never replaces them: it can only explain "
+            "saved results or supply bounded signals for a separate cognition track."
+        )
+        expect(field).not_to_be_editable()
+        expect(page.locator("label", has_text="Response mode")).to_have_count(0)
 
 
 def test_bounded_cost_disclosure_reserves_whole_requests_without_spending_claims(
@@ -930,9 +956,9 @@ def test_scripted_v10_job_never_relabels_or_regresses_its_phases(tmp_path: Path)
         expect(page.locator("#job-inspect-link")).to_be_visible(timeout=20_000)
 
         assert page.evaluate("window.__phases") == [
-            "PLANNING-COGNITION",
-            "REQUESTING-COGNITION",
-            "APPLYING-COGNITION",
+            "PLANNING COGNITION",
+            "REQUESTING COGNITION",
+            "APPLYING COGNITION",
             "PERSISTING",
             "VERIFYING",
             "COMPLETED",
@@ -1075,9 +1101,9 @@ def test_real_bounded_local_run_shows_exact_phases_and_completes_as_v10(
     gates = {
         phase: _gate(monkeypatch, method)
         for phase, method in (
-            ("PLANNING-COGNITION", "prepare_scientific_v2"),
-            ("REQUESTING-COGNITION", "resolve_cognition_v2"),
-            ("APPLYING-COGNITION", "finalize_cognition_v2"),
+            ("PLANNING COGNITION", "prepare_scientific_v2"),
+            ("REQUESTING COGNITION", "resolve_cognition_v2"),
+            ("APPLYING COGNITION", "finalize_cognition_v2"),
         )
     }
     job_posts: list[str] = []
@@ -1117,7 +1143,8 @@ def test_real_bounded_local_run_shows_exact_phases_and_completes_as_v10(
                 assert entered.wait(15), phase
                 expect(page.locator("#job-phase")).to_have_text(phase, timeout=10_000)
                 current = page.locator("#job-phase-track li[aria-current='step']")
-                expect(current).to_have_attribute("data-phase", phase.lower())
+                # The badge shows the readable label; the track keeps the phase slug.
+                expect(current).to_have_attribute("data-phase", phase.lower().replace(" ", "-"))
                 release.set()
             expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
             expect(page.locator("#job-inspect-link")).to_have_attribute(
@@ -1156,7 +1183,7 @@ def test_bounded_rules_job_can_be_cancelled_before_publication(
             _validate(page)
             page.locator("#start-run").click()
             assert entered.wait(15)
-            expect(page.locator("#job-phase")).to_have_text("REQUESTING-COGNITION", timeout=10_000)
+            expect(page.locator("#job-phase")).to_have_text("REQUESTING COGNITION", timeout=10_000)
             page.locator("#cancel-job").click()
             expect(page.locator("#job-message")).to_contain_text("Cancellation requested")
             release.set()
@@ -1169,6 +1196,46 @@ def test_bounded_rules_job_can_be_cancelled_before_publication(
             expect(page.locator("#job-phase-track li").last).to_contain_text("Cancelled")
             expect(page.locator("#job-inspect-link")).to_be_hidden()
             assert not (root / "city-runs" / "bounded-cancel").exists()
+    finally:
+        release.set()
+
+
+def test_reload_while_cognition_is_applied_reopens_the_live_bounded_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A presenter who refreshes mid-run lands on that run's job panel, never an empty CITY."""
+    entered, release = _gate(monkeypatch, "finalize_cognition_v2")
+    try:
+        with _session(tmp_path) as (page, base_url, root):
+            _to_run_step(page, base_url)
+            page.locator("#run-id").fill("bounded-reload")
+            page.locator("#agent-count").fill("2")
+            _set_audience_count(page, 2)
+            _choose(page, BOUNDED, "mock")
+            _validate(page)
+            page.locator("#start-run").click()
+            assert entered.wait(15)
+            expect(page.locator("#job-phase")).to_have_text("APPLYING COGNITION", timeout=10_000)
+
+            page.reload(wait_until="domcontentloaded")
+            expect(page.locator("#panel-run")).to_be_visible(timeout=15_000)
+            expect(page.locator("#panel-city")).to_be_hidden()
+            expect(page.locator("#stage-run")).to_have_attribute("aria-current", "step")
+            job = page.locator("#job-panel")
+            expect(job).to_be_visible()
+            expect(job).to_be_in_viewport()
+            expect(page.locator("#job-phase")).to_have_text("APPLYING COGNITION")
+            current = page.locator("#job-phase-track li[aria-current='step']")
+            expect(current).to_have_attribute("data-phase", "applying-cognition")
+            expect(page.locator("#job-settings")).to_contain_text("bounded-reload")
+            expect(page.locator("#job-settings")).to_contain_text("Bounded AI cognition")
+            expect(page.locator("#cancel-job")).to_be_visible()
+
+            release.set()
+            inspect_link = page.locator("#job-inspect-link")
+            expect(inspect_link).to_be_visible(timeout=30_000)
+            expect(inspect_link).to_have_attribute("href", "/runs/bounded-reload")
+            assert CityRunStore(root).load("bounded-reload").manifest.schema_version == 10
     finally:
         release.set()
 
@@ -1353,6 +1420,61 @@ def test_bounded_copy_follows_any_consistent_server_capability(tmp_path: Path) -
             "384 per attempt"
             if effective == 384
             else f"{effective:,} per attempt for signals (profile allows 384)"
+        )
+        expect(page.locator("#error-banner")).to_be_hidden()
+
+
+def test_a_declared_single_funded_request_and_attempt_read_in_the_singular(
+    tmp_path: Path,
+) -> None:
+    """A consistent server may fund one request of one attempt; the copy must still read."""
+    declared: dict[str, Any] = {}
+
+    def single(route: Route) -> None:
+        response = route.fetch()
+        document = response.json()
+        bounded = document["capabilities"]["bounded_cognition"]
+        per_attempt = bounded["max_output_tokens_per_attempt"]
+        selected = bounded["selected_requests_per_run"]
+        bounded.update(
+            max_http_attempts_per_request=1,
+            reserved_output_tokens_per_request=per_attempt,
+            funded_response_limits=[1, selected],
+            default_provider_funded_response_limit=1,
+        )
+        declared.update(bounded)
+        route.fulfill(response=response, json=document)
+
+    with _session(tmp_path) as (page, base_url, _root):
+        _providers(page, _provider_document())
+        page.route("**/api/workbench", single)
+        _to_run_step(page, base_url)
+        _choose(page, BOUNDED, "local")
+
+        selected = declared["selected_requests_per_run"]
+        reserved = declared["reserved_output_tokens_per_request"]
+        funded = page.locator("#cognition-funded-responses")
+        assert funded.locator("option").all_inner_texts() == [
+            "1 request (default)",
+            f"{selected} requests",
+        ]
+        expect(funded).to_have_value("1")
+        expect(page.locator("#cognition-funded-status")).to_have_text(
+            f"Only the first of up to {selected} selected responses goes to the model; the rest "
+            "are recorded as budget-skipped neutral signals."
+        )
+        expect(page.locator("#bounded-cost-disclosure")).to_have_text(
+            f"Each funded request reserves {reserved:,} output tokens: at most 1 HTTP attempt of "
+            f"up to {declared['max_output_tokens_per_attempt']:,} output tokens each. 1 request "
+            f"reserves {reserved:,} output tokens. Input tokens and vendor charges are not "
+            "included; this is a reservation, not a spending limit."
+        )
+        funded.select_option(str(selected))
+        expect(page.locator("#bounded-cost-disclosure")).to_contain_text(
+            f"{selected} requests reserve {selected * reserved:,} output tokens."
+        )
+        expect(page.locator("#cognition-funded-status")).to_have_text(
+            f"Every selected response (up to {selected}) goes to the model."
         )
         expect(page.locator("#error-banner")).to_be_hidden()
 

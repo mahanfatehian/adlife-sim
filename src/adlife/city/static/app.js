@@ -844,6 +844,7 @@ function renderMap() {
     ctx.fillStyle = "#a3c0bd"; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
   }
   const positions = [...state.frame.positions].sort((a, b) => (a.agent_id === state.selected ? 1 : 0) - (b.agent_id === state.selected ? 1 : 0));
+  let selectedLabel = null;
   for (const position of positions) {
     const [x, y] = project(position.longitude, position.latitude);
     const selected = position.agent_id === state.selected;
@@ -851,10 +852,7 @@ function renderMap() {
     ctx.strokeStyle = selected ? "#f7f3de" : "#143642";
     ctx.lineWidth = selected ? 3 : 2;
     ctx.beginPath(); ctx.arc(x, y, selected ? 8 : 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    if (selected) {
-      ctx.fillStyle = "#f5f0de"; ctx.font = "600 12px Consolas, monospace";
-      ctx.fillText(position.agent_id.toUpperCase(), x + 14, y - 11);
-    }
+    if (selected) selectedLabel = { text: position.agent_id.toUpperCase(), x: x + 14, y: y - 11 };
   }
   if (state.opportunityPage) {
     for (const opportunity of state.opportunityPage.items) {
@@ -863,6 +861,14 @@ function renderMap() {
   }
   if (state.attentionPage) {
     for (const event of state.attentionPage.items) drawAttentionMarker(event, project);
+  }
+  if (selectedLabel) {
+    // Label the selected agent last, so its own opportunity and notice rings never cover it.
+    ctx.font = "600 12px Consolas, monospace";
+    ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = "#0b1b2a";
+    ctx.strokeText(selectedLabel.text, selectedLabel.x, selectedLabel.y);
+    ctx.fillStyle = "#f5f0de";
+    ctx.fillText(selectedLabel.text, selectedLabel.x, selectedLabel.y);
   }
 }
 
@@ -2552,7 +2558,7 @@ function renderResponseState() {
   }
   const list = byId("response-state-list");
   while (list.firstChild) list.removeChild(list.firstChild);
-  byId("response-state-current").textContent = `${page.total} FINAL CAMPAIGN STATES FOR SELECTED AGENT`;
+  byId("response-state-current").textContent = `${page.total} ${page.total === 1 ? "FINAL CAMPAIGN STATE" : "FINAL CAMPAIGN STATES"} FOR SELECTED AGENT`;
   byId("response-state-empty").hidden = page.total !== 0;
   const pageNote = byId("response-state-page-note");
   pageNote.hidden = page.next_offset === null;
@@ -2966,7 +2972,8 @@ function renderBoundedCognitionSummary() {
   }));
   renderBoundedOutcomes(documentValue, state.boundedCognition.records.records);
   const neutral = summary.neutralization;
-  byId("bounded-cognition-neutralization").textContent = `Neutral vector applied to ${neutral.neutralized_response_count} of ${coverage.eligible_response_count} eligible responses · uncertain results ${neutral.uncertain_result_count} · safety-neutralized results ${neutral.safety_neutralized_result_count} (these two diagnostic counts may overlap).`;
+  const eligible = coverage.eligible_response_count;
+  byId("bounded-cognition-neutralization").textContent = `Neutral vector applied to ${neutral.neutralized_response_count} of ${eligible} eligible ${eligible === 1 ? "response" : "responses"} · uncertain results ${neutral.uncertain_result_count} · safety-neutralized results ${neutral.safety_neutralized_result_count} (these two diagnostic counts may overlap).`;
   const reasonText = cognitionReasons
     .filter((reason) => reason !== "budget-skipped")
     .filter((reason) => summary.reasons[reason.replaceAll("-", "_")] > 0)
@@ -2991,7 +2998,7 @@ function renderBoundedCognitionSummary() {
     provenance, "funded-limit", "Funded request limit",
     offline
       ? `${documentValue.funded_response_limit} · resolved locally, no provider tokens`
-      : `${documentValue.funded_response_limit} · ${frozenCognition.aggregate_output_token_ceiling} reserved output tokens (${frozenCognition.reservation_tokens_per_request} per request, at most ${frozenCognition.max_output_tokens_per_attempt} per attempt)`,
+      : `${documentValue.funded_response_limit} · ${frozenCognition.aggregate_output_token_ceiling.toLocaleString("en-US")} reserved output tokens (${frozenCognition.reservation_tokens_per_request.toLocaleString("en-US")} per request, at most ${frozenCognition.max_output_tokens_per_attempt.toLocaleString("en-US")} per attempt)`,
   );
   appendBoundedFact(
     provenance, "usage", "Provider usage",
@@ -3064,7 +3071,7 @@ function renderBoundedCognitionShortcut(title, coverage, documentValue) {
     createTextElement(
       "strong",
       "",
-      `${coverage.selected_request_count} saved ${coverage.selected_request_count === 1 ? "request" : "requests"} · ${coverage.eligible_response_count} eligible responses`,
+      `${coverage.selected_request_count} saved ${coverage.selected_request_count === 1 ? "request" : "requests"} · ${coverage.eligible_response_count} eligible ${coverage.eligible_response_count === 1 ? "response" : "responses"}`,
     ),
     source,
     createTextElement("small", "", "View the bounded cognition evidence"),
@@ -3105,7 +3112,7 @@ function renderBoundedSignalIndex() {
   }
   byId("bounded-signal-list").replaceChildren(fragment);
   byId("bounded-signal-empty").hidden = shown !== 0;
-  byId("bounded-signal-count").textContent = `${shown} of ${records.length} requests`;
+  byId("bounded-signal-count").textContent = `${shown} of ${records.length} ${records.length === 1 ? "request" : "requests"}`;
 }
 
 async function jumpToBoundedSignal(record) {
@@ -3379,7 +3386,7 @@ function renderBoundedResponseEvidence() {
 function renderBoundedResponseState() {
   const page = state.responseStatePage;
   const list = byId("response-state-list");
-  byId("response-state-current").textContent = `${page.total} FINAL CAMPAIGN STATES FOR SELECTED AGENT · RULE AND COGNITION TRACKS`;
+  byId("response-state-current").textContent = `${page.total} ${page.total === 1 ? "FINAL CAMPAIGN STATE" : "FINAL CAMPAIGN STATES"} FOR SELECTED AGENT · RULE AND COGNITION TRACKS`;
   byId("response-state-empty").hidden = page.total !== 0;
   const pageNote = byId("response-state-page-note");
   pageNote.hidden = page.next_offset === null;
@@ -4541,7 +4548,7 @@ function renderBoundedResponseMetrics() {
     boundedMetricRow(
       body, key.replaceAll("_", "-"), label,
       signedProxyText(receipt.value, label),
-      `${compactReceiptNumber(receipt.numerator)} / ${receipt.denominator} applied responses`,
+      `${compactReceiptNumber(receipt.numerator)} / ${receipt.denominator} applied ${receipt.denominator === 1 ? "response" : "responses"}`,
     );
   }
   for (const [key, label] of [
