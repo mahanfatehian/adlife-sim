@@ -126,6 +126,34 @@ What this model cannot support. Read alongside the
   performs no provider call, credential lookup, profile lookup, cache lookup, or network
   request. Its `inputs/cognition.json`, `outputs/cognition.jsonl`, and
   `outputs/cognition-summary.json` preserve provenance, not truth.
+- **Schema-v10 bounded cognition is provider-dependent, exploratory evidence.** A model
+  chooses closed affect, relevance, credibility, and salience categories for selected noticed
+  responses, and AdLife's frozen `city-cognition-influence-v1` tables turn them into bounded
+  deltas on a separate synthetic cognition state. The categories are not validated psychology,
+  the tables are not calibrated effects, and a general-purpose model brings its own
+  tendencies: in rehearsal a local model gave nearly the same answer to most responses, and
+  before its prompt defined the safety flags it flagged almost every ordinary answer.
+  Movement, attention, baseline responses, budgets, and the purchase-intention proxy stay
+  rule-owned, so V10 adds no memory, social propagation, budget mutation, or purchase event.
+  No paired-cognition protocol exists yet: `city-compare --layer response`, `city-study`, and
+  `city-report` refuse V10 runs, the attention comparison pairs a V10 run only with another
+  V10 run, and cognition results must never be reported as a campaign effect. Live provider
+  signals are nondeterministic even at temperature 0 with a fixed seed; frozen schema-v10
+  replay reapplies the saved signals and performs no provider call, so it reproduces a saved
+  run but cannot validate one.
+- **The bounded-cognition budget is an output reservation, not a cost limit.** Each funded
+  request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output tokens
+  each. Input tokens and vendor charges are outside that reservation. A local Ollama model
+  answers one request at a time, about 2.5-3 seconds each on the development laptop, so the
+  largest funding of 60 requests can approach the 180-second aggregate deadline, after which
+  unanswered requests fall back to the neutral vector. A ChatGPT or Codex subscription,
+  product login, or OAuth token is not accepted as a credential, and the workbench has no
+  user authentication.
+- **V10 artifacts are unsigned and unreleased.** Canonical hashes detect damaged, partial,
+  isolated, or rebound files but cannot attest who produced a provider answer or resist
+  someone who rewrites every file and recomputes the hash chain. V10 runs written by earlier
+  development builds no longer validate, and the wheel and frozen-executable release smoke
+  checks do not yet exercise V10 runs.
 - **Geographic evidence omits important mechanisms.** Road proximity and the half-plane
   orientation heuristic omit occlusion, lanes, buildings, traffic, speed variation and
   measured viewability. Phone probability is an analyst assumption, not an observed usage
@@ -164,7 +192,8 @@ as release blockers.
 
 ## Fictional audience limits
 
-Default schema-3 personas produce schema-v9; schema-2/schema-v8 and schema-1/schema-v7 remain
+Default schema-3 personas produce schema-v9 and schema-4 bounded AI cognition produces
+schema-v10; schema-2/schema-v8 and schema-1/schema-v7 remain
 compatible. Names, ages, occupations, backgrounds and MBTI are noncausal descriptive
 metadata, with no real-person validity, demographic calibration or MBTI predictive power.
 Explicit interests, six traits and initial campaign state are causal response assumptions;
@@ -178,4 +207,5 @@ Purchase intention is an uncalibrated proxy, never a transaction. Canonical byte
 use. Screening refuses recognized sensitive identifiers/secrets and unsafe text; it cannot
 prove absence of personal information. Use wholly fictional data only. There is no authenticated
 shared deployment, durable job recovery, worldwide qualified catalog, provider persona generation,
-or full browser comparison/study/report workflow. These limitations remain despite V9 consumer support.
+or full browser comparison/study/report workflow. These limitations remain despite V9 and V10
+consumer support.

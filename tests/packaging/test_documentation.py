@@ -1822,6 +1822,7 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
         "docs/city-pilot.md",
         "docs/investor-demo.md",
         "docs/methodology/model-card.md",
+        "docs/methodology/limitations.md",
     ):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
@@ -2203,6 +2204,39 @@ def test_model_card_states_the_v10_llm_role_and_its_limits() -> None:
         "schema-v10",
         "bounded authority rather than perfect obedience",
         "neutralized",
+    )
+
+
+def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
+    limitations = _read("docs", "methodology", "limitations.md")
+    deadline = _literal("aggregate_deadline_seconds")
+    _assert_terms_share_paragraph(
+        limitations,
+        "schema-v10 bounded cognition is provider-dependent, exploratory evidence",
+        "not validated psychology",
+        "city-compare --layer response",
+        "city-study",
+        "city-report",
+        "refuse v10 runs",
+        "never be reported as a campaign effect",
+        "live provider signals are nondeterministic",
+        "frozen schema-v10 replay",
+        "no provider call",
+    )
+    _assert_terms_share_paragraph(
+        limitations,
+        "output reservation, not a cost limit",
+        "input tokens and vendor charges are outside that reservation",
+        f"{deadline}-second aggregate deadline",
+        "chatgpt or codex subscription",
+        "oauth token is not accepted",
+    )
+    _assert_terms_share_paragraph(
+        limitations,
+        "v10 artifacts are unsigned and unreleased",
+        "recomputes the hash chain",
+        "earlier development builds",
+        "smoke checks do not yet exercise v10",
     )
 
 
