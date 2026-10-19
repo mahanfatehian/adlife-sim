@@ -4508,7 +4508,11 @@ function renderBoundedResponseMetrics() {
     section.setAttribute("aria-labelledby", "bounded-cognition-metrics-title");
     byId("response-metrics-panel").append(section);
   }
-  const title = createTextElement("h3", "", "Provider-dependent cognition · exploratory");
+  // Only a model source is provider-dependent; offline sources fill the same track locally.
+  const title = createTextElement("h3", "", {
+    mock: "Bounded cognition track · exploratory · offline mock signals",
+    rules: "Bounded cognition track · exploratory · rules identity",
+  }[cognition.mode] || "Provider-dependent cognition · exploratory");
   title.id = "bounded-cognition-metrics-title";
   const claim = createTextElement(
     "p",

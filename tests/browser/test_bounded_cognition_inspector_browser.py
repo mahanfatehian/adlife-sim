@@ -2217,7 +2217,11 @@ def test_v10_response_metrics_keep_the_rule_baseline_separate_from_cognition(
         assert state_rows == ["Brand sentiment", "Recall strength", "Purchase intention proxy"]
         cognition = page.locator("#bounded-cognition-metrics")
         expect(cognition).to_be_visible()
-        expect(cognition.locator("h3")).to_have_text("Provider-dependent cognition · exploratory")
+        heading = {
+            "rules": "Bounded cognition track · exploratory · rules identity",
+            "mock": "Bounded cognition track · exploratory · offline mock signals",
+        }.get(run.stored.cognition_input.mode, "Provider-dependent cognition · exploratory")
+        expect(cognition.locator("h3")).to_have_text(heading)
         expect(cognition.locator(".bounded-metrics-claim")).to_have_text(
             "Synthetic cognition-track measurements · not a campaign effect · no purchase quantity"
         )
