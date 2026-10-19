@@ -242,9 +242,11 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    the model's categories, and therefore stages 2-5, can differ in a live run. Then set
    **Show** to `Budget skipped (8)` and open an entry: the neutral vector leaves the applied
    delta exactly equal to the baseline.
-4. **Final states.** Under **Final campaign state** for a selected agent, the rule card
-   carries the purchase-intention proxy; the cognition card has synthetic sentiment and recall
-   only, with its gap from the rule track. Purchase intention never reads the cognition track.
+4. **Final states.** Under **Final campaign state**, each agent has a `RULE TRACK ·
+   RULE-OWNED` card with sentiment, recall, and the intention proxy, and a `COGNITION TRACK ·
+   SYNTHETIC` card with sentiment and recall only plus its `VS RULE TRACK` gap (or
+   `IDENTICAL TO THE RULE TRACK` when every signal was neutral). Purchase intention never
+   reads the cognition track.
 5. **Metrics.** Open **Response metrics**: the rule-baseline tables keep the uncalibrated
    purchase-intention proxy, and the cognition metrics are labelled exploratory.
 
