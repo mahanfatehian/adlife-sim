@@ -161,7 +161,9 @@ The process-local control API exposes these bounded catalog, job, and discovery 
   `requesting-cognition`, `applying-cognition`, `persisting`, `verifying`, or a terminal
   phase;
 - `POST /api/jobs/{job_id}/cancel` requests cooperative cancellation before persistence;
-- `GET /api/runs?offset=&limit=` lists only independently loaded, verified completed runs;
+- `GET /api/runs?offset=&limit=` lists only independently loaded, verified completed runs; a
+  run whose exact artifact content is unchanged reuses its earlier full verification in this
+  process;
 - `GET /api/persona-templates` returns the four validated fictional persona templates;
 - `GET /api/providers` lists approved origins and immutable profile revisions without credentials;
 - `POST /api/providers` creates one immutable profile revision at an approved origin;
@@ -186,8 +188,10 @@ The process-local control API exposes these bounded catalog, job, and discovery 
 Opening an inspector performs one complete artifact verification and places an opaque,
 run-bound token in that page. Its same-origin API requests send the token in a header and
 reuse a bounded process-local immutable snapshot. The token is never a URL or persisted
-artifact value. Reloading the page, library discovery, and direct scoped API calls without
-a token perform fresh verification; malformed, unknown, or cross-run tokens are refused.
+artifact value. Reloading the page and direct scoped API calls without a token perform fresh
+verification; library discovery re-reads every artifact byte and reuses an earlier full
+verification only for a run whose exact content is unchanged. Malformed, unknown, or
+cross-run tokens are refused.
 The ▶ control replays the saved timeline and restarts from minute zero at the end. It is a
 presentation control, not the independent scientific replay performed by
 `adlife city-replay ROOT ID`.

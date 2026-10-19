@@ -106,13 +106,18 @@ recover transient job history.
 The four-stage client never computes a route, coordinate, hash, metric, or simulation
 result and stores nothing in browser persistence.
 
-The run repository scans a bounded number of portable run identifiers, reloads each
-candidate through `CityRunStore`, and lists only fully verified artifacts in stable order.
+The run repository scans at most 256 portable run identifiers and lists only fully verified
+artifacts in stable order. Each listing re-reads every artifact byte of each candidate under
+the store's link-refusing rules: a candidate whose exact content fingerprint matches an
+earlier full verification in this process reuses that verification's summary, while any
+changed byte, file, or path, or anything the store would refuse, sends it through a new full
+`CityRunStore` verification.
 Opening `/runs/{run_id}` loads and verifies the selected artifact once, then gives that
 page an opaque, run-bound token for a bounded process-local immutable snapshot. Its scoped
 reads reuse that exact verified state, so a large timeline remains responsive and one page
-cannot combine files from different points in time. Reloading the page, listing runs, and
-direct scoped API reads without that token still perform fresh verification; unknown,
+cannot combine files from different points in time. Reloading the page and direct scoped API
+reads without that token still perform fresh verification, and listing runs re-checks every
+artifact byte before it reuses a verification; unknown,
 malformed, and cross-run tokens are refused. Thus a file changed after a page opens is
 detected on reload rather than silently changing the already-open observation. The legacy
 single-run viewer and workbench routes share one immutable projection service; the latter
