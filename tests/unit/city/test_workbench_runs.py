@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
+import shutil
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from pydantic import ValidationError
 
+from adlife.city.run_store import CityRunStore
 from adlife.city.runs import create_city_run
 from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import (
@@ -17,6 +23,7 @@ from adlife.city.workbench_workspace import (
     prepare_workbench_workspace,
 )
 from adlife.core.ports.run_store import DuplicateRun, UnsafeRunLocation
+from tests.integration.test_city_cognition_v2_artifacts import V10_PATHS
 from tests.unit.city.test_city_run_preparation import _validated
 from tests.unit.city.test_workbench_validation import persona_draft
 
@@ -849,3 +856,368 @@ def test_repository_preflight_rejects_a_reparse_point_at_the_candidate_path(
     ):
         with pytest.raises(UnsafeRunLocation, match="candidate reparse"):
             operation()
+
+
+# Discovery reuses a summary only for byte-identical runs; anything else verifies fully.
+
+_CACHED_V10 = "cached-v10"
+
+
+class _StoreLoads:
+    """Record every full store verification by run identifier, then perform it."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.run_ids: list[str] = []
+        verify = CityRunStore.load
+
+        def load(store: CityRunStore, run_id: str):
+            self.run_ids.append(run_id)
+            return verify(store, run_id)
+
+        monkeypatch.setattr(CityRunStore, "load", load)
+
+    def take(self) -> list[str]:
+        observed, self.run_ids = self.run_ids, []
+        return observed
+
+
+@pytest.fixture(scope="module")
+def v10_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    # Two people are the smallest population whose evidence streams are all non-empty.
+    _staged, _prepared, directory = _saved_v10(
+        tmp_path_factory.mktemp("v10-template"),
+        mode="rules",
+        agents=2,
+        days=2,
+        run_id=_CACHED_V10,
+    )
+    assert all(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+    return directory
+
+
+def _copied_v10(template: Path, root: Path) -> Path:
+    destination = root / "city-runs" / template.name
+    destination.parent.mkdir(exist_ok=True)
+    shutil.copytree(template, destination)
+    return destination
+
+
+def _flip_one_byte_keeping_size_and_mtime(path: Path) -> None:
+    before = os.stat(path)
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0x01
+    with path.open("r+b") as target:
+        target.write(data)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = os.stat(path)
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+
+
+def _directory_link(link: Path, target: Path) -> bool:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if sys.platform != "win32":
+            return False
+        import _winapi
+
+        try:
+            _winapi.CreateJunction(str(target), str(link))
+        except OSError:
+            return False
+    return True
+
+
+def test_unchanged_runs_are_relisted_without_a_full_store_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, v10_template: Path
+) -> None:
+    module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    _copied_v10(v10_template, workspace.root)
+    _saved_run(workspace.root, run_id="alpha-v7", workbench=True)
+    _saved_run(workspace.root, run_id="zulu-v6", workbench=False)
+    loads = _StoreLoads(monkeypatch)
+    repository = module.WorkbenchRunRepository(workspace)
+
+    first = repository.list_runs(offset=0, limit=20)
+    assert loads.take() == ["alpha-v7", _CACHED_V10, "zulu-v6"]
+    second = repository.list_runs(offset=0, limit=20)
+    window = repository.list_runs(offset=1, limit=1)
+
+    assert loads.take() == []
+    assert second == first
+    assert second.model_dump_json() == first.model_dump_json()
+    assert [item.run_schema_version for item in first.runs] == [7, 10, 6]
+    assert window.runs == first.runs[1:2]
+    assert (window.verified_total, window.scanned_count, window.corrupt_count) == (3, 3, 0)
+
+    # Opening a run and a job's verification step still verify the artifact afresh.
+    assert repository.load(_CACHED_V10).manifest.run_id == _CACHED_V10
+    assert repository.verified_summary("alpha-v7") == first.runs[0]
+    assert loads.take() == [_CACHED_V10, "alpha-v7"]
+
+
+@pytest.mark.parametrize("relative", sorted(V10_PATHS))
+def test_one_flipped_byte_in_any_artifact_forces_full_reverification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    v10_template: Path,
+    relative: str,
+) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    directory = _copied_v10(v10_template, workspace.root)
+    loads = _StoreLoads(monkeypatch)
+    repository = _module().WorkbenchRunRepository(workspace)
+    assert repository.list_runs(offset=0, limit=20).verified_total == 1
+    assert loads.take() == [_CACHED_V10]
+
+    _flip_one_byte_keeping_size_and_mtime(directory / relative)
+    page = repository.list_runs(offset=0, limit=20)
+
+    assert loads.take() == [_CACHED_V10]
+    assert (page.verified_total, page.scanned_count, page.corrupt_count) == (0, 1, 1)
+    assert page.runs == ()
+
+
+def test_a_failed_run_is_rechecked_and_restored_bytes_verify_once_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, v10_template: Path
+) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    directory = _copied_v10(v10_template, workspace.root)
+    stream = directory / "outputs" / "spatial-responses.jsonl"
+    original = stream.read_bytes()
+    stamp = os.stat(stream)
+    loads = _StoreLoads(monkeypatch)
+    repository = _module().WorkbenchRunRepository(workspace)
+    valid = repository.list_runs(offset=0, limit=20)
+
+    _flip_one_byte_keeping_size_and_mtime(stream)
+    damaged = [repository.list_runs(offset=0, limit=20) for _ in range(2)]
+    stream.write_bytes(original)
+    os.utime(stream, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    restored = [repository.list_runs(offset=0, limit=20) for _ in range(2)]
+
+    assert loads.take() == [_CACHED_V10] * 4
+    assert all(page.corrupt_count == 1 and page.runs == () for page in damaged)
+    assert valid.verified_total == 1
+    assert restored == [valid, valid]
+
+
+@pytest.mark.parametrize("change", ["hard-link", "undeclared-directory"])
+def test_cache_never_masks_a_store_refusal_when_artifact_bytes_are_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    v10_template: Path,
+    change: str,
+) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    directory = _copied_v10(v10_template, workspace.root)
+    loads = _StoreLoads(monkeypatch)
+    repository = _module().WorkbenchRunRepository(workspace)
+    assert repository.list_runs(offset=0, limit=20).verified_total == 1
+    assert loads.take() == [_CACHED_V10]
+
+    if change == "hard-link":
+        try:
+            os.link(directory / "inputs" / "city.json", tmp_path / "second-name.json")
+        except OSError:
+            pytest.skip("hard links are unavailable on this filesystem")
+    else:
+        (directory / "inputs" / "undeclared").mkdir()
+    page = repository.list_runs(offset=0, limit=20)
+
+    assert loads.take() == [_CACHED_V10]
+    assert (page.verified_total, page.corrupt_count) == (0, 1)
+
+
+def test_a_link_inside_a_run_is_never_followed_and_disables_the_shortcut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    _saved_run(workspace.root, run_id="linked-run", workbench=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "payload.json").write_text("{}", encoding="utf-8")
+    if not _directory_link(workspace.root / "city-runs" / "linked-run" / "extra", outside):
+        pytest.skip("directory links are unavailable on this platform")
+    loads = _StoreLoads(monkeypatch)
+    repository = module.WorkbenchRunRepository(workspace)
+
+    pages = [repository.list_runs(offset=0, limit=20) for _ in range(2)]
+
+    # The store ignores this undeclared top-level entry, so the listing is unchanged, but
+    # the cache refuses to read through the link and the run is verified every time.
+    assert pages[0] == pages[1]
+    assert [item.run_id for item in pages[0].runs] == ["linked-run"]
+    assert loads.take() == ["linked-run", "linked-run"]
+    assert repository._observe("linked-run") is None
+    assert "linked-run" not in repository._verified_runs
+
+
+def test_deleted_runs_leave_both_the_listing_and_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    _saved_run(workspace.root, run_id="gone-run", workbench=True)
+    _saved_run(workspace.root, run_id="kept-run", workbench=True)
+    loads = _StoreLoads(monkeypatch)
+    repository = _module().WorkbenchRunRepository(workspace)
+    assert repository.list_runs(offset=0, limit=20).verified_total == 2
+    assert loads.take() == ["gone-run", "kept-run"]
+
+    shutil.rmtree(workspace.root / "city-runs" / "gone-run")
+    page = repository.list_runs(offset=0, limit=20)
+
+    assert [item.run_id for item in page.runs] == ["kept-run"]
+    assert (page.verified_total, page.scanned_count, page.corrupt_count) == (1, 1, 0)
+    assert loads.take() == []
+    assert list(repository._verified_runs) == ["kept-run"]
+
+    shutil.rmtree(workspace.root / "city-runs")
+    assert repository.list_runs(offset=0, limit=20).scanned_count == 0
+    assert list(repository._verified_runs) == []
+
+
+def test_an_added_run_is_verified_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    _saved_run(workspace.root, run_id="first-run", workbench=True)
+    loads = _StoreLoads(monkeypatch)
+    repository = _module().WorkbenchRunRepository(workspace)
+    assert repository.list_runs(offset=0, limit=20).verified_total == 1
+    assert loads.take() == ["first-run"]
+
+    _saved_run(workspace.root, run_id="second-run", workbench=False)
+    pages = [repository.list_runs(offset=0, limit=20) for _ in range(3)]
+
+    assert loads.take() == ["second-run"]
+    assert pages[0] == pages[1] == pages[2]
+    assert [item.run_id for item in pages[0].runs] == ["first-run", "second-run"]
+
+
+def test_a_run_that_changes_during_verification_is_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    _saved_run(workspace.root, run_id="moving-run", workbench=True)
+    notes = workspace.root / "city-runs" / "moving-run" / "notes.txt"
+    verify = CityRunStore.load
+    calls: list[str] = []
+
+    def verify_while_a_writer_adds_a_file(store: CityRunStore, run_id: str):
+        calls.append(run_id)
+        stored = verify(store, run_id)
+        if len(calls) == 1:
+            notes.write_bytes(b"written while the run was being verified\n")
+        return stored
+
+    monkeypatch.setattr(CityRunStore, "load", verify_while_a_writer_adds_a_file)
+    repository = _module().WorkbenchRunRepository(workspace)
+
+    pages = [repository.list_runs(offset=0, limit=20) for _ in range(3)]
+
+    # The store ignores the undeclared file, but bytes that moved during verification are
+    # never vouched for; the next listing verifies the settled bytes once and keeps them.
+    assert calls == ["moving-run", "moving-run"]
+    assert pages[0] == pages[1] == pages[2]
+    assert pages[0].verified_total == 1
+
+
+def test_a_job_verification_seeds_the_listing_through_the_same_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from adlife.city.workbench_jobs import CityJobManager
+    from tests.unit.city.test_workbench_transport_v4 import compiled_v4
+
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    repository = _module().WorkbenchRunRepository(workspace)
+    validated = compiled_v4(
+        mode="rules",
+        mutation=lambda payload: (
+            payload["settings"].update(run_id="seeded-v10", agent_count=1, days=2, seed=42),
+            payload["population"]["personas"][0].update(count=1),
+        ),
+    )
+    loads = _StoreLoads(monkeypatch)
+    manager = CityJobManager(repository)
+    try:
+        submitted = manager.submit(validated)
+        deadline = time.monotonic() + 60
+        while (terminal := manager.get(submitted.job_id)).phase not in {
+            "completed",
+            "failed",
+            "cancelled",
+        }:
+            assert time.monotonic() < deadline, "V10 workbench job did not terminate"
+            time.sleep(0.01)
+    finally:
+        manager.close()
+    assert terminal.phase == "completed"
+    assert loads.take() == ["seeded-v10"]
+
+    page = repository.list_runs(offset=0, limit=20)
+
+    assert loads.take() == []
+    assert page.runs == (terminal.result,)
+
+
+def test_verified_summary_cache_is_bounded_and_drops_the_least_recent_entry(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    _saved_run(workspace.root, run_id="bounded-run", workbench=True)
+    repository = module.WorkbenchRunRepository(workspace)
+    summary = repository.list_runs(offset=0, limit=20).runs[0]
+    limit = module.MAX_DISCOVERY_CANDIDATES
+
+    for index in range(limit + 8):
+        repository._remember(f"seeded-{index:03d}", (), summary)
+        assert len(repository._verified_runs) <= limit
+
+    assert len(repository._verified_runs) == limit
+    assert "bounded-run" not in repository._verified_runs
+    assert next(iter(repository._verified_runs)) == "seeded-008"
+    # A listing keeps only runs it scanned, so the seeded strangers are evicted as well.
+    assert repository.list_runs(offset=0, limit=20).runs == (summary,)
+    assert list(repository._verified_runs) == ["bounded-run"]
+
+
+def test_concurrent_listings_and_job_verifications_share_one_consistent_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    workspace = prepare_workbench_workspace(tmp_path / "state")
+    run_ids = ["first-run", "second-run", "third-run"]
+    for run_id in run_ids:
+        _saved_run(workspace.root, run_id=run_id, workbench=True)
+    expected = module.WorkbenchRunRepository(workspace).list_runs(offset=0, limit=20)
+    repository = module.WorkbenchRunRepository(workspace)
+    start = Barrier(6)
+
+    def listings() -> list[object]:
+        start.wait(timeout=60)
+        return [repository.list_runs(offset=0, limit=20) for _ in range(3)]
+
+    def verifications() -> list[object]:
+        start.wait(timeout=60)
+        return [repository.verified_summary("second-run") for _ in range(3)]
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        listed = [pool.submit(listings) for _ in range(4)]
+        verified = [pool.submit(verifications) for _ in range(2)]
+        pages = [page for future in listed for page in future.result(timeout=300)]
+        summaries = [item for future in verified for item in future.result(timeout=300)]
+
+    assert len(pages) == 12 and all(page == expected for page in pages)
+    assert len(summaries) == 6 and all(item == expected.runs[1] for item in summaries)
+    assert sorted(repository._verified_runs) == run_ids
+    loads = _StoreLoads(monkeypatch)
+    assert repository.list_runs(offset=0, limit=20) == expected
+    assert loads.take() == []

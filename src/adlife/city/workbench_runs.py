@@ -5,10 +5,14 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+from collections import OrderedDict
+from contextlib import ExitStack
 from dataclasses import dataclass
+from hashlib import sha256
 from inspect import isawaitable
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from threading import Lock
+from typing import Annotated, Literal, NamedTuple, Self
 
 from pydantic import Field, field_validator, model_validator
 
@@ -40,7 +44,13 @@ from adlife.city.provider_profiles import (
     ProviderProfileRevisionV1,
 )
 from adlife.city.provider_runtime import ProviderRuntimePolicy, build_provider_runtime_policy
-from adlife.city.run_store import CityRunStore, StoredCityRun
+from adlife.city.run_store import (
+    CityRunStore,
+    StoredCityRun,
+    _hold_parents,
+    _open_artifact,
+    _safe_status,
+)
 from adlife.city.runs import (
     PreparedCityRun,
     PreparedCityScientificRun,
@@ -92,7 +102,7 @@ _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 class WorkbenchRunSummary(DomainModel):
-    """Path-free public facts from one freshly verified completed artifact."""
+    """Path-free public facts from one fully verified completed artifact."""
 
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -672,6 +682,116 @@ def _direct_location_exists(path: Path, *, label: str) -> bool:
     return True
 
 
+# The discovery cache vouches for a run only after reading every entry under the store's
+# own pinned, no-follow rules. The bounds sit above the largest layout the store accepts
+# (one level of sidecar directories, about twenty entries, stream limits summing to about
+# 3.5 GiB); a run beyond them is simply verified in full on every listing.
+_FINGERPRINT_MAX_ENTRIES = 64
+_FINGERPRINT_MAX_BYTES = 4 * 1_073_741_824
+_FINGERPRINT_CHUNK_BYTES = 1_048_576
+
+
+class _UnfingerprintableRun(Exception):
+    """A run directory holds something the discovery cache will not vouch for."""
+
+
+class _ArtifactEntry(NamedTuple):
+    """One exact entry relative to its run directory; a directory carries no bytes."""
+
+    path: str
+    size: int | None
+    sha256: str | None
+
+
+_ArtifactFingerprint = tuple[_ArtifactEntry, ...]
+_ArtifactStamp = tuple[str, int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _RunObservation:
+    """An exact content fingerprint plus the file identities seen while reading it."""
+
+    fingerprint: _ArtifactFingerprint
+    stamps: tuple[_ArtifactStamp, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _VerifiedRun:
+    fingerprint: _ArtifactFingerprint
+    summary: WorkbenchRunSummary
+    generation: int
+
+
+def _artifact_stamp(path: str, status: os.stat_result) -> _ArtifactStamp:
+    return path, status.st_dev, status.st_ino, status.st_mtime_ns, status.st_ctime_ns
+
+
+def _hash_artifact(path: Path, budget: int) -> tuple[int, str, os.stat_result]:
+    """Hash one regular file through the store's pinned, link-refusing artifact read."""
+    digest = sha256()
+    size = 0
+    with _open_artifact(path, "rb") as source:
+        opened = os.fstat(source.fileno())
+        if opened.st_size > budget:
+            raise _UnfingerprintableRun("run directory exceeds the fingerprint budget")
+        while chunk := source.read(_FINGERPRINT_CHUNK_BYTES):
+            size += len(chunk)
+            if size > opened.st_size:
+                raise _UnfingerprintableRun("run artifact grew while it was fingerprinted")
+            digest.update(chunk)
+    if size != opened.st_size:
+        raise _UnfingerprintableRun("run artifact shrank while it was fingerprinted")
+    return size, digest.hexdigest(), opened
+
+
+def _observe_run_directory(directory: Path) -> _RunObservation:
+    """Read every entry under one run directory once, refusing links and reparse points."""
+    entries: list[_ArtifactEntry] = []
+    stamps: list[_ArtifactStamp] = []
+    budget = _FINGERPRINT_MAX_BYTES
+    seen = 0
+    with ExitStack() as holds:
+        holds.enter_context(_hold_parents(directory))
+        status = os.lstat(directory)
+        _safe_status(status, directory=True)
+        stamps.append(_artifact_stamp("", status))
+        pending = [(directory, "")]
+        while pending:
+            parent, prefix = pending.pop()
+            names: list[str] = []
+            with os.scandir(parent) as children:
+                for child in children:
+                    seen += 1
+                    if seen > _FINGERPRINT_MAX_ENTRIES:
+                        raise _UnfingerprintableRun("run directory has too many entries")
+                    names.append(child.name)
+            for name in sorted(names):
+                path = parent / name
+                relative = prefix + name
+                status = os.lstat(path)
+                if stat.S_ISDIR(status.st_mode):
+                    if prefix:
+                        raise _UnfingerprintableRun("run directory nests too deeply")
+                    # Refuses a junction or other directory reparse point, then pins it.
+                    _safe_status(status, directory=True)
+                    holds.enter_context(_hold_parents(path))
+                    entries.append(_ArtifactEntry(relative, None, None))
+                    stamps.append(_artifact_stamp(relative, status))
+                    pending.append((path, f"{relative}/"))
+                    continue
+                # Refuses links, reparse points, extra hard links, and non-regular files,
+                # exactly as the store refuses them before reading an artifact.
+                _safe_status(status, directory=False)
+                size, digest, opened = _hash_artifact(path, budget)
+                budget -= size
+                entries.append(_ArtifactEntry(relative, size, digest))
+                stamps.append(_artifact_stamp(relative, opened))
+    return _RunObservation(
+        fingerprint=tuple(sorted(entries, key=lambda entry: entry.path)),
+        stamps=tuple(sorted(stamps)),
+    )
+
+
 class WorkbenchRunRepository:
     """Recheck one pinned workspace around every artifact boundary."""
 
@@ -719,6 +839,12 @@ class WorkbenchRunRepository:
         self._provider_factory_v2 = (
             CityOpenAICompatibleProviderV2 if provider_factory_v2 is None else provider_factory_v2
         )
+        # Process-local and bounded: run identifier -> summary of one full verification,
+        # valid only while the run's exact content fingerprint stays the same. The worker
+        # thread seeds it while request threads list, so every access holds the lock.
+        self._verified_runs: OrderedDict[str, _VerifiedRun] = OrderedDict()
+        self._verified_lock = Lock()
+        self._verified_generation = 0
 
     def _root(self) -> Path:
         return verify_workbench_workspace(self._workspace)
@@ -1097,8 +1223,91 @@ class WorkbenchRunRepository:
         return store.load(run_id)
 
     def verified_summary(self, run_id: str) -> WorkbenchRunSummary:
-        """Return path-free metadata only after a new full artifact verification."""
-        return _summary(self.load(run_id))
+        """Return path-free metadata only after a new full artifact verification.
+
+        A job's verification step lands here, so a run whose exact bytes stayed the same
+        around this verification also seeds the discovery cache.
+        """
+        validate_run_id(run_id)
+        return self._verify_and_remember(run_id, self._observe(run_id))
+
+    def _observe(self, run_id: str) -> _RunObservation | None:
+        """Fingerprint one run behind load()'s location checks, or None to verify fully."""
+        try:
+            root = self._root()
+            store = CityRunStore(root)
+            if not _direct_directory_exists(root / "city-runs", label="city-runs location"):
+                return None
+            directory = store.run_directory(run_id)
+            if not _direct_directory_exists(directory, label="city run candidate"):
+                return None
+            return _observe_run_directory(directory)
+        except (OSError, StorageError, ValueError, _UnfingerprintableRun):
+            # Any refusal, an unsafe workspace included, only disables the shortcut: the
+            # full verification that follows reports it exactly as it always has.
+            return None
+
+    def _verify_and_remember(
+        self,
+        run_id: str,
+        before: _RunObservation | None,
+    ) -> WorkbenchRunSummary:
+        summary = _summary(self.load(run_id))
+        # Vouch only for bytes and identities that did not move around the verification.
+        if before is not None and self._observe(run_id) == before:
+            self._remember(run_id, before.fingerprint, summary)
+        return summary
+
+    def _remember(
+        self,
+        run_id: str,
+        fingerprint: _ArtifactFingerprint,
+        summary: WorkbenchRunSummary,
+    ) -> None:
+        with self._verified_lock:
+            self._verified_generation += 1
+            self._verified_runs[run_id] = _VerifiedRun(
+                fingerprint, summary, self._verified_generation
+            )
+            self._verified_runs.move_to_end(run_id)
+            while len(self._verified_runs) > MAX_DISCOVERY_CANDIDATES:
+                self._verified_runs.popitem(last=False)
+
+    def _recall(
+        self,
+        run_id: str,
+        observation: _RunObservation | None,
+    ) -> WorkbenchRunSummary | None:
+        with self._verified_lock:
+            entry = self._verified_runs.get(run_id)
+            if entry is None:
+                return None
+            if observation is None or observation.fingerprint != entry.fingerprint:
+                del self._verified_runs[run_id]
+                return None
+            self._verified_runs.move_to_end(run_id)
+            return entry.summary
+
+    def _verified_runs_generation(self) -> int:
+        with self._verified_lock:
+            return self._verified_generation
+
+    def _forget_unlisted(self, listed: frozenset[str], generation: int) -> None:
+        """Evict runs a scan did not see, keeping entries seeded after that scan began."""
+        with self._verified_lock:
+            for run_id in [
+                run_id
+                for run_id, entry in self._verified_runs.items()
+                if run_id not in listed and entry.generation <= generation
+            ]:
+                del self._verified_runs[run_id]
+
+    def _listed_summary(self, run_id: str) -> WorkbenchRunSummary:
+        observation = self._observe(run_id)
+        cached = self._recall(run_id, observation)
+        if cached is not None:
+            return cached
+        return self._verify_and_remember(run_id, observation)
 
     def list_runs(
         self,
@@ -1106,11 +1315,18 @@ class WorkbenchRunRepository:
         offset: int = 0,
         limit: int = DEFAULT_RUN_PAGE_LIMIT,
     ) -> WorkbenchRunPage:
-        """Verify at most 256 direct candidates and page the stable verified subset."""
+        """Verify at most 256 direct candidates and page the stable verified subset.
+
+        A candidate whose exact content fingerprint matches an earlier full verification
+        in this process reuses that summary; any changed byte, file, or path, or anything
+        the store would refuse, sends it through a new full verification instead.
+        """
         offset, limit = _pagination(offset, limit)
         root = self._root()
+        generation = self._verified_runs_generation()
         runs_directory = root / "city-runs"
         if not _direct_directory_exists(runs_directory, label="city-runs location"):
+            self._forget_unlisted(frozenset(), generation)
             return WorkbenchRunPage(
                 offset=offset,
                 limit=limit,
@@ -1136,6 +1352,7 @@ class WorkbenchRunRepository:
         except OSError:
             raise UnsafeRunLocation("city-runs directory is unreadable") from None
 
+        self._forget_unlisted(frozenset(candidate_names), generation)
         for name in sorted(candidate_names):
             try:
                 validate_run_id(name)
@@ -1143,7 +1360,7 @@ class WorkbenchRunRepository:
                     runs_directory / name,
                     label="city run candidate",
                 )
-                summaries.append(self.verified_summary(name))
+                summaries.append(self._listed_summary(name))
             except UnsafeWorkbenchWorkspace:
                 raise
             except (OSError, StorageError, TypeError, ValueError):
