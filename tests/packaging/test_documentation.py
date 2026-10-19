@@ -1812,9 +1812,88 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
                 int(count) == max(_FUNDED_RESPONSE_LIMITS)
                 and _integer(reserved) == CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
             )
-    for required in ("CHANGELOG.md", "README.md"):
+    for required in ("CHANGELOG.md", "README.md", "docs/cli-reference.md"):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
+
+
+def _literal(field: str) -> int:
+    (value,) = typing.get_args(CityCognitionInputV2.model_fields[field].annotation)
+    return typing.cast(int, value)
+
+
+def test_cli_reference_documents_the_v10_operation_matrix_and_commands() -> None:
+    from adlife.city import workbench_providers
+
+    cli = _read("docs", "cli-reference.md")
+    for operation, pair in (
+        ("`explanation-only`", "schema 3 / V9"),
+        ("`bounded-signals-v1`", "schema 4 / V10"),
+    ):
+        rows = [line for line in cli.splitlines() if line.startswith(f"| {operation}")]
+        assert len(rows) == 2, f"operation matrix rows for {operation} are missing"
+        assert all(pair in row for row in rows), operation
+    assert "(4,10)" in cli
+    for phase in ("planning-cognition", "requesting-cognition", "applying-cognition"):
+        assert f"`{phase}`" in cli, phase
+    assert '`{"effect_scope": "bounded-signals-v1"}`' in cli
+    assert "`provider-compatibility-required`" in cli
+
+    squashed = _squash(cli)
+    transport = re.search(
+        r"bounded to (\d+) concurrent requests, at most (\d+) seconds per attempt, and (\d+) "
+        r"seconds in aggregate",
+        squashed,
+    )
+    assert transport is not None, "bounded provider transport limits are undocumented"
+    assert tuple(int(value) for value in transport.groups()) == (
+        _literal("concurrency_limit"),
+        _literal("attempt_timeout_seconds_ceiling"),
+        _literal("aggregate_deadline_seconds"),
+    )
+    checks = re.search(
+        r"a local check waits up to (\d+) seconds .* and a remote check up to (\d+) seconds",
+        squashed,
+    )
+    assert checks is not None, "compatibility-check deadlines are undocumented"
+    assert (int(checks.group(1)), int(checks.group(2))) == (
+        workbench_providers._LOCAL_CHECK_DEADLINE_SECONDS,
+        workbench_providers._REMOTE_CHECK_DEADLINE_SECONDS,
+    )
+
+    _assert_terms_share_paragraph(
+        cli,
+        "schema-v10",
+        "spatial-response-metrics-v2",
+        "rule-owned-synthetic-baseline-not-observed-outcomes",
+        "purchase-intention proxy",
+        "provider-dependent-exploratory-not-campaign-effect",
+        "no purchase, delta, effect, or lift member",
+    )
+    _assert_terms_share_paragraph(
+        cli, "a schema-v10 run compares only with another schema-v10 run", "refused"
+    )
+    _assert_terms_share_paragraph(
+        cli, "city-compare --layer response", "refuses any schema-v10 run for now"
+    )
+    _assert_terms_share_paragraph(
+        cli, "attention-and-response", "schema-v10 runs are refused for now", "city-report"
+    )
+    _assert_terms_share_paragraph(
+        cli,
+        "load the frozen inputs",
+        "schema-v10 requires input schema 4",
+        "city-cognition-influence-v1",
+        "without a provider, cache, keyring, environment variable, profile registry, or network",
+    )
+    _assert_terms_share_paragraph(
+        cli,
+        "schema-v10 run opens in the same viewer",
+        "/api/workbench-input",
+        "/api/cognition-summary",
+        "/api/cognition-records",
+        "final-end-of-run-not-scrubbed-minute",
+    )
 
 
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
