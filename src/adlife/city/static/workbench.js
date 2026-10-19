@@ -30,6 +30,87 @@
     "failed",
     "cancelled",
   ]);
+  // Schema-4 jobs use only the bounded-cognition sequence; earlier schemas keep their phases.
+  const BOUNDED_PHASES = new Set([
+    "queued",
+    "planning-cognition",
+    "requesting-cognition",
+    "applying-cognition",
+    "persisting",
+    "verifying",
+    "completed",
+    "failed",
+    "cancelled",
+  ]);
+  const PHASE_TRACKS = new Map([
+    [1, ["queued", "evaluating", "persisting", "verifying", "completed"]],
+    [2, ["queued", "evaluating", "persisting", "verifying", "completed"]],
+    [3, ["queued", "simulating", "selecting-explanations", "requesting-explanations", "persisting", "verifying", "completed"]],
+    [4, ["queued", "planning-cognition", "requesting-cognition", "applying-cognition", "persisting", "verifying", "completed"]],
+  ]);
+  const PHASE_RANKS = new Map([
+    ["queued", 0],
+    ["evaluating", 1],
+    ["simulating", 1],
+    ["planning-cognition", 1],
+    ["selecting-explanations", 2],
+    ["requesting-explanations", 3],
+    ["requesting-cognition", 2],
+    ["applying-cognition", 3],
+    ["persisting", 4],
+    ["verifying", 5],
+    ["completed", 6],
+    ["failed", 6],
+    ["cancelled", 6],
+  ]);
+  const PHASE_LABELS = new Map([
+    ["queued", "Queued"],
+    ["evaluating", "Evaluating"],
+    ["simulating", "Simulating"],
+    ["selecting-explanations", "Selecting explanations"],
+    ["requesting-explanations", "Requesting explanations"],
+    ["planning-cognition", "Planning cognition"],
+    ["requesting-cognition", "Requesting cognition"],
+    ["applying-cognition", "Applying cognition"],
+    ["persisting", "Persisting"],
+    ["verifying", "Verifying"],
+    ["completed", "Completed"],
+  ]);
+  const COGNITION_MODES = Object.freeze(["rules", "mock", "local", "remote"]);
+  const COGNITION_MODE_LABELS = new Map([
+    ["rules", "Rules"],
+    ["mock", "Mock"],
+    ["local", "Local model"],
+    ["remote", "Remote model"],
+  ]);
+  const EFFECT_SCOPES = Object.freeze(["explanation-only", "bounded-signals-v1"]);
+  const BOUNDED_SCOPE = "bounded-signals-v1";
+  // The serializer emits exactly this draft/manifest pair. Every numeric bounded-cognition
+  // limit comes from the server capability document and is never pinned in the browser.
+  const BOUNDED_WORKBENCH_SCHEMA = 4;
+  const BOUNDED_RUN_SCHEMA = 10;
+  const BOUNDED_CAPABILITY_KEYS = Object.freeze([
+    "effect_scope",
+    "workbench_schema_version",
+    "run_schema_version",
+    "modes",
+    "funded_response_limits",
+    "default_provider_funded_response_limit",
+    "offline_funded_response_limit",
+    "selected_requests_per_run",
+    "reserved_output_tokens_per_request",
+    "max_output_tokens_per_attempt",
+    "max_http_attempts_per_request",
+    "compatibility_check_required_modes",
+  ]);
+  // Outer sanity bounds only: a declared limit beyond these is refused as implausible.
+  const CAPABILITY_BOUNDS = Object.freeze({
+    selectedRequestsPerRun: 1_000,
+    outputTokensPerAttempt: 4_096,
+    httpAttemptsPerRequest: 16,
+    fundingChoices: 16,
+  });
+  const MAX_V10_RESPONSES = 520_800;
   const WORKER_FAILURE_MESSAGES = new Map([
     ["evaluation-failed", "The deterministic city evaluation failed."],
     ["persistence-failed", "The city run could not be persisted."],
@@ -46,9 +127,18 @@
   const byId = (id) => document.getElementById(id);
   const csrfMeta = document.querySelector('meta[name="adlife-csrf-token"]');
   const csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+  let markCapabilityReady = () => {};
+  const capabilityReady = new Promise((resolve) => {
+    markCapabilityReady = resolve;
+  });
 
   const state = {
     capabilities: null,
+    boundedCapability: null,
+    validatedSelection: null,
+    startPending: false,
+    startLocked: false,
+    lastActivePhase: null,
     cities: [],
     templates: [],
     personaEditor: null,
@@ -64,6 +154,7 @@
     jobGeneration: 0,
     pollTimer: null,
     libraryGeneration: 0,
+    libraryLoading: false,
     libraryOffset: 0,
     libraryLimit: 20,
     lastLibraryPage: null,
@@ -114,10 +205,12 @@
     ["settings.agent_count", ["agent-count-error", "agent-count"]],
     ["settings.days", ["days-error", "days"]],
     ["settings.seed", ["seed-error", "seed"]],
+    ["cognition.effect_scope", ["cognition-effect-scope-error", "cognition-effect-scope"]],
     ["cognition.mode", ["cognition-mode-error", "cognition-mode"]],
     ["cognition.provider_profile_id", ["provider-profile-error", "provider-profile"]],
     ["cognition.provider_revision_sha256", ["provider-profile-error", "provider-profile"]],
     ["cognition.aggregate_output_token_ceiling", ["cognition-budget-error", "cognition-budget"]],
+    ["cognition.funded_response_limit", ["cognition-funded-responses-error", "cognition-funded-responses"]],
   ]);
 
   const AGGREGATE_PATHS = [
@@ -180,7 +273,14 @@
     setText("error-banner-message", "");
   }
 
+  function clearCredentialInput() {
+    // Credentials are transient: every error, submission, and navigation discards them.
+    const input = byId("provider-credential");
+    if (input) input.value = "";
+  }
+
   function showBanner(message) {
+    clearCredentialInput();
     const safeMessage = boundedText(message, 500)
       ? message
       : "The local workbench could not complete the request.";
@@ -523,20 +623,25 @@
 
     const agentCount = numberValue("agent-count", "settings.agent_count", 1, 30, true);
     if (!state.personaEditor) throw new DraftError("population", "The fictional audience catalog is unavailable.", null);
-    if (!state.providerPanel) throw new DraftError("cognition", "The explanation controls are unavailable.", null);
+    if (!state.providerPanel) throw new DraftError("cognition", "The model assistance controls are unavailable.", null);
     const issue = state.personaEditor.issue(agentCount);
     if (issue) throw new DraftError(issue.path, issue.message, null);
-    let cognition;
+    let selection;
     try {
-      cognition = state.providerPanel.serialize();
+      // The operation alone selects the outer schema: never infer it from a profile.
+      selection = state.providerPanel.serialize();
     } catch (error) {
       if (error && boundedText(error.path, 100) && boundedText(error.message, 500)) {
         throw new DraftError(error.path, error.message, error.controlId || null);
       }
       throw error;
     }
+    if (selection.schemaVersion !== 3 && selection.schemaVersion !== BOUNDED_WORKBENCH_SCHEMA) {
+      throw new DraftError("cognition.effect_scope", "Choose a supported operation.", "cognition-effect-scope");
+    }
+    const cognition = selection.cognition;
     return {
-      schema_version: 3,
+      schema_version: selection.schemaVersion,
       city_id: state.cityDetail.city_id,
       scenario: {
         scenario_id: requiredText("scenario-id", "scenario.scenario_id", 80),
@@ -567,10 +672,35 @@
     updateAudienceCount();
     state.validationGeneration += 1;
     state.validatedDraft = null;
+    state.validatedSelection = null;
     byId("validation-review").hidden = true;
-    byId("start-run").disabled = true;
     byId("validation-state").classList.remove("valid");
     setText("validation-state", message);
+    refreshStartGate();
+  }
+
+  function refreshStartGate() {
+    const selection = state.validatedSelection;
+    const requirement = selection === null || !state.providerPanel
+      ? null
+      : state.providerPanel.startRequirement(selection);
+    const ready = state.validatedDraft !== null && selection !== null && !state.startPending &&
+      !state.startLocked && requirement === null;
+    byId("start-run").disabled = !ready;
+    const note = byId("start-run-requirement");
+    note.hidden = state.validatedDraft === null || requirement === null || state.startLocked;
+    setText("start-run-requirement", note.hidden ? "" : requirement);
+    setText("review-readiness", requirement === null ? "Ready to run" : "Check required");
+    const compatibility = selection !== null && state.boundedCapability !== null &&
+      selection.schemaVersion === BOUNDED_WORKBENCH_SCHEMA &&
+      state.boundedCapability.compatibility_check_required_modes.includes(selection.cognition.mode);
+    byId("review-compatibility-row").hidden = !compatibility;
+    if (compatibility) {
+      setText(
+        "review-compatibility",
+        requirement === null ? "Bounded-signal check passed for this revision" : "Required before start",
+      );
+    }
   }
 
   function updateAudienceCount() {
@@ -590,6 +720,7 @@
     if (button.disabled) {
       return;
     }
+    clearCredentialInput();
     for (const name of STAGES) {
       const isCurrent = name === stage;
       byId(`panel-${name}`).hidden = !isCurrent;
@@ -603,7 +734,9 @@
     const mapHidden = stage === "run" || stage === "inspect";
     document.querySelector(".map-column").hidden = mapHidden;
     document.querySelector(".workbench-shell").classList.toggle("single-column", mapHidden);
-    if (stage === "inspect") {
+    // A listing already in flight (for example the one started at page load) will render;
+    // a second concurrent listing would only re-verify the same saved runs again.
+    if (stage === "inspect" && !state.libraryLoading) {
       loadRunPage(state.libraryOffset);
     }
     announce(`${stage.toUpperCase()} stage selected.`);
@@ -755,6 +888,65 @@
       throw new RequestError("The workbench capability document is incompatible.");
     }
     return documentValue;
+  }
+
+  function deepFreeze(value) {
+    if (value !== null && typeof value === "object") {
+      for (const item of Object.values(value)) deepFreeze(item);
+      Object.freeze(value);
+    }
+    return value;
+  }
+
+  function hasExactKeys(value, keys) {
+    return isObject(value) && sameJson(Object.keys(value).sort(), [...keys].sort());
+  }
+
+  function positiveInteger(value, maximum) {
+    return Number.isInteger(value) && value >= 1 && value <= maximum;
+  }
+
+  /** Strictly increasing whole request counts, none above the per-run selection. */
+  function isFundingLadder(limits, selected) {
+    return Array.isArray(limits) && limits.length >= 1 &&
+      limits.length <= CAPABILITY_BOUNDS.fundingChoices &&
+      limits.every((limit, index) =>
+        positiveInteger(limit, selected) && (index === 0 || limit > limits[index - 1]));
+  }
+
+  /**
+   * The additive V10 capability is optional. When declared, its structure must be exact and
+   * self-consistent; the numbers themselves are the server's to choose.
+   */
+  function assertBoundedCapability(capabilities) {
+    const declaresScopes = Object.hasOwn(capabilities, "cognition_effect_scopes");
+    const declaresBounded = Object.hasOwn(capabilities, "bounded_cognition");
+    if (!declaresScopes && !declaresBounded) {
+      return null;
+    }
+    const value = capabilities.bounded_cognition;
+    if (
+      !sameJson(capabilities.cognition_effect_scopes, EFFECT_SCOPES) ||
+      !hasExactKeys(value, BOUNDED_CAPABILITY_KEYS) ||
+      value.effect_scope !== BOUNDED_SCOPE ||
+      value.workbench_schema_version !== BOUNDED_WORKBENCH_SCHEMA ||
+      value.run_schema_version !== BOUNDED_RUN_SCHEMA ||
+      !sameJson(value.modes, capabilities.cognition_modes) ||
+      !sameJson(value.compatibility_check_required_modes, COGNITION_MODES.filter(isProviderMode)) ||
+      !positiveInteger(value.selected_requests_per_run, CAPABILITY_BOUNDS.selectedRequestsPerRun) ||
+      !positiveInteger(value.max_output_tokens_per_attempt, CAPABILITY_BOUNDS.outputTokensPerAttempt) ||
+      !positiveInteger(value.max_http_attempts_per_request, CAPABILITY_BOUNDS.httpAttemptsPerRequest) ||
+      // The whole-request reservation covers every attempt one funded request may make.
+      value.reserved_output_tokens_per_request !==
+        value.max_output_tokens_per_attempt * value.max_http_attempts_per_request ||
+      !isFundingLadder(value.funded_response_limits, value.selected_requests_per_run) ||
+      !value.funded_response_limits.includes(value.default_provider_funded_response_limit) ||
+      // Rules and mock resolve every selected request locally.
+      value.offline_funded_response_limit !== value.selected_requests_per_run
+    ) {
+      throw new RequestError("The workbench capability document is incompatible.");
+    }
+    return deepFreeze(JSON.parse(JSON.stringify(value)));
   }
 
   function assertBounds(bounds) {
@@ -1269,7 +1461,22 @@
     return documentValue;
   }
 
-  function renderValidation(documentValue) {
+  function renderReviewSource(review) {
+    const source = byId("review-source");
+    const parts = [makeElement("span", review.sourceLabel)];
+    if (review.profileLabel !== null && review.profileLabel !== review.sourceLabel) {
+      parts.push(makeElement("span", " · "), makeElement("bdi", review.profileLabel));
+    }
+    if (review.modelId !== null) {
+      parts.push(makeElement("span", " · "), makeElement("bdi", review.modelId));
+    }
+    if (review.revision !== null) {
+      parts.push(makeElement("span", ` · rev ${review.revision}`));
+    }
+    source.replaceChildren(...parts);
+  }
+
+  function renderValidation(documentValue, selection) {
     setText("review-run", documentValue.run.run_id);
     setText("review-seed", documentValue.run.seed);
     setText("review-population", `${documentValue.run.agent_count} synthetic people · ${documentValue.run.days} model days`);
@@ -1279,8 +1486,22 @@
     setText("review-scenario-hash", documentValue.hashes.scenario_sha256);
     setText("review-creative-hash", documentValue.hashes.creative_sha256);
     setText("review-response-hash", documentValue.hashes.response_sha256);
+    const review = state.providerPanel.reviewFacts(selection);
+    setText("review-operation", review.operation);
+    renderReviewSource(review);
+    setText("review-funding", review.funding);
+    setText("review-schema", review.schema);
+    const ownership = byId("review-ownership");
+    ownership.replaceChildren(...review.ownership.map(([label, owner]) => {
+      const row = makeElement("div");
+      row.append(makeElement("dt", label), makeElement("dd", owner));
+      return row;
+    }));
+    setText("start-run", review.startLabel);
     byId("validation-review").hidden = false;
-    byId("start-run").disabled = false;
+    state.validatedSelection = selection;
+    state.startLocked = false;
+    refreshStartGate();
     byId("validation-state").classList.add("valid");
     setText("validation-state", "Validated. Review the immutable binding receipt before starting.");
   }
@@ -1305,6 +1526,7 @@
   async function validateDraft() {
     clearBanner();
     clearFieldErrors();
+    clearCredentialInput();
     let draft;
     try {
       draft = readDraft();
@@ -1327,7 +1549,10 @@
         return;
       }
       state.validatedDraft = JSON.stringify(draft);
-      renderValidation(receipt);
+      renderValidation(receipt, deepFreeze({
+        schemaVersion: draft.schema_version,
+        cognition: JSON.parse(JSON.stringify(draft.cognition)),
+      }));
       announce("Study validated without writing an artifact.");
     } catch (error) {
       if (generation !== state.validationGeneration) {
@@ -1344,15 +1569,50 @@
     }
   }
 
+  function isProviderMode(mode) {
+    return mode === "local" || mode === "remote";
+  }
+
+  /** Exact V10 binding under the server capability: scope, source, profile, funding, ceiling. */
+  function hasBoundedBinding(value) {
+    const capability = state.boundedCapability;
+    if (capability === null) return false;
+    const providerMode = isProviderMode(value.cognition_mode);
+    return value.effect_scope === capability.effect_scope &&
+      capability.modes.includes(value.cognition_mode) &&
+      Number.isInteger(value.funded_response_limit) &&
+      Number.isInteger(value.aggregate_output_token_ceiling) &&
+      (providerMode
+        ? PROFILE_ID_PATTERN.test(value.provider_profile_id || "") &&
+          HASH_PATTERN.test(value.provider_revision_sha256 || "") &&
+          capability.funded_response_limits.includes(value.funded_response_limit) &&
+          value.aggregate_output_token_ceiling ===
+            value.funded_response_limit * capability.reserved_output_tokens_per_request
+        : value.provider_profile_id === null &&
+          value.provider_revision_sha256 === null &&
+          value.funded_response_limit === capability.offline_funded_response_limit &&
+          value.aggregate_output_token_ceiling === 0);
+  }
+
   function assertAcceptedSettings(value, runId) {
     const schemaThree = value?.workbench_input_schema_version === 3 && value?.run_schema_version === 9;
+    const schemaFour = value?.workbench_input_schema_version === BOUNDED_WORKBENCH_SCHEMA &&
+      value?.run_schema_version === BOUNDED_RUN_SCHEMA;
     const providerMode = value?.cognition_mode === "local" || value?.cognition_mode === "remote";
+    if (
+      isObject(value) &&
+      (schemaFour
+        ? !hasBoundedBinding(value)
+        : Object.hasOwn(value, "effect_scope") || Object.hasOwn(value, "funded_response_limit"))
+    ) {
+      throw new RequestError("The worker returned incompatible accepted settings.");
+    }
     if (
       !isObject(value) ||
       value.schema_version !== 1 ||
       !((value.workbench_input_schema_version === 1 && value.run_schema_version === 7) ||
         (value.workbench_input_schema_version === 2 && value.run_schema_version === 8) ||
-        schemaThree) ||
+        schemaThree || schemaFour) ||
       !RUN_ID_PATTERN.test(runId || "") ||
       !ID_PATTERN.test(value.city_id || "") ||
       !ID_PATTERN.test(value.scenario_id || "") ||
@@ -1380,7 +1640,7 @@
           : value.provider_profile_id !== null || value.provider_revision_sha256 !== null) ||
         (!providerMode && value.aggregate_output_token_ceiling !== 0)
       )) ||
-      (!schemaThree && [
+      (!schemaThree && !schemaFour && [
         value.cognition_mode,
         value.provider_profile_id,
         value.provider_revision_sha256,
@@ -1392,6 +1652,63 @@
     return value;
   }
 
+  // Request counts are bounded by the server's per-run selection; response counts by run size.
+  const V10_SUMMARY_COUNTS = Object.freeze([
+    ["eligible_response_count", "responses"],
+    ["selected_request_count", "requests"],
+    ["funded_request_count", "requests"],
+    ["budget_skipped_count", "requests"],
+    ["unselected_response_count", "responses"],
+    ["applied_response_count", "responses"],
+    ["rules_count", "requests"],
+    ["mock_count", "requests"],
+    ["provider_count", "requests"],
+    ["cache_count", "requests"],
+    ["fallback_count", "requests"],
+    ["neutralized_response_count", "responses"],
+    ["uncertain_result_count", "requests"],
+    ["safety_neutralized_result_count", "requests"],
+  ]);
+  const V10_SUMMARY_FIELDS = Object.freeze([
+    "workbench_input_schema_version",
+    "effect_scope",
+    "funded_response_limit",
+    ...V10_SUMMARY_COUNTS.map(([name]) => name),
+  ]);
+
+  /** Mirror the server's V10 summary equations; any drift refuses the whole record. */
+  function hasBoundedSummary(value) {
+    const capability = state.boundedCapability;
+    if (
+      capability === null ||
+      value.workbench_input_schema_version !== capability.workbench_schema_version ||
+      !hasBoundedBinding(value) ||
+      V10_SUMMARY_COUNTS.some(([name, kind]) => {
+        const maximum = kind === "requests" ? capability.selected_requests_per_run : MAX_V10_RESPONSES;
+        return !Number.isInteger(value[name]) || value[name] < 0 || value[name] > maximum;
+      })
+    ) {
+      return false;
+    }
+    const selected = value.selected_request_count;
+    const expectedFunded = isProviderMode(value.cognition_mode)
+      ? Math.min(selected, value.funded_response_limit)
+      : selected;
+    const resolved = value.rules_count + value.mock_count + value.provider_count +
+      value.cache_count + value.fallback_count + value.budget_skipped_count;
+    const offlineSource = { rules: value.rules_count, mock: value.mock_count }[value.cognition_mode];
+    const sourcesMatchMode = offlineSource === undefined
+      ? value.rules_count === 0 && value.mock_count === 0
+      : offlineSource === selected && resolved === offlineSource;
+    return sourcesMatchMode &&
+      value.eligible_response_count === value.response_count &&
+      value.eligible_response_count === selected + value.unselected_response_count &&
+      selected === value.funded_request_count + value.budget_skipped_count &&
+      value.funded_request_count === expectedFunded &&
+      value.applied_response_count === value.eligible_response_count &&
+      resolved === selected;
+  }
+
   function assertRunSummary(value) {
     if (
       !isObject(value) ||
@@ -1399,7 +1716,7 @@
       !RUN_ID_PATTERN.test(value.run_id || "") ||
       !Number.isInteger(value.run_schema_version) ||
       value.run_schema_version < 1 ||
-      value.run_schema_version > 9 ||
+      value.run_schema_version > 10 ||
       !ID_PATTERN.test(value.city_id || "") ||
       !SEED_PATTERN.test(value.seed || "") ||
       BigInt(value.seed) > MAX_SEED ||
@@ -1415,6 +1732,15 @@
       value.frame_count !== value.days * 1440
     ) {
       throw new RequestError("A verified run summary is incompatible.");
+    }
+    if (value.run_schema_version === BOUNDED_RUN_SCHEMA) {
+      if (!hasBoundedSummary(value)) {
+        throw new RequestError("A verified run summary has incompatible bounded cognition settings.");
+      }
+      return value;
+    }
+    if (V10_SUMMARY_FIELDS.some((name) => Object.hasOwn(value, name))) {
+      throw new RequestError("A verified run summary carried unsupported bounded cognition fields.");
     }
     if (value.run_schema_version === 9) {
       const providerMode = value.cognition_mode === "local" || value.cognition_mode === "remote";
@@ -1451,13 +1777,17 @@
       value.schema_version !== 1 ||
       !JOB_ID_PATTERN.test(value.job_id || "") ||
       !RUN_ID_PATTERN.test(value.run_id || "") ||
-      !LEGAL_PHASES.has(value.phase) ||
+      !PHASE_RANKS.has(value.phase) ||
       typeof value.cancellation_requested !== "boolean" ||
       typeof value.can_cancel !== "boolean"
     ) {
       throw new RequestError("The worker returned an incompatible job record.");
     }
     assertAcceptedSettings(value.accepted_settings, value.run_id);
+    const bounded = value.accepted_settings.workbench_input_schema_version === BOUNDED_WORKBENCH_SCHEMA;
+    if (!(bounded ? BOUNDED_PHASES : LEGAL_PHASES).has(value.phase)) {
+      throw new RequestError("The worker returned an incompatible job record.");
+    }
     if (value.phase === "completed") {
       const result = assertRunSummary(value.result);
       const settings = value.accepted_settings;
@@ -1472,6 +1802,9 @@
         result.seed !== settings.seed ||
         result.agent_count !== settings.agent_count ||
         result.days !== settings.days ||
+        (result.workbench_input_schema_version ?? null) !== (bounded ? BOUNDED_WORKBENCH_SCHEMA : null) ||
+        (result.effect_scope ?? null) !== (settings.effect_scope ?? null) ||
+        (result.funded_response_limit ?? null) !== (settings.funded_response_limit ?? null) ||
         (result.cognition_mode ?? null) !== (settings.cognition_mode ?? null) ||
         (result.provider_profile_id ?? null) !== (settings.provider_profile_id ?? null) ||
         (result.provider_revision_sha256 ?? null) !== (settings.provider_revision_sha256 ?? null) ||
@@ -1502,11 +1835,59 @@
     list.append(wrapper);
   }
 
+  function renderPhaseTrack(job) {
+    const track = PHASE_TRACKS.get(job.accepted_settings.workbench_input_schema_version) || [];
+    const stopped = job.phase === "failed" || job.phase === "cancelled";
+    const reference = stopped ? state.lastActivePhase : job.phase;
+    const position = job.phase === "completed" ? track.length : track.indexOf(reference);
+    const items = track.map((phase, index) => {
+      let status = "pending";
+      if (position >= 0 && index < position) status = "done";
+      else if (index === position) status = stopped ? "stopped" : "current";
+      const final = index === track.length - 1;
+      const label = final && stopped
+        ? (job.phase === "failed" ? "Failed" : "Cancelled")
+        : PHASE_LABELS.get(phase);
+      if (final && stopped) status = "stopped";
+      const item = makeElement("li", null, `phase-step ${status}`);
+      item.dataset.phase = phase;
+      item.dataset.status = status;
+      if (status === "current") item.setAttribute("aria-current", "step");
+      const marker = { done: "Done", current: "Now", stopped: "Stopped", pending: "" }[status];
+      item.append(makeElement("span", label, "phase-label"));
+      if (marker) item.append(makeElement("span", marker, "phase-state"));
+      return item;
+    });
+    byId("job-phase-track").replaceChildren(...items);
+  }
+
+  function boundedJobFact(settings) {
+    const source = COGNITION_MODE_LABELS.get(settings.cognition_mode);
+    return isProviderMode(settings.cognition_mode)
+      ? `${source} · ${settings.funded_response_limit} funded responses`
+      : `${source} · offline, up to ${state.boundedCapability.selected_requests_per_run} selected`;
+  }
+
+  function acceptsJobProgress(job) {
+    const previous = state.activeJob;
+    return !(
+      previous !== null && previous.job_id === job.job_id &&
+      PHASE_RANKS.get(job.phase) < PHASE_RANKS.get(previous.phase)
+    );
+  }
+
   function renderJob(job) {
+    if (!acceptsJobProgress(job)) {
+      // A delayed response can never move a job backwards in its frozen phase sequence.
+      return false;
+    }
     state.activeJob = job;
+    if (!TERMINAL_PHASES.has(job.phase)) state.lastActivePhase = job.phase;
     byId("job-panel").hidden = false;
     setText("job-phase", job.phase.toUpperCase());
+    renderPhaseTrack(job);
     const settings = job.accepted_settings;
+    const bounded = settings.workbench_input_schema_version === BOUNDED_WORKBENCH_SCHEMA;
     const facts = byId("job-settings");
     facts.replaceChildren();
     appendFact(facts, "Run", job.run_id);
@@ -1515,13 +1896,18 @@
     appendFact(facts, "Population", `${settings.agent_count} · ${settings.days} days`);
     appendFact(facts, "Seed", settings.seed);
     appendFact(facts, "Simulation", "Deterministic rules");
-    appendFact(
-      facts,
-      "Explanations",
-      settings.cognition_mode === null || settings.cognition_mode === undefined
-        ? "Legacy run"
-        : settings.cognition_mode,
-    );
+    if (bounded) {
+      appendFact(facts, "Operation", "Bounded AI cognition");
+      appendFact(facts, "Cognition signals", boundedJobFact(settings));
+    } else {
+      appendFact(
+        facts,
+        "Explanations",
+        settings.cognition_mode === null || settings.cognition_mode === undefined
+          ? "Legacy run"
+          : settings.cognition_mode,
+      );
+    }
     const cancel = byId("cancel-job");
     cancel.hidden = !job.can_cancel;
     cancel.disabled = !job.can_cancel;
@@ -1546,11 +1932,17 @@
         simulating: "The deterministic city simulation is in progress.",
         "selecting-explanations": "Saved responses are being selected in stable order.",
         "requesting-explanations": "Bounded explanations are being resolved.",
+        "planning-cognition": "Rules compute movement, attention, and baseline responses; signal requests are selected in stable order.",
+        "requesting-cognition": isProviderMode(settings.cognition_mode)
+          ? "Bounded signals are being requested from the model; a local model can take a minute or more. Failures resolve to neutral fallback."
+          : "Bounded signals are being resolved offline.",
+        "applying-cognition": "The frozen city-cognition-influence-v1 mapping is updating the separate cognition state.",
         persisting: "Evaluation finished; the immutable artifact is being persisted.",
         verifying: "The saved artifact is being independently verified.",
       };
       setText("job-message", phaseMessages[job.phase]);
     }
+    return true;
   }
 
   function stopPolling() {
@@ -1618,6 +2010,8 @@
       throw new RequestError("The worker returned an unsafe status address.");
     }
     stopPolling();
+    state.activeJob = null;
+    state.lastActivePhase = null;
     const generation = state.jobGeneration;
     state.jobBinding = Object.freeze({
       generation,
@@ -1631,9 +2025,38 @@
     }
   }
 
+  /** The worker receipt must restate the exact submitted 3/9 or 4/10 cognition draft. */
+  function acceptedMatchesDraft(job, draft) {
+    const accepted = job.accepted_settings;
+    const cognition = draft.cognition;
+    const common = job.run_id === draft.settings.run_id &&
+      accepted.workbench_input_schema_version === draft.schema_version &&
+      accepted.agent_count === draft.settings.agent_count && accepted.days === draft.settings.days &&
+      accepted.seed === draft.settings.seed && accepted.city_id === draft.city_id &&
+      accepted.scenario_id === draft.scenario.scenario_id &&
+      accepted.campaign_id === draft.scenario.campaign.campaign_id &&
+      accepted.cognition_mode === cognition.mode &&
+      accepted.provider_profile_id === cognition.provider_profile_id &&
+      accepted.provider_revision_sha256 === cognition.provider_revision_sha256;
+    if (draft.schema_version === BOUNDED_WORKBENCH_SCHEMA) {
+      const capability = state.boundedCapability;
+      return capability !== null && common && accepted.run_schema_version === BOUNDED_RUN_SCHEMA &&
+        accepted.effect_scope === cognition.effect_scope &&
+        accepted.funded_response_limit === cognition.funded_response_limit &&
+        accepted.aggregate_output_token_ceiling === (isProviderMode(cognition.mode)
+          ? cognition.funded_response_limit * capability.reserved_output_tokens_per_request
+          : 0);
+    }
+    return common && accepted.run_schema_version === 9 &&
+      !Object.hasOwn(accepted, "effect_scope") && !Object.hasOwn(accepted, "funded_response_limit") &&
+      accepted.aggregate_output_token_ceiling === cognition.aggregate_output_token_ceiling;
+  }
+
   async function startRun() {
+    if (state.startPending || state.startLocked) return;
     clearBanner();
     clearFieldErrors();
+    clearCredentialInput();
     let draft;
     try {
       draft = readDraft();
@@ -1650,7 +2073,14 @@
       showBanner("The draft changed after validation. Validate the revised draft before starting.");
       return;
     }
-    byId("start-run").disabled = true;
+    const requirement = state.providerPanel.startRequirement(state.validatedSelection);
+    if (requirement !== null) {
+      refreshStartGate();
+      showBanner(requirement);
+      return;
+    }
+    state.startPending = true;
+    refreshStartGate();
     const generation = state.validationGeneration;
     try {
       const documentValue = await fetchJson("/api/jobs", { method: "POST", body: draft });
@@ -1663,24 +2093,23 @@
         throw new RequestError("The worker acceptance response is incompatible.");
       }
       const job = assertJob(documentValue.job);
-      const accepted = job.accepted_settings;
-      if (job.run_id !== draft.settings.run_id ||
-          accepted.workbench_input_schema_version !== draft.schema_version ||
-          accepted.agent_count !== draft.settings.agent_count || accepted.days !== draft.settings.days ||
-          accepted.seed !== draft.settings.seed || accepted.city_id !== draft.city_id ||
-          accepted.scenario_id !== draft.scenario.scenario_id ||
-          accepted.campaign_id !== draft.scenario.campaign.campaign_id ||
-          accepted.cognition_mode !== draft.cognition.mode ||
-          accepted.provider_profile_id !== draft.cognition.provider_profile_id ||
-          accepted.provider_revision_sha256 !== draft.cognition.provider_revision_sha256 ||
-          accepted.aggregate_output_token_ceiling !== draft.cognition.aggregate_output_token_ceiling) {
+      if (!acceptedMatchesDraft(job, draft)) {
         throw new RequestError("The worker acceptance is incompatible with the submitted draft.");
       }
+      state.startLocked = true;
       beginPolling(job, documentValue.status_url);
+      // Keep the live phase track on screen; the start button just locked below the review.
+      byId("job-panel").scrollIntoView({ block: "nearest" });
       announce(`Run ${job.run_id} accepted in ${job.phase} phase.`);
     } catch (error) {
       if (generation !== state.validationGeneration) return;
-      byId("start-run").disabled = false;
+      if (
+        error instanceof RequestError && isObject(error.documentValue) &&
+        isObject(error.documentValue.error) &&
+        error.documentValue.error.code === "provider-compatibility-required"
+      ) {
+        state.providerPanel.invalidateBoundedCheck();
+      }
       if (error instanceof RequestError && isObject(error.documentValue) && isObject(error.documentValue.error)) {
         const fields = error.documentValue.error.fields;
         if (isObject(fields) && Object.keys(fields).length > 0) {
@@ -1691,6 +2120,9 @@
       } else {
         showBanner(error instanceof Error ? error.message : "The run could not be started.");
       }
+    } finally {
+      state.startPending = false;
+      refreshStartGate();
     }
   }
 
@@ -1782,6 +2214,17 @@
         appendFact(facts, "Opportunities", String(run.opportunity_count));
         appendFact(facts, "Notices", String(run.noticed_count));
         appendFact(facts, "Responses", String(run.response_count));
+        if (run.run_schema_version === BOUNDED_RUN_SCHEMA) {
+          const source = COGNITION_MODE_LABELS.get(run.cognition_mode);
+          appendFact(facts, "Cognition", `Bounded · ${source}`);
+          appendFact(
+            facts,
+            "Signals",
+            isProviderMode(run.cognition_mode)
+              ? `${run.selected_request_count} selected · ${run.provider_count + run.cache_count} model · ${run.fallback_count} fallback`
+              : `${run.selected_request_count} selected · offline`,
+          );
+        }
         const link = makeElement("a", "View timeline and results", "button primary");
         link.href = run.inspector_url;
         article.append(header, facts, link);
@@ -1793,18 +2236,22 @@
     setText("library-page", `Page ${pageNumber}`);
     byId("library-previous").disabled = page.offset === 0;
     byId("library-next").disabled = page.offset + page.returned_count >= page.verified_total;
-    if (byId("run-id").dataset.touched !== "true") {
-      byId("run-id").value = suggestedRunId();
+    // A late listing never rewrites a run ID inside a draft that is validated but not started.
+    const runId = byId("run-id");
+    if (runId.dataset.touched !== "true" && (state.validatedDraft === null || state.startLocked)) {
+      runId.value = suggestedRunId();
     }
   }
 
-  async function loadRunPage(offset) {
-    if (!Number.isInteger(offset) || offset < 0 || offset > 10000) {
-      return;
-    }
+  /** Render one library listing unless a newer listing request has superseded it. */
+  async function renderLibraryRequest(request) {
     const generation = ++state.libraryGeneration;
+    state.libraryLoading = true;
     try {
-      const page = assertRunPage(await fetchJson(`/api/runs?offset=${offset}&limit=${state.libraryLimit}`));
+      const documentValue = await request;
+      // V10 summaries are checked against the bounded capability, so wait until it is known.
+      await capabilityReady;
+      const page = assertRunPage(documentValue);
       if (generation !== state.libraryGeneration) {
         return;
       }
@@ -1815,7 +2262,18 @@
       }
       showBanner(error instanceof Error ? error.message : "The run library could not be verified.");
       setText("library-count", "Verified library unavailable");
+    } finally {
+      if (generation === state.libraryGeneration) {
+        state.libraryLoading = false;
+      }
     }
+  }
+
+  async function loadRunPage(offset) {
+    if (!Number.isInteger(offset) || offset < 0 || offset > 10000) {
+      return;
+    }
+    await renderLibraryRequest(fetchJson(`/api/runs?offset=${offset}&limit=${state.libraryLimit}`));
   }
 
   function installCityPackUploader() {
@@ -1836,12 +2294,13 @@
 
   function installProviderPanel() {
     if (typeof window.AdLifeProviderPanel !== "function") {
-      throw new RequestError("The explanation controls are unavailable. Reload the page.");
+      throw new RequestError("The model assistance controls are unavailable. Reload the page.");
     }
     state.providerPanel = new window.AdLifeProviderPanel({
       requestJson: fetchJson,
       postCredential,
       onChange: () => invalidateValidation(),
+      onAuthorityChange: () => refreshStartGate(),
       announce,
     });
   }
@@ -1915,8 +2374,11 @@
     });
     window.addEventListener("beforeunload", () => {
       state.shuttingDown = true;
+      clearCredentialInput();
       stopPolling();
     });
+    window.addEventListener("pagehide", clearCredentialInput);
+    byId("job-inspect-link").addEventListener("click", clearCredentialInput);
   }
 
   async function boot() {
@@ -1926,15 +2388,19 @@
     resetSchedules();
     updatePlacementVisibility();
     clearFieldErrors();
+    // Page load lists the library itself; opening INSPECT meanwhile waits for that listing.
+    state.libraryLoading = true;
     try {
-      const [capabilitiesDocument, catalogDocument, templatesDocument, runsDocument, personasDocument] = await Promise.all([
+      const [capabilitiesDocument, catalogDocument, templatesDocument, personasDocument] = await Promise.all([
         fetchJson("/api/workbench"),
         fetchJson("/api/catalog/cities"),
         fetchJson("/api/creative-templates"),
-        fetchJson("/api/runs?offset=0&limit=20"),
         fetchJson("/api/persona-templates"),
       ]);
       state.capabilities = assertCapabilities(capabilitiesDocument);
+      state.boundedCapability = assertBoundedCapability(state.capabilities.capabilities);
+      state.providerPanel.configureBounded(state.boundedCapability);
+      markCapabilityReady();
       state.cities = assertCatalog(catalogDocument);
       state.templates = assertTemplates(templatesDocument);
       state.personaEditor = new window.AdLifePersonaEditor(byId("persona-editor"), personasDocument,
@@ -1942,9 +2408,11 @@
       updateAudienceCount();
       renderCatalog();
       renderTemplates();
-      renderRunPage(assertRunPage(runsDocument));
       await state.providerPanel.load();
       await loadCity(byId("city-select").value);
+      // Listing re-verifies every saved run, which can take seconds. It starts once the city is
+      // verified, so setup never waits for it and the two never contend for the workspace.
+      void loadRunPage(0);
       const active = state.capabilities.active_job;
       if (active !== null) {
         const job = assertJob(active);
@@ -1952,6 +2420,7 @@
         byId("stage-run").disabled = false;
       }
     } catch (error) {
+      state.libraryLoading = false;
       showBanner(error instanceof Error ? error.message : "The local workbench could not start.");
     }
   }

@@ -7,6 +7,11 @@
   const MAX_SEED = 9223372036854775807n;
   const MODES = Object.freeze(["rules", "mock", "local", "remote"]);
   const PROVIDER_MODES = new Set(["local", "remote"]);
+  const EXPLANATION_SCOPE = "explanation-only";
+  const BOUNDED_SCOPE = "bounded-signals-v1";
+  const EFFECT_SCOPES = Object.freeze([EXPLANATION_SCOPE, BOUNDED_SCOPE]);
+  const DEFAULT_LOCAL_ORIGIN = "local-ollama";
+  const DEFAULT_LOCAL_MODEL = "qwen2.5:7b-instruct";
   const REASON_CODES = new Set([
     "endpoint-resolution-refused",
     "authentication-refused",
@@ -21,8 +26,51 @@
     "endpoint-policy-refused",
   ]);
   const UNAVAILABLE_REASONS = new Set(["credential-unavailable", "endpoint-policy-refused"]);
+  const BOUNDED_CHECK_HASHES = Object.freeze([
+    "compatibility_key_sha256",
+    "causal_contract_sha256",
+    "prompt_contract_sha256",
+    "result_schema_contract_sha256",
+    "selection_policy_sha256",
+    "fallback_policy_sha256",
+    "mock_policy_sha256",
+    "influence_policy_sha256",
+  ]);
+  const MODE_LABELS = Object.freeze({
+    rules: "Rules",
+    mock: "Mock",
+    local: "Local model",
+    remote: "Remote model",
+  });
+  const SCOPE_LABELS = Object.freeze({
+    [EXPLANATION_SCOPE]: "Explanation",
+    [BOUNDED_SCOPE]: "Bounded cognition",
+  });
+  const SCOPE_HELP = Object.freeze({
+    [EXPLANATION_SCOPE]: "Text about saved results; saved as run V9.",
+    [BOUNDED_SCOPE]: "Closed appraisal categories feed a separate cognition state; saved as run V10.",
+  });
+  const EXPLANATION_MODE_HELP = Object.freeze({
+    rules: "Deterministic grounded wording; offline and reproducible.",
+    mock: "Deterministic provider-shaped wording for demos and tests.",
+    local: "Calls one approved loopback OpenAI-compatible endpoint.",
+    remote: "Calls one approved HTTPS OpenAI-compatible endpoint.",
+  });
+  const BOUNDED_MODE_HELP = Object.freeze({
+    rules: "Neutral signals for every selected response; offline and reproducible.",
+    mock: "Deterministic content-addressed signals; offline, with no network call.",
+    local: "One approved loopback OpenAI-compatible endpoint, with deterministic neutral fallback.",
+    remote: "One approved HTTPS OpenAI-compatible endpoint, with deterministic neutral fallback.",
+  });
+  const BOUNDARY_COPY = Object.freeze({
+    [EXPLANATION_SCOPE]: "Only explanatory text. A model may describe an already-computed fictional response; it cannot move agents, create or select events, change any state or purchase intention, or make purchases.",
+    [BOUNDED_SCOPE]: "External AI selects a small set of synthetic appraisal categories. AdLife applies a fixed mapping. These categories may change only the displayed cognition state. They cannot move agents, create or select events, change purchase intention, or make purchases.",
+  });
+  const PURCHASE_OWNERSHIP = "Rules: an uncalibrated proxy score; purchases are not modeled";
+  const TIMEOUT_REASON = "timeout-exhausted";
 
   const byId = (id) => document.getElementById(id);
+  const formatCount = (value) => Number(value).toLocaleString("en-US");
 
   function isObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -101,6 +149,20 @@
       throw new Error("The compatibility response is inconsistent.");
     }
     return value;
+  }
+
+  function assertBoundedCheck(value, profile) {
+    if (
+      !hasExactKeys(value, ["status", "reason_code", "effect_scope", "profile_id", "revision_sha256", ...BOUNDED_CHECK_HASHES]) ||
+      value.effect_scope !== BOUNDED_SCOPE ||
+      value.profile_id !== profile.profile_id ||
+      value.revision_sha256 !== profile.revision_sha256 ||
+      BOUNDED_CHECK_HASHES.some((name) => !HASH_PATTERN.test(value[name] || ""))
+    ) {
+      throw new Error("The bounded-signal compatibility response is incompatible.");
+    }
+    assertCheck({ status: value.status, reason_code: value.reason_code });
+    return Object.freeze({ ...value });
   }
 
   function assertProfile(value) {
@@ -197,24 +259,28 @@
     return { profiles, origins };
   }
 
+  const ERROR_PATHS = Object.freeze({
+    "cognition-budget": "cognition.aggregate_output_token_ceiling",
+    "cognition-mode": "cognition.mode",
+    "cognition-effect-scope": "cognition.effect_scope",
+    "cognition-funded-responses": "cognition.funded_response_limit",
+  });
+
   class ProviderDraftError extends Error {
     constructor(controlId, message) {
       super(message);
       this.controlId = controlId;
-      this.path = controlId === "cognition-budget"
-        ? "cognition.aggregate_output_token_ceiling"
-        : controlId === "cognition-mode"
-          ? "cognition.mode"
-          : "cognition.provider_profile_id";
+      this.path = ERROR_PATHS[controlId] || "cognition.provider_profile_id";
     }
   }
 
   class AdLifeProviderPanel {
-    constructor({ requestJson, postCredential, onChange, announce }) {
+    constructor({ requestJson, postCredential, onChange, onAuthorityChange, announce }) {
       if (
         typeof requestJson !== "function" ||
         typeof postCredential !== "function" ||
         typeof onChange !== "function" ||
+        typeof onAuthorityChange !== "function" ||
         typeof announce !== "function"
       ) {
         throw new TypeError("Provider panel callbacks are required.");
@@ -222,30 +288,48 @@
       this.requestJson = requestJson;
       this.postCredential = postCredential;
       this.onChange = onChange;
+      this.onAuthorityChange = onAuthorityChange;
       this.announce = announce;
       this.profiles = new Map();
       this.origins = [];
+      this.bounded = null;
+      this.providerFundedLimit = null;
+      this.boundedCheck = null;
       this.loadGeneration = 0;
       this.generation = 0;
       this.busy = false;
       this.installEvents();
-      this.renderMode();
+      this.configureBounded(null);
     }
 
     installEvents() {
+      byId("cognition-effect-scope").addEventListener("change", () => {
+        this.advanceAuthority();
+        this.clearActionStatuses();
+        this.renderMode();
+        this.onChange();
+      });
       byId("cognition-mode").addEventListener("change", () => {
-        this.generation += 1;
-        byId("provider-credential").value = "";
+        this.advanceAuthority();
         this.clearActionStatuses();
         this.renderMode();
         this.onChange();
       });
       byId("provider-profile").addEventListener("change", () => {
-        this.generation += 1;
-        byId("provider-credential").value = "";
+        this.advanceAuthority();
         this.clearActionStatuses();
         this.renderSelection();
         this.onChange();
+      });
+      byId("cognition-funded-responses").addEventListener("change", () => {
+        const value = Number(byId("cognition-funded-responses").value);
+        if (
+          PROVIDER_MODES.has(byId("cognition-mode").value) &&
+          this.bounded?.funded_response_limits.includes(value)
+        ) {
+          this.providerFundedLimit = value;
+        }
+        this.renderFunding();
       });
       byId("provider-origin").addEventListener("change", () => this.renderOrigin());
       byId("provider-seed-policy").addEventListener("change", () => this.renderSeedPolicy());
@@ -263,6 +347,23 @@
       byId("cognition-budget").addEventListener("input", () => this.renderBudget());
     }
 
+    /** Accept the server-declared bounded-signal capability, or null when it is not offered. */
+    configureBounded(capability) {
+      this.bounded = capability;
+      this.providerFundedLimit = capability === null
+        ? null
+        : capability.default_provider_funded_response_limit;
+      const option = byId("cognition-effect-scope").querySelector(`option[value="${BOUNDED_SCOPE}"]`);
+      option.disabled = capability === null;
+      option.textContent = capability === null
+        ? "Bounded AI cognition (not offered by this server)"
+        : "Bounded AI cognition";
+      if (capability === null && byId("cognition-effect-scope").value === BOUNDED_SCOPE) {
+        byId("cognition-effect-scope").value = EXPLANATION_SCOPE;
+      }
+      this.renderMode();
+    }
+
     async load() {
       const generation = ++this.loadGeneration;
       const documentValue = await this.requestJson("/api/providers");
@@ -270,21 +371,69 @@
       if (generation !== this.loadGeneration) return;
       this.profiles = new Map(verified.profiles.map((profile) => [profileKey(profile), profile]));
       this.origins = verified.origins;
+      this.advanceAuthority();
       this.renderMode();
+    }
+
+    /** Every authority-affecting edit advances exactly one generation and drops scoped checks. */
+    advanceAuthority() {
+      this.generation += 1;
+      this.boundedCheck = null;
+      this.clearCredential();
+      byId("explanations-section").dataset.authorityGeneration = String(this.generation);
+      this.onAuthorityChange();
+    }
+
+    clearCredential() {
+      byId("provider-credential").value = "";
     }
 
     clearActionStatuses() {
       setText("provider-status", "");
       setText("provider-credential-status", "");
-      setText("provider-check-status", "");
+      this.setCheckStatus("");
+    }
+
+    /** One place owns the check status and its optional next-step hint, so neither goes stale. */
+    setCheckStatus(message, hint = null) {
+      setText("provider-check-status", message);
+      const element = byId("provider-check-hint");
+      element.hidden = hint === null;
+      element.replaceChildren(...(hint === null ? [] : hint));
+    }
+
+    /** A cold local model can outlast the check; say how to warm it instead of implying a defect. */
+    timeoutHint(profile) {
+      if (profile?.mode !== "local") return null;
+      const lead = document.createTextNode(
+        "The local model may still be loading. Warm it first, then check again",
+      );
+      if (profile.origin_approval_id !== DEFAULT_LOCAL_ORIGIN) {
+        return [lead, document.createTextNode(".")];
+      }
+      const command = document.createElement("code");
+      command.textContent = `ollama run ${profile.model_id} --keepalive 30m hello`;
+      return [lead, document.createTextNode(", for example: "), command];
+    }
+
+    effectScope() {
+      const scope = byId("cognition-effect-scope").value;
+      if (!EFFECT_SCOPES.includes(scope) || (scope === BOUNDED_SCOPE && this.bounded === null)) {
+        throw new ProviderDraftError("cognition-effect-scope", "Choose an operation offered by this server.");
+      }
+      return scope;
     }
 
     mode() {
       const mode = byId("cognition-mode").value;
       if (!MODES.includes(mode)) {
-        throw new ProviderDraftError("cognition-mode", "Choose a supported explanation source.");
+        throw new ProviderDraftError("cognition-mode", "Choose a supported model source.");
       }
       return mode;
+    }
+
+    scopeValue() {
+      return byId("cognition-effect-scope").value === BOUNDED_SCOPE ? BOUNDED_SCOPE : EXPLANATION_SCOPE;
     }
 
     selectedProfile() {
@@ -304,22 +453,34 @@
     }
 
     renderMode() {
+      const scope = this.scopeValue();
+      const bounded = scope === BOUNDED_SCOPE;
       const mode = byId("cognition-mode").value;
       const usesProvider = PROVIDER_MODES.has(mode);
+      byId("explanations-section").dataset.effectScope = scope;
       byId("provider-settings").hidden = !usesProvider;
+      byId("provider-check-panel").hidden = !usesProvider;
+      byId("explanation-budget").hidden = bounded || !usesProvider;
+      byId("provider-product-login-note").hidden = mode !== "remote";
       setText(
         "explanation-source-label",
-        { rules: "Rules", mock: "Mock", local: "Local model", remote: "Remote model" }[mode] || "Unavailable",
+        `${SCOPE_LABELS[scope]} · ${MODE_LABELS[mode] || "Unavailable"}`,
       );
+      setText("cognition-effect-scope-help", SCOPE_HELP[scope]);
       setText(
         "cognition-mode-help",
-        {
-          rules: "Deterministic grounded wording; offline and reproducible.",
-          mock: "Deterministic provider-shaped wording for demos and tests.",
-          local: "Calls one approved loopback OpenAI-compatible endpoint.",
-          remote: "Calls one approved HTTPS OpenAI-compatible endpoint.",
-        }[mode] || "Choose a supported source.",
+        (bounded ? BOUNDED_MODE_HELP : EXPLANATION_MODE_HELP)[mode] || "Choose a supported source.",
       );
+      setText("cognition-boundary-text", BOUNDARY_COPY[scope]);
+      byId("cognition-boundary-disclosure").hidden = !bounded;
+      setText("provider-check-scope", bounded ? "Bounded-signal contract · required before start" : "Explanation contract");
+      setText(
+        "provider-check-help",
+        bounded
+          ? "Checks the exact signal contract with one bounded inference; may incur provider usage."
+          : "Runs one bounded inference and may incur provider usage.",
+      );
+      this.renderFunding();
       if (!usesProvider) {
         byId("cognition-budget").value = "0";
         this.renderBudget();
@@ -332,6 +493,60 @@
       this.renderOrigins();
       this.renderProfiles();
       this.renderBudget();
+    }
+
+    renderFunding() {
+      const capability = this.bounded;
+      const visible = capability !== null && this.scopeValue() === BOUNDED_SCOPE;
+      byId("bounded-settings").hidden = !visible;
+      const disclosure = byId("bounded-cost-disclosure");
+      if (!visible) {
+        disclosure.hidden = true;
+        disclosure.textContent = "";
+        return;
+      }
+      const select = byId("cognition-funded-responses");
+      const provider = PROVIDER_MODES.has(byId("cognition-mode").value);
+      const values = provider
+        ? capability.funded_response_limits
+        : [capability.offline_funded_response_limit];
+      const wanted = provider ? this.providerFundedLimit : capability.offline_funded_response_limit;
+      const current = [...select.options].map((option) => Number(option.value));
+      if (JSON.stringify(current) !== JSON.stringify(values)) {
+        select.replaceChildren(...values.map((value) => {
+          const option = document.createElement("option");
+          option.value = String(value);
+          option.textContent = provider
+            ? `${value} requests${value === capability.default_provider_funded_response_limit ? " (default)" : ""}`
+            : `${value} · all selected, resolved offline`;
+          return option;
+        }));
+      }
+      select.value = String(values.includes(wanted) ? wanted : values[0]);
+      select.disabled = !provider;
+      const limit = Number(select.value);
+      const selected = capability.selected_requests_per_run;
+      if (!provider) {
+        setText(
+          "cognition-funded-status",
+          `Rules and mock resolve every selected response (up to ${selected}) locally. No provider tokens are reserved.`,
+        );
+        disclosure.hidden = true;
+        disclosure.textContent = "";
+        return;
+      }
+      setText(
+        "cognition-funded-status",
+        limit < selected
+          ? `The first ${limit} of up to ${selected} selected responses go to the model; the rest are recorded as budget-skipped neutral signals.`
+          : `Every selected response (up to ${selected}) goes to the model.`,
+      );
+      const reserved = capability.reserved_output_tokens_per_request;
+      setText(
+        "bounded-cost-disclosure",
+        `Each funded request reserves ${formatCount(reserved)} output tokens: at most ${capability.max_http_attempts_per_request} HTTP attempts of up to ${formatCount(capability.max_output_tokens_per_attempt)} output tokens each. ${limit} requests reserve ${formatCount(limit * reserved)} output tokens. Input tokens and vendor charges are not included; this is a reservation, not a spending limit.`,
+      );
+      disclosure.hidden = false;
     }
 
     renderOrigins() {
@@ -366,7 +581,12 @@
       if (!origin) return;
       if (!byId("provider-profile-id").value) byId("provider-profile-id").value = origin.approval_id;
       if (!byId("provider-label").value) {
-        byId("provider-label").value = origin.trust_class === "local" ? "Local model" : "Remote model";
+        byId("provider-label").value = origin.approval_id === DEFAULT_LOCAL_ORIGIN
+          ? "Local Ollama"
+          : origin.trust_class === "local" ? "Local model" : "Remote model";
+      }
+      if (!byId("provider-model").value && origin.approval_id === DEFAULT_LOCAL_ORIGIN) {
+        byId("provider-model").value = DEFAULT_LOCAL_MODEL;
       }
     }
 
@@ -374,7 +594,7 @@
       const mode = byId("cognition-mode").value;
       const select = byId("provider-profile");
       const previous = preferred || select.value;
-      byId("provider-credential").value = "";
+      this.clearCredential();
       const matching = [...this.profiles.values()]
         .filter((profile) => profile.mode === mode)
         .sort((left, right) => profileKey(left).localeCompare(profileKey(right)));
@@ -401,12 +621,40 @@
           select.value = profileKey(selectable[0]);
         }
       }
+      this.renderEmptyHint(matching);
       this.renderSelection();
+    }
+
+    renderEmptyHint(matching) {
+      const hint = byId("provider-empty-hint");
+      const mode = byId("cognition-mode").value;
+      const origins = this.origins.filter((origin) => origin.trust_class === mode);
+      if (
+        matching.some((profile) => profile.endpoint_policy_accepted) ||
+        origins.length === 0 || !PROVIDER_MODES.has(mode)
+      ) {
+        hint.hidden = true;
+        setText("provider-empty-hint", "");
+        return;
+      }
+      const suggested = mode === "local" &&
+        origins.some((origin) => origin.approval_id === DEFAULT_LOCAL_ORIGIN);
+      const prefix = matching.length === 0
+        ? `No ${mode} profile yet.`
+        : `No ${mode} profile is allowed by this server's endpoint policy.`;
+      setText(
+        "provider-empty-hint",
+        suggested
+          ? `${prefix} Create one below: the approved ${DEFAULT_LOCAL_ORIGIN} endpoint and model ${DEFAULT_LOCAL_MODEL} are prefilled; edit the model ID if yours differs.`
+          : `${prefix} Create one below from an approved endpoint.`,
+      );
+      hint.hidden = false;
+      byId("provider-create-details").open = true;
     }
 
     renderSelection() {
       const profile = this.selectedProfile();
-      setText("provider-check-status", "");
+      this.setCheckStatus("");
       byId("provider-receipt").hidden = profile === null;
       const remote = profile?.mode === "remote";
       byId("provider-credential-controls").hidden = !remote;
@@ -415,6 +663,7 @@
         setText("provider-endpoint", "—");
         setText("provider-model-receipt", "—");
         setText("provider-credential-state", "—");
+        setText("provider-output-tokens", "—");
         return;
       }
       setText("provider-endpoint", profile.base_url);
@@ -423,7 +672,22 @@
         "provider-credential-state",
         profile.credential_available ? "Available on server" : "Required",
       );
-      if (profile.last_check !== null) this.renderCheck(profile.last_check);
+      const bounded = this.scopeValue() === BOUNDED_SCOPE && this.bounded !== null;
+      // Signals cap each attempt at the server's limit without rewriting the saved profile.
+      const effective = bounded
+        ? Math.min(profile.max_output_tokens, this.bounded.max_output_tokens_per_attempt)
+        : profile.max_output_tokens;
+      setText(
+        "provider-output-tokens",
+        effective === profile.max_output_tokens
+          ? `${formatCount(effective)} per attempt`
+          : `${formatCount(effective)} per attempt for signals (profile allows ${formatCount(profile.max_output_tokens)})`,
+      );
+      if (bounded) {
+        if (this.currentBoundedCheck(profile) !== null) this.renderCheck(this.boundedCheck.result, BOUNDED_SCOPE);
+      } else if (profile.last_check !== null) {
+        this.renderCheck(profile.last_check, EXPLANATION_SCOPE);
+      }
     }
 
     renderSeedPolicy() {
@@ -518,12 +782,15 @@
         );
         this.profiles.set(profileKey(profile), profile);
         if (generation !== this.generation || this.mode() !== profile.mode) return;
+        this.advanceAuthority();
         this.renderProfiles(profileKey(profile));
+        byId("provider-create-details").open = false;
         setText("provider-status", "Profile saved as an immutable revision.");
         byId("provider-profile").focus();
         this.announce("Provider profile revision saved.");
         this.onChange();
       } catch (error) {
+        this.clearCredential();
         if (generation !== this.generation) return;
         setText("provider-create-error", safeMessage(error, "The provider profile could not be saved."));
         byId("provider-profile-id").focus();
@@ -537,7 +804,6 @@
       const input = byId("provider-credential");
       let credential = input.value;
       const profile = this.selectedProfile();
-      const generation = this.generation;
       if (this.busy || profile === null || profile.mode !== "remote") {
         input.value = "";
         credential = "";
@@ -553,8 +819,12 @@
         input.focus();
         return;
       }
+      // Replacing a credential invalidates every scoped compatibility result on the server.
+      this.advanceAuthority();
+      const generation = this.generation;
       this.busy = true;
       this.refreshActionControls();
+      this.setCheckStatus("");
       setText("provider-credential-status", "Saving to the server-side secret store…");
       try {
         const pending = this.postCredential(
@@ -587,36 +857,73 @@
       }
     }
 
-    renderCheck(result) {
+    renderCheck(result, scope) {
+      const reason = result.reason_code === null ? "" : result.reason_code.replaceAll("-", " ");
+      const bounded = scope === BOUNDED_SCOPE;
       if (result.status === "compatible") {
-        setText("provider-check-status", "Compatible inference confirmed.");
+        this.setCheckStatus(bounded ? "Bounded-signal contract confirmed." : "Compatible inference confirmed.");
       } else if (result.status === "unavailable") {
-        setText("provider-check-status", `Check unavailable · ${result.reason_code.replaceAll("-", " ")}.`);
+        this.setCheckStatus(`${bounded ? "Bounded-signal check" : "Check"} unavailable · ${reason}.`);
+      } else if (result.reason_code === TIMEOUT_REASON) {
+        this.setCheckStatus(
+          "Not confirmed: the model did not answer within the check's time limit.",
+          this.timeoutHint(this.selectedProfile()),
+        );
       } else {
-        setText("provider-check-status", `Not compatible · ${result.reason_code.replaceAll("-", " ")}.`);
+        this.setCheckStatus(`Not compatible${bounded ? " with bounded signals" : ""} · ${reason}.`);
       }
+    }
+
+    currentBoundedCheck(profile) {
+      const check = this.boundedCheck;
+      if (
+        check === null || profile === null || check.generation !== this.generation ||
+        check.key !== profileKey(profile)
+      ) {
+        return null;
+      }
+      return check;
     }
 
     async checkCompatibility() {
       const profile = this.selectedProfile();
       if (this.busy || profile === null || !profile.credential_available) return;
+      const scope = this.scopeValue();
+      const bounded = scope === BOUNDED_SCOPE;
+      if (bounded && this.bounded === null) return;
       const generation = this.generation;
       const key = profileKey(profile);
       this.busy = true;
       this.refreshActionControls();
-      setText("provider-check-status", "Checking compatibility…");
+      this.setCheckStatus(
+        profile.mode === "local"
+          ? "Checking compatibility… a local model that is still loading may take a minute or more."
+          : "Checking compatibility…",
+      );
       try {
-        const result = assertCheck(await this.requestJson(
+        const response = await this.requestJson(
           `/api/providers/${profile.profile_id}/revisions/${profile.revision_sha256}/check`,
-          { method: "POST", body: {} },
-        ));
+          { method: "POST", body: bounded ? { effect_scope: BOUNDED_SCOPE } : {} },
+        );
+        if (bounded) {
+          const result = assertBoundedCheck(response, profile);
+          const selected = this.selectedProfile();
+          if (generation !== this.generation || selected === null || profileKey(selected) !== key) return;
+          this.boundedCheck = Object.freeze({ key, generation, result });
+          this.renderCheck(result, BOUNDED_SCOPE);
+          this.announce("Bounded-signal compatibility check completed.");
+          this.onAuthorityChange();
+          return;
+        }
+        const result = assertCheck(response);
         this.profiles.set(key, { ...profile, last_check: result });
         if (generation !== this.generation || this.selectedProfile() === null || profileKey(this.selectedProfile()) !== key) return;
-        this.renderCheck(result);
+        this.renderCheck(result, EXPLANATION_SCOPE);
         this.announce("Provider compatibility check completed.");
       } catch (error) {
+        this.clearCredential();
         if (generation !== this.generation) return;
-        setText("provider-check-status", safeMessage(error, "The compatibility check could not be completed."));
+        this.setCheckStatus(safeMessage(error, "The compatibility check could not be completed."));
         byId("provider-check").focus();
       } finally {
         this.busy = false;
@@ -624,15 +931,91 @@
       }
     }
 
+    /** The server no longer holds a success for this profile; require a fresh explicit check. */
+    invalidateBoundedCheck() {
+      this.boundedCheck = null;
+      if (this.scopeValue() === BOUNDED_SCOPE) {
+        this.setCheckStatus("Check again: the server needs a current bounded-signal result.");
+      }
+      this.onAuthorityChange();
+    }
+
+    /** Null when a validated selection may start; otherwise the exact missing authority. */
+    startRequirement(selection) {
+      if (
+        !isObject(selection) || this.bounded === null ||
+        selection.schemaVersion !== this.bounded.workbench_schema_version ||
+        !this.bounded.compatibility_check_required_modes.includes(selection.cognition?.mode)
+      ) {
+        return null;
+      }
+      const profile = this.selectedProfile();
+      const check = this.currentBoundedCheck(profile);
+      if (
+        check === null ||
+        check.key !== `${selection.cognition.provider_profile_id}/${selection.cognition.provider_revision_sha256}`
+      ) {
+        return "Check bounded-signal compatibility for this profile revision to enable the run.";
+      }
+      if (check.result.status !== "compatible") {
+        return "This profile revision did not pass the bounded-signal check; choose or fix a profile.";
+      }
+      return null;
+    }
+
+    /** Build the exact outer schema and cognition body the runtime accepts for the chosen scope. */
     serialize() {
+      const scope = this.effectScope();
       const mode = this.mode();
+      if (scope === BOUNDED_SCOPE) {
+        const capability = this.bounded;
+        if (!capability.modes.includes(mode)) {
+          throw new ProviderDraftError("cognition-mode", "Choose a source offered for bounded cognition.");
+        }
+        if (!PROVIDER_MODES.has(mode)) {
+          return Object.freeze({
+            schemaVersion: capability.workbench_schema_version,
+            cognition: {
+              effect_scope: BOUNDED_SCOPE,
+              mode,
+              provider_profile_id: null,
+              provider_revision_sha256: null,
+              funded_response_limit: capability.offline_funded_response_limit,
+            },
+          });
+        }
+        const profile = this.selectedProfile();
+        if (profile === null || profile.mode !== mode || !profile.endpoint_policy_accepted) {
+          throw new ProviderDraftError("provider-profile", `Choose an approved ${mode} profile revision.`);
+        }
+        const limit = Number(byId("cognition-funded-responses").value);
+        if (!capability.funded_response_limits.includes(limit)) {
+          throw new ProviderDraftError(
+            "cognition-funded-responses",
+            "Choose a funded response count offered by this server.",
+          );
+        }
+        return Object.freeze({
+          schemaVersion: capability.workbench_schema_version,
+          cognition: {
+            effect_scope: BOUNDED_SCOPE,
+            mode,
+            provider_profile_id: profile.profile_id,
+            provider_revision_sha256: profile.revision_sha256,
+            funded_response_limit: limit,
+          },
+        });
+      }
       if (!PROVIDER_MODES.has(mode)) {
-        return {
-          mode,
-          provider_profile_id: null,
-          provider_revision_sha256: null,
-          aggregate_output_token_ceiling: 0,
-        };
+        return Object.freeze({
+          schemaVersion: 3,
+          cognition: {
+            mode,
+            provider_profile_id: null,
+            provider_revision_sha256: null,
+            aggregate_output_token_ceiling: 0,
+          },
+        });
       }
       const profile = this.selectedProfile();
       if (profile === null || profile.mode !== mode || !profile.endpoint_policy_accepted) {
@@ -642,19 +1025,80 @@
       if (budget % 1536 !== 0) {
         throw new ProviderDraftError("cognition-budget", "Use a multiple of 1,536 output tokens.");
       }
-      return {
-        mode,
-        provider_profile_id: profile.profile_id,
-        provider_revision_sha256: profile.revision_sha256,
-        aggregate_output_token_ceiling: budget,
-      };
+      return Object.freeze({
+        schemaVersion: 3,
+        cognition: {
+          mode,
+          provider_profile_id: profile.profile_id,
+          provider_revision_sha256: profile.revision_sha256,
+          aggregate_output_token_ceiling: budget,
+        },
+      });
+    }
+
+    /** Inert review facts for one serialized selection; profile labels stay plain text. */
+    reviewFacts(selection) {
+      const bounded = selection.schemaVersion === 4;
+      const cognition = selection.cognition;
+      const mode = cognition.mode;
+      const provider = PROVIDER_MODES.has(mode);
+      const profile = provider
+        ? this.profiles.get(`${cognition.provider_profile_id}/${cognition.provider_revision_sha256}`) || null
+        : null;
+      const capability = this.bounded;
+      let funding;
+      if (bounded) {
+        funding = provider
+          ? `${cognition.funded_response_limit} funded of up to ${capability.selected_requests_per_run} selected · ${formatCount(cognition.funded_response_limit * capability.reserved_output_tokens_per_request)} output tokens reserved`
+          : `Up to ${capability.selected_requests_per_run} selected · resolved offline · no reservation`;
+      } else {
+        funding = provider
+          ? `${formatCount(cognition.aggregate_output_token_ceiling)} output-token reservation · ${cognition.aggregate_output_token_ceiling / 1536} explanations funded`
+          : "None · offline";
+      }
+      const sourceLabel = MODE_LABELS[mode];
+      const signals = provider
+        ? `${sourceLabel}, with deterministic neutral fallback`
+        : mode === "rules" ? "Rules: neutral signals" : "Mock: deterministic signals, offline";
+      const ownership = bounded
+        ? [
+            ["Movement, exposure, attention", "Rules"],
+            ["Purchase intention", PURCHASE_OWNERSHIP],
+            ["Cognition signals", signals],
+            [
+              "Reproducibility",
+              provider ? "Live signals are not guaranteed reproducible" : "Identical on rerun",
+            ],
+            ["Saved replay", "Frozen and offline"],
+          ]
+        : [
+            ["Movement, exposure, attention", "Rules"],
+            ["Purchase intention", PURCHASE_OWNERSHIP],
+            ["Explanations", `${sourceLabel} text only; cannot change results`],
+            ["Saved replay", "Frozen and offline"],
+          ];
+      return Object.freeze({
+        operation: bounded ? "Bounded AI cognition" : "Explanation only",
+        schema: bounded ? "Workbench schema 4 → run V10" : "Workbench schema 3 → run V9",
+        sourceLabel: provider ? sourceLabel : `${sourceLabel} (offline)`,
+        profileLabel: profile === null ? (provider ? cognition.provider_profile_id : null) : profile.display_label,
+        modelId: profile === null ? null : profile.model_id,
+        revision: provider ? cognition.provider_revision_sha256.slice(0, 10) : null,
+        funding,
+        compatibilityRequired: bounded && provider,
+        startLabel: bounded ? "Start bounded cognition run" : "Start deterministic run",
+        ownership: Object.freeze(ownership.map((row) => Object.freeze(row))),
+      });
     }
 
     reset() {
-      this.generation += 1;
+      byId("cognition-effect-scope").value = EXPLANATION_SCOPE;
       byId("cognition-mode").value = "rules";
       byId("cognition-budget").value = "0";
-      byId("provider-credential").value = "";
+      this.providerFundedLimit = this.bounded === null
+        ? null
+        : this.bounded.default_provider_funded_response_limit;
+      this.advanceAuthority();
       this.clearActionStatuses();
       this.renderMode();
     }

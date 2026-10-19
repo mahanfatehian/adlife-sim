@@ -301,13 +301,15 @@ def test_explanations_panel_creates_exact_profile_and_emits_schema_three(
             page.locator("#city-continue").click()
             page.locator("#campaign-continue").click()
 
-            expect(page.get_by_role("heading", name="Explanations", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="Model assistance", exact=True)).to_be_visible()
+            expect(page.locator("#cognition-effect-scope")).to_have_value("explanation-only")
             expect(page.locator("#cognition-mode option")).to_have_count(4)
             expect(page.locator("#cognition-mode")).to_have_value("rules")
             expect(page.locator("#provider-settings")).to_be_hidden()
             expect(page.locator("#provider-boundary")).to_contain_text(
-                "never changes movement, ad response, state, or metrics"
+                "purchase intention are always rule-computed"
             )
+            expect(page.locator("#cognition-boundary")).to_contain_text("Only explanatory text.")
             expect(page.locator("#provider-product-login-note")).to_contain_text(
                 "ChatGPT or Codex subscription"
             )
@@ -1356,7 +1358,7 @@ def test_cancellation_settings_drift_cannot_rebind_later_completion(
             playwright.stop()
 
 
-@pytest.mark.parametrize("input_version,run_version", [(1, 7), (2, 8), (3, 9)])
+@pytest.mark.parametrize("input_version,run_version", [(1, 7), (2, 8), (3, 9), (4, 10)])
 def test_exact_completed_schema_pairs_resume_from_server_authority(
     tmp_path: Path, input_version: int, run_version: int
 ) -> None:
@@ -1374,7 +1376,39 @@ def test_exact_completed_schema_pairs_resume_from_server_authority(
                 agent_count=1,
             )
             summary["run_schema_version"] = run_version
-            if input_version == 3:
+            if input_version == 4:
+                bounded = {
+                    "effect_scope": "bounded-signals-v1",
+                    "cognition_mode": "mock",
+                    "provider_profile_id": None,
+                    "provider_revision_sha256": None,
+                    "funded_response_limit": 60,
+                    "aggregate_output_token_ceiling": 0,
+                }
+                settings.update(bounded)
+                summary.update(
+                    bounded,
+                    workbench_input_schema_version=4,
+                    opportunity_count=3,
+                    impression_count=3,
+                    noticed_count=2,
+                    response_count=2,
+                    eligible_response_count=2,
+                    selected_request_count=2,
+                    funded_request_count=2,
+                    budget_skipped_count=0,
+                    unselected_response_count=0,
+                    applied_response_count=2,
+                    rules_count=0,
+                    mock_count=2,
+                    provider_count=0,
+                    cache_count=0,
+                    fallback_count=0,
+                    neutralized_response_count=0,
+                    uncertain_result_count=0,
+                    safety_neutralized_result_count=0,
+                )
+            elif input_version == 3:
                 settings.update(
                     cognition_mode="rules",
                     provider_profile_id=None,
@@ -1412,7 +1446,12 @@ def test_exact_completed_schema_pairs_resume_from_server_authority(
             )
             expect(page.locator("#job-settings")).to_contain_text("Simulation")
             expect(page.locator("#job-settings")).to_contain_text("Deterministic rules")
-            expect(page.locator("#job-settings")).to_contain_text("Explanations")
+            if input_version == 4:
+                expect(page.locator("#job-settings")).to_contain_text("Bounded AI cognition")
+                expect(page.locator("#job-settings")).not_to_contain_text("Explanations")
+                expect(page.locator("#job-phase-track li")).to_have_count(7)
+            else:
+                expect(page.locator("#job-settings")).to_contain_text("Explanations")
             expect(page.locator("#error-banner")).to_be_hidden()
         finally:
             browser.close()
@@ -1525,7 +1564,7 @@ def test_city_stage_boots_from_verified_local_catalog_without_external_requests(
             expect(page.locator("#city-map-alternative")).to_contain_text("12 roads")
             expect(page.locator("#city-map-alternative")).to_contain_text("9 nodes")
             expect(page.locator("#provider-boundary")).to_contain_text(
-                "never changes movement, ad response, state, or metrics"
+                "purchase intention are always rule-computed"
             )
             expect(page.locator(".map-column")).to_be_visible()
             page.locator("#city-continue").click()
@@ -2316,6 +2355,147 @@ def test_stale_library_page_cannot_replace_a_newer_verified_page(
 
                 expect(page.locator("#run-library")).not_to_contain_text("stale-page")
                 expect(page.locator("#library-page")).to_have_text("Page 2")
+            finally:
+                release.set()
+                browser.close()
+                playwright.stop()
+    finally:
+        release.set()
+
+
+def test_setup_never_waits_for_a_slow_run_library(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    browser_path = _installed_browser()
+    entered = threading.Event()
+    release = threading.Event()
+    original = workbench_web.WorkbenchRunRepository.list_runs
+
+    def slow_list_runs(repository: object, *, offset: int = 0, limit: int = 20) -> WorkbenchRunPage:
+        # Listing re-verifies every saved run, which takes seconds once runs accumulate.
+        entered.set()
+        if not release.wait(20):
+            raise RuntimeError("library gate timed out")
+        return original(repository, offset=offset, limit=limit)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(workbench_web.WorkbenchRunRepository, "list_runs", slow_list_runs)
+    try:
+        with _workbench(tmp_path) as (base_url, _root):
+            playwright, browser, page = _open_page(browser_path, base_url)
+            try:
+                page.goto(base_url)
+                assert entered.wait(10)
+                expect(page.locator("#city-continue")).to_be_enabled(timeout=10_000)
+                expect(page.locator("#library-count")).to_have_text("Loading verified runs…")
+                page.locator("#city-continue").click()
+                page.locator("#campaign-continue").click()
+                expect(page.locator("#validate-run")).to_be_enabled()
+                expect(page.locator("#run-id")).to_have_value("city-study-001")
+                release.set()
+                expect(page.locator("#library-count")).to_have_text(
+                    "0 verified runs", timeout=10_000
+                )
+                expect(page.locator("#error-banner")).to_be_hidden()
+            finally:
+                release.set()
+                browser.close()
+                playwright.stop()
+    finally:
+        release.set()
+
+
+def test_inspect_stage_reuses_the_library_listing_already_in_flight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    browser_path = _installed_browser()
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+    original = workbench_web.WorkbenchRunRepository.list_runs
+
+    def counted_list_runs(
+        repository: object, *, offset: int = 0, limit: int = 20
+    ) -> WorkbenchRunPage:
+        calls.append(offset)
+        entered.set()
+        if not release.wait(20):
+            raise RuntimeError("library gate timed out")
+        return original(repository, offset=offset, limit=limit)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(workbench_web.WorkbenchRunRepository, "list_runs", counted_list_runs)
+    try:
+        with _workbench(tmp_path) as (base_url, _root):
+            playwright, browser, page = _open_page(browser_path, base_url)
+            try:
+                page.goto(base_url)
+                assert entered.wait(10)
+                # Opening INSPECT during the page-load listing must not re-verify every run again.
+                page.locator("#stage-inspect").click()
+                expect(page.locator("#panel-inspect")).to_be_visible()
+                page.wait_for_timeout(300)
+                assert calls == [0]
+                release.set()
+                expect(page.locator("#library-count")).to_have_text(
+                    "0 verified runs", timeout=10_000
+                )
+                # Once nothing is loading, returning to INSPECT asks for a fresh listing.
+                page.locator("#stage-city").click()
+                page.locator("#stage-inspect").click()
+                for _ in range(50):
+                    if len(calls) == 2:
+                        break
+                    page.wait_for_timeout(100)
+                assert calls == [0, 0]
+                expect(page.locator("#error-banner")).to_be_hidden()
+            finally:
+                release.set()
+                browser.close()
+                playwright.stop()
+    finally:
+        release.set()
+
+
+def test_late_library_never_rewrites_a_validated_run_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    browser_path = _installed_browser()
+    release = threading.Event()
+
+    def late_list_runs(
+        _repository: object, *, offset: int = 0, limit: int = 20
+    ) -> WorkbenchRunPage:
+        if not release.wait(20):
+            raise RuntimeError("library gate timed out")
+        # The listing reveals that the suggested ID is already taken.
+        return _library_page(offset=offset, run_id="city-study-001")
+
+    monkeypatch.setattr(workbench_web.WorkbenchRunRepository, "list_runs", late_list_runs)
+    try:
+        with _workbench(tmp_path) as (base_url, _root):
+            playwright, browser, page = _open_page(browser_path, base_url)
+            try:
+                page.goto(base_url)
+                page.locator("#city-continue").click()
+                page.locator("#campaign-continue").click()
+                page.locator("#validate-run").click()
+                expect(page.locator("#validation-review")).to_be_visible(timeout=15_000)
+                release.set()
+                expect(page.locator("#library-count")).to_have_text(
+                    "21 verified runs", timeout=10_000
+                )
+                # The validated draft keeps its run ID instead of silently drifting.
+                expect(page.locator("#run-id")).to_have_value("city-study-001")
+                expect(page.locator("#review-run")).to_have_text("city-study-001")
+                expect(page.locator("#validation-review")).to_be_visible()
+                # An unvalidated draft takes the next free suggestion on the next listing.
+                page.locator("#seed").fill("43")
+                page.locator("#stage-inspect").click()
+                expect(page.locator("#library-count")).to_have_text("21 verified runs")
+                page.locator("#stage-run").click()
+                expect(page.locator("#run-id")).to_have_value("city-study-002", timeout=10_000)
             finally:
                 release.set()
                 browser.close()
