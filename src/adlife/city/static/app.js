@@ -83,37 +83,52 @@ const evidencePageContracts = {
   opportunity: {
     endpoint: "/opportunities",
     pageKey: "opportunityPage",
+    schemaVersion: 1,
     claimScope: "synthetic-opportunity-not-impression",
     modelKey: null,
     modelId: "spatial-opportunity-v1",
     idKey: "opportunity_id",
     eventTypes: null,
+    channelEventType: null,
     maximumTotal: 520800,
     keys: ["schema_version", "claim_scope", "minute", "agent_id", "offset", "limit", "total", "channel_counts", "agent_counts", "next_offset", "items"],
   },
   attention: {
     endpoint: "/attention-events",
     pageKey: "attentionPage",
+    schemaVersion: 1,
     claimScope: "synthetic-attention-not-observed-behavior",
     modelKey: "attention_model_id",
     modelId: "spatial-attention-v1",
     idKey: "event_id",
     eventTypes: ["spatial.impression", "spatial.noticed"],
+    channelEventType: null,
     maximumTotal: 1041600,
     keys: ["schema_version", "attention_model_id", "claim_scope", "minute", "agent_id", "offset", "limit", "total", "event_type_counts", "channel_counts", "agent_counts", "next_offset", "items"],
   },
   response: {
     endpoint: "/response-events",
     pageKey: "responsePage",
+    schemaVersion: 1,
     claimScope: "synthetic-response-not-observed-behavior",
     modelKey: "response_model_id",
     modelId: "spatial-response-v1",
     idKey: "event_id",
     eventTypes: ["spatial.response", "spatial.state-updated"],
+    channelEventType: "spatial.response",
     maximumTotal: 1041600,
     keys: ["schema_version", "response_model_id", "claim_scope", "minute", "agent_id", "offset", "limit", "total", "event_type_counts", "channel_counts", "agent_counts", "next_offset", "items"],
   },
 };
+// The V10 response page keeps the V9 envelope members with an exact version-2 contract.
+const boundedResponsePageContract = Object.freeze({
+  ...evidencePageContracts.response,
+  schemaVersion: 2,
+  claimScope: "synthetic-bounded-cognition-not-observed-behavior",
+  modelId: "spatial-response-v2",
+  eventTypes: ["spatial.applied-response", "spatial.dual-state-updated"],
+  channelEventType: "spatial.applied-response",
+});
 const evidenceChannels = ["roadside-billboard", "mobile-feed"];
 const evidenceHashPattern = /^[0-9a-f]{64}$/;
 const evidenceIdPattern = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -219,6 +234,70 @@ const cognitionReasons = [
 ];
 const cognitionSafetyFlags = ["stereotype-risk", "unsupported-inference", "unsafe-content"];
 const cognitionDisclosure = "synthetic-narrative-not-observed-behavior";
+// Manifest-V10 bounded cognition: exact version-2 evidence, never a widened V1 contract.
+const boundedRunSchemaVersion = 10;
+const boundedEffectScope = "bounded-signals-v1";
+const boundedResponseModelId = "spatial-response-v2";
+const boundedClaimScope = "synthetic-bounded-cognition-not-observed-behavior";
+const boundedHelperFunctions = [
+  "validateSummary", "validateRecords", "indexTerminalRecords", "presentationForAppliedResponse",
+];
+const boundedAppliedSources = [...cognitionSources, "unselected"];
+const boundedNeutralizationStatuses = [
+  "none", "uncertain", "safety", "rules", "fallback", "budget-skipped", "unselected",
+];
+const boundedAppliedKeys = [
+  "schema_version", "model_id", "claim_scope", "event_type", "event_id",
+  "cognition_input_sha256", "baseline", "terminal_record_hash", "unselected_marker", "source",
+  "neutralization_status", "influence_policy_sha256", "previous_rule_state_sha256",
+  "previous_cognition_state_sha256", "applied_sentiment_delta", "applied_recall_delta",
+];
+const boundedDualKeys = [
+  "schema_version", "model_id", "claim_scope", "event_type", "event_id",
+  "caused_by_event_ids", "response_input_sha256", "scenario_sha256", "city_sha256",
+  "cognition_input_sha256", "influence_policy_sha256", "campaign_id", "agent_id", "day_index",
+  "model_minute", "previous_rule_state", "rule_state", "previous_cognition_state",
+  "cognition_state",
+];
+const boundedCognitionStateKeys = [
+  "schema_version", "agent_id", "campaign_id", "synthetic_sentiment", "synthetic_recall",
+  "response_count", "last_response_minute",
+];
+const boundedStatePageKeys = [
+  ...responseStatePageKeys, "cognition_input_sha256", "rule_state_model_id",
+  "cognition_state_model_id",
+];
+const boundedStatePairKeys = ["rule_state", "cognition_state"];
+const boundedResponseSummaryKeys = [
+  "schema_version", "model_id", "claim_scope", "response_model_id", "response_input_sha256",
+  "scenario_sha256", "city_sha256", "cognition_input_sha256", "influence_policy_sha256",
+  "attention_seed", "stream_sha256", "stream_bytes", "state_document_sha256",
+  "state_document_bytes", "rule_state_document_sha256", "cognition_state_document_sha256",
+  "counts",
+];
+const boundedResponseCountKeys = [
+  "schema_version", "baseline_response_count", "applied_response_count",
+  "dual_state_update_count", "roadside_response_count", "phone_response_count",
+  "campaign_count", "final_rule_state_count", "final_cognition_state_count",
+];
+const boundedWorkbenchCognitionKeys = [
+  "effect_scope", "mode", "provider_profile_id", "provider_revision_sha256",
+  "funded_response_limit", "causal_contract", "causal_contract_sha256",
+  "request_schema_version", "selected_requests_per_agent", "selected_requests_per_run",
+  "concurrency_limit", "max_request_bytes", "max_terminal_record_bytes",
+  "max_wire_response_bytes", "max_output_tokens_per_attempt",
+  "reservation_tokens_per_request", "initial_attempts", "transient_retries",
+  "repair_attempts", "attempt_timeout_seconds", "aggregate_deadline_seconds",
+  "aggregate_output_token_ceiling", "response_model", "rule_state_noninterference",
+];
+const boundedCausalContractKeys = [
+  "schema_version", "disclosure", "prompt_contract_id", "prompt_contract_version",
+  "prompt_contract_text", "prompt_contract_sha256", "result_schema_id", "result_schema_version",
+  "result_schema_document", "result_schema_contract_sha256", "selection_policy_version",
+  "selection_policy", "selection_policy_sha256", "fallback_policy_version", "fallback_policy",
+  "fallback_policy_sha256", "mock_policy_version", "mock_policy", "mock_policy_sha256",
+  "influence_policy_version", "influence_policy", "influence_policy_sha256",
+];
 const state = {
   meta: null,
   metaSeedToken: null,
@@ -241,6 +320,8 @@ const state = {
   cognitionSummary: null,
   cognitionRecords: null,
   cognitionByResponseId: new Map(),
+  boundedCognition: null,
+  boundedSignalFilter: "all",
   frame: null,
   selected: null,
   selectedCampaign: null,
@@ -461,6 +542,34 @@ function spatialCampaignById(campaignId) {
   return state.opportunitySummary.campaigns.find((item) => item.campaign_id === campaignId) || null;
 }
 
+function boundedCognitionRun() {
+  return state.meta !== null && state.meta.run_schema_version === boundedRunSchemaVersion;
+}
+
+function boundedCognitionHelper() {
+  const helper = window.AdLifeBoundedCognition;
+  if (
+    !helper
+    || typeof helper !== "object"
+    || !Object.isFrozen(helper)
+    || boundedHelperFunctions.some((name) => typeof helper[name] !== "function")
+  ) throw new Error("Bounded cognition inspector assets are unavailable");
+  return helper;
+}
+
+// A V10 applied response carries its identity in the embedded rule-owned baseline.
+function evidenceSubject(item) {
+  return item.event_type === "spatial.applied-response" ? item.baseline : item;
+}
+
+function responseEvidenceCauses(item) {
+  if (item.event_type === "spatial.response") return [item.caused_by, item.opportunity_id];
+  if (item.event_type === "spatial.applied-response") {
+    return [item.baseline.caused_by, item.baseline.opportunity_id, item.baseline.event_id];
+  }
+  return item.caused_by_event_ids;
+}
+
 function causalEvidenceIds() {
   if (state.selectedEvidence === null) return new Set();
   const records = [];
@@ -471,12 +580,7 @@ function causalEvidenceIds() {
     records.push({ id: item.event_id, causes: [item.caused_by, item.opportunity_id] });
   }
   for (const item of state.responsePage ? state.responsePage.items : []) {
-    records.push({
-      id: item.event_id,
-      causes: item.event_type === "spatial.response"
-        ? [item.caused_by, item.opportunity_id]
-        : item.caused_by_event_ids,
-    });
+    records.push({ id: item.event_id, causes: responseEvidenceCauses(item) });
   }
   const graph = new Map();
   const connect = (left, right) => {
@@ -830,23 +934,33 @@ function renderMapTextAlternative() {
 }
 
 function selectedEvidenceIdentity(kind, item) {
+  const subject = evidenceSubject(item);
   return {
     kind,
     id: kind === "opportunity" ? item.opportunity_id : item.event_id,
-    campaignId: item.campaign_id,
-    placementId: typeof item.placement_id === "string" ? item.placement_id : null,
+    campaignId: subject.campaign_id,
+    placementId: typeof subject.placement_id === "string" ? subject.placement_id : null,
   };
+}
+
+// V10 response metrics expose the rule-owned series under rule_baseline; V6-V9 keep overall.
+function responseMetricSeriesSource() {
+  const metrics = state.spatialResponseMetrics;
+  return boundedCognitionRun()
+    ? { overall: metrics.rule_baseline, campaigns: metrics.rule_baseline.campaigns }
+    : { overall: metrics.overall, campaigns: metrics.campaigns };
 }
 
 function showResponseMetricSeries(campaignId) {
   if (!state.spatialResponseMetrics) return;
   const selector = byId("response-metrics-campaign");
+  const source = responseMetricSeriesSource();
   if (campaignId === null) {
     selector.value = "overall";
-    renderResponseMetricsState(state.spatialResponseMetrics.overall, "ALL CAMPAIGNS");
+    renderResponseMetricsState(source.overall, "ALL CAMPAIGNS");
     return;
   }
-  const campaign = state.spatialResponseMetrics.campaigns.find(
+  const campaign = source.campaigns.find(
     (item) => item.campaign_id === campaignId,
   );
   if (!campaign) return;
@@ -858,9 +972,10 @@ async function selectCausalEvidence(kind, item) {
   stopPlayback();
   const generation = ++state.causalSelectionGeneration;
   const evidence = selectedEvidenceIdentity(kind, item);
-  if (!await setMinute(state.minute, item.agent_id, null, false)) return;
+  const subject = evidenceSubject(item);
+  if (!await setMinute(state.minute, subject.agent_id, null, false)) return;
   if (generation !== state.causalSelectionGeneration) return;
-  state.selectedCampaign = item.campaign_id;
+  state.selectedCampaign = subject.campaign_id;
   state.selectedEvidence = evidence;
   renderOpportunityEvidence();
   renderAttentionEvidence();
@@ -1061,6 +1176,36 @@ function validateResponseStateValue(value, kind) {
   return responseState;
 }
 
+// The V10 cognition track: synthetic sentiment/recall and progress only, never purchase.
+function validateCognitionStateValue(value, kind) {
+  const cognitionState = requireRecord(value, "Synthetic cognition state");
+  if (
+    !hasExactKeys(cognitionState, boundedCognitionStateKeys)
+    || cognitionState.schema_version !== 2
+    || !validEvidenceId(cognitionState.agent_id)
+    || !knownEvidenceAgents().has(cognitionState.agent_id)
+    || !validEvidenceId(cognitionState.campaign_id)
+    || !state.opportunitySummary.campaigns.some(
+      (campaign) => campaign.campaign_id === cognitionState.campaign_id,
+    )
+    || !validEvidenceNumber(cognitionState.synthetic_sentiment, -1, 1)
+    || !validEvidenceNumber(cognitionState.synthetic_recall, 0, 1)
+    || !Number.isInteger(cognitionState.response_count)
+    || cognitionState.response_count < 0
+    || cognitionState.response_count > 520800
+    || (
+      cognitionState.last_response_minute !== null
+      && (
+        !Number.isInteger(cognitionState.last_response_minute)
+        || cognitionState.last_response_minute < 0
+        || cognitionState.last_response_minute >= state.meta.days * 1440
+      )
+    )
+    || ((cognitionState.response_count === 0) !== (cognitionState.last_response_minute === null))
+  ) throw evidenceValidationError(kind);
+  return cognitionState;
+}
+
 function timelineFrameValidationError() {
   return new Error("Timeline frame is invalid");
 }
@@ -1152,7 +1297,79 @@ function responseStatePageValidationError() {
   return new Error("Spatial response state page is invalid");
 }
 
+function validateBoundedResponseStatePage(value, selectedAgent, requestedOffset) {
+  try {
+    const page = requireRecord(value, "Spatial response state page");
+    const summary = state.responseSummary;
+    const campaigns = state.opportunitySummary && state.opportunitySummary.campaigns;
+    if (!summary || summary.schema_version !== 2 || !Array.isArray(campaigns)) {
+      throw responseStatePageValidationError();
+    }
+    const campaignIds = campaigns.map((campaign) => campaign.campaign_id);
+    const total = requireBoundedInteger(page.total, 0, 600, "Response state total");
+    if (requestedOffset > total || (total > 0 && requestedOffset === total)) {
+      throw responseStatePageValidationError();
+    }
+    const expectedLength = total === 0 ? 0 : Math.min(EVIDENCE_PAGE_SIZE, total - requestedOffset);
+    const expectedNext = requestedOffset + expectedLength < total
+      ? requestedOffset + expectedLength
+      : null;
+    if (
+      !hasExactKeys(page, boundedStatePageKeys)
+      || page.schema_version !== 2
+      || page.model_id !== "spatial-response-state-v2"
+      || page.claim_scope !== boundedClaimScope
+      || page.response_input_sha256 !== summary.response_input_sha256
+      || page.scenario_sha256 !== summary.scenario_sha256
+      || page.scenario_sha256 !== state.opportunitySummary.scenario_sha256
+      || page.city_sha256 !== summary.city_sha256
+      || page.city_sha256 !== state.meta.city_sha256
+      || page.cognition_input_sha256 !== summary.cognition_input_sha256
+      || page.rule_state_model_id !== "spatial-rule-state-v2"
+      || page.cognition_state_model_id !== "spatial-cognition-state-v2"
+      || page.state_scope !== "final-end-of-run-not-scrubbed-minute"
+      || page.agent_id !== selectedAgent
+      || !knownEvidenceAgents().has(page.agent_id)
+      || page.offset !== requestedOffset
+      || page.limit !== EVIDENCE_PAGE_SIZE
+      || total !== summary.counts.campaign_count
+      || summary.counts.final_rule_state_count !== state.agents.length * total
+      || !Array.isArray(page.items)
+      || page.items.length !== expectedLength
+      || page.next_offset !== expectedNext
+    ) throw responseStatePageValidationError();
+    const seenCampaigns = [];
+    for (const pairValue of page.items) {
+      const pair = requireRecord(pairValue, "Spatial response state pair");
+      if (!hasExactKeys(pair, boundedStatePairKeys)) throw responseStatePageValidationError();
+      const rule = validateResponseStateValue(pair.rule_state, "response");
+      const cognition = validateCognitionStateValue(pair.cognition_state, "response");
+      if (
+        rule.agent_id !== selectedAgent
+        || cognition.agent_id !== selectedAgent
+        || cognition.campaign_id !== rule.campaign_id
+        || cognition.response_count !== rule.response_count
+        || cognition.last_response_minute !== rule.last_response_minute
+        || seenCampaigns.includes(rule.campaign_id)
+      ) throw responseStatePageValidationError();
+      seenCampaigns.push(rule.campaign_id);
+    }
+    const expectedCampaigns = campaignIds.slice(requestedOffset, requestedOffset + expectedLength);
+    if (!sameStrings(seenCampaigns, expectedCampaigns)) throw responseStatePageValidationError();
+    return page;
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === "Spatial response state page is invalid"
+    ) throw error;
+    throw responseStatePageValidationError();
+  }
+}
+
 function validateResponseStatePage(value, selectedAgent, requestedOffset) {
+  if (boundedCognitionRun()) {
+    return validateBoundedResponseStatePage(value, selectedAgent, requestedOffset);
+  }
   try {
     const page = requireRecord(value, "Spatial response state page");
     const summary = state.responseSummary;
@@ -1326,6 +1543,120 @@ function validateResponseRecord(itemValue, requestedMinute) {
   ) throw evidenceValidationError(kind);
 }
 
+function validateBoundedResponseRecord(itemValue, requestedMinute) {
+  const kind = "response";
+  const item = requireRecord(itemValue, "Response evidence record");
+  const summary = state.responseSummary;
+  if (
+    !summary
+    || summary.schema_version !== 2
+    || item.schema_version !== 2
+    || item.model_id !== boundedResponseModelId
+    || item.claim_scope !== boundedClaimScope
+    || !validEvidenceHash(item.event_id)
+    || item.cognition_input_sha256 !== summary.cognition_input_sha256
+    || item.influence_policy_sha256 !== summary.influence_policy_sha256
+  ) throw evidenceValidationError(kind);
+  if (item.event_type === "spatial.applied-response") {
+    if (!hasExactKeys(item, boundedAppliedKeys)) throw evidenceValidationError(kind);
+    const baseline = requireRecord(item.baseline, "Applied response baseline");
+    if (baseline.event_type !== "spatial.response") throw evidenceValidationError(kind);
+    // The embedded baseline is the complete, unchanged V1 rule response.
+    validateResponseRecord(baseline, requestedMinute);
+    const selected = item.source !== "unselected";
+    if (
+      !boundedAppliedSources.includes(item.source)
+      || !boundedNeutralizationStatuses.includes(item.neutralization_status)
+      || item.previous_rule_state_sha256 !== baseline.state_before_sha256
+      || !validEvidenceHash(item.previous_cognition_state_sha256)
+      || (
+        selected
+          ? !validEvidenceHash(item.terminal_record_hash) || item.unselected_marker !== null
+          : item.terminal_record_hash !== null || item.unselected_marker !== "unselected-neutral"
+      )
+      || !validEvidenceNumber(item.applied_sentiment_delta, -0.2, 0.2)
+      || !validEvidenceNumber(item.applied_recall_delta, 0, 0.3)
+    ) throw evidenceValidationError(kind);
+    return;
+  }
+  if (
+    item.event_type !== "spatial.dual-state-updated"
+    || !hasExactKeys(item, boundedDualKeys)
+    || item.response_input_sha256 !== summary.response_input_sha256
+    || item.scenario_sha256 !== summary.scenario_sha256
+    || item.scenario_sha256 !== state.opportunitySummary.scenario_sha256
+    || item.city_sha256 !== summary.city_sha256
+    || item.city_sha256 !== state.meta.city_sha256
+    || !validEvidenceId(item.campaign_id)
+    || !state.opportunitySummary.campaigns.some(
+      (campaign) => campaign.campaign_id === item.campaign_id,
+    )
+    || !validEvidenceId(item.agent_id)
+    || !knownEvidenceAgents().has(item.agent_id)
+    || item.model_minute !== requestedMinute
+    || item.day_index !== Math.floor(requestedMinute / 1440)
+    || !Array.isArray(item.caused_by_event_ids)
+    || item.caused_by_event_ids.length < 1
+    || item.caused_by_event_ids.length > 520800
+    || item.caused_by_event_ids.some((identifier) => !validEvidenceHash(identifier))
+    || new Set(item.caused_by_event_ids).size !== item.caused_by_event_ids.length
+  ) throw evidenceValidationError(kind);
+  const tracks = [
+    [
+      validateResponseStateValue(item.previous_rule_state, kind),
+      validateResponseStateValue(item.rule_state, kind),
+    ],
+    [
+      validateCognitionStateValue(item.previous_cognition_state, kind),
+      validateCognitionStateValue(item.cognition_state, kind),
+    ],
+  ];
+  for (const [previous, committed] of tracks) {
+    if (
+      previous.agent_id !== item.agent_id
+      || committed.agent_id !== item.agent_id
+      || previous.campaign_id !== item.campaign_id
+      || committed.campaign_id !== item.campaign_id
+      || committed.response_count !== previous.response_count + item.caused_by_event_ids.length
+      || committed.last_response_minute !== requestedMinute
+      || (previous.last_response_minute !== null && previous.last_response_minute >= requestedMinute)
+    ) throw evidenceValidationError(kind);
+  }
+}
+
+// One or more applied responses precede exactly one dual update per canonical group; a page
+// boundary may split a group, but never reorder or orphan it.
+function validateBoundedPageGrammar(page) {
+  let pending = [];
+  let sawUpdate = false;
+  for (const item of page.items) {
+    if (item.event_type === "spatial.applied-response") {
+      pending.push(item);
+      continue;
+    }
+    const causes = item.caused_by_event_ids;
+    const tail = causes.slice(causes.length - pending.length);
+    if (
+      pending.length > causes.length
+      || (pending.length !== causes.length && (sawUpdate || page.offset === 0))
+      || pending.some((applied, index) => (
+        applied.event_id !== tail[index]
+        || applied.baseline.agent_id !== item.agent_id
+        || applied.baseline.campaign_id !== item.campaign_id
+      ))
+    ) throw evidenceValidationError("response");
+    pending = [];
+    sawUpdate = true;
+  }
+  if (pending.length > 0 && page.next_offset === null) throw evidenceValidationError("response");
+}
+
+function evidencePageContract(kind) {
+  return kind === "response" && boundedCognitionRun()
+    ? boundedResponsePageContract
+    : evidencePageContracts[kind];
+}
+
 function validateEvidenceCountMap(kind, value, expectedKeys, expectedTotal, allowZero) {
   const counts = requireRecord(value, `${kind} counts`);
   const keys = Object.keys(counts);
@@ -1353,7 +1684,8 @@ function validateEvidenceCountMap(kind, value, expectedKeys, expectedTotal, allo
 
 function validateEvidencePage(kind, value, requestedMinute, requestedOffset) {
   try {
-    const contract = evidencePageContracts[kind];
+    const contract = evidencePageContract(kind);
+    const bounded = contract === boundedResponsePageContract;
     const page = requireRecord(value, evidenceLabel(kind));
     const total = requireBoundedInteger(page.total, 0, contract.maximumTotal, `${kind} total`);
     if (requestedOffset > total || (total > 0 && requestedOffset === total)) {
@@ -1365,7 +1697,7 @@ function validateEvidencePage(kind, value, requestedMinute, requestedOffset) {
       : null;
     if (
       !hasExactKeys(page, contract.keys)
-      || page.schema_version !== 1
+      || page.schema_version !== contract.schemaVersion
       || page.claim_scope !== contract.claimScope
       || page.minute !== requestedMinute
       || page.agent_id !== null
@@ -1385,8 +1717,8 @@ function validateEvidencePage(kind, value, requestedMinute, requestedOffset) {
         total,
         true,
       );
-    const expectedChannelTotal = kind === "response"
-      ? eventTypeCounts["spatial.response"]
+    const expectedChannelTotal = contract.channelEventType !== null
+      ? eventTypeCounts[contract.channelEventType]
       : total;
     const channelCounts = validateEvidenceCountMap(
       kind,
@@ -1409,19 +1741,22 @@ function validateEvidencePage(kind, value, requestedMinute, requestedOffset) {
     for (const itemValue of page.items) {
       if (kind === "opportunity") validateOpportunityRecord(itemValue, requestedMinute);
       else if (kind === "attention") validateAttentionRecord(itemValue, requestedMinute);
+      else if (bounded) validateBoundedResponseRecord(itemValue, requestedMinute);
       else validateResponseRecord(itemValue, requestedMinute);
       const item = itemValue;
+      const subject = evidenceSubject(item);
       const evidenceId = item[contract.idKey];
       if (!validEvidenceHash(evidenceId) || ids.has(evidenceId)) {
         throw evidenceValidationError(kind);
       }
       ids.add(evidenceId);
-      pageAgentCounts[item.agent_id] = (pageAgentCounts[item.agent_id] || 0) + 1;
+      pageAgentCounts[subject.agent_id] = (pageAgentCounts[subject.agent_id] || 0) + 1;
       if (item.event_type) {
         pageEventTypeCounts[item.event_type] = (pageEventTypeCounts[item.event_type] || 0) + 1;
       }
-      if (item.channel) pageChannelCounts[item.channel] += 1;
+      if (subject.channel) pageChannelCounts[subject.channel] += 1;
     }
+    if (bounded) validateBoundedPageGrammar(page);
     if (
       Object.entries(pageAgentCounts).some(([key, count]) => count > (agentCounts[key] || 0))
       || Object.entries(pageChannelCounts).some(([key, count]) => count > channelCounts[key])
@@ -2027,6 +2362,10 @@ function renderCognitionSummary() {
 
 function renderResponseEvidence() {
   if (!state.responseSummary || !state.responsePage) return;
+  if (boundedCognitionRun()) {
+    renderBoundedResponseEvidence();
+    return;
+  }
   const page = state.responsePage;
   const list = byId("response-list");
   const fragment = document.createDocumentFragment();
@@ -2093,6 +2432,10 @@ function renderResponseState() {
   if (page.state_scope !== "final-end-of-run-not-scrubbed-minute") {
     throw new Error("Spatial response state scope is invalid");
   }
+  if (boundedCognitionRun()) {
+    renderBoundedResponseState();
+    return;
+  }
   const list = byId("response-state-list");
   while (list.firstChild) list.removeChild(list.firstChild);
   byId("response-state-current").textContent = `${page.total} FINAL CAMPAIGN STATES FOR SELECTED AGENT`;
@@ -2116,6 +2459,944 @@ function renderResponseState() {
     card.append(identity, count, values, timing);
     list.append(card);
   }
+}
+
+// ---- Manifest-V10 bounded cognition inspector (inert for every other run version) ----
+
+function createTextElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+function createIsolatedText(text, className = "") {
+  const isolated = createTextElement("bdi", className, text);
+  isolated.dir = "auto";
+  return isolated;
+}
+
+const boundedSourceTitles = {
+  provider: "Provider",
+  cache: "Cache",
+  mock: "Mock",
+  rules: "Rules",
+  fallback: "Fallback",
+  "budget-skipped": "Budget skipped",
+  unselected: "Not selected",
+};
+
+function boundedModeLabel(mode) {
+  return {
+    rules: "Offline rules · neutral identity",
+    mock: "Offline deterministic mock",
+    local: "Local compatible provider",
+    remote: "Remote compatible provider",
+  }[mode];
+}
+
+function boundedCognitionPresentation(documentValue) {
+  const outcomes = documentValue.summary.outcomes;
+  if (documentValue.mode === "rules") {
+    return [
+      "Bounded cognition · rules identity",
+      "Rule-owned simulation · neutral bounded cognition identity",
+    ];
+  }
+  if (documentValue.mode === "mock") {
+    return [
+      "Bounded cognition · mock signals",
+      "Rule-owned simulation · deterministic mock cognition signals",
+    ];
+  }
+  if (outcomes.provider + outcomes.cache > 0) {
+    return ["Bounded AI cognition signals", "Rule-owned simulation · bounded AI cognition signals"];
+  }
+  return [
+    "Bounded AI cognition · neutral outcomes",
+    "Rule-owned simulation · bounded cognition with neutral outcomes",
+  ];
+}
+
+function boundedBoundaryText(mode) {
+  const limits = "They cannot move agents, create or select events, change purchase intention, or make purchases.";
+  if (mode === "rules") {
+    return `Rules mode applies the exact neutral vector, so the cognition state follows the rule baseline. ${limits}`;
+  }
+  const selector = mode === "mock"
+    ? "An offline deterministic mock selects"
+    : "External AI selects";
+  return `${selector} a small set of synthetic appraisal categories. AdLife applies a fixed mapping. These categories may change only the displayed cognition state. ${limits}`;
+}
+
+function boundedSignalText(record) {
+  const vector = [
+    record.result.affect, record.result.relevance, record.result.credibility,
+    record.result.salience,
+  ].join(" · ");
+  if (record.source === "fallback") return `neutral vector · ${record.reason.replaceAll("-", " ")}`;
+  if (record.source === "budget-skipped") return "neutral vector · budget skipped";
+  if (record.source === "rules") return "neutral vector · rules identity";
+  if (record.result.safety_flags.length !== 0) {
+    return `${vector} · safety ${record.result.safety_flags.join(", ")} → neutralized`;
+  }
+  if (vector.split(" · ").includes("uncertain")) return `${vector} → neutralized (uncertain)`;
+  return vector;
+}
+
+function boundedSignalMatches(record, filter) {
+  if (filter === "all") return true;
+  if (filter === "neutralized") {
+    return record.result.safety_flags.length !== 0
+      || [
+        record.result.affect, record.result.relevance, record.result.credibility,
+        record.result.salience,
+      ].includes("uncertain");
+  }
+  return record.source === filter;
+}
+
+const boundedSignalFilters = [
+  ["all", "All selected requests"],
+  ["provider", "Provider signals"],
+  ["cache", "Cached signals"],
+  ["mock", "Mock signals"],
+  ["rules", "Rules identity"],
+  ["fallback", "Fallback"],
+  ["budget-skipped", "Budget skipped"],
+  ["neutralized", "Uncertain or safety neutralized"],
+];
+
+function appendBoundedFact(list, key, label, value, className = "") {
+  const row = document.createElement("div");
+  row.dataset.fact = key;
+  const term = createTextElement("dt", "", label);
+  const detail = createTextElement("dd", className);
+  detail.append(createIsolatedText(value));
+  row.append(term, detail);
+  list.append(row);
+}
+
+function ensureBoundedCognitionPanel() {
+  const existing = byId("bounded-cognition-panel");
+  if (existing) return existing;
+  const panel = document.createElement("section");
+  panel.className = "bounded-cognition-panel";
+  panel.id = "bounded-cognition-panel";
+  panel.tabIndex = -1;
+  panel.setAttribute("aria-labelledby", "bounded-cognition-title");
+  panel.setAttribute("aria-describedby", "bounded-cognition-boundary bounded-cognition-replay");
+
+  const heading = createTextElement("div", "bounded-cognition-heading");
+  const titles = document.createElement("div");
+  titles.append(
+    createTextElement("span", "eyebrow", "Saved cognition evidence · manifest V10"),
+    Object.assign(createTextElement("h3", "", "Bounded cognition"), { id: "bounded-cognition-title" }),
+  );
+  const mode = createTextElement("span", "bounded-mode-badge");
+  mode.id = "bounded-cognition-mode";
+  heading.append(titles, mode);
+  const model = createTextElement("p", "bounded-model");
+  model.id = "bounded-cognition-model";
+
+  const boundary = createTextElement("p", "bounded-boundary");
+  boundary.id = "bounded-cognition-boundary";
+
+  const pipeline = document.createElement("ol");
+  pipeline.className = "bounded-pipeline";
+  pipeline.id = "bounded-cognition-pipeline";
+  pipeline.setAttribute("aria-label", "Authority order for every eligible response");
+  for (const [title, owner] of [
+    ["Rule baseline", "deterministic"],
+    ["Signal or neutral", "closed categories"],
+    ["Fixed mapping", "influence-v1"],
+    ["Applied delta", "cognition only"],
+    ["Dual-state commit", "one atomic update"],
+  ]) {
+    const step = document.createElement("li");
+    step.append(createTextElement("strong", "", title), createTextElement("small", "", owner));
+    pipeline.append(step);
+  }
+
+  const authority = document.createElement("ul");
+  authority.className = "bounded-authority";
+  authority.id = "bounded-cognition-authority";
+  authority.setAttribute("aria-label", "Evidence ownership");
+
+  const coverage = document.createElement("div");
+  coverage.className = "bounded-coverage";
+  coverage.id = "bounded-cognition-coverage";
+  coverage.setAttribute("role", "group");
+  coverage.setAttribute("aria-label", "Selected, funded, and neutral cognition coverage");
+  const outcomes = document.createElement("section");
+  outcomes.className = "bounded-outcomes";
+  outcomes.id = "bounded-cognition-outcomes";
+  outcomes.setAttribute("aria-labelledby", "bounded-cognition-outcomes-title");
+  const outcomesTitle = createTextElement("h4", "bounded-outcomes-title");
+  outcomesTitle.id = "bounded-cognition-outcomes-title";
+  const outcomeList = document.createElement("dl");
+  outcomeList.className = "bounded-outcome-list";
+  outcomeList.id = "bounded-cognition-outcome-list";
+  outcomes.append(outcomesTitle, outcomeList);
+  const neutralization = createTextElement("p", "bounded-neutralization");
+  neutralization.id = "bounded-cognition-neutralization";
+  const reasons = createTextElement("p", "bounded-reasons");
+  reasons.id = "bounded-cognition-reasons";
+
+  const provenance = document.createElement("dl");
+  provenance.className = "bounded-provenance";
+  provenance.id = "bounded-cognition-provenance";
+
+  const replay = createTextElement("p", "bounded-replay");
+  replay.id = "bounded-cognition-replay";
+  const disclosure = createTextElement("p", "bounded-disclosure");
+  disclosure.id = "bounded-cognition-disclosure";
+
+  const index = document.createElement("details");
+  index.className = "bounded-signal-index";
+  index.id = "bounded-signal-index";
+  const indexSummary = document.createElement("summary");
+  const indexCount = createTextElement("span", "bounded-signal-count");
+  indexCount.id = "bounded-signal-count";
+  indexSummary.append(createTextElement("strong", "", "Saved signal timeline"), indexCount);
+  const filterLabel = createTextElement("label", "bounded-signal-filter-label", "Show");
+  filterLabel.htmlFor = "bounded-signal-filter";
+  const filter = document.createElement("select");
+  filter.id = "bounded-signal-filter";
+  filterLabel.append(filter);
+  const list = document.createElement("ol");
+  list.className = "bounded-signal-list";
+  list.id = "bounded-signal-list";
+  list.setAttribute("aria-label", "Saved bounded cognition requests in selection order");
+  const empty = createTextElement("p", "bounded-signal-empty", "No saved request matches this filter.");
+  empty.id = "bounded-signal-empty";
+  index.append(indexSummary, filterLabel, list, empty);
+  filter.addEventListener("change", () => {
+    const value = filter.value;
+    if (!boundedSignalFilters.some(([key]) => key === value)) return;
+    state.boundedSignalFilter = value;
+    renderBoundedSignalIndex();
+  });
+
+  panel.append(
+    heading, model, boundary, coverage, outcomes, neutralization, reasons, index, pipeline,
+    authority, provenance, replay, disclosure,
+  );
+  byId("response-claim").after(panel);
+  return panel;
+}
+
+function renderBoundedModelLine(documentValue) {
+  const line = byId("bounded-cognition-model");
+  line.dataset.mode = documentValue.mode;
+  if (documentValue.mode === "mock") {
+    line.replaceChildren(createTextElement("span", "", "No model · offline deterministic mock signals"));
+    return;
+  }
+  if (documentValue.mode === "rules") {
+    line.replaceChildren(createTextElement("span", "", "No model · rules identity, no signal requests"));
+    return;
+  }
+  line.replaceChildren(
+    createTextElement("span", "bounded-model-label", "Model"),
+    createIsolatedText(documentValue.model_id, "bounded-model-id"),
+    createTextElement(
+      "span",
+      "bounded-model-profile",
+      `profile ${documentValue.provider_profile_id} · revision ${documentValue.provider_revision_sha256.slice(0, 12)}…`,
+    ),
+  );
+}
+
+// Every eligible response resolves to exactly one applied status; the rows partition them.
+const boundedOutcomeRows = [
+  ["signal", "Signal applied", "Model or mock categories passed through the fixed mapping."],
+  ["safety", "Set aside · safety flag", "The model flagged its own answer, so the neutral vector applied."],
+  ["uncertain", "Set aside · uncertain answer", "A category was “uncertain” (no safety flag), so the neutral vector applied."],
+  ["fallback", "Neutral · fallback", "The provider call failed under the frozen fallback policy."],
+  ["budget-skipped", "Neutral · budget skipped", "Selected beyond the funded limit; no provider call."],
+  ["rules", "Neutral · rules identity", "Rules mode requests no signal."],
+  ["unselected", "Neutral · not selected", "Beyond 4 per agent or 60 per run; no request."],
+];
+
+function renderBoundedOutcomes(documentValue, records) {
+  const coverage = documentValue.summary.coverage;
+  const counts = Object.fromEntries(boundedOutcomeRows.map(([key]) => [key, 0]));
+  counts.unselected = coverage.unselected_response_count;
+  for (const record of records) {
+    const vector = [
+      record.result.affect, record.result.relevance, record.result.credibility,
+      record.result.salience,
+    ];
+    if (["rules", "fallback", "budget-skipped"].includes(record.source)) counts[record.source] += 1;
+    else if (record.result.safety_flags.length !== 0) counts.safety += 1;
+    else if (vector.includes("uncertain")) counts.uncertain += 1;
+    else counts.signal += 1;
+  }
+  const eligible = coverage.eligible_response_count;
+  byId("bounded-cognition-outcomes-title").textContent = eligible === 0
+    ? "No ad was noticed, so no response needed a signal"
+    : `How the ${eligible} eligible ${eligible === 1 ? "response was" : "responses were"} resolved`;
+  const list = byId("bounded-cognition-outcome-list");
+  list.replaceChildren(...boundedOutcomeRows
+    .filter(([key]) => counts[key] > 0 || (
+      key === "signal" && documentValue.mode !== "rules" && eligible > 0
+    ))
+    .map(([key, label, explanation]) => {
+      const row = document.createElement("div");
+      row.dataset.outcome = key;
+      const term = createTextElement("dt", "");
+      term.append(createTextElement("strong", "", label), createTextElement("small", "", explanation));
+      row.append(term, createTextElement("dd", "", String(counts[key])));
+      return row;
+    }));
+}
+
+function renderBoundedCognitionSummary() {
+  if (!state.boundedCognition) return;
+  const documentValue = state.boundedCognition.summary;
+  const summary = documentValue.summary;
+  const offline = ["rules", "mock"].includes(documentValue.mode);
+  ensureBoundedCognitionPanel();
+  const [title, boundaryLabel] = boundedCognitionPresentation(documentValue);
+  byId("bounded-cognition-title").textContent = title;
+  byId("bounded-cognition-mode").textContent = boundedModeLabel(documentValue.mode);
+  byId("bounded-cognition-mode").dataset.mode = documentValue.mode;
+  renderBoundedModelLine(documentValue);
+  byId("bounded-cognition-boundary").textContent = boundedBoundaryText(documentValue.mode);
+
+  const authority = byId("bounded-cognition-authority");
+  const ownership = [
+    ["Movement, exposure, and attention", "rules"],
+    ["Purchase intention", "rule-owned uncalibrated proxy · purchases not modeled"],
+    [
+      "Cognition signals",
+      offline
+        ? (documentValue.mode === "mock" ? "deterministic offline mock" : "neutral rules identity")
+        : "selected provider with deterministic fallback",
+    ],
+    ["Fresh live signals", "not guaranteed reproducible"],
+    ["Saved replay", "frozen and offline"],
+  ];
+  authority.replaceChildren(...ownership.map(([subject, owner]) => {
+    const item = document.createElement("li");
+    item.append(createTextElement("span", "", subject), createTextElement("strong", "", owner));
+    return item;
+  }));
+
+  const coverage = summary.coverage;
+  const outcomes = summary.outcomes;
+  const offlineTile = documentValue.mode === "mock"
+    ? ["mock", boundedSourceTitles.mock, outcomes.mock, "offline mock answers"]
+    : ["rules", boundedSourceTitles.rules, outcomes.rules, "neutral identity, no request"];
+  const tiles = [
+    ["eligible", "Eligible", coverage.eligible_response_count, "noticed ad responses"],
+    ["selected", "Selected", coverage.selected_request_count, "chosen for a signal"],
+    ["funded", "Funded", coverage.funded_request_count, "within the funded limit"],
+    ["unselected", "Unselected", coverage.unselected_response_count, "neutral, no request"],
+    ...(offline ? [offlineTile] : []),
+    ["provider", "Provider", outcomes.provider, "answered by the model"],
+    ["cache", "Cache", outcomes.cache, "verified earlier answers"],
+    ["fallback", "Fallback", outcomes.fallback, "provider failed, neutral"],
+    ["budget-skipped", "Budget skipped", outcomes.budget_skipped, "over the funded limit"],
+  ];
+  byId("bounded-cognition-coverage").dataset.offline = String(offline);
+  byId("bounded-cognition-coverage").replaceChildren(...tiles.map(([key, label, count, caption]) => {
+    const tile = document.createElement("div");
+    tile.className = "bounded-tile";
+    tile.dataset.count = key;
+    tile.append(
+      createTextElement("span", "", label),
+      createTextElement("strong", "", String(count)),
+      createTextElement("small", "", caption),
+    );
+    return tile;
+  }));
+  renderBoundedOutcomes(documentValue, state.boundedCognition.records.records);
+  const neutral = summary.neutralization;
+  byId("bounded-cognition-neutralization").textContent = `Neutral vector applied to ${neutral.neutralized_response_count} of ${coverage.eligible_response_count} eligible responses · uncertain results ${neutral.uncertain_result_count} · safety-neutralized results ${neutral.safety_neutralized_result_count} (these two diagnostic counts may overlap).`;
+  const reasonText = cognitionReasons
+    .filter((reason) => reason !== "budget-skipped")
+    .filter((reason) => summary.reasons[reason.replaceAll("-", "_")] > 0)
+    .map((reason) => `${reason.replaceAll("-", " ")} ${summary.reasons[reason.replaceAll("-", "_")]}`)
+    .join(" · ");
+  byId("bounded-cognition-reasons").textContent = `Fallback reasons: ${reasonText || "none recorded"}.`;
+
+  const provenance = byId("bounded-cognition-provenance");
+  provenance.replaceChildren();
+  appendBoundedFact(provenance, "mode", "Source mode", `${boundedModeLabel(documentValue.mode)} (${documentValue.mode})`);
+  appendBoundedFact(
+    provenance, "profile", "Provider profile",
+    offline ? "Not used · offline" : documentValue.provider_profile_id,
+  );
+  appendBoundedFact(provenance, "model", "Model", documentValue.model_id || "Not used");
+  appendBoundedFact(
+    provenance, "revision", "Profile revision",
+    documentValue.provider_revision_sha256 || "Not used", "bounded-hash",
+  );
+  const frozenCognition = state.workbenchInput.cognition;
+  appendBoundedFact(
+    provenance, "funded-limit", "Funded request limit",
+    offline
+      ? `${documentValue.funded_response_limit} · resolved locally, no provider tokens`
+      : `${documentValue.funded_response_limit} · ${frozenCognition.aggregate_output_token_ceiling} reserved output tokens (${frozenCognition.reservation_tokens_per_request} per request, at most ${frozenCognition.max_output_tokens_per_attempt} per attempt)`,
+  );
+  appendBoundedFact(
+    provenance, "prompt", "Prompt contract",
+    `${documentValue.prompt_contract_id} · ${documentValue.prompt_contract_sha256}`, "bounded-hash",
+  );
+  appendBoundedFact(
+    provenance, "result-schema", "Result schema",
+    `${documentValue.result_schema_id} · ${documentValue.result_schema_contract_sha256}`,
+    "bounded-hash",
+  );
+  appendBoundedFact(
+    provenance, "influence", "Influence policy",
+    `${documentValue.influence_policy_id} · ${documentValue.influence_policy_sha256}`,
+    "bounded-hash",
+  );
+  appendBoundedFact(
+    provenance, "causal-contract", "Causal contract",
+    documentValue.causal_contract_sha256, "bounded-hash",
+  );
+  appendBoundedFact(
+    provenance, "cognition-input", "Cognition input",
+    documentValue.cognition_input_sha256, "bounded-hash",
+  );
+
+  byId("bounded-cognition-replay").textContent = "Saved replay is frozen and offline: this inspector reads the verified saved signals and never calls a provider. A fresh live run is not guaranteed to reproduce them.";
+  byId("bounded-cognition-disclosure").textContent = `Disclosure: ${summary.disclosure}. Categories and the fixed mapping are synthetic assumptions, not observed behavior, validated psychology, or a prediction.`;
+
+  const filter = byId("bounded-signal-filter");
+  const records = state.boundedCognition.records.records;
+  filter.replaceChildren(...boundedSignalFilters.map(([key, label]) => {
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = `${label} (${records.filter((record) => boundedSignalMatches(record, key)).length})`;
+    return option;
+  }));
+  filter.value = state.boundedSignalFilter;
+  byId("bounded-signal-index").open = false;
+  renderBoundedSignalIndex();
+  renderBoundedCognitionShortcut(title, coverage, documentValue);
+  byId("model-boundary-label").textContent = boundaryLabel;
+}
+
+// A keyboard-reachable shortcut from the top of the sidebar to the run-level evidence.
+function renderBoundedCognitionShortcut(title, coverage, documentValue) {
+  let shortcut = byId("bounded-cognition-shortcut");
+  if (!shortcut) {
+    shortcut = document.createElement("button");
+    shortcut.type = "button";
+    shortcut.id = "bounded-cognition-shortcut";
+    shortcut.className = "bounded-cognition-shortcut";
+    shortcut.addEventListener("click", () => {
+      const panel = byId("bounded-cognition-panel");
+      panel.scrollIntoView({ block: "start" });
+      panel.focus({ preventScroll: true });
+    });
+    document.querySelector(".sidebar-intro").append(shortcut);
+  }
+  const source = createTextElement("small", "bounded-shortcut-source");
+  if (documentValue.model_id === null) {
+    source.textContent = documentValue.mode === "mock" ? "Offline mock · no model" : "Rules identity · no model";
+  } else {
+    source.append(createTextElement("span", "", "Model "), createIsolatedText(documentValue.model_id));
+  }
+  shortcut.replaceChildren(
+    createTextElement("span", "", title),
+    createTextElement(
+      "strong",
+      "",
+      `${coverage.selected_request_count} saved ${coverage.selected_request_count === 1 ? "request" : "requests"} · ${coverage.eligible_response_count} eligible responses`,
+    ),
+    source,
+    createTextElement("small", "", "View the bounded cognition evidence"),
+  );
+}
+
+function renderBoundedSignalIndex() {
+  if (!state.boundedCognition) return;
+  const records = state.boundedCognition.records.records;
+  const filter = state.boundedSignalFilter;
+  const fragment = document.createDocumentFragment();
+  let shown = 0;
+  for (const record of records) {
+    if (!boundedSignalMatches(record, filter)) continue;
+    shown += 1;
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `bounded-signal-jump source-${record.source}`;
+    button.dataset.recordHash = record.record_hash;
+    button.dataset.source = record.source;
+    button.append(
+      createTextElement(
+        "span",
+        "bounded-signal-time",
+        `#${record.selection_index + 1} · ${dayText(record.model_minute)} · ${clockText(record.model_minute)}`,
+      ),
+      createTextElement("strong", "", `${record.agent_id.toUpperCase()} · ${record.campaign_id.toUpperCase()}`),
+      createTextElement("small", "", `${boundedSourceTitles[record.source]} · ${boundedSignalText(record)}`),
+    );
+    button.setAttribute(
+      "aria-label",
+      `Go to saved request ${record.selection_index + 1}: ${record.agent_id}, ${dayText(record.model_minute)} ${clockText(record.model_minute)}, ${boundedSourceTitles[record.source]}, ${boundedSignalText(record)}`,
+    );
+    button.addEventListener("click", () => jumpToBoundedSignal(record));
+    item.append(button);
+    fragment.append(item);
+  }
+  byId("bounded-signal-list").replaceChildren(fragment);
+  byId("bounded-signal-empty").hidden = shown !== 0;
+  byId("bounded-signal-count").textContent = `${shown} of ${records.length} requests`;
+}
+
+async function jumpToBoundedSignal(record) {
+  stopPlayback();
+  const generation = ++state.causalSelectionGeneration;
+  if (!await setMinute(record.model_minute, record.agent_id, null, false)) return;
+  if (generation !== state.causalSelectionGeneration || !state.responsePage) return;
+  const applied = state.responsePage.items.find((item) => (
+    item.event_type === "spatial.applied-response"
+    && item.terminal_record_hash === record.record_hash
+  ));
+  if (!applied) {
+    announceTimeline(`Saved request ${record.selection_index + 1} is on another response evidence page at this minute.`);
+    return;
+  }
+  state.selectedCampaign = applied.baseline.campaign_id;
+  state.selectedEvidence = selectedEvidenceIdentity("response", applied);
+  renderOpportunityEvidence();
+  renderAttentionEvidence();
+  renderResponseEvidence();
+  renderMap();
+  renderMapTextAlternative();
+  announceTimeline(`Saved request ${record.selection_index + 1} selected. ${byId("map-text-summary").textContent}`);
+  const card = document.querySelector(`[data-evidence-id="${applied.event_id}"]`);
+  if (card instanceof HTMLElement) card.focus();
+}
+
+function boundedDualStageText(appliedId, update) {
+  if (update === null) {
+    return "Committed atomically by this minute group's dual-state update on the next evidence page.";
+  }
+  const position = update.caused_by_event_ids.indexOf(appliedId) + 1;
+  return `Committed atomically as cause ${position} of ${update.caused_by_event_ids.length} by update ${update.event_id.slice(0, 10).toUpperCase()} · rule sentiment ${proxyText(update.previous_rule_state.brand_sentiment, "Previous rule sentiment")} → ${proxyText(update.rule_state.brand_sentiment, "Rule sentiment")} · cognition sentiment ${proxyText(update.previous_cognition_state.synthetic_sentiment, "Previous cognition sentiment")} → ${proxyText(update.cognition_state.synthetic_sentiment, "Cognition sentiment")}`;
+}
+
+// Text badges name the signal source and its effect; styles add shape, never meaning alone.
+function createBoundedBadges(presentation) {
+  const row = createTextElement("p", "bounded-badges");
+  for (const badge of presentation.badges) {
+    const element = createTextElement("span", `bounded-badge badge-${badge.kind}`);
+    element.dataset.badge = badge.kind;
+    element.dataset.value = badge.key;
+    element.append(
+      createTextElement("span", "bounded-badge-kind", badge.kind === "source" ? "Source" : "Effect"),
+      createTextElement("strong", "", badge.label),
+    );
+    row.append(element);
+  }
+  return row;
+}
+
+function createBoundedChips(stage) {
+  const chips = document.createElement("ul");
+  chips.className = `bounded-chips${stage.chipsApplied ? "" : " not-applied"}`;
+  chips.dataset.applied = String(stage.chipsApplied);
+  chips.setAttribute(
+    "aria-label",
+    stage.chipsApplied
+      ? "Recorded appraisal categories passed to the fixed mapping"
+      : "Recorded appraisal categories, set aside and not applied",
+  );
+  for (const chip of stage.chips) {
+    const chipItem = createTextElement("li", `bounded-chip chip-${chip.key}`);
+    chipItem.dataset.dimension = chip.key;
+    chipItem.dataset.value = chip.value;
+    chipItem.append(
+      createTextElement("span", "", chip.title),
+      createTextElement("strong", "", chip.value),
+    );
+    chips.append(chipItem);
+  }
+  for (const flag of stage.safetyFlags) {
+    const flagItem = createTextElement("li", "bounded-chip chip-flag");
+    flagItem.dataset.flag = flag;
+    flagItem.append(
+      createTextElement("span", "", "Safety flag"),
+      createTextElement("strong", "", flag.replaceAll("-", " ")),
+    );
+    chips.append(flagItem);
+  }
+  return chips;
+}
+
+function createBoundedTrace(presentation, update) {
+  const trace = document.createElement("ol");
+  trace.className = "bounded-trace";
+  trace.dataset.effect = presentation.effect;
+  trace.setAttribute(
+    "aria-label",
+    `Bounded cognition trace for ${presentation.agentId.toUpperCase()} at ${clockText(presentation.modelMinute)}`,
+  );
+  presentation.stages.forEach((stage, index) => {
+    const item = document.createElement("li");
+    item.className = `bounded-stage stage-${stage.key}`;
+    item.dataset.stage = stage.key;
+    const marker = createTextElement("span", "bounded-stage-marker", String(index + 1));
+    marker.setAttribute("aria-hidden", "true");
+    const body = createTextElement("div", "bounded-stage-body");
+    const header = createTextElement("div", "bounded-stage-heading");
+    header.append(
+      createTextElement("strong", "bounded-stage-title", stage.title),
+      createTextElement("span", "bounded-stage-status", stage.status),
+    );
+    body.append(header);
+    if (stage.key === "signal" && stage.chips.length > 0) {
+      body.append(createBoundedChips(stage));
+      if (!stage.chipsApplied) {
+        body.append(createTextElement(
+          "p",
+          "bounded-chips-note",
+          "Recorded for audit · not applied to cognition",
+        ));
+      }
+    }
+    const detail = stage.key === "dual"
+      ? boundedDualStageText(presentation.appliedEventId, update)
+      : stage.detail;
+    body.append(createTextElement("p", "bounded-stage-detail", detail));
+    if (stage.key === "mapping") {
+      for (const line of stage.formula) {
+        body.append(createTextElement("p", "bounded-stage-formula", line));
+      }
+    }
+    item.append(marker, body);
+    trace.append(item);
+  });
+  return trace;
+}
+
+function boundedTrackSection(kind, title, rows) {
+  const section = document.createElement("section");
+  section.className = `bounded-track bounded-${kind}-track`;
+  section.dataset.track = kind;
+  section.append(createTextElement("h4", "", title));
+  const list = document.createElement("dl");
+  for (const [label, value] of rows) {
+    const row = document.createElement("div");
+    row.append(createTextElement("dt", "", label), createTextElement("dd", "", value));
+    list.append(row);
+  }
+  section.append(list);
+  return section;
+}
+
+function boundedChange(previous, committed, label) {
+  return `${proxyText(previous, `Previous ${label}`)} → ${proxyText(committed, label)}`;
+}
+
+function createBoundedDualTracks(update) {
+  const tracks = createTextElement("div", "bounded-dual-tracks");
+  const previousRule = update.previous_rule_state;
+  const rule = update.rule_state;
+  const previousCognition = update.previous_cognition_state;
+  const cognition = update.cognition_state;
+  tracks.append(
+    boundedTrackSection("rule", "Rule track · rule-owned", [
+      ["Sentiment", boundedChange(previousRule.brand_sentiment, rule.brand_sentiment, "rule sentiment")],
+      ["Recall", boundedChange(previousRule.recall_strength, rule.recall_strength, "rule recall")],
+      [
+        "Purchase-intention proxy (uncalibrated)",
+        boundedChange(previousRule.purchase_intention, rule.purchase_intention, "intention proxy"),
+      ],
+      ["Responses", `${previousRule.response_count} → ${rule.response_count}`],
+    ]),
+    boundedTrackSection("cognition", "Cognition track · synthetic", [
+      [
+        "Sentiment",
+        boundedChange(previousCognition.synthetic_sentiment, cognition.synthetic_sentiment, "cognition sentiment"),
+      ],
+      [
+        "Recall",
+        boundedChange(previousCognition.synthetic_recall, cognition.synthetic_recall, "cognition recall"),
+      ],
+      ["Responses", `${previousCognition.response_count} → ${cognition.response_count}`],
+      ["Last minute", `${dayText(cognition.last_response_minute)} · ${clockText(cognition.last_response_minute)}`],
+    ]),
+  );
+  return tracks;
+}
+
+function renderBoundedResponseEvidence() {
+  const page = state.responsePage;
+  const list = byId("response-list");
+  const fragment = document.createDocumentFragment();
+  const selectedCount = page.agent_counts[state.selected] || 0;
+  const cognition = state.boundedCognition;
+  const helper = cognition === null ? null : boundedCognitionHelper();
+  const updates = page.items.filter((item) => item.event_type === "spatial.dual-state-updated");
+  for (const record of page.items) {
+    const subject = evidenceSubject(record);
+    const item = createTextElement("div", "response-evidence-item");
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "response-card";
+    card.dataset.evidenceId = record.event_id;
+    card.dataset.campaignId = subject.campaign_id;
+    if (typeof subject.placement_id === "string") card.dataset.placementId = subject.placement_id;
+    card.classList.toggle("selected", subject.agent_id === state.selected);
+    const causalSelected = state.selectedEvidence !== null
+      && state.selectedEvidence.id === record.event_id;
+    card.classList.toggle("causal-selected", causalSelected);
+    card.classList.toggle("causal-related", isCausalEvidence(record.event_id));
+    card.setAttribute("aria-pressed", String(causalSelected));
+    const stageLabel = createTextElement("span", "response-stage");
+    const at = createTextElement("span", "response-at", clockText(subject.model_minute));
+    const identity = createTextElement(
+      "strong",
+      "",
+      `${subject.agent_id.toUpperCase()} · ${subject.campaign_id.toUpperCase()}`,
+    );
+    const detail = document.createElement("small");
+    if (record.event_type === "spatial.applied-response") {
+      const presentation = helper === null
+        ? null
+        : helper.presentationForAppliedResponse(record, cognition.index);
+      item.classList.add("bounded-applied-item");
+      item.dataset.appliedEventId = record.event_id;
+      item.dataset.baselineEventId = record.baseline.event_id;
+      card.classList.add("rule-response", "bounded-applied-card");
+      card.dataset.source = record.source;
+      card.dataset.neutralization = record.neutralization_status;
+      if (record.terminal_record_hash !== null) {
+        card.dataset.terminalRecordHash = record.terminal_record_hash;
+      }
+      stageLabel.textContent = "APPLIED RESPONSE";
+      at.textContent += `:${String(Math.floor(subject.millisecond_within_minute / 1000)).padStart(2, "0")}`;
+      detail.textContent = `${subject.channel === "mobile-feed" ? "PHONE" : "ROADSIDE"} · ${boundedSourceTitles[record.source].toUpperCase()} · APPLIED SENTIMENT Δ ${signedProxyText(record.applied_sentiment_delta, "Applied sentiment delta")} · RECALL Δ ${signedProxyText(record.applied_recall_delta, "Applied recall delta")}`;
+      card.append(stageLabel, at, identity, detail);
+      item.append(card);
+      if (presentation === null) {
+        item.append(createTextElement(
+          "p",
+          "bounded-trace-pending",
+          "Verifying the saved cognition evidence for this response…",
+        ));
+      } else {
+        const update = updates.find((candidate) => (
+          candidate.caused_by_event_ids.includes(record.event_id)
+        )) || null;
+        item.dataset.effect = presentation.effect;
+        item.append(createBoundedBadges(presentation), createBoundedTrace(presentation, update));
+      }
+    } else if (record.event_type === "spatial.dual-state-updated") {
+      item.classList.add("bounded-dual-item");
+      card.classList.add("state-update", "bounded-dual-card");
+      stageLabel.textContent = "DUAL STATE UPDATE";
+      detail.textContent = `${record.caused_by_event_ids.length} ${record.caused_by_event_ids.length === 1 ? "CAUSE" : "CAUSES"} · RULE AND COGNITION TRACKS COMMITTED TOGETHER`;
+      card.append(stageLabel, at, identity, detail);
+      item.append(card, createBoundedDualTracks(record));
+    } else {
+      throw new Error("Unknown spatial response record type");
+    }
+    card.addEventListener("click", () => selectCausalEvidence("response", record));
+    fragment.append(item);
+  }
+  list.replaceChildren(fragment);
+  byId("response-current").textContent = `${page.total} RECORDS AT THIS MINUTE · ${selectedCount} FOR SELECTED AGENT`;
+  byId("response-empty").hidden = page.total !== 0;
+  renderEvidencePagination("response", page);
+}
+
+function renderBoundedResponseState() {
+  const page = state.responseStatePage;
+  const list = byId("response-state-list");
+  byId("response-state-current").textContent = `${page.total} FINAL CAMPAIGN STATES FOR SELECTED AGENT · RULE AND COGNITION TRACKS`;
+  byId("response-state-empty").hidden = page.total !== 0;
+  const pageNote = byId("response-state-page-note");
+  pageNote.hidden = page.next_offset === null;
+  pageNote.textContent = `Showing the first ${page.items.length} of ${page.total} final campaign states.`;
+  const fragment = document.createDocumentFragment();
+  for (const pair of page.items) {
+    const rule = pair.rule_state;
+    const cognition = pair.cognition_state;
+    const group = createTextElement("article", "bounded-state-pair");
+    group.dataset.campaignId = rule.campaign_id;
+    group.append(createTextElement(
+      "strong",
+      "bounded-state-identity",
+      `${rule.agent_id.toUpperCase()} · ${rule.campaign_id.toUpperCase()}`,
+    ));
+    const timing = (minute) => (
+      minute === null
+        ? "NO RESPONSE COMMITTED"
+        : `LAST RESPONSE ${dayText(minute)} · ${clockText(minute)}`
+    );
+    const ruleCard = createTextElement("section", "response-state-card bounded-rule-card");
+    ruleCard.dataset.track = "rule";
+    ruleCard.append(
+      createTextElement("strong", "", "RULE TRACK · RULE-OWNED"),
+      createTextElement("span", "", `${rule.response_count} RESPONSES`),
+      createTextElement(
+        "small",
+        "",
+        `SENTIMENT ${proxyText(rule.brand_sentiment, "Final rule sentiment")} · RECALL ${proxyText(rule.recall_strength, "Final rule recall")} · INTENTION PROXY ${proxyText(rule.purchase_intention, "Final intention proxy")}`,
+      ),
+      createTextElement("small", "", timing(rule.last_response_minute)),
+    );
+    const cognitionCard = createTextElement(
+      "section",
+      "response-state-card bounded-cognition-card",
+    );
+    cognitionCard.dataset.track = "cognition";
+    cognitionCard.append(
+      createTextElement("strong", "", "COGNITION TRACK · SYNTHETIC"),
+      createTextElement("span", "", `${cognition.response_count} RESPONSES`),
+      createTextElement(
+        "small",
+        "",
+        `SENTIMENT ${proxyText(cognition.synthetic_sentiment, "Final cognition sentiment")} · RECALL ${proxyText(cognition.synthetic_recall, "Final cognition recall")}`,
+      ),
+      createTextElement("small", "", timing(cognition.last_response_minute)),
+    );
+    group.append(ruleCard, cognitionCard);
+    fragment.append(group);
+  }
+  list.replaceChildren(fragment);
+}
+
+function validateBoundedResponseSummary(value) {
+  const summary = requireRecord(value, "Spatial response summary");
+  const counts = requireRecord(summary.counts, "Spatial response summary");
+  const invalidSummary = () => {
+    throw new Error("Spatial response summary is invalid");
+  };
+  if (
+    !hasExactKeys(summary, boundedResponseSummaryKeys)
+    || !hasExactKeys(counts, boundedResponseCountKeys)
+    || summary.schema_version !== 2
+    || summary.model_id !== "spatial-response-artifact-v2"
+    || summary.claim_scope !== boundedClaimScope
+    || summary.response_model_id !== boundedResponseModelId
+    || counts.schema_version !== 2
+    || [
+      "response_input_sha256", "scenario_sha256", "city_sha256", "cognition_input_sha256",
+      "influence_policy_sha256", "stream_sha256", "state_document_sha256",
+      "rule_state_document_sha256", "cognition_state_document_sha256",
+    ].some((field) => !validEvidenceHash(summary[field]))
+    || summary.city_sha256 !== state.meta.city_sha256
+    || (state.opportunitySummary && summary.scenario_sha256 !== state.opportunitySummary.scenario_sha256)
+    || !Number.isInteger(summary.attention_seed)
+    || summary.attention_seed < 0
+    || !Number.isInteger(summary.stream_bytes)
+    || summary.stream_bytes < 0
+    || summary.stream_bytes > 2147483648
+    || !Number.isInteger(summary.state_document_bytes)
+    || summary.state_document_bytes < 1
+    || summary.state_document_bytes > 8388608
+  ) invalidSummary();
+  for (const key of boundedResponseCountKeys.slice(1)) {
+    requireBoundedInteger(counts[key], 0, 520800, "Spatial response summary");
+  }
+  if (
+    counts.baseline_response_count !== counts.applied_response_count
+    || counts.baseline_response_count !== counts.roadside_response_count + counts.phone_response_count
+    || counts.final_rule_state_count !== counts.final_cognition_state_count
+    || counts.campaign_count < 1
+    || counts.campaign_count > 20
+    || counts.final_rule_state_count !== state.agents.length * counts.campaign_count
+    || (
+      counts.baseline_response_count === 0
+        ? counts.dual_state_update_count !== 0
+        : counts.dual_state_update_count < 1
+          || counts.dual_state_update_count > counts.baseline_response_count
+    )
+  ) invalidSummary();
+  return summary;
+}
+
+function renderBoundedResponseFrame() {
+  document.body.classList.add("bounded-cognition-run");
+  const rail = byId("response-causal");
+  rail.classList.add("bounded-causal");
+  rail.setAttribute(
+    "aria-label",
+    "Notice causes a deterministic baseline; a bounded signal or neutral status passes the fixed mapping and commits with the baseline in one dual-state update",
+  );
+  const fragment = document.createDocumentFragment();
+  ["NOTICE", "BASELINE", "SIGNAL", "MAPPING", "DUAL STATE"].forEach((label, index) => {
+    if (index > 0) {
+      const arrow = createTextElement("i", "", "→");
+      arrow.setAttribute("aria-hidden", "true");
+      fragment.append(arrow);
+    }
+    fragment.append(createTextElement("span", "", label));
+  });
+  rail.replaceChildren(fragment);
+  byId("response-title").textContent = "Responses & bounded cognition";
+  byId("response-claim").textContent = "Modeled response · bounded synthetic cognition · not observed behavior";
+  const updateLabel = document.querySelector("#response-panel .response-totals div:nth-child(2) span");
+  if (updateLabel) updateLabel.textContent = "DUAL UPDATES";
+  byId("response-state-claim").textContent = "Rule track: uncalibrated synthetic scores; the intention proxy is rule-owned, not purchase probability or sales. Cognition track: synthetic sentiment and recall only.";
+}
+
+async function loadBoundedCognitionEvidence() {
+  const helper = boundedCognitionHelper();
+  const [summaryValue, recordsValue] = await Promise.all([
+    fetchJson("/cognition-summary"),
+    fetchJson("/cognition-records"),
+  ]);
+  const summary = helper.validateSummary(summaryValue);
+  const input = state.workbenchInput;
+  const cognition = input.cognition;
+  const contract = cognition.causal_contract;
+  const responseSummary = state.responseSummary;
+  if (
+    summary.run_id !== state.meta.run_id
+    || summary.run_id !== input.run_id
+    || summary.mode !== cognition.mode
+    || summary.provider_profile_id !== cognition.provider_profile_id
+    || summary.provider_revision_sha256 !== cognition.provider_revision_sha256
+    || summary.funded_response_limit !== cognition.funded_response_limit
+    || summary.causal_contract_sha256 !== cognition.causal_contract_sha256
+    || [
+      "prompt_contract_sha256", "result_schema_contract_sha256", "selection_policy_sha256",
+      "fallback_policy_sha256", "mock_policy_sha256", "influence_policy_sha256",
+    ].some((field) => summary[field] !== contract[field])
+    || summary.prompt_contract_id !== contract.prompt_contract_id
+    || summary.result_schema_id !== contract.result_schema_id
+    || summary.influence_policy_id !== contract.influence_policy.policy_id
+    || summary.cognition_input_sha256 !== responseSummary.cognition_input_sha256
+    || summary.influence_policy_sha256 !== responseSummary.influence_policy_sha256
+    || summary.summary.coverage.eligible_response_count
+      !== responseSummary.counts.baseline_response_count
+  ) invalidCognitionEvidence();
+  // The saved prompt and result schema must hash to the identities the run declares.
+  // The prompt text is checked here but never rendered.
+  const [promptSha256, resultSchemaSha256] = await Promise.all([
+    sha256Text(contract.prompt_contract_text),
+    sha256Text(contract.result_schema_document),
+  ]);
+  if (
+    promptSha256 !== summary.prompt_contract_sha256
+    || resultSchemaSha256 !== summary.result_schema_contract_sha256
+  ) invalidCognitionEvidence();
+  const records = helper.validateRecords(recordsValue, summary);
+  if (records.records.some((record) => (
+    record.run_input_sha256 !== input.workbench_input_sha256
+    || record.response_input_sha256 !== responseSummary.response_input_sha256
+    || record.scenario_sha256 !== input.scenario_sha256
+    || record.city_sha256 !== input.city_sha256
+    || !knownEvidenceAgents().has(record.agent_id)
+  ))) invalidCognitionEvidence();
+  state.boundedCognition = Object.freeze({
+    summary,
+    records,
+    index: helper.indexTerminalRecords(records),
+  });
 }
 
 function metricValueText(name, value) {
@@ -2683,6 +3964,11 @@ function renderSpatialResponseMetrics() {
     state.spatialResponseMetrics,
     state.spatialResponseSeedToken,
   );
+  renderResponseMetricTables(metrics);
+}
+
+// Shared by V6-V9 metrics and the V10 rule baseline; both carry exact V1 rule receipts.
+function renderResponseMetricTables(metrics) {
   const eventBody = byId("response-metrics-event-body");
   const eventFragment = document.createDocumentFragment();
   const groups = [
@@ -2748,6 +4034,364 @@ function renderSpatialResponseMetrics() {
   });
   renderResponseMetricsState(metrics.overall, "ALL CAMPAIGNS");
   byId("response-metrics-panel").hidden = false;
+}
+
+// ---- Manifest-V10 response metrics: rule baseline and exploratory cognition stay separate ----
+
+const boundedMetricsKeys = [
+  "schema_version", "model_id", "claim_scope", "source_run_schema_version",
+  "opportunity_model_id", "attention_model_id", "response_model_id", "scenario_sha256",
+  "city_sha256", "agents_sha256", "trace_sha256", "opportunity_structure_sha256",
+  "response_input_sha256", "response_assumption_structure_sha256", "response_stream_sha256",
+  "response_state_sha256", "response_summary_sha256", "rule_state_document_sha256",
+  "cognition_state_document_sha256", "cognition_input_sha256",
+  "cognition_terminal_stream_sha256", "cognition_summary_sha256", "influence_policy_sha256",
+  "seed", "population_size", "days", "campaign_count", "rule_baseline",
+  "provider_dependent_cognition",
+];
+const boundedMetricsHashFields = boundedMetricsKeys.filter((key) => key.endsWith("_sha256"));
+const boundedRuleBaselineKeys = [
+  "schema_version", "claim_scope", "purchase_intention_proxy_scope",
+  ...responseMetricNames.map(([name]) => name), ...responseStateNames.map(([name]) => name),
+  "channels", "campaigns",
+];
+const boundedCognitionMetricKeys = [
+  "schema_version", "claim_scope", "disclosure", "mode", "cognition_input_sha256",
+  "cognition_terminal_stream_sha256", "cognition_summary_sha256", "causal_contract_sha256",
+  "prompt_contract_sha256", "result_schema_contract_sha256", "selection_policy_sha256",
+  "fallback_policy_sha256", "mock_policy_sha256", "influence_policy_id",
+  "influence_policy_sha256", "provider_profile_id", "provider_model_id",
+  "provider_revision_sha256", "provider_profile_snapshot_sha256", "effective_settings_sha256",
+  "funded_response_limit", "coverage", "source_counts", "fallback_counts",
+  "neutralization_counts", "category_counts", "funded_coverage", "mean_applied_sentiment",
+  "mean_applied_recall", "synthetic_sentiment", "synthetic_recall",
+];
+const boundedCategoryFamilies = [
+  ["affect", ["annoyed", "skeptical", "neutral", "curious", "positive", "uncertain"]],
+  ["relevance", ["none", "low", "medium", "high", "uncertain"]],
+  ["credibility", ["low", "medium", "high", "uncertain"]],
+  ["salience", ["none", "low", "medium", "high", "uncertain"]],
+];
+
+function invalidBoundedMetrics() {
+  throw new Error("Spatial response metrics contract is invalid");
+}
+
+function validateRuleBaselineMetrics(value, populationSize, campaignCount) {
+  const rule = requireRecord(value, "Rule baseline metrics");
+  if (
+    !hasExactKeys(rule, boundedRuleBaselineKeys)
+    || rule.schema_version !== 2
+    || rule.claim_scope !== "rule-owned-synthetic-baseline-not-observed-outcomes"
+    || rule.purchase_intention_proxy_scope !== "uncalibrated-rule-owned-proxy"
+  ) invalidBoundedMetrics();
+  for (const [name] of responseMetricNames) validateResponseMetricReceipt(rule[name], name);
+  for (const [name] of responseStateNames) validateResponseStateReceipt(rule[name], name);
+  if (
+    rule.response_count.denominator !== 1
+    || rule.response_frequency.numerator !== rule.response_count.numerator
+    || rule.response_frequency.denominator !== rule.response_reach.numerator
+    || rule.mean_rule_sentiment_delta.denominator !== rule.response_count.numerator
+    || rule.mean_rule_recall_delta.denominator !== rule.response_count.numerator
+  ) throw new Error("Response metric series is inconsistent");
+  if (!Array.isArray(rule.channels) || rule.channels.length !== 2) invalidBoundedMetrics();
+  const channels = rule.channels.map((channel) => validateResponseEventSeries(channel, ["channel"]));
+  if (channels[0].channel !== "roadside" || channels[1].channel !== "mobile") {
+    invalidBoundedMetrics();
+  }
+  if (!Array.isArray(rule.campaigns) || rule.campaigns.length !== campaignCount) {
+    invalidBoundedMetrics();
+  }
+  let previousCampaign = "";
+  const campaigns = rule.campaigns.map((campaign) => {
+    const validated = validateResponseAggregateSeries(campaign, ["campaign_id"]);
+    if (
+      typeof campaign.campaign_id !== "string"
+      || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(campaign.campaign_id)
+      || containsCredentialShapedCampaignId(campaign.campaign_id)
+      || campaign.campaign_id <= previousCampaign
+    ) invalidBoundedMetrics();
+    previousCampaign = campaign.campaign_id;
+    return validated;
+  });
+  const sourceCampaigns = state.opportunitySummary.campaigns;
+  if (
+    sourceCampaigns.length !== campaigns.length
+    || campaigns.some((campaign, index) => sourceCampaigns[index].campaign_id !== campaign.campaign_id)
+  ) invalidBoundedMetrics();
+  for (const series of [rule, ...channels, ...campaigns]) {
+    if (
+      series.response_reach.denominator !== populationSize
+      || series.response_reach.numerator > populationSize
+    ) throw new Error("Response metric population evidence is inconsistent");
+  }
+  validatePartitionedResponseEvidence(rule, channels);
+  validatePartitionedResponseEvidence(rule, campaigns);
+  for (const [name] of responseStateNames) {
+    const overallState = rule[name];
+    const campaignStates = campaigns.map((campaign) => campaign[name]);
+    if (
+      overallState.denominator !== populationSize * campaignCount
+      || campaignStates.some((receipt) => receipt.denominator !== populationSize)
+      || !matchesPartitionedEvidence(
+        overallState.initial_total,
+        campaignStates.map((receipt) => receipt.initial_total),
+      )
+      || !matchesPartitionedEvidence(
+        overallState.final_total,
+        campaignStates.map((receipt) => receipt.final_total),
+      )
+    ) throw new Error("Response state partitions are inconsistent");
+  }
+  return { overall: rule, channels, campaigns };
+}
+
+function validateBoundedQuotient(receiptValue, keys, name, extra) {
+  const receipt = requireRecord(receiptValue, "Cognition metric receipt");
+  if (!hasExactKeys(receipt, keys) || receipt.schema_version !== 2 || receipt.name !== name) {
+    invalidBoundedMetrics();
+  }
+  requireBoundedInteger(receipt.denominator, 0, 520800, "Cognition metric denominator");
+  requireFiniteNumber(receipt.numerator, "Cognition metric numerator");
+  requireFiniteNumber(receipt.value, "Cognition metric value");
+  const expected = receipt.denominator === 0 ? 0 : receipt.numerator / receipt.denominator;
+  if (receipt.value !== expected || Object.is(receipt.value, -0) || !extra(receipt)) {
+    invalidBoundedMetrics();
+  }
+  return receipt;
+}
+
+function validateBoundedStateReceipt(receiptValue, name, denominator) {
+  const receipt = requireRecord(receiptValue, "Cognition state receipt");
+  if (
+    !hasExactKeys(receipt, responseStateReceiptKeys)
+    || receipt.schema_version !== 2
+    || receipt.name !== name
+    || receipt.denominator !== denominator
+    || !sameStrings(receipt.source_artifacts, [
+      "inputs/spatial-response.json",
+      "outputs/response-state.json",
+    ])
+  ) invalidBoundedMetrics();
+  const minimum = name === "synthetic_sentiment" ? -1 : 0;
+  requireBoundedNumber(receipt.initial_mean, minimum, 1, "Cognition state mean");
+  requireBoundedNumber(receipt.final_mean, minimum, 1, "Cognition state mean");
+  requireBoundedNumber(receipt.mean_change, -2, 2, "Cognition state change");
+  if (
+    receipt.change_total !== receipt.final_total - receipt.initial_total
+    || receipt.initial_mean !== receipt.initial_total / denominator
+    || receipt.final_mean !== receipt.final_total / denominator
+    || receipt.mean_change !== receipt.change_total / denominator
+    || Object.is(receipt.mean_change, -0)
+  ) invalidBoundedMetrics();
+  return receipt;
+}
+
+function validateBoundedCognitionMetrics(value, populationSize, campaignCount) {
+  const cognition = requireRecord(value, "Provider-dependent cognition metrics");
+  const verified = state.boundedCognition;
+  if (!verified) invalidBoundedMetrics();
+  const summary = verified.summary;
+  if (
+    !hasExactKeys(cognition, boundedCognitionMetricKeys)
+    || cognition.schema_version !== 2
+    || cognition.claim_scope !== "provider-dependent-exploratory-not-campaign-effect"
+    || cognition.disclosure !== boundedClaimScope
+    || cognition.mode !== summary.mode
+    || cognition.cognition_input_sha256 !== summary.cognition_input_sha256
+    || cognition.cognition_terminal_stream_sha256 !== summary.summary.terminal_stream_sha256
+    || [
+      "causal_contract_sha256", "prompt_contract_sha256", "result_schema_contract_sha256",
+      "selection_policy_sha256", "fallback_policy_sha256", "mock_policy_sha256",
+      "influence_policy_sha256",
+    ].some((field) => cognition[field] !== summary[field])
+    || cognition.influence_policy_id !== summary.influence_policy_id
+    || cognition.provider_profile_id !== summary.provider_profile_id
+    || cognition.provider_model_id !== summary.model_id
+    || cognition.provider_revision_sha256 !== summary.provider_revision_sha256
+    || cognition.funded_response_limit !== summary.funded_response_limit
+    || ["cognition_summary_sha256", "effective_settings_sha256"].some(
+      (field) => !validEvidenceHash(cognition[field]),
+    )
+    || (
+      cognition.provider_profile_snapshot_sha256 !== null
+      && !validEvidenceHash(cognition.provider_profile_snapshot_sha256)
+    )
+    || (cognition.provider_profile_snapshot_sha256 === null) !== (summary.provider_profile_id === null)
+    || canonicalJson(cognition.coverage) !== canonicalJson(summary.summary.coverage)
+    || canonicalJson(cognition.source_counts) !== canonicalJson(summary.summary.outcomes)
+    || canonicalJson(cognition.fallback_counts) !== canonicalJson(summary.summary.reasons)
+    || canonicalJson(cognition.neutralization_counts)
+      !== canonicalJson(summary.summary.neutralization)
+  ) invalidBoundedMetrics();
+  const categories = requireRecord(cognition.category_counts, "Cognition category counts");
+  if (
+    !hasExactKeys(categories, ["schema_version", ...boundedCategoryFamilies.map(([key]) => key)])
+    || categories.schema_version !== 2
+  ) invalidBoundedMetrics();
+  for (const [family, values] of boundedCategoryFamilies) {
+    const counts = requireRecord(categories[family], "Cognition category counts");
+    if (!hasExactKeys(counts, values)) invalidBoundedMetrics();
+    const total = values.reduce((sum, key) => (
+      sum + requireBoundedInteger(counts[key], 0, 60, "Cognition category count")
+    ), 0);
+    if (total !== summary.summary.coverage.selected_request_count) invalidBoundedMetrics();
+  }
+  const coverage = summary.summary.coverage;
+  validateBoundedQuotient(
+    cognition.funded_coverage,
+    ["schema_version", "name", "numerator", "denominator", "value", "source_artifacts"],
+    "funded_coverage",
+    (receipt) => receipt.numerator === coverage.funded_request_count
+      && receipt.denominator === coverage.eligible_response_count
+      && sameStrings(receipt.source_artifacts, ["outputs/cognition-summary.json"]),
+  );
+  for (const name of ["mean_applied_sentiment", "mean_applied_recall"]) {
+    validateBoundedQuotient(
+      cognition[name],
+      [...responseMetricReceiptKeys],
+      name,
+      (receipt) => receipt.denominator === coverage.eligible_response_count
+        && sameStrings(receipt.source_event_types, ["spatial.applied-response"])
+        && sameStrings(receipt.source_artifacts, ["outputs/spatial-responses.jsonl"]),
+    );
+  }
+  const grid = populationSize * campaignCount;
+  validateBoundedStateReceipt(cognition.synthetic_sentiment, "synthetic_sentiment", grid);
+  validateBoundedStateReceipt(cognition.synthetic_recall, "synthetic_recall", grid);
+  return cognition;
+}
+
+function validateBoundedResponseMetrics(documentValue, seedToken) {
+  const metrics = requireRecord(documentValue, "Spatial response metrics");
+  if (
+    !hasExactKeys(metrics, boundedMetricsKeys)
+    || metrics.schema_version !== 2
+    || metrics.model_id !== "spatial-response-metrics-v2"
+    || metrics.claim_scope !== "synthetic-dual-state-metrics-not-observed-outcomes"
+    || metrics.source_run_schema_version !== boundedRunSchemaVersion
+    || metrics.source_run_schema_version !== state.meta.run_schema_version
+    || metrics.opportunity_model_id !== "spatial-opportunity-v1"
+    || metrics.attention_model_id !== "spatial-attention-v1"
+    || metrics.response_model_id !== boundedResponseModelId
+    || boundedMetricsHashFields.some((field) => !validEvidenceHash(metrics[field]))
+    || metrics.cognition_input_sha256 !== state.responseSummary.cognition_input_sha256
+    || metrics.influence_policy_sha256 !== state.responseSummary.influence_policy_sha256
+    || metrics.response_input_sha256 !== state.responseSummary.response_input_sha256
+    || metrics.city_sha256 !== state.meta.city_sha256
+  ) invalidBoundedMetrics();
+  validateSpatialResponseSeed(metrics.seed, seedToken);
+  if (seedToken !== state.metaSeedToken) throw new Error("Spatial response seed is inconsistent");
+  const populationSize = requireBoundedInteger(
+    metrics.population_size, 1, 30, "Spatial response population",
+  );
+  requireBoundedInteger(metrics.days, 1, 7, "Spatial response days");
+  const campaignCount = requireBoundedInteger(
+    metrics.campaign_count, 1, 20, "Spatial response campaign count",
+  );
+  const rule = validateRuleBaselineMetrics(metrics.rule_baseline, populationSize, campaignCount);
+  const cognition = validateBoundedCognitionMetrics(
+    metrics.provider_dependent_cognition, populationSize, campaignCount,
+  );
+  if (
+    cognition.coverage.eligible_response_count !== rule.overall.response_count.numerator
+    || cognition.synthetic_sentiment.initial_total !== rule.overall.brand_sentiment.initial_total
+    || cognition.synthetic_recall.initial_total !== rule.overall.recall_strength.initial_total
+  ) invalidBoundedMetrics();
+  return { metrics, rule, cognition };
+}
+
+function boundedMetricRow(body, key, label, value, receipt) {
+  const row = document.createElement("tr");
+  row.dataset.metric = key;
+  const heading = createTextElement("th", "", label);
+  heading.scope = "row";
+  const cell = document.createElement("td");
+  cell.tabIndex = 0;
+  cell.append(createTextElement("strong", "", value), createTextElement("small", "", receipt));
+  cell.setAttribute("aria-label", `${label}: ${value}. ${receipt}.`);
+  row.append(heading, cell);
+  body.append(row);
+}
+
+function renderBoundedResponseMetrics() {
+  const { rule, cognition } = validateBoundedResponseMetrics(
+    state.spatialResponseMetrics,
+    state.spatialResponseSeedToken,
+  );
+  renderResponseMetricTables(rule);
+  byId("response-metrics-claim").textContent = "Rule baseline · modeled response metrics · not observed outcomes";
+  byId("response-metrics-event-scope").textContent = "Rule baseline · full-run event totals";
+  let section = byId("bounded-cognition-metrics");
+  if (!section) {
+    section = document.createElement("section");
+    section.className = "bounded-cognition-metrics";
+    section.id = "bounded-cognition-metrics";
+    section.setAttribute("aria-labelledby", "bounded-cognition-metrics-title");
+    byId("response-metrics-panel").append(section);
+  }
+  const title = createTextElement("h3", "", "Provider-dependent cognition · exploratory");
+  title.id = "bounded-cognition-metrics-title";
+  const claim = createTextElement(
+    "p",
+    "bounded-metrics-claim",
+    "Synthetic cognition-track measurements · not a campaign effect · no purchase quantity",
+  );
+  const table = document.createElement("table");
+  table.className = "bounded-metrics-table";
+  const caption = createTextElement(
+    "caption",
+    "",
+    "Exploratory cognition-track receipts with numerator and denominator",
+  );
+  const body = document.createElement("tbody");
+  const funded = cognition.funded_coverage;
+  boundedMetricRow(
+    body, "funded-coverage", "Funded coverage",
+    `${Number((funded.value * 100).toFixed(1))}%`,
+    `${funded.numerator} funded / ${funded.denominator} eligible`,
+  );
+  for (const [key, label] of [
+    ["mean_applied_sentiment", "Mean applied sentiment Δ"],
+    ["mean_applied_recall", "Mean applied recall Δ"],
+  ]) {
+    const receipt = cognition[key];
+    boundedMetricRow(
+      body, key.replaceAll("_", "-"), label,
+      signedProxyText(receipt.value, label),
+      `${compactReceiptNumber(receipt.numerator)} / ${receipt.denominator} applied responses`,
+    );
+  }
+  for (const [key, label] of [
+    ["synthetic_sentiment", "Synthetic sentiment"],
+    ["synthetic_recall", "Synthetic recall"],
+  ]) {
+    const receipt = cognition[key];
+    boundedMetricRow(
+      body, key.replaceAll("_", "-"), label,
+      `${proxyText(receipt.initial_mean, label)} → ${proxyText(receipt.final_mean, label)}`,
+      `change ${signedProxyText(receipt.mean_change, label)} · n = ${receipt.denominator}`,
+    );
+  }
+  table.append(caption, body);
+  const categories = document.createElement("dl");
+  categories.className = "bounded-category-counts";
+  for (const [family, values] of boundedCategoryFamilies) {
+    const row = document.createElement("div");
+    row.dataset.family = family;
+    const counts = cognition.category_counts[family];
+    row.append(
+      createTextElement("dt", "", family[0].toUpperCase() + family.slice(1)),
+      createTextElement(
+        "dd",
+        "",
+        values.filter((key) => counts[key] > 0).map((key) => `${key} ${counts[key]}`).join(" · ")
+          || "none selected",
+      ),
+    );
+    categories.append(row);
+  }
+  section.replaceChildren(title, claim, table, categories);
 }
 
 function evidencePageUrl(kind, minute, offset) {
@@ -3210,9 +4854,87 @@ function validateWorkbenchCognition(value) {
   return cognition;
 }
 
+function validateBoundedWorkbenchCognition(value) {
+  const cognition = requireRecord(value, "Frozen workbench input");
+  const fixedIntegers = {
+    request_schema_version: 2,
+    selected_requests_per_agent: 4,
+    selected_requests_per_run: 60,
+    concurrency_limit: 4,
+    max_request_bytes: 8192,
+    max_terminal_record_bytes: 8192,
+    max_wire_response_bytes: 1048576,
+    initial_attempts: 1,
+    transient_retries: 2,
+    repair_attempts: 1,
+    attempt_timeout_seconds: 30,
+    aggregate_deadline_seconds: 180,
+  };
+  if (
+    !hasExactKeys(cognition, boundedWorkbenchCognitionKeys)
+    || cognition.effect_scope !== boundedEffectScope
+    || !["rules", "mock", "local", "remote"].includes(cognition.mode)
+    || ![10, 20, 40, 60].includes(cognition.funded_response_limit)
+    || Object.entries(fixedIntegers).some(([key, expected]) => cognition[key] !== expected)
+    || cognition.response_model !== boundedResponseModelId
+    || cognition.rule_state_noninterference !== true
+    || !validEvidenceHash(cognition.causal_contract_sha256)
+  ) invalidWorkbenchInput();
+  // The output budget is the run's own frozen authority, never a browser constant: one
+  // attempt's cap, times every allowed attempt, reserves a whole funded request.
+  const attemptTokens = requireBoundedInteger(
+    cognition.max_output_tokens_per_attempt, 1, 65536, "Frozen workbench input",
+  );
+  const attemptsPerRequest = cognition.initial_attempts + cognition.transient_retries
+    + cognition.repair_attempts;
+  if (cognition.reservation_tokens_per_request !== attemptTokens * attemptsPerRequest) {
+    invalidWorkbenchInput();
+  }
+  const offline = ["rules", "mock"].includes(cognition.mode);
+  if (
+    offline
+      ? cognition.provider_profile_id !== null
+        || cognition.provider_revision_sha256 !== null
+        || cognition.funded_response_limit !== 60
+        || cognition.aggregate_output_token_ceiling !== 0
+      : !validEvidenceId(cognition.provider_profile_id)
+        || cognition.provider_profile_id.length > 64
+        || !validEvidenceHash(cognition.provider_revision_sha256)
+        || cognition.aggregate_output_token_ceiling
+          !== cognition.funded_response_limit * cognition.reservation_tokens_per_request
+  ) invalidWorkbenchInput();
+  const contract = requireRecord(cognition.causal_contract, "Frozen workbench input");
+  if (
+    !hasExactKeys(contract, boundedCausalContractKeys)
+    || contract.schema_version !== 2
+    || contract.disclosure !== boundedClaimScope
+    || contract.prompt_contract_id !== "city-cognition-signal-prompt-v2"
+    || contract.prompt_contract_version !== 2
+    || contract.result_schema_id !== "city-cognition-signal-result-v2"
+    || contract.result_schema_version !== 2
+    || contract.selection_policy_version !== 2
+    || contract.fallback_policy_version !== 2
+    || contract.mock_policy_version !== 1
+    || contract.influence_policy_version !== 1
+    || typeof contract.prompt_contract_text !== "string"
+    || typeof contract.result_schema_document !== "string"
+    || [
+      "prompt_contract_sha256", "result_schema_contract_sha256", "selection_policy_sha256",
+      "fallback_policy_sha256", "mock_policy_sha256", "influence_policy_sha256",
+    ].some((field) => !validEvidenceHash(contract[field]))
+    || [
+      "selection_policy", "fallback_policy", "mock_policy", "influence_policy",
+    ].some((field) => !contract[field] || typeof contract[field] !== "object")
+    || contract.influence_policy.policy_id !== "city-cognition-influence-v1"
+  ) invalidWorkbenchInput();
+  return cognition;
+}
+
 function validateWorkbenchInput(value) {
   const documentValue = requireRecord(value, "Frozen workbench input");
-  const isPersonaRun = [8, 9].includes(documentValue.run_schema_version);
+  // Exact V10 branch: schema-4 bounded cognition input, never a relaxed version union.
+  const isBoundedRun = documentValue.run_schema_version === boundedRunSchemaVersion;
+  const isPersonaRun = [8, 9].includes(documentValue.run_schema_version) || isBoundedRun;
   const isCognitionRun = documentValue.run_schema_version === 9;
   if (!hasExactKeys(documentValue, [
     "run_id",
@@ -3226,7 +4948,7 @@ function validateWorkbenchInput(value) {
     "scenario",
     isPersonaRun ? "population" : "cohort",
     "settings",
-    ...(isCognitionRun ? ["cognition"] : []),
+    ...(isCognitionRun || isBoundedRun ? ["cognition"] : []),
     "creative_template",
   ])) invalidWorkbenchInput();
   const settings = requireRecord(documentValue.settings, "Frozen workbench input");
@@ -3234,10 +4956,11 @@ function validateWorkbenchInput(value) {
     "run_id", "agent_count", "days", "seed", "response_mode",
   ])) invalidWorkbenchInput();
   const runId = requireWorkbenchId(documentValue.run_id, 40);
+  const expectedInputSchema = isBoundedRun ? 4 : isCognitionRun ? 3 : isPersonaRun ? 2 : 1;
   if (
-    ![7, 8, 9].includes(documentValue.run_schema_version)
+    (![7, 8, 9].includes(documentValue.run_schema_version) && !isBoundedRun)
     || documentValue.run_schema_version !== state.meta.run_schema_version
-    || documentValue.workbench_input_schema_version !== (isCognitionRun ? 3 : isPersonaRun ? 2 : 1)
+    || documentValue.workbench_input_schema_version !== expectedInputSchema
     || runId !== settings.run_id
     || runId !== state.meta.run_id
     || settings.response_mode !== "deterministic-rules"
@@ -3294,6 +5017,7 @@ function validateWorkbenchInput(value) {
   if (isPersonaRun) validateWorkbenchPopulation(documentValue.population, settings.agent_count);
   else validateWorkbenchCohort(documentValue.cohort);
   if (isCognitionRun) validateWorkbenchCognition(documentValue.cognition);
+  if (isBoundedRun) validateBoundedWorkbenchCognition(documentValue.cognition);
 
   const creative = requireRecord(documentValue.creative_template, "Frozen workbench input");
   if (!hasExactKeys(creative, [
@@ -3776,9 +5500,27 @@ async function boot() {
     state.meta = meta; state.metaSeedToken = metaResponse.integerToken;
     state.city = city; state.agents = agents; state.selected = agents[0].agent_id;
     byId("model-clock-note").textContent = `Clock: ${modelTimeZone()}. Daylight is illustrative from 06:00–19:00; it does not model local sunrise, traffic, calendars, or DST.`;
+    // Exact V10 dispatch: the run must declare bounded cognition and its helper must be loaded.
+    const boundedRun = meta.run_schema_version === boundedRunSchemaVersion;
+    if (boundedRun) {
+      boundedCognitionHelper();
+      if (
+        meta.saved !== true
+        || meta.bounded_cognition !== true
+        || meta.cognition_effect_scope !== boundedEffectScope
+        || meta.spatial_opportunities !== true
+        || meta.spatial_attention !== true
+        || meta.spatial_response !== true
+        || meta.response_model_id !== boundedResponseModelId
+        || meta.workbench_input_available !== true
+      ) throw new Error("Saved bounded cognition run metadata is invalid");
+    }
     if (meta.workbench_input_available === true) {
       try {
-        if (
+        if (boundedRun) {
+          // A V10 run is served by the workbench (/api/runs/{id}) and standalone city-view (/api).
+          if (!validEvidenceHash(meta.workbench_input_sha256)) invalidWorkbenchInput();
+        } else if (
           ![7, 8, 9].includes(meta.run_schema_version)
           || !validEvidenceHash(meta.workbench_input_sha256)
           || !validatedApiBase().startsWith("/api/runs/")
@@ -3823,16 +5565,27 @@ async function boot() {
       for (const key of document.querySelectorAll(".attention-key")) key.hidden = false;
     }
     if (meta.spatial_response === true) {
-      state.responseSummary = await fetchJson("/response-summary");
-      if (state.responseSummary.claim_scope !== "synthetic-response-not-observed-behavior") {
-        throw new Error("Spatial response claim scope is invalid");
+      const responseSummary = await fetchJson("/response-summary");
+      if (boundedRun) {
+        state.responseSummary = validateBoundedResponseSummary(responseSummary);
+      } else {
+        state.responseSummary = responseSummary;
+        if (state.responseSummary.claim_scope !== "synthetic-response-not-observed-behavior") {
+          throw new Error("Spatial response claim scope is invalid");
+        }
       }
+      const responseCounts = state.responseSummary.counts;
       byId("response-scenario").textContent = state.opportunitySummary
         ? state.opportunitySummary.scenario_name
         : "Spatial response study";
-      byId("response-responses").textContent = String(state.responseSummary.counts.response_count);
-      byId("response-updates").textContent = String(state.responseSummary.counts.state_update_count);
-      byId("response-campaigns").textContent = String(state.responseSummary.counts.campaign_count);
+      byId("response-responses").textContent = String(
+        boundedRun ? responseCounts.baseline_response_count : responseCounts.response_count,
+      );
+      byId("response-updates").textContent = String(
+        boundedRun ? responseCounts.dual_state_update_count : responseCounts.state_update_count,
+      );
+      byId("response-campaigns").textContent = String(responseCounts.campaign_count);
+      if (boundedRun) renderBoundedResponseFrame();
       byId("response-panel").hidden = false;
       byId("response-state-panel").hidden = false;
     }
@@ -3845,6 +5598,10 @@ async function boot() {
       ) invalidCognitionEvidence();
       await loadCognitionEvidence();
       renderCognitionSummary();
+    } else if (boundedRun) {
+      if (!state.workbenchInput || !state.responseSummary) invalidCognitionEvidence();
+      await loadBoundedCognitionEvidence();
+      renderBoundedCognitionSummary();
     } else {
       byId("model-boundary-label").textContent = "Deterministic simulation · no saved explanations";
     }
@@ -3859,7 +5616,8 @@ async function boot() {
       );
       state.spatialResponseMetrics = responseMetrics.document;
       state.spatialResponseSeedToken = responseMetrics.integerToken;
-      renderSpatialResponseMetrics();
+      if (boundedRun) renderBoundedResponseMetrics();
+      else renderSpatialResponseMetrics();
     }
     byId("city-name").textContent = meta.city_name;
     if (meta.saved === true && typeof meta.run_id === "string") {
@@ -3878,7 +5636,10 @@ async function boot() {
     byId("timeline-duration").textContent = `${meta.days} ${meta.days === 1 ? "DAY" : "DAYS"}`;
     byId("time-slider").max = String(meta.days * 1440 - 1);
     if (state.workbenchInput) {
-      if ([8, 9].includes(state.workbenchInput.run_schema_version)) {
+      if (
+        [8, 9].includes(state.workbenchInput.run_schema_version)
+        || state.workbenchInput.run_schema_version === boundedRunSchemaVersion
+      ) {
         state.personaByAgent = validateWorkbenchPopulation(
           state.workbenchInput.population, state.workbenchInput.settings.agent_count,
         );

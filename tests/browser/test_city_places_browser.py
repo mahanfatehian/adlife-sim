@@ -7,7 +7,7 @@ import re
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from hashlib import sha256
 from importlib import resources
@@ -1443,6 +1443,84 @@ def test_schema_v8_inspector_never_requests_cognition_projections(tmp_path: Path
         expect(page.locator("#cognition-summary")).to_be_hidden()
         assert cognition_requests == []
         browser.close()
+
+
+_BOUNDED_HELPER_SCRIPT = '<script src="/static/app-cognition-v2.js" defer></script>'
+_BOUNDED_HELPER_STYLE = '<link rel="stylesheet" href="/static/app-cognition-v2.css">'
+
+
+def _with_bounded_inspector_assets(base_url: str, run_id: str) -> Callable[[Route], None]:
+    """Serve the V10 inspector assets beside a legacy run, as the shared page will."""
+    static = resources.files("adlife.city").joinpath("static")
+
+    def handle(route: Route) -> None:
+        url = route.request.url
+        if url == f"{base_url}/runs/{run_id}":
+            upstream = route.fetch()
+            body = upstream.text()
+            if _BOUNDED_HELPER_SCRIPT not in body:
+                body = body.replace(
+                    '<link rel="stylesheet" href="/static/app.css">',
+                    f'<link rel="stylesheet" href="/static/app.css">\n  {_BOUNDED_HELPER_STYLE}',
+                ).replace(
+                    '<script src="/static/app.js" defer></script>',
+                    f'{_BOUNDED_HELPER_SCRIPT}\n  <script src="/static/app.js" defer></script>',
+                )
+            route.fulfill(response=upstream, body=body)
+        elif url == f"{base_url}/static/app-cognition-v2.js":
+            route.fulfill(
+                body=static.joinpath("app-cognition-v2.js").read_bytes(),
+                content_type="text/javascript; charset=utf-8",
+            )
+        elif url == f"{base_url}/static/app-cognition-v2.css":
+            route.fulfill(
+                body=static.joinpath("app-cognition-v2.css").read_bytes(),
+                content_type="text/css; charset=utf-8",
+            )
+        else:
+            route.continue_()
+
+    return handle
+
+
+def test_bounded_cognition_assets_are_inert_for_schema_v9_and_earlier_runs(
+    tmp_path: Path,
+) -> None:
+    with (
+        _cognition_viewer(tmp_path) as (base_url, root, expected),
+        sync_playwright() as playwright,
+    ):
+        before = _artifact_hashes(root)
+        browser = playwright.chromium.launch(
+            executable_path=str(_installed_browser()), headless=True
+        )
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page_errors: list[str] = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.route("**/*", _with_bounded_inspector_assets(base_url, str(expected["run_id"])))
+        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+
+        expect(page.locator("#error-banner")).to_be_hidden()
+        assert page.evaluate("() => Object.isFrozen(window.AdLifeBoundedCognition)") is True
+        expect(page.locator("#cognition-summary-label")).to_have_text("Deterministic explanations")
+        assert page.evaluate("minute => setMinute(minute)", expected["model_minute"]) is True
+        item = page.locator(
+            f'.response-evidence-item[data-response-event-id="{expected["response_event_id"]}"]'
+        )
+        expect(item.locator(".response-explanation summary strong")).to_have_text(
+            "Deterministic explanation"
+        )
+        assert page.locator("#bounded-cognition-panel, .bounded-trace").count() == 0
+        assert "bounded-cognition-run" not in (page.locator("body").get_attribute("class") or "")
+        assert page.locator("#response-causal span").all_inner_texts() == [
+            "NOTICE",
+            "RULE RESPONSE",
+            "STATE UPDATE",
+        ]
+        assert page.evaluate("() => state.boundedCognition") is None
+        assert page_errors == []
+        browser.close()
+        assert _artifact_hashes(root) == before
 
 
 def test_schema_v8_inspector_refuses_incomplete_or_misbound_identity_before_rendering(

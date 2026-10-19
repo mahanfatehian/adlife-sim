@@ -108,6 +108,37 @@ def test_wheel_carries_offline_city_viewer_and_demo_pack(built_wheel: Path) -> N
     assert "SAVED RUN / ${meta.run_id} · V${meta.run_schema_version}" in script
 
 
+def test_wheel_carries_exact_bounded_cognition_inspector_assets(built_wheel: Path) -> None:
+    static = ROOT / "src" / "adlife" / "city" / "static"
+    members = {
+        "adlife/city/static/app-cognition-v2.js": static / "app-cognition-v2.js",
+        "adlife/city/static/app-cognition-v2.css": static / "app-cognition-v2.css",
+    }
+    with zipfile.ZipFile(built_wheel) as wheel:
+        names = set(wheel.namelist())
+        packaged = {name: wheel.read(name) for name in members if name in names}
+        script = wheel.read("adlife/city/static/app.js").decode("utf-8")
+    assert set(members) <= names
+    for name, source in members.items():
+        assert packaged[name] == source.read_bytes(), name
+    helper = packaged["adlife/city/static/app-cognition-v2.js"].decode("utf-8")
+    style = packaged["adlife/city/static/app-cognition-v2.css"].decode("utf-8")
+    assert 'Object.defineProperty(window, "AdLifeBoundedCognition"' in helper
+    for exported in (
+        "validateSummary,",
+        "validateRecords,",
+        "indexTerminalRecords,",
+        "presentationForAppliedResponse,",
+    ):
+        assert exported in helper
+    for forbidden in ("innerHTML", "fetch(", "localStorage", "http://", "https://"):
+        assert forbidden not in helper
+    assert ".bounded-cognition-panel" in style
+    assert "url(" not in style
+    assert "function boundedCognitionHelper()" in script
+    assert 'const boundedResponseModelId = "spatial-response-v2";' in script
+
+
 def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> None:
     with zipfile.ZipFile(built_wheel) as wheel:
         names = set(wheel.namelist())
