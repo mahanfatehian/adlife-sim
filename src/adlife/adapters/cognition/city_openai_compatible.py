@@ -179,7 +179,7 @@ def _has_invalid_wire_text(value: str) -> bool:
 
 
 def _unsafe_provider_text(value: str, *, credential_present: Callable[[str | bytes], bool]) -> bool:
-    """Screen raw and repeatedly escaped provider text without ever returning it."""
+    """Screen decoded and repeatedly escaped provider text without ever returning it."""
     current = value
     for _ in range(4):
         if (
@@ -187,6 +187,25 @@ def _unsafe_provider_text(value: str, *, credential_present: Callable[[str | byt
             or contains_provider_secret_text(current)
             or contains_sensitive_text(current)
         ):
+            return True
+        decoded = _decode_json_escapes(current)
+        if decoded == current:
+            return False
+        current = decoded
+    return True
+
+
+def _unsafe_protocol_text(value: str, *, credential_present: Callable[[str | bytes], bool]) -> bool:
+    """Screen the whole raw body for the bound credential and provider-secret shapes only.
+
+    Raw protocol JSON legitimately carries numbers, such as the ten-digit Unix
+    ``created`` time of every real completion, that persona phone and national-ID
+    heuristics would misread. Those heuristics apply to every decoded envelope string
+    and every model-authored result string instead.
+    """
+    current = value
+    for _ in range(4):
+        if credential_present(current) or contains_provider_secret_text(current):
             return True
         decoded = _decode_json_escapes(current)
         if decoded == current:
@@ -535,7 +554,7 @@ class CityOpenAICompatibleProvider:
             text = body.decode("utf-8")
         except UnicodeDecodeError:
             return _invalid_attempt("invalid-json")
-        if _unsafe_provider_text(
+        if _unsafe_protocol_text(
             text, credential_present=self._transport.contains_bound_credential
         ):
             return _invalid_attempt("unsafe-content")

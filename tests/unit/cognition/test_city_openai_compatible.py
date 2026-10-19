@@ -646,6 +646,90 @@ async def test_sensitive_provider_output_is_never_echoed_into_a_repair_context(
     await provider.aclose()
 
 
+@pytest.mark.parametrize(
+    "updates",
+    [
+        # Real OpenAI and Ollama envelopes carry a ten-digit Unix "created" time.
+        {"created": 1792391034},
+        {"created": 1792391034, "system_fingerprint": "fp_ollama"},
+        {
+            "created": 1792391034,
+            "usage": {"prompt_tokens": 571, "completion_tokens": 211, "total_tokens": 782},
+        },
+    ],
+)
+async def test_realistic_unix_created_timestamp_is_not_screened_as_persona_text(
+    updates: dict[str, object],
+) -> None:
+    request, _input_document, provider, _credential, _resolver, factory = _provider(
+        _http_response(_completion("placeholder"))
+    )
+    factory._responses[0] = _http_response(
+        _completion(json.dumps(_result(request.request_id)), **updates)
+    )
+
+    attempt = await provider.call(request)
+
+    assert attempt.status == "valid"
+    assert attempt.result is not None
+    assert attempt.result.request_id == request.request_id
+    await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"created": 1792391034, "system_fingerprint": "+1 415 555 0134"},
+        {"created": 1792391034, "id": "fictional.person@example.invalid"},
+        {"created": 1792391034, "model": "4155550134"},
+    ],
+)
+async def test_decoded_envelope_text_keeps_the_sensitive_persona_screen(
+    updates: dict[str, object],
+) -> None:
+    request, _input_document, provider, _credential, _resolver, factory = _provider(
+        _http_response(_completion("placeholder"))
+    )
+    factory._responses[0] = _http_response(
+        _completion(json.dumps(_result(request.request_id)), **updates)
+    )
+
+    attempt = await provider.call(request)
+
+    assert attempt.status == "invalid-result"
+    assert attempt.repair_context is not None
+    assert attempt.repair_context.reason_code == "unsafe-content"
+    serialized = attempt.model_dump_json()
+    assert "415 555" not in serialized and "4155550134" not in serialized
+    assert "example.invalid" not in serialized
+    await provider.aclose()
+
+
+async def test_model_authored_result_text_keeps_the_sensitive_persona_screen() -> None:
+    request, _input_document, provider, _credential, _resolver, factory = _provider(
+        _http_response(_completion("placeholder"))
+    )
+    factory._responses[0] = _http_response(
+        _completion(
+            json.dumps(
+                _result(
+                    request.request_id,
+                    interpretation="The fictional commuter can be reached at +1 415 555 0134.",
+                )
+            ),
+            created=1792391034,
+        )
+    )
+
+    attempt = await provider.call(request)
+
+    assert attempt.status == "invalid-result"
+    assert attempt.repair_context is not None
+    assert attempt.repair_context.reason_code == "unsafe-content"
+    assert "415 555" not in attempt.model_dump_json()
+    await provider.aclose()
+
+
 async def test_exact_configured_credential_is_detected_even_when_json_escaped() -> None:
     escaped = "".join(f"\\u{ord(character):04x}" for character in FAKE_CREDENTIAL)
     body = (
