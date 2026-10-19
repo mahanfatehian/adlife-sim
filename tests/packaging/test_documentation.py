@@ -1794,6 +1794,58 @@ def _public_documents() -> dict[str, str]:
     return documents
 
 
+def test_bounded_cognition_public_contract_is_documented() -> None:
+    """The public documents state the whole V10 contract the browser capability publishes."""
+    from adlife.city.workbench_web import _bounded_cognition_capabilities
+
+    readme = _read("README.md")
+    assert _table_row(readme, "**Bounded AI cognition**") is not None, (
+        "bounded cognition mode matrix is missing"
+    )
+    capability = _bounded_cognition_capabilities()
+    public = _squash("\n".join(_public_documents().values()))
+
+    for field in ("affect", "relevance", "credibility", "salience"):
+        for category in typing.get_args(CityCognitionResultV2.model_fields[field].annotation):
+            assert f"`{category}`" in public, (field, category)
+    (flag_literal, _) = typing.get_args(
+        CityCognitionResultV2.model_fields["safety_flags"].annotation
+    )
+    for flag in typing.get_args(flag_literal):
+        assert f"`{flag}`" in public, flag
+
+    limits = typing.cast(list[int], capability["funded_response_limits"])
+    default = capability["default_provider_funded_response_limit"]
+    funding = ", ".join(
+        f"{limit} (default)" if limit == default else str(limit) for limit in limits[:-1]
+    )
+    assert f"{funding}, or {limits[-1]}" in public, "funded response choices are undocumented"
+    assert f"offline limit {capability['offline_funded_response_limit']}" in public
+    assert (
+        f"each funded request reserves {capability['reserved_output_tokens_per_request']:,} "
+        f"output tokens: at most {capability['max_http_attempts_per_request']} http attempts of "
+        f"up to {capability['max_output_tokens_per_attempt']:,} output tokens each"
+    ) in public
+
+    for clause in (
+        "city-cognition-influence-v1",
+        "separate synthetic cognition state",
+        "purchase-intention proxy stay rule-owned",
+        "name, age, occupation, background, and mbti",
+        "input tokens and vendor charges",
+        "live provider signals are nondeterministic",
+        "frozen schema-v10 replay",
+        "no provider call",
+        "unsigned",
+        "recomputes the whole hash chain",
+        "a chatgpt or codex subscription",
+        "oauth token is not accepted",
+        "refuse v10 runs for now",
+        "not a campaign effect",
+    ):
+        assert clause in public, clause
+
+
 def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
     """Every published V10 reservation figure is the runtime's own, never a stale copy."""
     reservation_documents: set[str] = set()
