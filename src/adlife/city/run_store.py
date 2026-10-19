@@ -386,7 +386,7 @@ def _open_artifact(
         if before is not None:
             _safe_status(before, directory=False)
         if parent_descriptor is None:
-            if mode == "rb":
+            if mode == "rb" and sys.platform == "win32":
                 from adlife.city.workbench_city_registry import _open_windows_owned_file
 
                 read_guard = _open_windows_owned_file(
