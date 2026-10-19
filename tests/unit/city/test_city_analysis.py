@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -553,13 +552,19 @@ def test_v10_attention_comparison_keeps_exact_source_schema_and_aa_zero(
     assert _artifact_bytes(directory) == before
 
 
+MIXED_ATTENTION_REFUSAL = (
+    r"^spatial attention comparison cannot mix a schema-v10 city run with a "
+    r"schema-v5, v6, v7, v8 or v9 city run$"
+)
+
+
 @pytest.mark.parametrize("v10_arm", ["treatment", "control"])
-def test_mixed_v9_and_v10_attention_comparison_keeps_truthful_per_arm_schemas(
-    tmp_path: Path, v10_arm: str
+def test_mixed_v9_and_v10_attention_comparison_is_refused_before_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, v10_arm: str
 ) -> None:
-    # Bounded cognition cannot reach movement, opportunities, or attention. A matched
-    # V9/V10 pair therefore takes the existing cross-version attention-snapshot path in
-    # either order, while the V1 response comparison refuses the same pair outright.
+    # A V10 run compares only with another V10 run. Even a V9/V10 pair whose movement
+    # provenance and attention evidence match takes the pre-V10 schema-version refusal,
+    # in either order and before either run is projected; V10/V10 stays comparable.
     from tests.integration.test_city_run_replay import _create_v9_run
 
     v9 = _create_v9_run(tmp_path / "v9")
@@ -578,36 +583,52 @@ def test_mixed_v9_and_v10_attention_comparison_keeps_truthful_per_arm_schemas(
     assert [getattr(v10.manifest, name) for name in provenance] == [
         getattr(v9.manifest, name) for name in provenance
     ]
+    snapshots = [metrics_for_stored_city_run(stored) for stored in (v9, v10)]
+    assert [snapshot.source_run_schema_version for snapshot in snapshots] == [9, 10]
+    assert snapshots[0].model_dump(exclude={"source_run_schema_version"}) == (
+        snapshots[1].model_dump(exclude={"source_run_schema_version"})
+    )
     control, treatment = (v9, v10) if v10_arm == "treatment" else (v10, v9)
     before = (_artifact_bytes(v9.directory), _artifact_bytes(directory))
 
-    result = compare_stored_city_runs(control, treatment)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("a refused comparison projected attention metrics")
 
-    assert (result.control_run_id, result.treatment_run_id) == (
-        control.manifest.run_id,
-        treatment.manifest.run_id,
-    )
-    assert (
-        result.control.source_run_schema_version,
-        result.treatment.source_run_schema_version,
-    ) == (
-        control.manifest.schema_version,
-        treatment.manifest.schema_version,
-    )
-    assert {control.manifest.schema_version, treatment.manifest.schema_version} == {9, 10}
-    assert result.classification == "matched-opportunity-structure"
-    assert result.control.model_dump(exclude={"source_run_schema_version"}) == (
-        result.treatment.model_dump(exclude={"source_run_schema_version"})
-    )
-    deltas = [
-        value
-        for series in (result.overall, *result.channels)
-        for value in series.model_dump(exclude={"schema_version", "channel"}).values()
-    ]
-    assert deltas and all(value == 0.0 and math.copysign(1.0, value) == 1.0 for value in deltas)
+    with monkeypatch.context() as patched:
+        patched.setattr(city_analysis, "metrics_for_stored_city_run", forbidden)
+        with pytest.raises(SchemaVersionMismatch, match=MIXED_ATTENTION_REFUSAL):
+            compare_stored_city_runs(control, treatment)
     with pytest.raises(SchemaVersionMismatch, match="schema-v6, v7, v8 or v9"):
         _compare_stored_city_response_runs(control, treatment)
+    same_version = compare_stored_city_runs(v10, v10)
+    assert (
+        same_version.control.source_run_schema_version,
+        same_version.treatment.source_run_schema_version,
+    ) == (10, 10)
     assert (_artifact_bytes(v9.directory), _artifact_bytes(directory)) == before
+
+
+@pytest.mark.parametrize("response", [False, True], ids=["v5", "v6"])
+def test_v10_attention_comparison_refuses_every_earlier_schema_before_provenance(
+    tmp_path: Path, response: bool
+) -> None:
+    # The version mix is refused first, so the operator is told the real reason rather
+    # than a provenance mismatch, and V5-V9 cross-version pairs keep their old path.
+    v10, _ = _stored_v10(tmp_path / "v10", mode="rules")
+    legacy = _spatial_run(tmp_path / "legacy", "legacy-study", response=response)
+    other_legacy = _spatial_run(tmp_path / "other", "other-study", response=not response)
+    assert legacy.manifest.schema_version == (6 if response else 5)
+
+    for control, treatment in ((legacy, v10), (v10, legacy)):
+        with pytest.raises(SchemaVersionMismatch, match=MIXED_ATTENTION_REFUSAL):
+            compare_stored_city_runs(control, treatment)
+    with pytest.raises(TypeError, match="StoredCityRun"):
+        compare_stored_city_runs(v10, object())  # type: ignore[arg-type]
+    cross_version = compare_stored_city_runs(legacy, other_legacy)
+    assert {
+        cross_version.control.source_run_schema_version,
+        cross_version.treatment.source_run_schema_version,
+    } == {5, 6}
 
 
 def test_legacy_refusals_name_every_supported_metric_schema(tmp_path: Path) -> None:

@@ -73,7 +73,22 @@ def compare_stored_city_runs(
     control: StoredCityRun,
     treatment: StoredCityRun,
 ) -> SpatialMetricsComparison:
-    """Compare two already verified runs; never rerun or mutate either artifact."""
+    """Compare two already verified runs; never rerun or mutate either artifact.
+
+    Schema-v5-v9 runs keep their cross-version attention comparison, and a V10 run
+    compares with another V10 run. A V10 run is never paired with an earlier schema:
+    that mix is refused before either run is projected, as before V10 support.
+    """
+    for stored in (control, treatment):
+        if not isinstance(stored, StoredCityRun):
+            raise TypeError("stored must be a StoredCityRun")
+    if isinstance(control.manifest, CityRunManifestV10) != isinstance(
+        treatment.manifest, CityRunManifestV10
+    ):
+        raise SchemaVersionMismatch(
+            "spatial attention comparison cannot mix a schema-v10 city run with a "
+            "schema-v5, v6, v7, v8 or v9 city run"
+        )
     control_metrics = metrics_for_stored_city_run(control)
     treatment_metrics = metrics_for_stored_city_run(treatment)
     return compare_spatial_metrics(
