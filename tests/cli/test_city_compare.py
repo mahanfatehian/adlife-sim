@@ -19,12 +19,12 @@ from tests.unit.city.test_city_analysis import _artifact_bytes, _persona_run, _s
 from tests.unit.city.test_city_pack import load_pack, pack_data
 
 
-def test_city_compare_help_lists_v9_for_both_run_ids():
+def test_city_compare_help_lists_v10_for_both_run_ids():
     result = CliRunner().invoke(app, ["city-compare", "--help"], terminal_width=200)
     assert result.exit_code == 0, result.output
     help_text = " ".join(strip_ansi(result.output).replace("│", " ").split())
     for arm in ("Control", "Treatment"):
-        assert f"{arm} schema-v5 through schema-v9 city run ID." in help_text
+        assert f"{arm} schema-v5 through schema-v10 city run ID." in help_text
 
 
 @pytest.mark.parametrize("layer", ["attention", "response"])

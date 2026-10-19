@@ -77,11 +77,11 @@ def command(
     root: Annotated[Path, typer.Argument(help="Root containing city-runs/.")],
     control_run_id: Annotated[
         str,
-        typer.Argument(help="Control schema-v5 through schema-v9 city run ID."),
+        typer.Argument(help="Control schema-v5 through schema-v10 city run ID."),
     ],
     treatment_run_id: Annotated[
         str,
-        typer.Argument(help="Treatment schema-v5 through schema-v9 city run ID."),
+        typer.Argument(help="Treatment schema-v5 through schema-v10 city run ID."),
     ],
     layer: Annotated[
         Literal["attention", "response"],
