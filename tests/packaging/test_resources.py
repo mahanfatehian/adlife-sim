@@ -82,6 +82,34 @@ def test_all_fictional_city_and_creative_choices_load_through_importlib() -> Non
     ]
 
 
+def test_packaged_city_static_assets_include_the_bounded_cognition_inspector() -> None:
+    """A saved manifest-V10 run fails closed without its inspector helper and stylesheet."""
+    import fnmatch
+    import tomllib
+    from importlib import resources
+
+    static = resources.files("adlife.city").joinpath("static")
+    names = {entry.name for entry in static.iterdir()}
+    for asset in ("app-cognition-v2.js", "app-cognition-v2.css"):
+        assert asset in names, asset
+        assert static.joinpath(asset).read_text(encoding="utf-8").strip(), asset
+
+    # The shared saved-run page loads the helper styles after app.css and the helper
+    # script before app.js, so every V10 inspector page can verify its evidence.
+    index = static.joinpath("index.html").read_text(encoding="utf-8")
+    assert index.index("/static/app.css") < index.index("/static/app-cognition-v2.css")
+    assert index.index("/static/app-cognition-v2.js") < index.index("/static/app.js")
+
+    # Without a built wheel, the build configuration must still select both assets.
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    patterns = pyproject["tool"]["hatch"]["build"]["include"]
+    for asset in ("app-cognition-v2.js", "app-cognition-v2.css"):
+        packaged_path = f"src/adlife/city/static/{asset}"
+        assert any(fnmatch.fnmatch(packaged_path, pattern) for pattern in patterns), asset
+
+
 def test_wheel_contains_report_resources() -> None:
     dist = Path(__file__).resolve().parents[2] / "dist"
     wheels = sorted(dist.glob("*.whl"))
