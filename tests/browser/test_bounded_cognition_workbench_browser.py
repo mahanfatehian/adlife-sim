@@ -1424,3 +1424,84 @@ def test_check_timeout_suggests_warming_a_local_model(tmp_path: Path) -> None:
         expect(status).to_have_text("Bounded-signal contract confirmed.")
         expect(hint).to_be_hidden()
         assert page.locator("main img").count() == 0
+
+
+def test_check_outcomes_are_stated_and_a_refused_local_model_points_at_its_id(
+    tmp_path: Path,
+) -> None:
+    document = _provider_document(
+        _profile("local-ollama", "local", LOCAL_REVISION, label="Local Ollama", model="qwen2.5:7b"),
+        {
+            **_profile("local-llama", "local", LOCAL_ALT_REVISION, label="Other local"),
+            "origin_approval_id": "local-llama",
+        },
+        _profile("remote-demo", "remote", REMOTE_REVISION, label="Remote lab"),
+    )
+    outcome = {"compatible": False}
+
+    def check(route: Route) -> None:
+        _, profile_id, _, revision, _ = route.request.url.rsplit("/", 4)
+        if outcome["compatible"]:
+            _fulfill(route, _v2_check(profile_id, revision))
+            return
+        _fulfill(
+            route,
+            {
+                **_v2_check(profile_id, revision, status="incompatible"),
+                "reason_code": "protocol-incompatible",
+            },
+        )
+
+    with _session(tmp_path) as (page, base_url, _root):
+        _providers(page, document)
+        page.route("**/api/providers/*/revisions/*/check", check)
+        _to_run_step(page, base_url)
+        _choose(page, BOUNDED, "local")
+        page.locator("#provider-profile").select_option(f"local-ollama/{LOCAL_REVISION}")
+        panel = page.locator("#provider-check-panel")
+        scope = page.locator("#provider-check-scope")
+        status = page.locator("#provider-check-status")
+        hint = page.locator("#provider-check-hint")
+        expect(scope).to_have_text("Bounded-signal contract · required before start")
+        expect(panel).to_have_attribute("data-check-state", "none")
+
+        page.locator("#provider-check").click()
+        # The refusal keeps its exact reason and names the usual cause in plain words.
+        expect(status).to_have_text("Not compatible with bounded signals · protocol incompatible.")
+        expect(panel).to_have_attribute("data-check-state", "failed")
+        expect(scope).to_have_text("Bounded-signal contract · not confirmed")
+        expect(hint).to_be_visible()
+        expect(hint).to_contain_text("qwen2.5:7b")
+        expect(hint).to_contain_text("not installed")
+        expect(hint.locator("code")).to_have_text("ollama list")
+
+        # A non-Ollama local origin gets the same advice without a command it may not have.
+        page.locator("#provider-profile").select_option(f"local-llama/{LOCAL_ALT_REVISION}")
+        expect(panel).to_have_attribute("data-check-state", "none")
+        expect(hint).to_be_hidden()
+        page.locator("#provider-check").click()
+        expect(hint).to_contain_text("not installed")
+        expect(hint.locator("code")).to_have_count(0)
+
+        # A remote refusal is not a local installation problem.
+        page.locator("#cognition-mode").select_option("remote")
+        page.locator("#provider-check").click()
+        expect(status).to_have_text("Not compatible with bounded signals · protocol incompatible.")
+        expect(hint).to_be_hidden()
+
+        # A success replaces the warning heading instead of leaving it beside the success.
+        outcome["compatible"] = True
+        _choose(page, BOUNDED, "local")
+        page.locator("#provider-profile").select_option(f"local-ollama/{LOCAL_REVISION}")
+        page.locator("#provider-check").click()
+        expect(status).to_have_text("Bounded-signal contract confirmed.")
+        expect(scope).to_have_text("Bounded-signal contract · confirmed for this revision")
+        expect(panel).to_have_attribute("data-check-state", "confirmed")
+        expect(hint).to_be_hidden()
+        # Any authority edit returns the row to its neutral, required state.
+        page.locator("#cognition-effect-scope").select_option(EXPLANATION)
+        expect(scope).to_have_text("Explanation contract")
+        expect(panel).to_have_attribute("data-check-state", "none")
+        page.locator("#cognition-effect-scope").select_option(BOUNDED)
+        expect(scope).to_have_text("Bounded-signal contract · required before start")
+        expect(status).to_have_text("")

@@ -219,6 +219,28 @@
   color: var(--amber);
 }
 
+/* The check outcome is stated in text; the row colour only repeats it. */
+.provider-check-row[data-check-state="confirmed"],
+.explanations-section[data-effect-scope="bounded-signals-v1"] .provider-check-row[data-check-state="confirmed"] {
+  border-left: 3px solid var(--mint);
+}
+
+.provider-check-row[data-check-state="confirmed"] .provider-check-scope,
+.explanations-section[data-effect-scope="bounded-signals-v1"] .provider-check-row[data-check-state="confirmed"] .provider-check-scope {
+  color: var(--mint);
+}
+
+.provider-check-row[data-check-state="failed"],
+.explanations-section[data-effect-scope="bounded-signals-v1"] .provider-check-row[data-check-state="failed"] {
+  border-left: 3px solid var(--coral);
+}
+
+.provider-check-row[data-check-state="failed"] .provider-check-scope,
+.explanations-section[data-effect-scope="bounded-signals-v1"] .provider-check-row[data-check-state="failed"] .provider-check-scope,
+.provider-check-row[data-check-state="failed"] .provider-action-status {
+  color: #ffc2aa;
+}
+
 .provider-check-hint {
   margin: 8px 0 0;
   padding: 8px 10px;

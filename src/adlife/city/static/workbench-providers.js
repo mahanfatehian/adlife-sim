@@ -68,6 +68,7 @@
   });
   const PURCHASE_OWNERSHIP = "Rules: an uncalibrated proxy score; purchases are not modeled";
   const TIMEOUT_REASON = "timeout-exhausted";
+  const PROTOCOL_REASON = "protocol-incompatible";
 
   const byId = (id) => document.getElementById(id);
   const formatCount = (value) => Number(value).toLocaleString("en-US");
@@ -394,12 +395,31 @@
       this.setCheckStatus("");
     }
 
-    /** One place owns the check status and its optional next-step hint, so neither goes stale. */
-    setCheckStatus(message, hint = null) {
+    /**
+     * One place owns the check status, its optional next-step hint, and the row's outcome
+     * state, so none of them goes stale. Outcome is "confirmed", "failed", or null (none).
+     */
+    setCheckStatus(message, hint = null, outcome = null, { restored = false } = {}) {
       setText("provider-check-status", message);
       const element = byId("provider-check-hint");
       element.hidden = hint === null;
       element.replaceChildren(...(hint === null ? [] : hint));
+      byId("provider-check-panel").dataset.checkState = outcome || "none";
+      this.renderCheckScope(outcome, restored);
+    }
+
+    /** The row heading says whether this scope still needs a check, never a stale warning. */
+    renderCheckScope(outcome = null, restored = false) {
+      const bounded = this.scopeValue() === BOUNDED_SCOPE;
+      let text = bounded ? "Bounded-signal contract · required before start" : "Explanation contract";
+      if (outcome === "confirmed") {
+        text = bounded
+          ? `Bounded-signal contract · ${restored ? "confirmed earlier in this workbench session" : "confirmed for this revision"}`
+          : "Explanation contract · confirmed";
+      } else if (outcome === "failed") {
+        text = bounded ? "Bounded-signal contract · not confirmed" : "Explanation contract · not confirmed";
+      }
+      setText("provider-check-scope", text);
     }
 
     /** A cold local model can outlast the check; say how to warm it instead of implying a defect. */
@@ -414,6 +434,26 @@
       const command = document.createElement("code");
       command.textContent = `ollama run ${profile.model_id} --keepalive 30m hello`;
       return [lead, document.createTextNode(", for example: "), command];
+    }
+
+    /**
+     * A local server answers an unknown model ID with a refusal that reads as a protocol
+     * mismatch; point at the usual cause (a model ID that is not installed) instead.
+     */
+    protocolHint(profile) {
+      if (profile?.mode !== "local") return null;
+      const lead = document.createTextNode(
+        `The local server refused this request. The usual cause is a model ID that is not installed: compare ${profile.model_id} with the installed names`,
+      );
+      const close = document.createTextNode(
+        "If the name differs, save a new profile revision with the exact name and check again.",
+      );
+      if (profile.origin_approval_id !== DEFAULT_LOCAL_ORIGIN) {
+        return [lead, document.createTextNode(". "), close];
+      }
+      const command = document.createElement("code");
+      command.textContent = "ollama list";
+      return [lead, document.createTextNode(", for example from:"), command, close];
     }
 
     effectScope() {
@@ -473,7 +513,9 @@
       );
       setText("cognition-boundary-text", BOUNDARY_COPY[scope]);
       byId("cognition-boundary-disclosure").hidden = !bounded;
-      setText("provider-check-scope", bounded ? "Bounded-signal contract · required before start" : "Explanation contract");
+      // Provider sources re-render the current outcome when the profile selection renders.
+      byId("provider-check-panel").dataset.checkState = "none";
+      this.renderCheckScope();
       setText(
         "provider-check-help",
         bounded
@@ -857,20 +899,34 @@
       }
     }
 
-    renderCheck(result, scope) {
+    renderCheck(result, scope, { restored = false } = {}) {
       const reason = result.reason_code === null ? "" : result.reason_code.replaceAll("-", " ");
       const bounded = scope === BOUNDED_SCOPE;
       if (result.status === "compatible") {
-        this.setCheckStatus(bounded ? "Bounded-signal contract confirmed." : "Compatible inference confirmed.");
+        this.setCheckStatus(
+          bounded ? "Bounded-signal contract confirmed." : "Compatible inference confirmed.",
+          null,
+          "confirmed",
+          { restored },
+        );
       } else if (result.status === "unavailable") {
-        this.setCheckStatus(`${bounded ? "Bounded-signal check" : "Check"} unavailable · ${reason}.`);
+        this.setCheckStatus(
+          `${bounded ? "Bounded-signal check" : "Check"} unavailable · ${reason}.`,
+          null,
+          "failed",
+        );
       } else if (result.reason_code === TIMEOUT_REASON) {
         this.setCheckStatus(
           "Not confirmed: the model did not answer within the check's time limit.",
           this.timeoutHint(this.selectedProfile()),
+          "failed",
         );
       } else {
-        this.setCheckStatus(`Not compatible${bounded ? " with bounded signals" : ""} · ${reason}.`);
+        this.setCheckStatus(
+          `Not compatible${bounded ? " with bounded signals" : ""} · ${reason}.`,
+          result.reason_code === PROTOCOL_REASON ? this.protocolHint(this.selectedProfile()) : null,
+          "failed",
+        );
       }
     }
 
@@ -923,7 +979,11 @@
       } catch (error) {
         this.clearCredential();
         if (generation !== this.generation) return;
-        this.setCheckStatus(safeMessage(error, "The compatibility check could not be completed."));
+        this.setCheckStatus(
+          safeMessage(error, "The compatibility check could not be completed."),
+          null,
+          "failed",
+        );
         byId("provider-check").focus();
       } finally {
         this.busy = false;
