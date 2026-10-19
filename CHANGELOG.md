@@ -36,7 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/runs/{run_id}` and in `adlife city-view` verifies V10 evidence, then shows coverage, a
   source and effect badge for every response, the per-response trace (deterministic
   baseline, signal or neutral status, fixed mapping, applied cognition delta, atomic
-  rule/cognition update) and the profile/model/contract provenance. The read-only
+  rule/cognition update), the profile/model/contract provenance, and the actual provider
+  usage (HTTP attempts and reported prompt and completion tokens) per run and per request,
+  kept apart from the output reservation. The read-only
   cognition-summary, cognition-records and workbench-input views serve V10, and
   `GET /api/workbench` publishes the bounded-cognition capability the browser reads instead of
   pinning limits. `city-metrics --layer response` prints the separate

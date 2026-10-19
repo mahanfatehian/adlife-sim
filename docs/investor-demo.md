@@ -223,8 +223,10 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    vector applied to 8 of 18 eligible responses`, with the uncertain and safety-neutralized
    counts); the authority pipeline Rule
    baseline → Signal or neutral → Fixed mapping → Applied delta → Dual-state commit; and the
-   prompt, result-schema, and influence-policy hashes. A model failure would show here as
-   Fallback with its reason.
+   prompt, result-schema, and influence-policy hashes. **Provider usage** reports what the
+   model actually did, kept apart from the reservation; one rehearsal read
+   `10 HTTP attempts in this run · 6,745 prompt + 1,402 completion tokens`, against 10,240
+   reserved output tokens. A model failure would show here as Fallback with its reason.
 3. **Saved signal timeline.** Open it, keep **Show** on `All selected requests (18)`, and
    click the first entry, `#1 · DAY 01 · 07:04`, `PERSON-005 · FICTIONAL-LAUNCH`. The page
    jumps to that minute and agent and shows the response's five-stage trace. In rehearsal it
@@ -233,7 +235,7 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    | Stage | What it showed |
    | --- | --- |
    | 1 Deterministic baseline (rule-owned) | sentiment Δ +0.0398, recall Δ +0.254 |
-   | 2 Provider signal | affect `neutral`, relevance `high`, credibility `high`, salience `medium` |
+   | 2 Provider signal | affect `neutral`, relevance `high`, credibility `high`, salience `medium`, with that request's usage (`1 HTTP attempt` and its prompt and completion tokens) |
    | 3 `city-cognition-influence-v1` mapping | sentiment (0.0398 + 0) × 1.15 × 1.10 = +0.0503; recall 0.254 × 1.15 × 1.10 × 1.00 = 0.3213, clamped to 0.3 |
    | 4 Applied cognition delta | sentiment Δ +0.0503, recall Δ +0.3, cognition track only |
    | 5 Atomic rule/cognition state update | rule sentiment 0 → 0.0398, cognition sentiment 0 → 0.0503 |

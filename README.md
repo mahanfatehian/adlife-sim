@@ -344,7 +344,8 @@ nondeterministic, even at temperature 0 with a fixed seed; frozen schema-v10 rep
 the saved signals and performs no provider call, cache read, keyring or environment lookup, or
 network request. The saved-run inspector shows each response's trace (deterministic baseline,
 signal or neutral status, fixed mapping, applied cognition delta, atomic rule/cognition state
-update) with source badges, coverage, and profile/model/contract provenance.
+update) with source badges, coverage, profile/model/contract provenance, and the provider's
+actual HTTP attempts and reported tokens, kept apart from the reservation.
 `city-metrics --layer response` prints the rule baseline, with the uncalibrated
 purchase-intention proxy, separately from provider-dependent cognition, which is exploratory
 and not a campaign effect. The categories are synthetic model output, not private thoughts,

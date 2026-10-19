@@ -2257,6 +2257,7 @@ _DEMO_INTERFACE_COPY = (
     "Final campaign state",
     "Response metrics",
     "Bounded AI cognition signals",
+    "Provider usage",
     "Saved signal timeline",
     "All selected requests",
     "Uncertain or safety neutralized",
