@@ -11,12 +11,20 @@ from __future__ import annotations
 
 import json
 import re
+import typing
 from pathlib import Path
 
 import pytest
 import yaml
 
 from adlife import __version__
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CityCognitionInputV2,
+)
 
 ROOT = Path(__file__).parents[2]
 
@@ -1746,6 +1754,90 @@ def test_spatial_response_docs_remove_obsolete_pre_c3c_claims() -> None:
     assert "c3 remains open for that response/state bridge" not in roadmap
     assert "a1\u2013g5 are unchecked" not in roadmap
     assert "status: proposed target, **not implemented**" not in design
+
+
+# ---------------------------------------------------------------------------
+# Bounded city cognition: workbench schema 4 / manifest V10
+# ---------------------------------------------------------------------------
+
+# Every limit below is read from the runtime contract, so changing a frozen budget cannot
+# leave a stale figure in the public documents without failing this suite.
+_FUNDED_RESPONSE_LIMITS: tuple[int, ...] = typing.get_args(
+    CityCognitionInputV2.model_fields["funded_response_limit"].annotation
+)
+_RESERVATION_SENTENCE = re.compile(
+    r"each funded request reserves ([\d,]+) output tokens: at most (\d+) http attempts of up "
+    r"to ([\d,]+) output tokens each"
+)
+_AGGREGATE_SENTENCE = re.compile(r"(\d+) funded requests reserve ([\d,]+) output tokens")
+
+
+def _integer(text: str) -> int:
+    return int(text.replace(",", ""))
+
+
+def _public_documents() -> dict[str, str]:
+    documents = {path.relative_to(ROOT).as_posix(): text for path, text in _all_docs().items()}
+    documents["CHANGELOG.md"] = _read("CHANGELOG.md")
+    return documents
+
+
+def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
+    """Every published V10 reservation figure is the runtime's own, never a stale copy."""
+    reservation_documents: set[str] = set()
+    aggregate_maximum_documented = False
+    for name, text in _public_documents().items():
+        squashed = _squash(text)
+        for reserved, attempts, per_attempt in _RESERVATION_SENTENCE.findall(squashed):
+            reservation_documents.add(name)
+            assert _integer(reserved) == CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST, name
+            assert int(attempts) == CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST, name
+            assert _integer(per_attempt) == CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT, name
+        for count, reserved in _AGGREGATE_SENTENCE.findall(squashed):
+            assert int(count) in _FUNDED_RESPONSE_LIMITS, (name, count)
+            assert _integer(reserved) == (
+                int(count) * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+            ), (name, count)
+            aggregate_maximum_documented |= (
+                int(count) == max(_FUNDED_RESPONSE_LIMITS)
+                and _integer(reserved) == CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+            )
+    for required in ("CHANGELOG.md",):
+        assert required in reservation_documents, f"{required} omits the V10 output reservation"
+    assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
+
+
+def test_changelog_records_bounded_cognition_without_overclaiming() -> None:
+    unreleased = _read("CHANGELOG.md").split("## [0.1.0]", maxsplit=1)[0]
+    _assert_terms_share_paragraph(
+        unreleased,
+        "bounded ai cognition",
+        "workbench schema 4",
+        "manifest v10",
+        "closed categories",
+        "city-cognition-influence-v1",
+        "separate synthetic cognition state",
+        "purchase-intention proxy stay rule-owned",
+        "excluded from the causal prompt",
+    )
+    _assert_terms_share_paragraph(
+        unreleased,
+        "live provider signals are nondeterministic",
+        "city-replay",
+        "no provider, cache, keyring, environment or network access",
+    )
+    _assert_terms_share_paragraph(
+        unreleased, "chatgpt", "codex", "subscription", "oauth", "not accepted"
+    )
+    _assert_terms_share_paragraph(
+        unreleased,
+        "city-compare --layer response",
+        "city-study",
+        "city-report",
+        "refuse v10",
+        "v6-v9 keep them",
+    )
+    assert "docs/investor-demo.md" in unreleased
 
 
 # ---------------------------------------------------------------------------

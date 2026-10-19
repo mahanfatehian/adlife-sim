@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bounded AI cognition in the city workbench (2026-10-19)** — the workbench RUN step now
+  separates **Operation** (`Explanation only` or `Bounded AI cognition`) from **Source**
+  (rules, mock, local or remote compatible model). `Bounded AI cognition` submits workbench
+  schema 4 and publishes manifest V10 under `spatial-response-v2`. For each selected noticed
+  response, the source chooses only closed categories — affect, relevance, credibility,
+  salience and safety flags — and AdLife maps them through the frozen
+  `city-cognition-influence-v1` policy into a separate synthetic cognition state. Movement,
+  opportunities, attention, baseline responses, budgets and the purchase-intention proxy stay
+  rule-owned, and name, age, occupation, background and MBTI are excluded from the causal
+  prompt. Selection keeps at most 4 responses per agent and 60 per run. Local and remote runs
+  fund 10, 20 (default), 40 or 60 requests and require a passing bounded-signal compatibility
+  check. Each funded request reserves 1,024 output tokens: at most 4 HTTP attempts of up to
+  256 output tokens each, so 60 funded requests reserve 61,440 output tokens. Input tokens and
+  vendor charges are outside that reservation. Uncertain or safety-flagged answers
+  stay auditable but are neutralized as a whole vector, unavailable or invalid answers become
+  typed neutral fallbacks, and unfunded selections are recorded as budget-skipped. Rules and
+  mock remain offline. V10 freezes `inputs/cognition.json`, `outputs/cognition.jsonl`,
+  `outputs/cognition-summary.json`, the dual rule/cognition response state and every policy
+  hash; `city-replay` reproduces it offline with no provider, cache, keyring, environment or
+  network access. Live provider signals are nondeterministic. A ChatGPT or Codex
+  subscription, product login or OAuth token is not accepted as a provider credential. V10 is
+  an unreleased artifact schema: V10 runs written by earlier development builds, before the
+  final output budget and safety-flag prompt guidance, are refused and must be recreated.
+- **V10 inspection, read-only views and metrics (2026-10-19)** — the saved-run inspector at
+  `/runs/{run_id}` and in `adlife city-view` verifies V10 evidence, then shows coverage, a
+  source and effect badge for every response, the per-response trace (deterministic
+  baseline, signal or neutral status, fixed mapping, applied cognition delta, atomic
+  rule/cognition update) and the profile/model/contract provenance. The read-only
+  cognition-summary, cognition-records and workbench-input views serve V10, and
+  `GET /api/workbench` publishes the bounded-cognition capability the browser reads instead of
+  pinning limits. `city-metrics --layer response` prints the separate
+  `spatial-response-metrics-v2` families: a rule baseline that keeps the uncalibrated purchase
+  proxy, and provider-dependent cognition labelled exploratory, not a campaign effect.
+  `city-compare --layer response`, `city-study` and `city-report` refuse V10 runs for now
+  (V6-V9 keep them), and the default attention comparison pairs a V10 run only with another
+  V10 run.
+- **Two-part live demonstration script** — [docs/investor-demo.md](docs/investor-demo.md) is
+  now the SETUP and SIMULATION script for presenting bounded AI cognition through a local
+  Ollama `qwen2.5:7b-instruct` model, with the offline mock/rules fallback and
+  troubleshooting.
 - **Optional city response explanations (2026-10-17)** — schema-3 workbench requests now
   publish schema-v9 runs with noncausal rules, mock, local, or remote explanations. Exact
   provider profiles are immutable; remote origins require startup approval; credentials
@@ -95,6 +135,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Real local-model provider path (2026-10-19)** — a local `qwen2.5:7b-instruct` needs
+  about 140-160 output tokens for the strict bounded-signal result, so the V10 per-attempt
+  cap is 256 output tokens instead of the development value that truncated every answer.
+  The bounded-signal prompt now states when each safety flag applies: before, the model
+  flagged almost every ordinary answer, so neutralization erased nearly every signal; in a
+  44-request live check with the new wording, no ordinary answer was flagged. The
+  neutralization rule itself is unchanged. A local compatibility check now waits up to 120
+  seconds for a model that is still loading (remote checks keep 10 seconds); run attempts
+  keep their frozen 30-second timeout.
+- **V9 explanations from real providers (2026-10-19)** — a real 10-digit `created`
+  timestamp in a provider response envelope matched the persona phone/national-ID screen,
+  so every schema-v9 explanation fell back. The whole raw response body is now screened only
+  for credentials and provider secrets; decoded envelope text and model-authored text keep
+  the full screen.
+- **Windows saved-run reads during city-registry access (2026-10-19)** — a run read that
+  overlapped a city-registry root anchor (for example `GET /api/cities`) hit a sharing
+  violation and reported the run unavailable; run reads now wait out the anchor for up to
+  10 seconds, as the registry already did.
+- **Workbench cognition field errors (2026-10-19)** — server-side cognition validation errors
+  now name their exact `cognition.*` fields, so the browser highlights the matching control.
 - **Verified timeline interaction and causal presentation** — the run-scoped workbench
   inspector now obtains each frame and its bounded evidence/state pages through one GET-only
   projection from one freshly verified run context. The legacy viewer exposes the same
