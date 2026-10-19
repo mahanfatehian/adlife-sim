@@ -7,7 +7,7 @@ import re
 import socket
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from hashlib import sha256
 from importlib import resources
@@ -1431,61 +1431,30 @@ def test_schema_v8_inspector_never_requests_cognition_projections(tmp_path: Path
         )
         page = browser.new_page()
         cognition_requests: list[str] = []
-        page.on(
-            "request",
-            lambda request: (
-                cognition_requests.append(request.url) if "cognition-" in request.url else None
-            ),
-        )
+        static_requests: list[str] = []
+
+        def record(request: PlaywrightRequest) -> None:
+            path = urlparse(request.url).path
+            if path.startswith("/api/") and "cognition-" in path:
+                cognition_requests.append(request.url)
+            elif path.startswith("/static/"):
+                static_requests.append(path)
+
+        page.on("request", record)
         page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
 
         expect(page.locator("#error-banner")).to_be_hidden()
         expect(page.locator("#cognition-summary")).to_be_hidden()
         assert cognition_requests == []
+        # The shared page still loads the inert V10 helper assets, never a projection.
+        assert "/static/app-cognition-v2.js" in static_requests
         browser.close()
-
-
-_BOUNDED_HELPER_SCRIPT = '<script src="/static/app-cognition-v2.js" defer></script>'
-_BOUNDED_HELPER_STYLE = '<link rel="stylesheet" href="/static/app-cognition-v2.css">'
-
-
-def _with_bounded_inspector_assets(base_url: str, run_id: str) -> Callable[[Route], None]:
-    """Serve the V10 inspector assets beside a legacy run, as the shared page will."""
-    static = resources.files("adlife.city").joinpath("static")
-
-    def handle(route: Route) -> None:
-        url = route.request.url
-        if url == f"{base_url}/runs/{run_id}":
-            upstream = route.fetch()
-            body = upstream.text()
-            if _BOUNDED_HELPER_SCRIPT not in body:
-                body = body.replace(
-                    '<link rel="stylesheet" href="/static/app.css">',
-                    f'<link rel="stylesheet" href="/static/app.css">\n  {_BOUNDED_HELPER_STYLE}',
-                ).replace(
-                    '<script src="/static/app.js" defer></script>',
-                    f'{_BOUNDED_HELPER_SCRIPT}\n  <script src="/static/app.js" defer></script>',
-                )
-            route.fulfill(response=upstream, body=body)
-        elif url == f"{base_url}/static/app-cognition-v2.js":
-            route.fulfill(
-                body=static.joinpath("app-cognition-v2.js").read_bytes(),
-                content_type="text/javascript; charset=utf-8",
-            )
-        elif url == f"{base_url}/static/app-cognition-v2.css":
-            route.fulfill(
-                body=static.joinpath("app-cognition-v2.css").read_bytes(),
-                content_type="text/css; charset=utf-8",
-            )
-        else:
-            route.continue_()
-
-    return handle
 
 
 def test_bounded_cognition_assets_are_inert_for_schema_v9_and_earlier_runs(
     tmp_path: Path,
 ) -> None:
+    """Every saved-run page loads the V10 helper first; it stays inert for V9 and earlier."""
     with (
         _cognition_viewer(tmp_path) as (base_url, root, expected),
         sync_playwright() as playwright,
@@ -1496,11 +1465,23 @@ def test_bounded_cognition_assets_are_inert_for_schema_v9_and_earlier_runs(
         )
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         page_errors: list[str] = []
+        console_errors: list[str] = []
         page.on("pageerror", lambda error: page_errors.append(str(error)))
-        page.route("**/*", _with_bounded_inspector_assets(base_url, str(expected["run_id"])))
+        page.on(
+            "console",
+            lambda message: (
+                console_errors.append(message.text) if message.type == "error" else None
+            ),
+        )
         page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
 
         expect(page.locator("#error-banner")).to_be_hidden()
+        assert page.evaluate(
+            "() => Array.from(document.scripts).map((script) => script.getAttribute('src'))"
+        ) == ["/static/app-cognition-v2.js", "/static/app.js"]
+        assert page.evaluate(
+            "() => Array.from(document.styleSheets).map((sheet) => new URL(sheet.href).pathname)"
+        ) == ["/static/app.css", "/static/app-cognition-v2.css"]
         assert page.evaluate("() => Object.isFrozen(window.AdLifeBoundedCognition)") is True
         expect(page.locator("#cognition-summary-label")).to_have_text("Deterministic explanations")
         assert page.evaluate("minute => setMinute(minute)", expected["model_minute"]) is True
@@ -1518,7 +1499,7 @@ def test_bounded_cognition_assets_are_inert_for_schema_v9_and_earlier_runs(
             "STATE UPDATE",
         ]
         assert page.evaluate("() => state.boundedCognition") is None
-        assert page_errors == []
+        assert page_errors == [] and console_errors == []
         browser.close()
         assert _artifact_hashes(root) == before
 

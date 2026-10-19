@@ -73,6 +73,8 @@ from adlife.core.simulation.spatial_response_v2 import (
 _ASSETS = {
     "app.js": "text/javascript; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
+    "app-cognition-v2.js": "text/javascript; charset=utf-8",
+    "app-cognition-v2.css": "text/css; charset=utf-8",
 }
 _MAX_SPATIAL_RESPONSE_STATES = 600
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
