@@ -89,7 +89,13 @@ PROMPT = (
     "the CityCognitionResultV2 JSON object with the supplied request_id and disclosure. Do not "
     "provide prose, reasoning, or chain-of-thought. Never invent or change identity, movement, "
     "routes, opportunities, attention, events, budgets, purchase intention, or purchases. These "
-    "categories are synthetic and are not observed behavior."
+    "categories are synthetic and are not observed behavior. safety_flags is normally the empty "
+    "list []. Add stereotype-risk only if the creative or the supplied facts invite a stereotype "
+    "about a group of people. Add unsupported-inference only if answering would require "
+    "inventing facts about a real person or data that is not in the supplied facts; choosing "
+    "categories from the supplied facts never does. Add unsafe-content only if the creative "
+    "contains harmful content. The synthetic, fictional nature of this task is never by itself "
+    "a reason to add a flag."
 )
 CATEGORIES = {
     "affect": ["annoyed", "skeptical", "neutral", "curious", "positive", "uncertain"],

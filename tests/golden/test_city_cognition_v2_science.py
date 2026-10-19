@@ -428,6 +428,6 @@ def test_v10_core_golden_is_identical_across_hash_seeds() -> None:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         assert result.stdout == (
-            "3319863bde856117a8e01d3718cbf3bca3dc35c500317d8f36242d21faa724f5\n"
+            "1a159ae9b625de5a226436585547fa3544843afc6baeedf17160a25b263a3dee\n"
         )
         assert result.stderr == ""

@@ -193,6 +193,18 @@ If any category is `uncertain`, or if `safety_flags` is nonempty, the record rem
 auditable but the complete applied vector becomes the neutral vector. The provider cannot
 partially apply a result.
 
+The frozen prompt contract tells the provider that `safety_flags` is normally empty and when
+each flag applies: `stereotype-risk` only when the creative or the supplied facts invite a
+stereotype about a group of people; `unsupported-inference` only when answering would require
+inventing facts about a real person or data that is not in the supplied facts, which choosing
+categories from the supplied facts never does; and `unsafe-content` only when the creative
+contains harmful content. The synthetic, fictional nature of the task is never by itself a
+reason to flag. Without that guidance a local `qwen2.5:7b-instruct` flagged
+`unsupported-inference` on 95% of ordinary answers, so neutralization erased almost every
+provider signal. With it, 44 real requests produced no spurious flag, while creatives that
+invite a stereotype or contain harmful content were still flagged. The neutralization rule
+itself is unchanged.
+
 ## Surrounding V2 contracts
 
 The result is only one part of the authority boundary. The V2 family has these exact
