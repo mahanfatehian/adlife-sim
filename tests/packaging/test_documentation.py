@@ -1794,6 +1794,20 @@ def _public_documents() -> dict[str, str]:
     return documents
 
 
+def _literal(field: str) -> int:
+    (value,) = typing.get_args(CityCognitionInputV2.model_fields[field].annotation)
+    return typing.cast(int, value)
+
+
+def _section(text: str, heading: str) -> str:
+    """Return the body under ``heading`` up to the next heading of the same or higher level."""
+    assert heading in text, f"section is missing: {heading}"
+    level = len(heading) - len(heading.lstrip("#"))
+    body = text.split(heading, maxsplit=1)[1]
+    following = re.search(rf"\n#{{1,{level}}} ", body)
+    return body if following is None else body[: following.start()]
+
+
 def test_bounded_cognition_public_contract_is_documented() -> None:
     """The public documents state the whole V10 contract the browser capability publishes."""
     from adlife.city.workbench_input import WorkbenchCognitionDraftV4
@@ -1904,11 +1918,6 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
     ):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
-
-
-def _literal(field: str) -> int:
-    (value,) = typing.get_args(CityCognitionInputV2.model_fields[field].annotation)
-    return typing.cast(int, value)
 
 
 def test_cli_reference_documents_the_v10_operation_matrix_and_commands() -> None:
@@ -2099,15 +2108,6 @@ def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
         "exploratory evidence, not a campaign effect",
         "refuse v10 runs for now",
     )
-
-
-def _section(text: str, heading: str) -> str:
-    """Return the body under ``heading`` up to the next heading of the same or higher level."""
-    assert heading in text, f"section is missing: {heading}"
-    level = len(heading) - len(heading.lstrip("#"))
-    body = text.split(heading, maxsplit=1)[1]
-    following = re.search(rf"\n#{{1,{level}}} ", body)
-    return body if following is None else body[: following.start()]
 
 
 def test_investor_demo_is_the_two_part_bounded_cognition_script() -> None:
