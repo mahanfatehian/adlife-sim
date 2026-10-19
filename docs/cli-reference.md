@@ -154,7 +154,9 @@ The process-local control API exposes these bounded catalog, job, and discovery 
 - `GET /api/catalog/cities/{city_id}` re-verifies and returns one path-free city detail;
 - `POST /api/catalog/cities/upload` validates and immutably registers one local V2 pack;
 - `POST /api/scenarios/validate` validates the complete draft without reserving a run ID;
-- `POST /api/jobs` repeats validation and returns `202` with a server-generated job ID;
+- `POST /api/jobs` repeats validation and returns `202` with a server-generated job ID; a run
+  ID that a saved run already uses is refused with `409` `run-conflict`, naming the
+  `settings.run_id` field;
 - `GET /api/jobs/{job_id}` reports a truthful bounded phase; schema-3 may report `queued`,
   `simulating`, `selecting-explanations`, `requesting-explanations`, `persisting`,
   `verifying`, or a terminal phase, and schema 4 may report `queued`, `planning-cognition`,
@@ -172,6 +174,10 @@ The process-local control API exposes these bounded catalog, job, and discovery 
 - `POST /api/providers/{profile_id}/revisions/{revision_id}/check` runs one bounded explicit
   compatibility check: body `{}` checks the explanation contract, and
   `{"effect_scope": "bounded-signals-v1"}` checks the bounded-signal contract;
+- `GET /api/providers/{profile_id}/revisions/{revision_id}/bounded-check` reads, without
+  running anything, the bounded-signal check result this process already recorded for that
+  exact revision, or returns `404` `provider-check-not-recorded` when none has run since the
+  workbench started;
 - `GET /api/runs/{run_id}/workbench-input` returns the verified schema-v10/schema-v9/schema-v8/schema-v7
   bounded assumptions/creative projection with the seed as an exact decimal string;
 - `GET /api/runs/{run_id}/cognition-summary` returns verified schema-v9 explanation provenance
@@ -183,7 +189,11 @@ The process-local control API exposes these bounded catalog, job, and discovery 
   exposes the equivalent contract over the legacy viewer's startup-validated immutable
   context, and the individual read endpoints remain supported;
 - `GET /runs/{run_id}` serves the immutable inspector, whose scientific reads are mirrored
-  under `/api/runs/{run_id}/...`.
+  under `/api/runs/{run_id}/...`;
+- `GET /runs/{run_id}/reuse` serves the workbench seeded to start a new draft from that saved
+  run's verified inputs (schema-v8 and later), read through
+  `/api/runs/{run_id}/workbench-input`; the browser suggests the next free sibling run ID and
+  never changes the saved run.
 
 Opening an inspector performs one complete artifact verification and places an opaque,
 run-bound token in that page. Its same-origin API requests send the token in a header and

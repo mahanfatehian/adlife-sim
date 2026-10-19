@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `city-compare --layer response`, `city-study` and `city-report` refuse V10 runs for now
   (V6-V9 keep them), and the default attention comparison pairs a V10 run only with another
   V10 run.
+- **Run again from a saved run (2026-10-19)** — the inspector and the run library offer
+  **Run again with these inputs**, which reopens the workbench at RUN with a schema-v8 or later
+  run's verified inputs and a suggested new run ID; the saved run is never changed. A reopened
+  page shows the bounded-signal check this server process already recorded for the selected
+  revision instead of asking for it again, and refused fields now open their own step.
 - **Two-part live demonstration script** — [docs/investor-demo.md](docs/investor-demo.md) is
   now the SETUP and SIMULATION script for presenting bounded AI cognition through a local
   Ollama `qwen2.5:7b-instruct` model, with the offline mock/rules fallback and
