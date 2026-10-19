@@ -2397,3 +2397,79 @@ def test_real_v10_projections_match_the_inspector_oracle(
     assert run.stored.cognition_input.causal_contract.prompt_contract_text not in encoded
     for form in (str(run.root), json.dumps(str(run.root))[1:-1], run.root.as_posix()):
         assert form not in everything
+
+
+MAP_LAYOUT = """async () => {
+  // Let any pending overlay resize settle into the fitted projection first.
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const project = projection();
+  const canvasBox = document.getElementById('city-map').getBoundingClientRect();
+  const points = [
+    ...state.city.nodes,
+    ...state.city.roads.flatMap((road) => road.shape || []),
+  ].map((point) => project(point.longitude, point.latitude));
+  const xs = points.map(([x]) => x + canvasBox.left);
+  const ys = points.map(([, y]) => y + canvasBox.top);
+  const overlays = {};
+  for (const selector of ['.map-legend', '.map-zoom-controls', '.map-help', '.map-compass']) {
+    const element = document.querySelector(selector);
+    if (!element || element.getClientRects().length === 0) continue;
+    const box = element.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) continue;
+    overlays[selector] = { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+  }
+  return {
+    zoom: state.zoom,
+    pan: [state.panX, state.panY],
+    city: {
+      left: Math.min(...xs), right: Math.max(...xs),
+      top: Math.min(...ys), bottom: Math.max(...ys),
+    },
+    canvas: {
+      left: canvasBox.left, right: canvasBox.right, top: canvasBox.top, bottom: canvasBox.bottom,
+    },
+    overlays,
+  };
+}"""
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [(1440, 900), (1280, 720), (1024, 768), (1920, 1080), (390, 844)],
+    ids=["1440", "projector-1280", "projector-1024", "1920", "phone-390"],
+)
+def test_v10_map_fits_the_city_clear_of_the_legend_and_map_controls(
+    browser: Browser, saved_runs: Callable[[str], SavedRun], width: int, height: int
+) -> None:
+    """No overlay may hide a road or the default agent at the edge of the fitted city."""
+    run = saved_runs("mock")
+    with inspector(browser, run, viewport={"width": width, "height": height}) as session:
+        page = session.page
+        expect(page.locator("#bounded-cognition-panel")).to_be_visible()
+        layout = page.evaluate(MAP_LAYOUT)
+        assert layout["zoom"] == 1 and layout["pan"] == [0, 0]
+        # Roads and node markers reach a few pixels beyond their centre lines.
+        margin = 8
+        city = {
+            "left": layout["city"]["left"] - margin,
+            "right": layout["city"]["right"] + margin,
+            "top": layout["city"]["top"] - margin,
+            "bottom": layout["city"]["bottom"] + margin,
+        }
+        canvas = layout["canvas"]
+        assert city["left"] >= canvas["left"] and city["right"] <= canvas["right"], layout
+        assert city["top"] >= canvas["top"] and city["bottom"] <= canvas["bottom"], layout
+        assert ".map-legend" in layout["overlays"], layout
+        for selector, box in layout["overlays"].items():
+            separate = (
+                box["right"] <= city["left"]
+                or box["left"] >= city["right"]
+                or box["bottom"] <= city["top"]
+                or box["top"] >= city["bottom"]
+            )
+            assert separate, (selector, layout)
+        # The fitted city is still a usable size, not a thumbnail.
+        assert layout["city"]["bottom"] - layout["city"]["top"] >= 0.3 * (
+            canvas["bottom"] - canvas["top"]
+        ), layout
+        assert session.page_errors == [] and session.console_errors == []

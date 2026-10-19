@@ -505,6 +505,80 @@ function updateLabels() {
   document.body.classList.toggle("night", night);
 }
 
+const mapFitMargin = 55;
+const mapOverlayGap = 12;
+
+// Canvas-relative box of one map overlay, or null when it is not rendered.
+function mapOverlayBox(selector, canvasBox) {
+  const element = document.querySelector(selector);
+  if (!element || element.hidden || element.getClientRects().length === 0) return null;
+  const box = element.getBoundingClientRect();
+  if (box.width === 0 || box.height === 0) return null;
+  return {
+    left: box.left - canvasBox.left,
+    right: box.right - canvasBox.left,
+    top: box.top - canvasBox.top,
+    bottom: box.bottom - canvasBox.top,
+  };
+}
+
+// The fitted city keeps clear of the overlays drawn above the canvas: the legend band at the
+// bottom always, and the top-right controls either by a top band or a right band, whichever
+// leaves the larger city. Pan and zoom still move the city freely from this fit.
+let mapFitCache = null;
+let mapFitFrame = null;
+
+// Overlay boxes only change on a resize or a legend change; measuring them on every
+// animation frame would force a synchronous layout during playback.
+if (typeof ResizeObserver === "function") {
+  const observer = new ResizeObserver(() => {
+    mapFitCache = null;
+    if (mapFitFrame !== null) return;
+    mapFitFrame = window.requestAnimationFrame(() => {
+      mapFitFrame = null;
+      if (state.city && state.frame) renderMap();
+    });
+  });
+  for (const selector of ["#map-stage", ".map-legend", ".map-zoom-controls", ".map-help", ".map-compass"]) {
+    const element = document.querySelector(selector);
+    if (element) observer.observe(element);
+  }
+}
+
+function mapFitInsets(width, height, xSpan, ySpan) {
+  const key = `${width}|${height}|${xSpan}|${ySpan}`;
+  if (mapFitCache !== null && mapFitCache.key === key) return mapFitCache.insets;
+  const insets = measureMapFitInsets(width, height, xSpan, ySpan);
+  mapFitCache = { key, insets };
+  return insets;
+}
+
+function measureMapFitInsets(width, height, xSpan, ySpan) {
+  const canvasBox = canvas.getBoundingClientRect();
+  const legend = mapOverlayBox(".map-legend", canvasBox);
+  const help = mapOverlayBox(".map-help", canvasBox);
+  const controls = [".map-compass", ".map-zoom-controls"]
+    .map((selector) => mapOverlayBox(selector, canvasBox))
+    .filter((box) => box !== null);
+  const bottom = legend && legend.top < height
+    ? Math.max(mapFitMargin, height - legend.top + mapOverlayGap)
+    : mapFitMargin;
+  const helpBottom = help ? help.bottom + mapOverlayGap : 0;
+  const controlBottom = Math.max(0, ...controls.map((box) => box.bottom + mapOverlayGap));
+  const controlLeft = Math.min(width, ...controls.map((box) => box.left - mapOverlayGap));
+  const candidates = [
+    { top: Math.max(mapFitMargin, helpBottom, controlBottom), right: mapFitMargin },
+    { top: Math.max(mapFitMargin, helpBottom), right: Math.max(mapFitMargin, width - controlLeft) },
+  ].map((insets) => ({ ...insets, left: mapFitMargin, bottom }));
+  const scaleFor = (insets) => Math.min(
+    (width - insets.left - insets.right) / xSpan,
+    (height - insets.top - insets.bottom) / ySpan,
+  );
+  const best = scaleFor(candidates[1]) > scaleFor(candidates[0]) ? candidates[1] : candidates[0];
+  // A tiny viewport keeps the plain centred fit rather than an unusable sliver.
+  return scaleFor(best) > 0 ? best : { top: mapFitMargin, right: mapFitMargin, bottom: mapFitMargin, left: mapFitMargin };
+}
+
 function projection() {
   const nodes = state.city.nodes;
   const shape = state.city.roads.flatMap((road) => road.shape || []);
@@ -518,9 +592,13 @@ function projection() {
   const width = Math.max(1, canvas.clientWidth), height = Math.max(1, canvas.clientHeight);
   const xSpan = Math.max(0.00001, (maxLon - minLon) * correction);
   const ySpan = Math.max(0.00001, maxLat - minLat);
-  const scale = Math.min((width - 110) / xSpan, (height - 110) / ySpan) * state.zoom;
+  const insets = mapFitInsets(width, height, xSpan, ySpan);
+  const fitWidth = Math.max(1, width - insets.left - insets.right);
+  const fitHeight = Math.max(1, height - insets.top - insets.bottom);
+  const scale = Math.min(fitWidth / xSpan, fitHeight / ySpan) * state.zoom;
+  const centerX = insets.left + fitWidth / 2, centerY = insets.top + fitHeight / 2;
   const centerLon = (minLon + maxLon) / 2, centerLat = (minLat + maxLat) / 2;
-  return (longitude, latitude) => [width / 2 + (longitude - centerLon) * correction * scale + state.panX, height / 2 - (latitude - centerLat) * scale + state.panY];
+  return (longitude, latitude) => [centerX + (longitude - centerLon) * correction * scale + state.panX, centerY - (latitude - centerLat) * scale + state.panY];
 }
 
 function selectedPlaceAssignment() {
