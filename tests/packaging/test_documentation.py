@@ -2240,6 +2240,26 @@ def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
     )
 
 
+def test_experiment_protocol_registers_v10_cognition_as_exploratory() -> None:
+    protocol = _read("docs", "methodology", "experiment-protocol.md")
+    addendum = _section(
+        protocol, "## Implementation reconciliation — 2026-10-19: bounded city cognition"
+    )
+    for term in (
+        "exploratory and provider-dependent, not a treatment outcome or a campaign effect",
+        "city-cognition-influence-v1",
+        "rule-baseline metrics exactly unchanged",
+        "common random numbers",
+        "not an a/a control for the cognition track",
+        "only replaying one saved run reproduces its cognition evidence exactly",
+        "no paired-cognition protocol exists yet",
+        "no v10 paired study can be run or registered",
+    ):
+        assert term in _squash(addendum), term
+    for command in ("`city-compare --layer response`", "`city-study`", "`city-report`"):
+        assert command in addendum, command
+
+
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
     policy = CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2
     documented: set[str] = set()

@@ -143,3 +143,30 @@ retroactive claim that a study followed every proposed reporting step.
   rank ordering. A city comparison uses the same verified response equations and causal
   inputs as schema-v6/v7/v8; differing explanation mode, profile revision, text, or token
   budget cannot be cited as an effect on synthetic response state.
+
+## Implementation reconciliation — 2026-10-19: bounded city cognition
+
+This addendum covers schema-v10 bounded AI cognition runs. It registers no new study and
+claims no empirical validation.
+
+- Schema-v10 cognition evidence is exploratory and provider-dependent, not a treatment
+  outcome or a campaign effect. A model chooses closed categories for selected noticed
+  responses, and the frozen `city-cognition-influence-v1` policy maps them into a separate
+  synthetic cognition state; the categories and tables are synthetic assumptions, not
+  validated psychology.
+- The rule-owned layers of a V10 run (movement, opportunities, attention, baseline
+  responses, rule state, and the purchase-intention proxy) follow the same equations and
+  keyed draws as before, and different valid provider signals leave the rule-baseline metrics
+  exactly unchanged. Only those rule-baseline metrics could enter a matched comparison under
+  common random numbers.
+- Cognition metrics depend on the model, profile revision, effective settings, funded
+  response limit, cache state, and live nondeterminism, so two fresh runs of the same scenario
+  are not an A/A control for the cognition track and are not expected to differ by exactly
+  zero. Only replaying one saved run reproduces its cognition evidence exactly.
+- No paired-cognition protocol exists yet. `city-compare --layer response`, `city-study`, and
+  `city-report` refuse V10 runs, so no V10 paired study can be run or registered with this
+  tooling; a later protocol would have to freeze compatible signals across arms first.
+- Any presentation of V10 results states the source mode, model ID, profile revision, funded
+  response limit, coverage, provider/cache/fallback/budget-skipped counts, uncertain and
+  safety-neutralized counts, and that the cognition track is synthetic, exploratory, and not
+  a campaign effect, alongside the existing synthetic-and-exploratory disclosure.
