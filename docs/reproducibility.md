@@ -121,8 +121,9 @@ schema-v5 attention addition, and C3c adds a validated `--spatial-response` docu
 create a schema-v6 artifact with deterministic bounded response/state evidence. Older
 schema-v4 artifacts remain readable as opportunity-only evidence.
 
-The browser workbench defaults to schema-3/schema-v9; schema-2/schema-v8 and
-schema-1/schema-v7 remain compatible without changing the CLI contract. V7, V8, and V9 retain the exact
+The browser workbench defaults to schema-3/schema-v9, uses schema-4/schema-v10 for bounded AI
+cognition, and keeps schema-2/schema-v8 and
+schema-1/schema-v7 compatible without changing the CLI contract. V7, V8, and V9 retain the exact
 schema-v6 scientific receipt plus canonical `inputs/workbench.json`, which freezes the
 complete accepted draft and creative-template snapshot. Its canonical bytes must match
 `workbench_input_sha256`, and its city, settings, run ID, campaign, creative and response
@@ -160,6 +161,50 @@ uses those recorded terminal outcomes, and performs no provider call, keyring lo
 environment lookup, cache lookup, or network access. Replay never consults the current
 profile registry and never modifies the source run.
 
+### Bounded AI cognition reproducibility (schema-v10)
+
+A schema-4 run freezes its accepted draft in `inputs/workbench.json` (input schema 4), the
+complete non-secret cognition input, policies, profile snapshot, effective settings, funded
+limit, and output reservations in `inputs/cognition.json`, one terminal record per selected
+request in `outputs/cognition.jsonl`, and the outcome summary in
+`outputs/cognition-summary.json`. The dual-state `outputs/spatial-responses.jsonl`, the final
+rule and cognition states in `outputs/response-state.json`, and
+`outputs/response-summary.json` complete the evidence, and the V10 manifest binds every hash,
+byte count, and record count.
+
+Live provider signals are nondeterministic. Even at temperature 0 with a fixed seed, a local
+`qwen2.5:7b-instruct` can choose different categories for a byte-identical request, and it
+occasionally mis-echoes the request ID, which costs one schema-repair attempt (for example 11
+HTTP attempts for 10 funded requests). Fresh calls are therefore never a reproducibility
+check. Frozen schema-v10 replay is: `city-replay` regenerates mobility, opportunities,
+attention, the deterministic baselines, the selected request identities, and the reservation
+order; validates every frozen result against its exact request and the frozen policies;
+reapplies `city-cognition-influence-v1` in canonical order; regenerates the dual-state stream,
+states, summaries, and manifest receipt; and requires exact equality. It makes no provider
+call and reads no cache, profile registry, keyring, environment variable, current prompt
+constant, or network, and it never regenerates a missing result, repairs a mismatch, or
+silently neutralizes corruption. Source artifacts are byte-identical before and after replay.
+
+The core builds every request and reservation before provider work starts, and all responses
+of one agent and campaign in the same minute read one immutable pre-minute state and commit
+one atomic update, so network completion order, input permutations, and `PYTHONHASHSEED`
+cannot change a run whose terminal records are identical. A causal request ID addresses only
+causal inputs: changing a persona's name, age, occupation, background, or MBTI changes the
+workbench and run provenance hashes but not the causal request IDs, the deterministic mock
+signals, the cache identity, or V10 numeric cognition. Rules and mock runs are offline and
+reproduce exactly. Within one workspace, a validated V2 cache entry for the same causal
+request, profile revision, effective settings, and contract hashes is reused with source
+`cache` and bound to the new run's own terminal record; a terminal record itself is never
+shared across runs.
+
+The rule-baseline metrics of a V10 run are derived only from the deterministic baselines and
+rule states, so different valid provider signals leave them exactly unchanged. Canonical
+hashes detect accidental damage, isolated edits, incomplete writes, and internal rebinding;
+they are unsigned, so they do not authenticate provider output or protect against someone
+who rewrites every artifact and recomputes the whole hash chain. V10 is an unreleased artifact
+schema: runs written by earlier development builds (before its final output budget and prompt
+contract) no longer validate and must be recreated.
+
 For the run-scoped workbench inspector, one GET-only `/api/runs/{run_id}/timeline` request
 projects the frame and four bounded evidence/state documents from the immutable run
 snapshot verified when that inspector page opened. Its opaque token is process-local,
@@ -182,7 +227,8 @@ so paired variants reuse common random numbers. Records are ordered by continuou
 agent, campaign, placement and channel; IDs hash scenario/city fingerprints and that
 canonical identity. Campaign, placement, window and activity input order and
 `PYTHONHASHSEED` therefore cannot alter an evaluation. In schema-v4, schema-v5, schema-v6,
-schema-v7, schema-v8, and schema-v9 runs this same computation is also artifact replay: the frozen scenario is
+schema-v7, schema-v8, schema-v9, and schema-v10 runs this same computation is also artifact
+replay: the frozen scenario is
 re-evaluated and the canonical stream and independently derived summary must match their
 manifest-bound evidence.
 
@@ -213,7 +259,8 @@ purchase probability, sales, or a transaction.
 
 `adlife city-metrics ROOT ID` derives canonical read-only projections only after complete
 artifact verification. The default attention layer remains the exact C4a contract for
-schema-v5, schema-v6, schema-v7, schema-v8, and schema-v9: it reads opportunity and attention evidence, records
+schema-v5, schema-v6, schema-v7, schema-v8, schema-v9, and schema-v10: it reads opportunity
+and attention evidence, records
 the source schema version, and does not consume response records or final campaign state.
 Every value
 carries its exact numerator, denominator, and source paths plus
@@ -226,7 +273,11 @@ the frozen response input and notice stream before folding it. Direct rule respo
 overall/channel/campaign event receipts; complete initial/final state has overall/campaign
 receipts only. Channel state is deliberately absent because a shared nonlinear commit
 cannot be decomposed after the fact. Both projections are deterministic, uncalibrated,
-derived in memory, and never stored back into the source run.
+derived in memory, and never stored back into the source run. For schema-v10,
+`city-metrics --layer response` instead derives the separate `spatial-response-metrics-v2`
+document after regenerating the dual-state stream from the verified evidence: its rule
+baseline equals the V1 derivation over the same rule evidence, and its provider-dependent
+cognition family depends on the frozen signals, which replay reproduces exactly.
 
 `adlife city-compare ROOT CONTROL_ID TREATMENT_ID` preserves the attention layer by default
 and requires identical city, assignment, trace model, seed, duration, and population
@@ -237,7 +288,8 @@ assumptions; a different normalized placement/channel structure is
 Attention comparisons carry
 `synthetic-comparison-not-causal-or-observed-effect`; response comparisons carry their
 separate response claim scope. Both explicitly refuse causal or observed-effect
-interpretation.
+interpretation. A schema-v10 run compares on the attention layer only with another
+schema-v10 run, and the response layer refuses it.
 
 ### Repeated-seed study reproducibility
 
@@ -246,8 +298,9 @@ interpretation.
 pair is the experimental unit; the analyzer never pools agents, events, opportunities,
 notices, or campaign-state rows as independent samples. Matching assignment, mobility trace,
 and optional place-assignment hashes provide the within-pair common-random-number evidence.
-Attention studies are homogeneous all-v5, all-v6, all-v7 or all-v8; attention-and-response studies
-are homogeneous all-v6, all-v7 or all-v8.
+Attention studies are homogeneous all-v5, all-v6, all-v7, all-v8 or all-v9;
+attention-and-response studies are homogeneous all-v6, all-v7, all-v8 or all-v9. Schema-v10
+runs are refused by both scopes, and therefore by `city-report`, for now.
 
 Each metric's treatment-minus-control vector yields its mean, sample standard deviation,
 median, nullable paired standardized difference, exact sign counts, agreement, direction,
@@ -331,25 +384,33 @@ Workbench publication retains all of those v6 files as schema-v7 (input 1), sche
 (input 2), or schema-v9 (input 3) and adds canonical
 `inputs/workbench.json` plus its manifest schema/hash binding. The sidecar is written and
 verified before the final manifest becomes authoritative. V9 additionally writes and
-verifies all three cognition files before that manifest-last publication.
+verifies all three cognition files before that manifest-last publication. Schema-v10
+(input 4) writes its version-2 cognition files and dual-state response files instead of the
+v6 response layer and publishes `run.json` last under the same no-clobber contract; failure or
+cancellation before that point leaves no loadable completed run.
 
 `adlife city-replay ROOT ID` validates those inputs and regenerates the complete trace
-without changing source files; for v4 through v9 it also recomputes and compares the
-normalized opportunity stream and summary, for v5 through v9 it independently recomputes
+without changing source files; for v4 through v10 it also recomputes and compares the
+normalized opportunity stream and summary, for v5 through v10 it independently recomputes
 attention, and for v6/v7/v8/v9 it re-evaluates the response stream, final-state document,
-and summary. V7/V8/V9 also verify and reuse their immutable workbench sidecars; V9 verifies
-the frozen explanation stream without a provider. A mismatch, partial
-publication, or incompatible artifact is refused.
+and summary. V7/V8/V9/V10 also verify and reuse their immutable workbench sidecars; V9 verifies
+the frozen explanation stream without a provider, and V10 reapplies its frozen bounded
+signals to regenerate the dual-state response evidence, as described above. A mismatch,
+partial publication, or incompatible artifact is refused.
 `adlife city-view ROOT ID` performs the same load verification before
 opening the read-only mobility timeline. For schema-v4 it also presents canonical,
 persisted current-minute opportunity evidence; scrubbing or selecting an evidence record
 does not recompute, append to or mutate the source artifact. Schema-v5 additionally presents
 persisted current-minute attention evidence with the synthetic claim and 0.5 assumption.
 Schema-v6, schema-v7, schema-v8, and schema-v9 present persisted current-minute response/state-update records and
-complete final end-of-run state explicitly labeled as not state at the scrubbed minute.
-Schema-v5, schema-v6, schema-v7, schema-v8, and schema-v9 viewers derive the same attention-only, receipt-bearing
+complete final end-of-run state explicitly labeled as not state at the scrubbed minute;
+schema-v10 presents its applied responses, dual-state updates, and final rule and cognition
+states the same way.
+Schema-v5, schema-v6, schema-v7, schema-v8, schema-v9, and schema-v10 viewers derive the same
+attention-only, receipt-bearing
 spatial metrics ledger in memory; a fully prevalidated schema-v6/schema-v7/schema-v8/schema-v9 viewer also
-re-derives the separate response metrics document. Viewing, scrubbing, metrics, comparison,
+re-derives the separate response metrics document, and a schema-v10 viewer re-derives its
+version-2 document. Viewing, scrubbing, metrics, comparison,
 study analysis, and reporting never modify the saved artifact. A digest proves equality
 against that artifact, not authenticity against an owner rewriting all files. Identical
 frames are expected on a compatible implementation/runtime;

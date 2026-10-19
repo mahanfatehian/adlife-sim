@@ -2022,8 +2022,12 @@ def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
 
 
 def _section(text: str, heading: str) -> str:
+    """Return the body under ``heading`` up to the next heading of the same or higher level."""
     assert heading in text, f"section is missing: {heading}"
-    return text.split(heading, maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+    level = len(heading) - len(heading.lstrip("#"))
+    body = text.split(heading, maxsplit=1)[1]
+    following = re.search(rf"\n#{{1,{level}}} ", body)
+    return body if following is None else body[: following.start()]
 
 
 def test_investor_demo_is_the_two_part_bounded_cognition_script() -> None:
@@ -2114,6 +2118,48 @@ def test_investor_demo_is_the_two_part_bounded_cognition_script() -> None:
         "purchase count is structurally zero",
     ):
         assert superseded not in lowered, superseded
+
+
+def test_reproducibility_separates_live_v10_signals_from_frozen_offline_replay() -> None:
+    reproducibility = _read("docs", "reproducibility.md")
+    section = _section(reproducibility, "### Bounded AI cognition reproducibility (schema-v10)")
+    for artifact in (
+        "inputs/workbench.json",
+        "inputs/cognition.json",
+        "outputs/cognition.jsonl",
+        "outputs/cognition-summary.json",
+        "outputs/spatial-responses.jsonl",
+        "outputs/response-state.json",
+        "outputs/response-summary.json",
+    ):
+        assert artifact in section, artifact
+    _assert_terms_share_paragraph(
+        section,
+        "live provider signals are nondeterministic",
+        "temperature 0 with a fixed seed",
+        "never a reproducibility check",
+        "frozen schema-v10 replay",
+        "city-cognition-influence-v1",
+        "makes no provider call",
+        "byte-identical before and after replay",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "completion order",
+        "pythonhashseed",
+        "name, age, occupation, background, or mbti",
+        "causal request ids",
+        "source `cache`",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "rule-baseline metrics",
+        "exactly unchanged",
+        "unsigned",
+        "recomputes the whole hash chain",
+        "earlier development builds",
+    )
+    _assert_terms_share_paragraph(reproducibility, "all-v9", "schema-v10", "refused", "city-report")
 
 
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
