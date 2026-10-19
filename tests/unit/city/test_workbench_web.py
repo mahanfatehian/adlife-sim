@@ -3506,6 +3506,70 @@ def test_validation_maps_unknown_keys_to_constant_field_without_echo(
     assert _snapshot(root) == ()
 
 
+def _schema4_provider_draft() -> dict[str, Any]:
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    payload = draft_v4_data(mode="local", limit=20)
+    payload["settings"]["seed"] = str(payload["settings"]["seed"])
+    payload["cognition"]["provider_profile_id"] = "local-ollama"
+    payload["cognition"]["provider_revision_sha256"] = "a" * 64
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("effect_scope", "explanation-only", "This field is invalid."),
+        ("mode", "cloud-provider", "This field is invalid."),
+        ("provider_profile_id", "Not A Profile", "This field is invalid."),
+        ("provider_revision_sha256", "not-a-revision", "This field is invalid."),
+        ("funded_response_limit", 15, "This field is invalid."),
+        ("aggregate_output_token_ceiling", 1000, "Unknown field."),
+    ],
+)
+def test_schema4_cognition_field_errors_name_their_exact_control_path(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    # Fixed draft field names are echoed so the browser focuses the matching control;
+    # submitted values never are.
+    payload = _schema4_provider_draft()
+    payload["cognition"][field] = value
+    client, root = _client(tmp_path)
+
+    with client:
+        accepted = _post(client, _schema4_provider_draft())
+        before = _snapshot(root)
+        response = _post(client, payload)
+
+    assert accepted.status_code == 200
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid-fields"
+    assert response.json()["error"]["fields"] == {f"cognition.{field}": message}
+    if isinstance(value, str):
+        assert value not in response.text
+    assert _snapshot(root) == before
+
+
+def test_cognition_section_and_schema3_budget_errors_keep_their_control_paths(
+    tmp_path: Path,
+) -> None:
+    missing = _schema4_provider_draft()
+    missing.pop("cognition")
+    legacy = draft_v3_data(mode="local")
+    legacy["settings"]["seed"] = str(legacy["settings"]["seed"])
+    legacy["cognition"]["aggregate_output_token_ceiling"] = -1
+    client, _ = _client(tmp_path)
+
+    with client:
+        responses = (_post(client, missing), _post(client, legacy))
+
+    assert [response.status_code for response in responses] == [422, 422]
+    assert responses[0].json()["error"]["fields"] == {"cognition": "This field is required."}
+    assert responses[1].json()["error"]["fields"] == {
+        "cognition.aggregate_output_token_ceiling": "This field is invalid."
+    }
+
+
 @pytest.mark.parametrize("activities", [[{}], [[]]])
 def test_validation_maps_malformed_activity_members_to_422(
     tmp_path: Path,
