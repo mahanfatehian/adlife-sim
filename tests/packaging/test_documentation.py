@@ -2200,6 +2200,110 @@ def test_investor_demo_is_the_two_part_bounded_cognition_script() -> None:
         assert superseded not in lowered, superseded
 
 
+# Labels and messages the live demo tells the presenter to look for. Each must still be
+# shipped verbatim, so a copy change in the product fails here instead of on stage.
+_DEMO_INTERFACE_COPY = (
+    "Bounded AI cognition",
+    "Local compatible model",
+    "Mock — reproducible demo",
+    "Rules — offline",
+    "Rules engine (offline)",
+    "Model assistance",
+    "Configure campaign",
+    "Review run",
+    "Create an immutable profile",
+    "Save profile revision",
+    "Exact profile revision",
+    "Available on server",
+    "per attempt for signals (profile allows",
+    "API credential",
+    "Check compatibility",
+    "Checking compatibility… a local model that is still loading may take a minute or more.",
+    "Bounded-signal contract confirmed.",
+    "Not confirmed: the model did not answer within the check's time limit.",
+    "Check bounded-signal compatibility for this profile revision to enable the run.",
+    "Funded responses",
+    "selected responses go to the model; the rest are recorded as budget-skipped neutral signals.",
+    "Input tokens and vendor charges are not included; this is a reservation, not a spending "
+    "limit.",
+    "all selected, resolved offline",
+    "resolved offline · no reservation",
+    "External AI selects a small set of synthetic appraisal categories. AdLife applies a fixed "
+    "mapping. These categories may change only the displayed cognition state. They cannot "
+    "move agents, create or select events, change purchase intention, or make purchases.",
+    "Validate study",
+    "Validated. Review the immutable binding receipt before starting.",
+    "Bounded-signal check passed for this revision",
+    "Workbench schema 4 → run V10",
+    "Who decides what",
+    "Rules: an uncalibrated proxy score; purchases are not modeled",
+    "with deterministic neutral fallback",
+    "Live signals are not guaranteed reproducible",
+    "Frozen and offline",
+    "Start bounded cognition run",
+    "Simulation status",
+    "Planning cognition",
+    "Requesting cognition",
+    "Applying cognition",
+    "The run is saved and ready to view.",
+    "Inspect run",
+    "Fictional starting point",
+    "Add persona",
+    "Bundled fictional fixture",
+    "Verified pack",
+    "City timeline",
+    "Modeled attention",
+    "Responses & bounded cognition",
+    "Final campaign state",
+    "Response metrics",
+    "Bounded AI cognition signals",
+    "Saved signal timeline",
+    "All selected requests",
+    "Uncertain or safety neutralized",
+    "Signal applied",
+    "Neutral · budget skipped",
+    "Set aside · safety flag",
+    "Set aside · uncertain answer",
+    "Neutral vector applied to",
+    "RULE TRACK · RULE-OWNED",
+    "COGNITION TRACK · SYNTHETIC",
+    "VS RULE TRACK",
+    "IDENTICAL TO THE RULE TRACK",
+    "Bounded cognition inspector assets are unavailable",
+)
+_DEMO_COMMAND_COPY = (
+    ("doctor.py", "checks passed"),
+    ("city_workbench.py", "city workbench: http://127.0.0.1:"),
+    ("city_workbench.py", "workbench workspace is unsafe or unavailable"),
+    ("city_metrics.py", "synthetic bounded-cognition metrics, not observed outcomes"),
+    ("city_metrics.py", "Rule baseline (rule-owned)"),
+    ("city_metrics.py", "Provider-dependent cognition (exploratory, not a campaign effect)"),
+    ("city_replay.py", "city replay identical:"),
+    ("city_replay.py", "purchase intention remains rule-owned"),
+    ("city_replay.py", "frozen offline replay"),
+)
+
+
+def test_live_demo_quotes_the_shipped_workbench_inspector_and_cli_copy() -> None:
+    from importlib import resources
+
+    demo = _squash(_read("docs", "investor-demo.md"))
+    static = resources.files("adlife.city").joinpath("static")
+    shipped = "\n".join(
+        entry.read_text(encoding="utf-8")
+        for entry in static.iterdir()
+        if entry.name.endswith((".html", ".js"))
+    )
+    for fragment in _DEMO_INTERFACE_COPY:
+        assert _squash(fragment) in demo, f"the demo no longer quotes: {fragment}"
+        assert fragment in shipped, f"the demo quotes copy the product no longer ships: {fragment}"
+    commands = ROOT / "src" / "adlife" / "cli" / "commands"
+    for module, fragment in _DEMO_COMMAND_COPY:
+        assert _squash(fragment) in demo, f"the demo no longer quotes: {fragment}"
+        source = (commands / module).read_text(encoding="utf-8")
+        assert fragment in source, f"{module} no longer prints: {fragment}"
+
+
 def test_reproducibility_separates_live_v10_signals_from_frozen_offline_replay() -> None:
     reproducibility = _read("docs", "reproducibility.md")
     section = _section(reproducibility, "### Bounded AI cognition reproducibility (schema-v10)")
