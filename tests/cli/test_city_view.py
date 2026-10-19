@@ -50,6 +50,14 @@ def test_city_view_dispatches_v9_metrics_before_loopback_bind(
     assert captured[0]["run_schema_version"] == 9
     assert captured[0]["spatial_metrics"] is not None
     assert captured[0]["spatial_response_metrics"] is not None
+    # V1-V9 viewers keep their exact surface: no bounded-cognition evidence or views.
+    assert not {
+        "cognition_input",
+        "cognition_evaluation",
+        "workbench_input_view",
+        "cognition_summary_view",
+        "cognition_records_view",
+    } & set(captured[0])
     assert before == {
         path.relative_to(stored.directory): path.read_bytes()
         for path in stored.directory.rglob("*")
@@ -511,3 +519,143 @@ def test_city_view_refuses_corrupt_v6_response_before_server_bind(
         for path in stored.directory.rglob("*")
         if path.is_file()
     }
+
+
+def _v10_artifacts(directory: Path) -> dict[Path, bytes]:
+    return {
+        path.relative_to(directory): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["mock", "local"])
+async def test_city_view_serves_exact_standalone_v10_projections_offline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    import keyring
+
+    from adlife.adapters.cognition.city_cache_v2 import CityCognitionCacheV2
+    from adlife.city.run_store import CityRunStore
+    from adlife.city.workbench_cognition_views import (
+        build_workbench_cognition_records_view,
+        build_workbench_cognition_summary_view,
+        build_workbench_run_input_view_v4,
+    )
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    _, _, directory = _saved_v10(tmp_path, mode=mode, run_id="standalone-v10")
+    stored = CityRunStore(tmp_path).load("standalone-v10")
+    before = _v10_artifacts(directory)
+
+    def forbidden(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the saved-run viewer attempted provider, cache, or keyring I/O")
+
+    for name in ("get_password", "set_password", "delete_password"):
+        monkeypatch.setattr(keyring, name, forbidden)
+    for name in ("get", "put"):
+        monkeypatch.setattr(CityCognitionCacheV2, name, forbidden, raising=False)
+    calls: list[tuple[FastAPI, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "uvicorn.run", lambda application, **kwargs: calls.append((application, kwargs))
+    )
+
+    result = CliRunner().invoke(app, ["city-view", str(tmp_path), "standalone-v10"])
+
+    assert result.exit_code == 0, result.output
+    application, options = calls[0]
+    assert (options["host"], options["access_log"]) == ("127.0.0.1", False)
+    minute = next(
+        record.model_minute
+        for record in stored.response_evaluation.records
+        if record.event_type == "spatial.dual-state-updated"
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application), base_url="http://127.0.0.1"
+    ) as web:
+        meta = (await web.get("/api/meta")).json()
+        saved_input = (await web.get("/api/workbench-input")).json()
+        summary = (await web.get("/api/cognition-summary")).json()
+        records = (await web.get("/api/cognition-records")).json()
+        timeline = (
+            await web.get(f"/api/timeline?minute={minute}&agent_id=person-001&limit=5")
+        ).json()
+        page = (await web.get(f"/api/response-events?minute={minute}&limit=5")).json()
+        workbench_only = [
+            await web.get(route) for route in ("/api/workbench", "/api/providers", "/api/runs")
+        ]
+
+    assert meta["run_schema_version"] == 10
+    assert meta["bounded_cognition"] is True
+    assert meta["workbench_input_sha256"] == stored.manifest.workbench_input_sha256
+    assert saved_input == build_workbench_run_input_view_v4(stored).model_dump(mode="json")
+    assert summary == build_workbench_cognition_summary_view(stored).model_dump(mode="json")
+    assert records == build_workbench_cognition_records_view(stored).model_dump(mode="json")
+    assert summary["mode"] == mode
+    assert timeline["response_page"] == page
+    assert page["schema_version"] == 2 and page["total"] >= 2
+    assert all(response.status_code == 404 for response in workbench_only)
+    assert "Traceback" not in result.output
+    assert _v10_artifacts(directory) == before
+
+
+@pytest.mark.parametrize(
+    "artifact", ["outputs/cognition.jsonl", "inputs/workbench.json", "outputs/response-state.json"]
+)
+def test_city_view_refuses_corrupt_v10_evidence_before_server_bind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact: str,
+) -> None:
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    _, _, directory = _saved_v10(tmp_path, mode="mock", run_id="corrupt-v10")
+    path = directory / artifact
+    path.write_bytes(path.read_bytes() + b" ")
+    tampered = _v10_artifacts(directory)
+    calls: list[object] = []
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: calls.append(args))
+
+    result = CliRunner().invoke(app, ["city-view", str(tmp_path), "corrupt-v10"])
+    machine = CliRunner().invoke(
+        app, ["--format", "json", "city-view", str(tmp_path), "corrupt-v10"]
+    )
+
+    assert result.exit_code == 4
+    assert machine.exit_code == 2
+    assert calls == []
+    assert "http://127.0.0.1" not in result.output
+    assert "Traceback" not in result.output + machine.output
+    assert str(tmp_path) not in result.output
+    assert _v10_artifacts(directory) == tampered
+
+
+def test_city_view_refuses_v10_runs_with_mismatched_in_memory_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adlife.city.run_store import CityRunStore
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    _saved_v10(tmp_path, mode="mock", run_id="mixed-v10")
+    _saved_v10(tmp_path, mode="rules", run_id="donor-v10")
+    store = CityRunStore(tmp_path)
+    mixed = replace(
+        store.load("mixed-v10"),
+        cognition_evaluation=store.load("donor-v10").cognition_evaluation,
+    )
+    monkeypatch.setattr(
+        "adlife.cli.commands.city_view.CityRunStore.load",
+        lambda _store, _run_id: mixed,
+    )
+    calls: list[object] = []
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: calls.append(args))
+
+    result = CliRunner().invoke(app, ["city-view", str(tmp_path), "mixed-v10"])
+
+    assert result.exit_code == 4
+    assert calls == []
+    assert "Traceback" not in result.output

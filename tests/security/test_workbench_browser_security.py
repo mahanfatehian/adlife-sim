@@ -1234,3 +1234,151 @@ def test_read_only_browser_and_api_inspection_preserve_every_source_artifact_byt
     assert statuses == [[path, expected_statuses.get(path, 200)] for path in paths]
     assert external_requests == []
     assert web_helpers._snapshot(root) == before
+
+
+_HOSTILE_NAME = "مینا <img src=x onerror=alert(1)>"
+_HOSTILE_BACKGROUND = "زندگی خیالی </script><script>alert(1)</script>"
+
+
+def _hostile_persona(document: dict[str, Any]) -> None:
+    persona = document["population"]["personas"][0]
+    persona["display_name"] = _HOSTILE_NAME
+    persona["background"] = _HOSTILE_BACKGROUND
+
+
+def _hostile_v10_workspace(root: Path, mode: str = "mock") -> Path:
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    workspace = root / "workspace"
+    prepare_workbench_workspace(workspace)
+    _saved_v10(workspace, mode=mode, run_id="hostile-v10", mutation=_hostile_persona)
+    return workspace
+
+
+@pytest.mark.parametrize("mode", ["mock", "local"])
+def test_v10_saved_run_api_keeps_hostile_text_as_inert_json_data(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    root = _hostile_v10_workspace(tmp_path, mode)
+    application = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="hostile-v10-token",
+    )
+    with TestClient(application, base_url="http://127.0.0.1:8765") as client:
+        shell = client.get("/runs/hostile-v10")
+        token = re.search(r'adlife-view-token" content="([A-Za-z0-9_-]{43})"', shell.text)
+        assert token is not None
+        headers = {"X-AdLife-View-Token": token.group(1)}
+        documents = {
+            suffix: client.get(f"/api/runs/hostile-v10/{suffix}", headers=headers)
+            for suffix in (
+                "meta",
+                "workbench-input",
+                "cognition-summary",
+                "cognition-records",
+                "response-events?minute=0",
+                "response-state",
+                "spatial-response-metrics",
+            )
+        }
+
+    assert shell.status_code == 200
+    assert "script-src 'self'" in shell.headers["content-security-policy"]
+    # The inspector shell embeds no saved evidence; hostile text arrives only as JSON.
+    for marker in ("مینا", "<img src=x", "alert(1)"):
+        assert marker not in shell.text
+    for suffix, response in documents.items():
+        assert response.status_code == 200, suffix
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.headers["x-content-type-options"] == "nosniff"
+    frozen = documents["workbench-input"]
+    assert frozen.headers["content-security-policy"].startswith("default-src 'none'")
+    personas = frozen.json()["population"]["personas"]
+    assert (personas[0]["display_name"], personas[0]["background"]) == (
+        _HOSTILE_NAME,
+        _HOSTILE_BACKGROUND,
+    )
+    # Descriptive persona text has no causal role: no cognition or response document
+    # carries it, and no projection exposes provider transport or local paths.
+    for suffix, response in documents.items():
+        if suffix != "workbench-input":
+            assert "مینا" not in response.text and "alert(1)" not in response.text, suffix
+        assert str(root) not in response.text
+        assert "11434" not in response.text and "credential_slot" not in response.text
+        assert re.search(r"(?i)authorization|bearer|api[_-]?key", response.text) is None
+
+
+def test_v10_read_only_browser_and_api_inspection_preserve_every_source_artifact_byte(
+    tmp_path: Path,
+) -> None:
+    browser_path = _installed_browser()
+    root = _hostile_v10_workspace(tmp_path)
+    application = create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token="read-only-v10-token",
+    )
+    before = web_helpers._snapshot(root)
+    prefix = "/api/runs/hostile-v10"
+    paths = [
+        f"{prefix}/{suffix}"
+        for suffix in (
+            "meta",
+            "city",
+            "agents",
+            "opportunity-summary",
+            "opportunities?minute=0",
+            "attention-summary",
+            "attention-events?minute=0",
+            "spatial-metrics",
+            "response-summary",
+            "response-events?minute=0",
+            "response-state",
+            "spatial-response-metrics",
+            "frame?minute=0",
+            "timeline?minute=0&agent_id=person-001",
+            "workbench-input",
+            "cognition-summary",
+            "cognition-records",
+        )
+    ]
+
+    with _serve(application) as base_url:
+        playwright, browser, page = _open_page(browser_path, base_url)
+        requests: list[tuple[str, str]] = []
+        dialogs: list[str] = []
+        try:
+            page.on("request", lambda request: requests.append((request.method, request.url)))
+            page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+            page.goto(f"{base_url}/runs/hostile-v10", wait_until="networkidle")
+            statuses = page.evaluate(
+                """async (paths) => {
+                  const token = document.querySelector('meta[name="adlife-view-token"]').content;
+                  return Promise.all(paths.map(async (path) => {
+                    const response = await fetch(path, {
+                      cache: "no-store",
+                      credentials: "same-origin",
+                      redirect: "error",
+                      headers: {"X-AdLife-View-Token": token},
+                    });
+                    await response.arrayBuffer();
+                    return [path, response.status];
+                  }));
+                }""",
+                paths,
+            )
+            stored_keys = page.evaluate(
+                "() => [window.localStorage.length, window.sessionStorage.length]"
+            )
+        finally:
+            browser.close()
+            playwright.stop()
+
+    assert statuses == [[path, 200] for path in paths]
+    assert all(method == "GET" and url.startswith(base_url) for method, url in requests)
+    assert not any("hostile" in url and "alert" in url for _, url in requests)
+    assert stored_keys == [0, 0]
+    assert dialogs == []
+    assert web_helpers._snapshot(root) == before

@@ -423,6 +423,21 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
             "oauth": False,
             "cognition_modes": ["rules", "mock", "local", "remote"],
             "response_modes": ["deterministic-rules"],
+            "cognition_effect_scopes": ["explanation-only", "bounded-signals-v1"],
+            "bounded_cognition": {
+                "effect_scope": "bounded-signals-v1",
+                "workbench_schema_version": 4,
+                "run_schema_version": 10,
+                "modes": ["rules", "mock", "local", "remote"],
+                "funded_response_limits": [10, 20, 40, 60],
+                "default_provider_funded_response_limit": 20,
+                "offline_funded_response_limit": 60,
+                "selected_requests_per_run": 60,
+                "reserved_output_tokens_per_request": 512,
+                "max_output_tokens_per_attempt": 128,
+                "max_http_attempts_per_request": 4,
+                "compatibility_check_required_modes": ["local", "remote"],
+            },
         },
         "active_job": None,
         "limits": {
@@ -443,6 +458,54 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
     }
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_bounded_capabilities_follow_runtime_models_and_expose_no_contract_authority(
+    tmp_path: Path,
+) -> None:
+    from typing import get_args
+
+    from adlife.city.workbench_input import (
+        NormalizedWorkbenchCognitionV4,
+        WorkbenchCognitionDraftV4,
+    )
+
+    client, _ = _client(tmp_path)
+    with client:
+        bounded = client.get("/api/workbench").json()["capabilities"]["bounded_cognition"]
+
+    assert bounded["modes"] == list(
+        get_args(WorkbenchCognitionDraftV4.model_fields["mode"].annotation)
+    )
+    assert bounded["funded_response_limits"] == list(
+        get_args(WorkbenchCognitionDraftV4.model_fields["funded_response_limit"].annotation)
+    )
+    provider = WorkbenchCognitionDraftV4.model_validate(
+        {
+            "effect_scope": "bounded-signals-v1",
+            "mode": "remote",
+            "provider_profile_id": "any-profile",
+            "provider_revision_sha256": "a" * 64,
+        }
+    )
+    assert bounded["default_provider_funded_response_limit"] == provider.funded_response_limit
+    fields = NormalizedWorkbenchCognitionV4.model_fields
+    assert (
+        bounded["reserved_output_tokens_per_request"]
+        == get_args(fields["reservation_tokens_per_request"].annotation)[0]
+    )
+    assert bounded["max_http_attempts_per_request"] == sum(
+        get_args(fields[name].annotation)[0]
+        for name in ("initial_attempts", "transient_retries", "repair_attempts")
+    )
+    # Browser options only: no policy hash, ceiling, or contract document to echo back.
+    encoded = json.dumps(bounded)
+    assert re.search(r"[0-9a-f]{64}", encoded) is None
+    assert not {
+        "aggregate_output_token_ceiling",
+        "causal_contract",
+        "prompt_contract_sha256",
+    } & set(bounded)
 
 
 def _local_provider_payload() -> dict[str, object]:
@@ -3564,7 +3627,6 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
     assert "<summary>Data &amp; integrity</summary>" in shell.text
     assert 'id="completed-runs"' in shell.text
     assert "not observed behavior, real sales" in shell.text
-    assert "never changes movement, ad response, state, or metrics" in shell.text
     assert "CAUSAL THREAD" not in shell.text
     assert "Compose bounded campaign assumptions" not in shell.text
     for control in ("<input", "<select", "<button"):
@@ -3601,3 +3663,265 @@ def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path
         assert response.headers["x-content-type-options"] == "nosniff"
         assert "access-control-allow-origin" not in response.headers
         assert "server" not in response.headers
+
+
+def _saved_v10_workspace(root: Path, *runs: tuple[str, str]) -> Path:
+    """Publish verified V10 runs through the real pure pipeline into one workspace."""
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+    from tests.unit.city.test_workbench_cognition_views import dense_phone
+
+    workspace = root / "workspace"
+    prepare_workbench_workspace(workspace)
+    for run_id, mode in runs:
+        _saved_v10(
+            workspace,
+            mode=mode,
+            run_id=run_id,
+            agents=4 if mode == "mock" else 3,
+            mutation=dense_phone if mode == "mock" else None,
+        )
+    return workspace
+
+
+@pytest.fixture(scope="module")
+def v10_workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _saved_v10_workspace(
+        tmp_path_factory.mktemp("v10-workbench"),
+        ("inspect-mock", "mock"),
+        ("inspect-local", "local"),
+    )
+
+
+def _view_token(page: Any) -> dict[str, str]:
+    match = re.search(r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">', page.text)
+    assert match is not None
+    return {"X-AdLife-View-Token": match.group(1)}
+
+
+V10_SUFFIXES = (
+    "meta",
+    "city",
+    "agents",
+    "opportunity-summary",
+    "attention-summary",
+    "spatial-metrics",
+    "spatial-response-metrics",
+    "response-summary",
+    "response-state?agent_id=person-001&limit=2",
+    "workbench-input",
+    "cognition-summary",
+    "cognition-records",
+)
+
+
+@pytest.mark.parametrize("run_id", ["inspect-mock", "inspect-local"])
+def test_v10_inspector_reads_match_the_standalone_viewer_exactly(
+    v10_workspace: Path,
+    run_id: str,
+) -> None:
+    from tests.unit.city.test_city_web import _v10_view_arguments
+
+    stored = CityRunStore(v10_workspace).load(run_id)
+    before = _artifact_snapshot(v10_workspace)
+    standalone = create_city_app(stored.mobility, **_v10_view_arguments(stored))
+    workbench = _module().create_city_workbench_app(
+        prepare_workbench_workspace(v10_workspace),
+        csrf_token=TOKEN,
+    )
+    minute = next(
+        record.model_minute
+        for record in stored.response_evaluation.records
+        if record.event_type == "spatial.dual-state-updated"
+    )
+    timeline = f"timeline?minute={minute}&agent_id=person-001&response_offset=0&limit=3"
+    suffixes = (*V10_SUFFIXES, f"response-events?minute={minute}&limit=2", timeline)
+
+    with (
+        TestClient(workbench, base_url=ORIGIN) as scoped,
+        TestClient(standalone, base_url=ORIGIN) as single,
+    ):
+        page = scoped.get(f"/runs/{run_id}")
+        assert page.status_code == 200
+        assert f'content="/api/runs/{run_id}"' in page.text
+        headers = _view_token(page)
+        for suffix in suffixes:
+            expected = single.get(f"/api/{suffix}")
+            assert expected.status_code == 200, suffix
+            # Pinned reads cover every route; fresh verification covers each family.
+            fresh = suffix in {"meta", "cognition-summary", "workbench-input", timeline}
+            for request_headers in (headers, {}) if fresh else (headers,):
+                actual = scoped.get(f"/api/runs/{run_id}/{suffix}", headers=request_headers)
+                assert actual.status_code == 200, suffix
+                assert actual.json() == expected.json(), suffix
+        meta = scoped.get(f"/api/runs/{run_id}/meta", headers=headers).json()
+
+    assert meta["run_schema_version"] == 10
+    assert meta["bounded_cognition"] is True
+    assert meta["cognition_effect_scope"] == "bounded-signals-v1"
+    assert meta["response_model_id"] == "spatial-response-v2"
+    assert meta["workbench_input_sha256"] == stored.manifest.workbench_input_sha256
+    assert _artifact_snapshot(v10_workspace) == before
+
+
+def test_v10_snapshot_pins_one_verified_load_and_reload_reverifies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _saved_v10_workspace(tmp_path, ("pinned-v10", "mock"))
+    module = _module()
+    original = module.WorkbenchRunRepository.load
+    loaded: list[str] = []
+
+    def counted_load(repository: object, candidate: str):
+        loaded.append(candidate)
+        return original(repository, candidate)
+
+    app = module.create_city_workbench_app(prepare_workbench_workspace(root), csrf_token=TOKEN)
+    with TestClient(app, base_url=ORIGIN) as client:
+        page = client.get("/runs/pinned-v10")
+        headers = _view_token(page)
+        monkeypatch.setattr(module.WorkbenchRunRepository, "load", counted_load)
+        first = {
+            suffix: client.get(f"/api/runs/pinned-v10/{suffix}", headers=headers)
+            for suffix in V10_SUFFIXES
+        }
+        assert loaded == []
+        # The preferred timeline projection verifies a tokenless run exactly once.
+        timeline = client.get(
+            "/api/runs/pinned-v10/timeline",
+            params={"minute": 480, "agent_id": "person-001", "limit": 1},
+        )
+        assert timeline.status_code == 200 and loaded == ["pinned-v10"]
+        assert timeline.json()["response_page"]["schema_version"] == 2
+        artifact = root / "city-runs" / "pinned-v10" / "outputs" / "cognition.jsonl"
+        artifact.write_bytes(artifact.read_bytes() + b" ")
+        pinned = {
+            suffix: client.get(f"/api/runs/pinned-v10/{suffix}", headers=headers)
+            for suffix in V10_SUFFIXES
+        }
+        fresh = client.get("/api/runs/pinned-v10/cognition-summary")
+        reload = client.get("/runs/pinned-v10")
+
+    assert all(response.status_code == 200 for response in first.values())
+    assert {suffix: response.content for suffix, response in pinned.items()} == {
+        suffix: response.content for suffix, response in first.items()
+    }
+    assert fresh.status_code == reload.status_code == 409
+    assert fresh.json()["error"]["code"] == "run-unavailable"
+    assert loaded == ["pinned-v10", "pinned-v10", "pinned-v10"]
+    assert str(root) not in "".join(response.text for response in first.values())
+
+
+def test_v10_tokens_stay_bound_to_their_run_under_interleaved_requests(
+    v10_workspace: Path,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = CityRunStore(v10_workspace)
+    runs = {run_id: store.load(run_id) for run_id in ("inspect-mock", "inspect-local")}
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(v10_workspace),
+        csrf_token=TOKEN,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        tokens = {run_id: _view_token(client.get(f"/runs/{run_id}")) for run_id in runs}
+        stale = client.get("/api/runs/inspect-local/meta", headers=tokens["inspect-mock"])
+        requests = [
+            (run_id, minute)
+            for minute in (0, 480, 600, 1500, 2000)
+            for run_id in runs
+            for _ in range(2)
+        ]
+
+        def fetch(request: tuple[str, int]) -> tuple[str, int, dict[str, Any], dict[str, Any]]:
+            run_id, minute = request
+            timeline = client.get(
+                f"/api/runs/{run_id}/timeline",
+                params={"minute": minute, "agent_id": "person-001", "limit": 100},
+                headers=tokens[run_id],
+            )
+            records = client.get(f"/api/runs/{run_id}/cognition-records", headers=tokens[run_id])
+            assert timeline.status_code == records.status_code == 200
+            return run_id, minute, timeline.json(), records.json()
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(fetch, requests))
+
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "run-unavailable"
+    for run_id, minute, timeline, records in results:
+        stored = runs[run_id]
+        expected_input = stored.cognition_input.fingerprint
+        assert timeline["minute"] == timeline["response_page"]["minute"] == minute
+        assert records["run_id"] == run_id
+        assert records["cognition_input_sha256"] == expected_input
+        assert all(
+            item["cognition_input_sha256"] == expected_input
+            for item in timeline["response_page"]["items"]
+        )
+        assert timeline["response_state_page"]["cognition_input_sha256"] == expected_input
+
+
+def test_v10_reads_never_touch_providers_cache_keyring_or_writers(
+    v10_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import keyring
+
+    from adlife.adapters.cognition.city_cache_v2 import CityCognitionCacheV2
+    from adlife.city import run_store
+
+    def forbidden(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("a read-only V10 projection attempted a side effect")
+
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(v10_workspace),
+        csrf_token=TOKEN,
+        provider_factory=forbidden,
+        provider_factory_v2=forbidden,
+    )
+    before = _artifact_snapshot(v10_workspace)
+    for name in ("get_password", "set_password", "delete_password"):
+        monkeypatch.setattr(keyring, name, forbidden)
+    for name in ("get", "put"):
+        monkeypatch.setattr(CityCognitionCacheV2, name, forbidden, raising=False)
+    monkeypatch.setattr(run_store.CityRunStore, "save", forbidden)
+    monkeypatch.setattr(Path, "write_bytes", forbidden)
+    monkeypatch.setattr(Path, "write_text", forbidden)
+    monkeypatch.setattr(os, "replace", forbidden)
+    with TestClient(app, base_url=ORIGIN) as client:
+        for run_id in ("inspect-mock", "inspect-local"):
+            page = client.get(f"/runs/{run_id}")
+            assert page.status_code == 200
+            headers = _view_token(page)
+            for suffix in (*V10_SUFFIXES, "timeline?minute=480&agent_id=person-001"):
+                response = client.get(f"/api/runs/{run_id}/{suffix}", headers=headers)
+                assert response.status_code == 200, suffix
+            for suffix in ("meta", "cognition-records", "workbench-input"):
+                assert client.get(f"/api/runs/{run_id}/{suffix}").status_code == 200, suffix
+    assert _artifact_snapshot(v10_workspace) == before
+
+
+def test_v10_workbench_input_and_cognition_routes_refuse_tampering_without_leaks(
+    tmp_path: Path,
+) -> None:
+    root = _saved_v10_workspace(tmp_path, ("tampered-v10", "mock"))
+    app = _module().create_city_workbench_app(prepare_workbench_workspace(root), csrf_token=TOKEN)
+    sidecar = root / "city-runs" / "tampered-v10" / "inputs" / "workbench.json"
+    with TestClient(app, base_url=ORIGIN) as client:
+        frozen = client.get("/api/runs/tampered-v10/workbench-input")
+        assert frozen.status_code == 200
+        assert frozen.json()["run_schema_version"] == 10
+        assert frozen.json()["workbench_input_schema_version"] == 4
+        assert frozen.json()["cognition"]["effect_scope"] == "bounded-signals-v1"
+        assert frozen.headers["content-security-policy"].startswith("default-src 'none'")
+        sidecar.write_bytes(sidecar.read_bytes() + b" ")
+        refused = [
+            client.get(f"/api/runs/tampered-v10/{suffix}")
+            for suffix in ("workbench-input", "cognition-summary", "cognition-records", "meta")
+        ]
+        page = client.get("/runs/tampered-v10")
+
+    assert all(response.status_code == 409 for response in (*refused, page))
+    assert all(response.json()["error"]["code"] == "run-unavailable" for response in refused)
+    assert all(str(root) not in response.text for response in (*refused, page))

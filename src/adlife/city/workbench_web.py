@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import html
 import re
 from collections import OrderedDict
@@ -10,12 +11,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib.resources import files
 from threading import RLock
-from typing import Any
+from typing import Any, Literal, get_args, get_origin
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -74,7 +75,17 @@ from adlife.city.workbench_city_registry import (
     InvalidCityPackUpload,
     MalformedCityPackUpload,
 )
+from adlife.city.workbench_cognition_views import (
+    build_saved_workbench_run_input_view,
+    build_workbench_cognition_records_view,
+    build_workbench_cognition_summary_view,
+)
 from adlife.city.workbench_creatives import load_creative_template_catalog
+from adlife.city.workbench_input import (
+    NormalizedWorkbenchCognitionV4,
+    WorkbenchCognitionDraftV4,
+    WorkbenchRunDraftV4,
+)
 from adlife.city.workbench_jobs import (
     CityJobManager,
     WorkbenchJobBusy,
@@ -116,7 +127,6 @@ from adlife.city.workbench_transport import (
     WorkbenchDraftTransportError,
     build_workbench_city_catalog_row,
     build_workbench_city_detail,
-    build_workbench_run_input_view,
     parse_workbench_credential_request,
     parse_workbench_http_draft,
 )
@@ -130,8 +140,14 @@ from adlife.city.workbench_workspace import (
     WorkbenchWorkspace,
     verify_workbench_workspace,
 )
-from adlife.core.domain.city_cognition import CityCognitionEvaluationV1, CityCognitionInputV1
-from adlife.core.domain.city_run import CityRunManifestV7, CityRunManifestV8, CityRunManifestV9
+from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
+from adlife.core.domain.city_cognition_v2 import CityCognitionEvaluationV2, CityCognitionInputV2
+from adlife.core.domain.city_run import (
+    CityRunManifestV7,
+    CityRunManifestV8,
+    CityRunManifestV9,
+    CityRunManifestV10,
+)
 from adlife.core.ports.run_store import (
     DuplicateRun,
     RunNotFound,
@@ -139,7 +155,6 @@ from adlife.core.ports.run_store import (
     UnsafeRunLocation,
     validate_run_id,
 )
-from adlife.core.simulation.spatial_response import SpatialResponseEvaluation
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _ASSET_LIMIT_BYTES = 262_144
@@ -448,6 +463,70 @@ def _require_job_id(job_id: str) -> str:
     return job_id
 
 
+def _literal_values(model: type[BaseModel], field: str) -> tuple[Any, ...]:
+    annotation = model.model_fields[field].annotation
+    if get_origin(annotation) is not Literal:
+        raise RuntimeError("workbench capability source is not a closed literal")
+    return get_args(annotation)
+
+
+def _single_literal(model: type[BaseModel], field: str) -> Any:
+    values = _literal_values(model, field)
+    if len(values) != 1:
+        raise RuntimeError("workbench capability source is not one exact literal")
+    return values[0]
+
+
+def _bounded_cognition_capabilities() -> dict[str, object]:
+    """Derive browser-visible schema-4 options from the frozen runtime models.
+
+    Only selectable options and disclosure ceilings are exposed; policy documents,
+    hashes, and transport ceilings stay server-derived and are never submitted.
+    """
+    draft = WorkbenchCognitionDraftV4
+    frozen = NormalizedWorkbenchCognitionV4
+    effect_scope = _single_literal(draft, "effect_scope")
+    modes = _literal_values(draft, "mode")
+    provider_modes = _literal_values(CityCognitionProviderProfileSnapshotV1, "mode")
+
+    def materialized_limit(mode: str) -> int:
+        # The draft model owns the server-side default for an omitted funded limit.
+        provider = mode in provider_modes
+        selection = draft.model_validate(
+            {
+                "effect_scope": effect_scope,
+                "mode": mode,
+                "provider_profile_id": "capability-probe" if provider else None,
+                "provider_revision_sha256": "0" * 64 if provider else None,
+            }
+        )
+        return selection.funded_response_limit
+
+    provider_limits = {materialized_limit(mode) for mode in modes if mode in provider_modes}
+    offline_limits = {materialized_limit(mode) for mode in modes if mode not in provider_modes}
+    if len(provider_limits) != 1 or len(offline_limits) != 1:
+        raise RuntimeError("bounded cognition default funding is not mode independent")
+    return {
+        "effect_scope": effect_scope,
+        "workbench_schema_version": _single_literal(WorkbenchRunDraftV4, "schema_version"),
+        "run_schema_version": _single_literal(CityRunManifestV10, "schema_version"),
+        "modes": list(modes),
+        "funded_response_limits": list(_literal_values(draft, "funded_response_limit")),
+        "default_provider_funded_response_limit": provider_limits.pop(),
+        "offline_funded_response_limit": offline_limits.pop(),
+        "selected_requests_per_run": _single_literal(frozen, "selected_requests_per_run"),
+        "reserved_output_tokens_per_request": _single_literal(
+            frozen, "reservation_tokens_per_request"
+        ),
+        "max_output_tokens_per_attempt": _single_literal(frozen, "max_output_tokens_per_attempt"),
+        "max_http_attempts_per_request": sum(
+            _single_literal(frozen, field)
+            for field in ("initial_attempts", "transient_retries", "repair_attempts")
+        ),
+        "compatibility_check_required_modes": [mode for mode in modes if mode in provider_modes],
+    }
+
+
 def create_city_workbench_app(
     workspace: WorkbenchWorkspace,
     *,
@@ -489,6 +568,8 @@ def create_city_workbench_app(
     jobs = CityJobManager(repository, operations=operations)
     city_resolver = WorkbenchCityResolver(workspace)
     inspector_snapshots = _InspectorSnapshots()
+    effect_scopes = list(get_args(ProviderEffectScope))
+    bounded_cognition = _bounded_cognition_capabilities()
 
     def verified_stored_run(run_id: object) -> StoredCityRun:
         try:
@@ -506,23 +587,33 @@ def create_city_workbench_app(
         return stored
 
     def city_view_from_stored(stored: StoredCityRun) -> CityViewContext:
-        schema_version = stored.manifest.schema_version
+        manifest = stored.manifest
+        schema_version = manifest.schema_version
         try:
-            if stored.response_evaluation is not None and not isinstance(
-                stored.response_evaluation, SpatialResponseEvaluation
-            ):
-                raise ValueError("unsupported city view response model")
+            # The context dispatches V1/V2 evidence by exact version; only V10 binds
+            # its frozen bounded-cognition input and terminal evaluation.
+            cognition_input: CityCognitionInputV2 | None = None
+            cognition_evaluation: CityCognitionEvaluationV2 | None = None
+            if isinstance(manifest, CityRunManifestV10):
+                if not isinstance(stored.cognition_input, CityCognitionInputV2) or not isinstance(
+                    stored.cognition_evaluation, CityCognitionEvaluationV2
+                ):
+                    raise ValueError("V10 city view requires bounded cognition evidence")
+                cognition_input = stored.cognition_input
+                cognition_evaluation = stored.cognition_evaluation
             spatial_metrics = (
-                metrics_for_stored_city_run(stored) if schema_version in {5, 6, 7, 8, 9} else None
+                metrics_for_stored_city_run(stored)
+                if schema_version in {5, 6, 7, 8, 9, 10}
+                else None
             )
             response_metrics = (
                 response_metrics_for_stored_city_run(stored)
-                if schema_version in {6, 7, 8, 9}
+                if schema_version in {6, 7, 8, 9, 10}
                 else None
             )
             return create_city_view_context(
                 stored.mobility,
-                run_id=stored.manifest.run_id,
+                run_id=manifest.run_id,
                 run_schema_version=schema_version,
                 spatial_scenario=stored.spatial_scenario,
                 opportunity_evaluation=stored.opportunity_evaluation,
@@ -532,15 +623,22 @@ def create_city_workbench_app(
                 response_evaluation=stored.response_evaluation,
                 spatial_response_metrics=response_metrics,
                 workbench_input_sha256=(
-                    stored.manifest.workbench_input_sha256
+                    manifest.workbench_input_sha256
                     if isinstance(
-                        stored.manifest,
-                        (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9),
+                        manifest,
+                        (
+                            CityRunManifestV7,
+                            CityRunManifestV8,
+                            CityRunManifestV9,
+                            CityRunManifestV10,
+                        ),
                     )
                     else None
                 ),
+                cognition_input=cognition_input,
+                cognition_evaluation=cognition_evaluation,
             )
-        except (StorageError, ValueError):
+        except (StorageError, TypeError, ValueError):
             raise WorkbenchRunUnavailable from None
 
     def verified_city_view(run_id: object) -> CityViewContext:
@@ -583,12 +681,14 @@ def create_city_workbench_app(
     def resolve_cognition_run(request: Request, run_id: str) -> StoredCityRun:
         stored = resolve_stored_run(request, run_id)
         version = stored.manifest.schema_version
-        if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+        if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}:
             raise WorkbenchRunUnavailable
-        if version != 9:
+        if version not in {9, 10}:
             raise WorkbenchCognitionUnavailable
         if (
-            not isinstance(stored.manifest, CityRunManifestV9)
+            not isinstance(
+                stored.manifest, CityRunManifestV10 if version == 10 else CityRunManifestV9
+            )
             or stored.cognition_input is None
             or stored.cognition_evaluation is None
         ):
@@ -1220,6 +1320,8 @@ def create_city_workbench_app(
                 "oauth": False,
                 "cognition_modes": ["rules", "mock", "local", "remote"],
                 "response_modes": ["deterministic-rules"],
+                "cognition_effect_scopes": list(effect_scopes),
+                "bounded_cognition": copy.deepcopy(bounded_cognition),
             },
             "active_job": None if active is None else active.model_dump(mode="json"),
             "limits": {
@@ -1386,12 +1488,13 @@ def create_city_workbench_app(
         _require_empty_query(request)
         stored = resolve_stored_run(request, run_id)
         if not isinstance(
-            stored.manifest, (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)
+            stored.manifest,
+            (CityRunManifestV7, CityRunManifestV8, CityRunManifestV9, CityRunManifestV10),
         ):
             raise WorkbenchInputUnavailable
         try:
-            view = build_workbench_run_input_view(stored)
-        except ValueError:
+            view = build_saved_workbench_run_input_view(stored)
+        except (TypeError, ValueError):
             raise WorkbenchRunUnavailable from None
         return JSONResponse(
             content=view.model_dump(mode="json"),
@@ -1402,45 +1505,21 @@ def create_city_workbench_app(
     def cognition_summary(run_id: str, request: Request) -> JSONResponse:
         _require_empty_query(request)
         stored = resolve_cognition_run(request, run_id)
-        cognition_input = stored.cognition_input
-        evaluation = stored.cognition_evaluation
-        assert isinstance(cognition_input, CityCognitionInputV1)
-        assert isinstance(evaluation, CityCognitionEvaluationV1)
-        profile = cognition_input.provider_profile
-        return JSONResponse(
-            content={
-                "schema_version": 1,
-                "run_id": stored.manifest.run_id,
-                "run_schema_version": 9,
-                "cognition_input_sha256": cognition_input.fingerprint,
-                "mode": cognition_input.mode,
-                "explainer_id": cognition_input.explainer_id,
-                "provider_profile_id": None if profile is None else profile.profile_id,
-                "provider_revision_sha256": None if profile is None else profile.revision_sha256,
-                "model_id": None if profile is None else profile.model_id,
-                "aggregate_output_token_ceiling": cognition_input.aggregate_output_token_ceiling,
-                "summary": evaluation.summary.model_dump(mode="json"),
-            },
-            headers=_SHELL_HEADERS,
-        )
+        try:
+            view = build_workbench_cognition_summary_view(stored)
+        except (TypeError, ValueError):
+            raise WorkbenchRunUnavailable from None
+        return JSONResponse(content=view.model_dump(mode="json"), headers=_SHELL_HEADERS)
 
     @app.get("/api/runs/{run_id}/cognition-records")
     def cognition_records(run_id: str, request: Request) -> JSONResponse:
         _require_empty_query(request)
         stored = resolve_cognition_run(request, run_id)
-        cognition_input = stored.cognition_input
-        evaluation = stored.cognition_evaluation
-        assert cognition_input is not None and evaluation is not None
-        return JSONResponse(
-            content={
-                "schema_version": 1,
-                "run_id": stored.manifest.run_id,
-                "run_schema_version": 9,
-                "cognition_input_sha256": cognition_input.fingerprint,
-                "records": [record.model_dump(mode="json") for record in evaluation.records],
-            },
-            headers=_SHELL_HEADERS,
-        )
+        try:
+            view = build_workbench_cognition_records_view(stored)
+        except (TypeError, ValueError):
+            raise WorkbenchRunUnavailable from None
+        return JSONResponse(content=view.model_dump(mode="json"), headers=_SHELL_HEADERS)
 
     install_city_view_routes(
         app,
