@@ -117,10 +117,13 @@ Click **Check compatibility** in the highlighted row under the funding control. 
 the page says
 `Checking compatibility… a local model that is still loading may take a minute or more.`
 
-Expected: `Bounded-signal contract confirmed.` The check sends one fixed synthetic probe
-under the exact V10 prompt and result contract and discards the answer. Results live only
-in the server process: check again after restarting the workbench or after changing
-Operation, Source, or profile. At most 5 checks may start per minute.
+Expected: `Bounded-signal contract confirmed.`, and the row heading reads
+`Bounded-signal contract · confirmed for this revision`. The check sends one fixed synthetic
+probe under the exact V10 prompt and result contract and discards the answer. The result lives
+only in the server process: a page reopened in the same workbench session shows
+`confirmed earlier in this workbench session`, but you must check again after restarting the
+workbench or after changing Operation, Source, or profile. At most 5 checks may start per
+minute.
 
 Say: *"This proves the model can return the strict closed-category result AdLife requires.
 It does not prove the model is right about anything."*
@@ -168,7 +171,8 @@ biographies, and MBTI are descriptive only: they never reach the model or the eq
    1,024 output tokens: at most 4 HTTP attempts of up to 256 output tokens each. 10 requests
    reserve 10,240 output tokens. Input tokens and vendor charges are not included; this is a
    reservation, not a spending limit.`
-4. If the check row shows that a check is required, click **Check compatibility** again.
+4. If the check row heading reads `Bounded-signal contract · required before start`, click
+   **Check compatibility** again.
 
 Point at the boundary card: *"External AI selects a small set of synthetic appraisal
 categories. AdLife applies a fixed mapping. These categories may change only the displayed
@@ -225,7 +229,7 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    baseline → Signal or neutral → Fixed mapping → Applied delta → Dual-state commit; and the
    prompt, result-schema, and influence-policy hashes. **Provider usage** reports what the
    model actually did, kept apart from the reservation; one rehearsal read
-   `10 HTTP attempts in this run · 6,745 prompt + 1,402 completion tokens`, against 10,240
+   `10 HTTP attempts in this run · 6,745 prompt + 1,400 completion tokens`, against 10,240
    reserved output tokens. A model failure would show here as Fallback with its reason.
 3. **Saved signal timeline.** Open it, keep **Show** on `All selected requests (18)`, and
    click the first entry, `#1 · DAY 01 · 07:04`, `PERSON-005 · FICTIONAL-LAUNCH`. The page
@@ -292,10 +296,15 @@ further live run.
 
 ### 15. Optional extensions
 
-- **Cache.** Repeat steps 9-11 with Run ID `demo-v10-002` and Funded responses `20 requests`.
-  All 18 selected requests are funded: 10 come from the verified cache of the first run and 8
-  from the model (about 28 seconds). Use a different seed or a fresh workspace when every
-  answer should be a live provider call.
+- **Run again and cache.** In the inspector, click **↻ Run again with these inputs** (the
+  same button sits on the run's card under INSPECT). The workbench reopens at RUN with
+  `Inputs restored from run demo-v10-001 with a new run ID. Review them, then validate.`,
+  the suggested Run ID `demo-v10-002`, the same audience, settings, and profile, and the check
+  still confirmed earlier in this workbench session. Set Funded responses to `20 requests`,
+  validate, and start: all 18 selected requests are funded, 10 from the verified cache of the
+  first run and 8 from the model (about 30 seconds), and Provider usage reads
+  `8 HTTP attempts in this run` with `10 cached answers reused without a call`. Use a
+  different seed or a fresh workspace when every answer should be a live provider call.
 - **Mock.** Repeat with Source `Mock — reproducible demo` and Run ID `demo-mock-001`. It needs
   no profile or check, finishes in about 3-10 seconds, and fills all 18 signals from the
   offline deterministic mock.
@@ -317,14 +326,14 @@ hash rule (`city-cognition-mock-signal-v1`), not a model.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `Not compatible with bounded signals · endpoint resolution refused.` after about 2 s | Ollama is not running, so nothing listens on `127.0.0.1:11434` | Start the Ollama app (or `ollama serve`), warm the model, and check again. |
-| `Not compatible with bounded signals · protocol incompatible.` at once | The Model ID is not installed (`ollama list`), or the endpoint lacks strict JSON-schema output | `ollama pull qwen2.5:7b-instruct`, or save a new profile revision whose Model ID matches `ollama list` exactly. |
+| `Not compatible with bounded signals · protocol incompatible.` at once, with the hint `The local server refused this request. The usual cause is a model ID that is not installed` | The Model ID is not installed, or the endpoint lacks strict JSON-schema output | Compare the Model ID with `ollama list`; run `ollama pull qwen2.5:7b-instruct`, or save a new profile revision whose Model ID matches exactly. |
 | `Not confirmed: the model did not answer within the check's time limit.` | The model was still loading after 120 seconds | Run the warm-up command the hint shows, `ollama run qwen2.5:7b-instruct --keepalive 30m hello`, then check again. |
 | **Start bounded cognition run** stays disabled: `Check bounded-signal compatibility for this profile revision to enable the run.` | No passing check in this server process for this exact revision | Click **Check compatibility**; repeat after a restart or after changing Operation, Source, or profile. |
 | A remote profile shows Credential `Required` and **Check compatibility** stays disabled | The server has no API key for that profile | Set the bound environment variable before starting the workbench, or save the key once in **API credential**. |
 | Every funded response shows **Fallback** with a reason such as `timeout-exhausted` | The model stopped, unloaded, or overloaded during the run | The run is still valid with neutral cognition. Warm the model, check again, and rerun with a new Run ID. |
 | Responses listed as `Set aside · safety flag` or `Set aside · uncertain answer` | The model set a safety flag or answered `uncertain` | Working as designed: the categories stay visible as recorded but not applied, and the whole vector is neutral. The `Uncertain or safety neutralized` filter lists them. |
 | Sources show **Cache** instead of **Provider** | Same inputs, seed, and profile revision as an earlier run in this workspace | Use a new seed or a fresh workspace folder. |
-| The Run ID is refused as already in use | A saved run in this workspace has that ID; runs are never overwritten | Enter a new Run ID such as `demo-v10-002`. |
+| Validation marks the Run ID: `A saved run already uses this ID. Choose a new run ID.` | A saved run in this workspace has that ID; runs are never overwritten | Enter a new Run ID such as `demo-v10-002`, or use **↻ Run again with these inputs**, which suggests a free one. |
 | `ERROR: [Errno 10048] error while attempting to bind on address ('127.0.0.1', 50050)` right after the `city workbench:` line | Another process already uses the port | Use another port such as `--port 50051`, or find the owner with `Get-NetTCPConnection -LocalPort 50050 -State Listen`. |
 | `[winerror 10013] an attempt was made to access a socket in a way forbidden by its access permissions` | The port is in a Windows-reserved range | List the ranges with `netsh interface ipv4 show excludedportrange protocol=tcp` and pick a port outside them. |
 | `workbench workspace is unsafe or unavailable` | The workspace path is a link, junction, or file, or uses an 8.3 short name | Use a plain folder such as `.\demo-workbench`. |

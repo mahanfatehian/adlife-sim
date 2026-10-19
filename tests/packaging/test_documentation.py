@@ -2220,6 +2220,10 @@ _DEMO_INTERFACE_COPY = (
     "Check compatibility",
     "Checking compatibility… a local model that is still loading may take a minute or more.",
     "Bounded-signal contract confirmed.",
+    "Bounded-signal contract · required before start",
+    "confirmed for this revision",
+    "confirmed earlier in this workbench session",
+    "The local server refused this request. The usual cause is a model ID that is not installed",
     "Not confirmed: the model did not answer within the check's time limit.",
     "Check bounded-signal compatibility for this profile revision to enable the run.",
     "Funded responses",
@@ -2271,6 +2275,9 @@ _DEMO_INTERFACE_COPY = (
     "VS RULE TRACK",
     "IDENTICAL TO THE RULE TRACK",
     "Bounded cognition inspector assets are unavailable",
+    "Run again with these inputs",
+    "with a new run ID. Review them, then validate.",
+    "reused without a call",
 )
 _DEMO_COMMAND_COPY = (
     ("doctor.py", "checks passed"),
