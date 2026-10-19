@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -363,6 +364,263 @@ def test_response_metrics_project_verified_v6_run_without_mutating_artifacts(
     assert metrics.overall.response_count.numerator == stored.manifest.response_count == 1
     assert metrics.overall.purchase_intention_proxy.denominator == stored.manifest.final_state_count
     assert _artifact_bytes(stored.directory) == before
+
+
+def _stored_v10(root: Path, **options):
+    from adlife.city.run_store import CityRunStore
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+
+    _, prepared, directory = _saved_v10(root, **options)
+    return CityRunStore(root).load(prepared.manifest.run_id), directory
+
+
+def _direct_v10_metrics(stored):
+    from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
+    from adlife.core.experiments.spatial_response_metrics_v2 import (
+        derive_spatial_response_metrics_v2,
+    )
+
+    agent_ids = tuple(agent.agent_id for agent in stored.mobility.agents)
+    attention = derive_spatial_metrics(
+        stored.opportunity_evaluation,
+        stored.attention_evaluation,
+        agent_ids=agent_ids,
+        agents_sha256=stored.manifest.agents_sha256,
+        trace_sha256=stored.manifest.trace_sha256,
+        days=stored.manifest.days,
+        source_run_schema_version=10,
+    )
+    return attention, derive_spatial_response_metrics_v2(
+        stored.response_input,
+        stored.response_evaluation,
+        scenario=stored.spatial_scenario,
+        opportunities=stored.opportunity_evaluation,
+        attention=stored.attention_evaluation,
+        agent_ids=agent_ids,
+        attention_metrics=attention,
+        cognition_input=stored.cognition_input,
+        cognition=stored.cognition_evaluation,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "source"), [("rules", None), ("mock", None), ("local", "provider")]
+)
+def test_v10_metrics_project_verified_dual_state_run_without_mutating_artifacts(
+    tmp_path: Path, mode: str, source: str | None
+) -> None:
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+    from adlife.core.domain.city_run import CityRunManifestV10
+    from adlife.core.experiments.spatial_response_metrics_v2 import SpatialResponseMetricsV2
+
+    options = {"mode": mode} if source is None else {"mode": mode, "source": source}
+    stored, directory = _stored_v10(tmp_path, **options)
+    before = _artifact_bytes(directory)
+
+    attention = metrics_for_stored_city_run(stored)
+    response = response_metrics_for_stored_city_run(stored)
+
+    assert type(stored.manifest) is CityRunManifestV10
+    assert attention.source_run_schema_version == 10
+    assert type(response) is SpatialResponseMetricsV2
+    assert response.source_run_schema_version == 10
+    assert response.rule_baseline.purchase_intention_proxy.name == "purchase_intention_proxy"
+    assert response.cognition_input_sha256 == stored.manifest.cognition.cognition_input_sha256
+    assert (attention, response) == _direct_v10_metrics(stored)
+    assert response.response_stream_sha256 == stored.manifest.response_stream_sha256
+    assert response.provider_dependent_cognition.mode == mode
+    assert response.provider_dependent_cognition.coverage == stored.manifest.cognition.coverage
+    assert _artifact_bytes(directory) == before
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "cognition_evaluation",
+        "cognition_input",
+        "response_evaluation",
+        "response_input",
+        "spatial_scenario",
+        "opportunity_evaluation",
+        "attention_evaluation",
+    ],
+)
+def test_v10_response_metrics_require_complete_exact_v2_evidence(
+    tmp_path: Path, missing: str
+) -> None:
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+
+    stored, _ = _stored_v10(tmp_path, mode="rules")
+    incomplete = replace(stored, **{missing: None})
+
+    with pytest.raises(CorruptRunArtifact, match="incomplete"):
+        response_metrics_for_stored_city_run(incomplete)
+
+
+def test_v10_and_v9_response_metrics_dispatch_by_manifest_class_without_trial_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+    from tests.integration.test_city_run_replay import _create_v9_run
+
+    v10, _ = _stored_v10(tmp_path / "v10", mode="mock")
+    v9 = _create_v9_run(tmp_path / "v9")
+    assert v9.manifest.schema_version == 9
+    v1_response = _spatial_run(tmp_path / "v6", "response-study", response=True)
+
+    # A manifest version selects exactly one evidence family; the other is corruption.
+    for crossed in (
+        replace(v10, response_evaluation=v1_response.response_evaluation),
+        replace(v10, cognition_input=v9.cognition_input),
+        replace(v10, cognition_evaluation=v9.cognition_evaluation),
+        replace(v9, response_evaluation=v10.response_evaluation),
+    ):
+        with pytest.raises(CorruptRunArtifact, match="incomplete"):
+            response_metrics_for_stored_city_run(crossed)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("response metrics entered the other version's derivation")
+
+    monkeypatch.setattr(city_analysis, "derive_spatial_response_metrics", forbidden)
+    assert response_metrics_for_stored_city_run(v10).source_run_schema_version == 10
+    monkeypatch.undo()
+    monkeypatch.setattr(city_analysis, "derive_spatial_response_metrics_v2", forbidden)
+    assert response_metrics_for_stored_city_run(v9).source_run_schema_version == 9
+
+
+def test_v10_response_metrics_refuse_a_manifest_from_another_verified_run(
+    tmp_path: Path,
+) -> None:
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+
+    rules, _ = _stored_v10(tmp_path / "rules", mode="rules", run_id="rules-run")
+    mock, _ = _stored_v10(tmp_path / "mock", mode="mock", run_id="mock-run")
+
+    with pytest.raises(CorruptRunArtifact, match="manifest"):
+        response_metrics_for_stored_city_run(replace(rules, manifest=mock.manifest))
+
+
+def test_v10_response_projection_maps_inconsistent_evidence_to_artifact_corruption(
+    tmp_path: Path,
+) -> None:
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+
+    rules, _ = _stored_v10(tmp_path / "rules", mode="rules")
+    mock, _ = _stored_v10(tmp_path / "mock", mode="mock")
+
+    for forged in (
+        replace(rules, cognition_evaluation=mock.cognition_evaluation),
+        replace(rules, response_evaluation=mock.response_evaluation),
+        replace(mock, cognition_input=rules.cognition_input),
+    ):
+        with pytest.raises(CorruptRunArtifact, match="could not be projected") as error:
+            response_metrics_for_stored_city_run(forged)
+        assert error.value.__cause__ is None
+        assert error.value.__suppress_context__
+
+
+def test_v10_response_comparison_refuses_v1_contract_before_projecting_metrics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.integration.test_city_run_replay import _create_v9_run
+
+    v10, directory = _stored_v10(tmp_path / "v10", mode="mock")
+    v9 = _create_v9_run(tmp_path / "v9")
+    before = _artifact_bytes(directory)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("a refused comparison projected response metrics")
+
+    monkeypatch.setattr(city_analysis, "response_metrics_for_stored_city_run", forbidden)
+    for control, treatment in ((v10, v10), (v9, v10), (v10, v9)):
+        with pytest.raises(SchemaVersionMismatch, match="schema-v6, v7, v8 or v9"):
+            _compare_stored_city_response_runs(control, treatment)
+    assert _artifact_bytes(directory) == before
+
+
+def test_v10_attention_comparison_keeps_exact_source_schema_and_aa_zero(
+    tmp_path: Path,
+) -> None:
+    stored, directory = _stored_v10(tmp_path, mode="mock")
+    before = _artifact_bytes(directory)
+
+    result = compare_stored_city_runs(stored, stored)
+
+    assert result.control.source_run_schema_version == 10
+    assert result.treatment.source_run_schema_version == 10
+    assert result.classification == "matched-opportunity-structure"
+    assert set(result.overall.model_dump(exclude={"schema_version", "channel"}).values()) == {0.0}
+    assert _artifact_bytes(directory) == before
+
+
+@pytest.mark.parametrize("v10_arm", ["treatment", "control"])
+def test_mixed_v9_and_v10_attention_comparison_keeps_truthful_per_arm_schemas(
+    tmp_path: Path, v10_arm: str
+) -> None:
+    # Bounded cognition cannot reach movement, opportunities, or attention. A matched
+    # V9/V10 pair therefore takes the existing cross-version attention-snapshot path in
+    # either order, while the V1 response comparison refuses the same pair outright.
+    from tests.integration.test_city_run_replay import _create_v9_run
+
+    v9 = _create_v9_run(tmp_path / "v9")
+
+    def same_seed(document) -> None:
+        document["settings"].update(seed=v9.manifest.seed)
+
+    v10, directory = _stored_v10(
+        tmp_path / "v10",
+        mode="mock",
+        agents=v9.manifest.agent_count,
+        days=v9.manifest.days,
+        mutation=same_seed,
+    )
+    provenance = ("agents_sha256", "trace_sha256", "city_sha256", "seed", "agent_count", "days")
+    assert [getattr(v10.manifest, name) for name in provenance] == [
+        getattr(v9.manifest, name) for name in provenance
+    ]
+    control, treatment = (v9, v10) if v10_arm == "treatment" else (v10, v9)
+    before = (_artifact_bytes(v9.directory), _artifact_bytes(directory))
+
+    result = compare_stored_city_runs(control, treatment)
+
+    assert (result.control_run_id, result.treatment_run_id) == (
+        control.manifest.run_id,
+        treatment.manifest.run_id,
+    )
+    assert (
+        result.control.source_run_schema_version,
+        result.treatment.source_run_schema_version,
+    ) == (
+        control.manifest.schema_version,
+        treatment.manifest.schema_version,
+    )
+    assert {control.manifest.schema_version, treatment.manifest.schema_version} == {9, 10}
+    assert result.classification == "matched-opportunity-structure"
+    assert result.control.model_dump(exclude={"source_run_schema_version"}) == (
+        result.treatment.model_dump(exclude={"source_run_schema_version"})
+    )
+    deltas = [
+        value
+        for series in (result.overall, *result.channels)
+        for value in series.model_dump(exclude={"schema_version", "channel"}).values()
+    ]
+    assert deltas and all(value == 0.0 and math.copysign(1.0, value) == 1.0 for value in deltas)
+    with pytest.raises(SchemaVersionMismatch, match="schema-v6, v7, v8 or v9"):
+        _compare_stored_city_response_runs(control, treatment)
+    assert (_artifact_bytes(v9.directory), _artifact_bytes(directory)) == before
+
+
+def test_legacy_refusals_name_every_supported_metric_schema(tmp_path: Path) -> None:
+    from adlife.city.analysis import response_metrics_for_stored_city_run
+
+    pack = load_pack(pack_data())
+    legacy = create_city_run(pack, root=tmp_path, run_id="legacy", seed=42, agent_count=2, days=1)
+    attention_only = _spatial_run(tmp_path, "attention-study")
+
+    with pytest.raises(SchemaVersionMismatch, match=r"schema-v5, v6, v7, v8, v9 or v10"):
+        metrics_for_stored_city_run(legacy)
+    with pytest.raises(SchemaVersionMismatch, match=r"schema-v6, v7, v8, v9 or v10"):
+        response_metrics_for_stored_city_run(attention_only)
 
 
 def test_v7_projections_and_comparisons_preserve_exact_source_schema(tmp_path: Path) -> None:

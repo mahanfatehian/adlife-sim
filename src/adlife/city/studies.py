@@ -26,6 +26,7 @@ from adlife.core.experiments.spatial_observations import (
     spatial_metric_observations,
 )
 from adlife.core.experiments.spatial_response_metrics import (
+    SpatialResponseMetrics,
     spatial_response_assumption_structure_sha256,
 )
 from adlife.core.experiments.spatial_study import (
@@ -114,6 +115,10 @@ def _project(stored: StoredCityRun, *, response_scope: bool) -> _RunProjection:
     }
     attention = metrics_for_stored_city_run(stored)
     response_metrics = response_metrics_for_stored_city_run(stored) if response_scope else None
+    if response_metrics is not None and not isinstance(response_metrics, SpatialResponseMetrics):
+        raise SchemaVersionMismatch(
+            "spatial response study requires a schema-v6, v7, v8 or v9 city run"
+        )
     response_receipt = None
     if isinstance(
         manifest, (CityRunManifestV6, CityRunManifestV7, CityRunManifestV8, CityRunManifestV9)
