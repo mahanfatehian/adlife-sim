@@ -19,7 +19,13 @@ from pydantic import (
 )
 
 from adlife.core.domain.city import TravelDirection, _validate_public_metadata
-from adlife.core.domain.city_cognition_v2 import CityCognitionCausalContractV2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CityCognitionCausalContractV2,
+    CityCognitionOutputTokensPerAttemptV2,
+    CityCognitionReservationTokensPerRequestV2,
+)
 from adlife.core.domain.identifiers import (
     WINDOWS_RESERVED_RUN_IDS,
     validate_portable_run_identifier,
@@ -656,14 +662,16 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
     max_request_bytes: Literal[8192]
     max_terminal_record_bytes: Literal[8192]
     max_wire_response_bytes: Literal[1048576]
-    max_output_tokens_per_attempt: Literal[128]
-    reservation_tokens_per_request: Literal[512]
+    max_output_tokens_per_attempt: CityCognitionOutputTokensPerAttemptV2
+    reservation_tokens_per_request: CityCognitionReservationTokensPerRequestV2
     initial_attempts: Literal[1]
     transient_retries: Literal[2]
     repair_attempts: Literal[1]
     attempt_timeout_seconds: Literal[30]
     aggregate_deadline_seconds: Literal[180]
-    aggregate_output_token_ceiling: int = Field(ge=0, le=30_720)
+    aggregate_output_token_ceiling: int = Field(
+        ge=0, le=CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    )
     response_model: Literal["spatial-response-v2"]
     rule_state_noninterference: Literal[True]
 
@@ -726,7 +734,11 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
         )
         if contract.fingerprint != self.causal_contract_sha256:
             raise ValueError("causal contract hash does not match the frozen document")
-        ceiling = 0 if self.mode in {"rules", "mock"} else self.funded_response_limit * 512
+        ceiling = (
+            0
+            if self.mode in {"rules", "mock"}
+            else self.funded_response_limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+        )
         if self.aggregate_output_token_ceiling != ceiling:
             raise ValueError("aggregate output ceiling does not match the funded response limit")
         return self

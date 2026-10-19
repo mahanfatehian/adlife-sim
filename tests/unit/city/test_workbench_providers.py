@@ -47,6 +47,8 @@ from adlife.core.domain.city_cognition import (
     CityProviderRepairContextV1,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CityCognitionResultV2,
     CityProviderAttemptV2,
 )
@@ -196,7 +198,9 @@ async def test_v2_check_uses_exact_fixed_causal_probe_and_original_profile(tmp_p
         )
     assert input_.schema_version == 2
     assert input_.provider_profile.model_dump() == profile.model_dump()
-    assert input_.effective_settings.max_output_tokens == 128
+    assert input_.effective_settings.max_output_tokens == min(
+        profile.max_output_tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+    )
     for name in (
         "attempt_timeout_seconds",
         "transient_retries",
@@ -207,7 +211,11 @@ async def test_v2_check_uses_exact_fixed_causal_probe_and_original_profile(tmp_p
     ):
         assert getattr(input_.effective_settings, name) == getattr(profile, name)
     assert input_.funded_response_limit == 10 and len(input_.reservations) == 1
-    assert input_.reservations[0].funded and input_.reservations[0].reserved_output_tokens == 512
+    assert input_.reservations[0].funded
+    assert (
+        input_.reservations[0].reserved_output_tokens
+        == CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    )
     assert provider.kwargs["credential"].secret.cleared
     assert controller.list().profiles[0].last_check is None
     module = importlib.import_module("adlife.city.provider_compatibility")

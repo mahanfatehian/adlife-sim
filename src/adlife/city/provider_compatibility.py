@@ -25,6 +25,7 @@ from adlife.core.domain.city_cognition import (
 )
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CityCognitionCausalContractV2,
     CityCognitionEffectiveSettingsV2,
 )
@@ -127,7 +128,12 @@ def build_workbench_provider_compatibility_key(
             for name in CityCognitionEffectiveSettingsV2.model_fields
             if name != "schema_version"
         }
-        facts.update(schema_version=2, max_output_tokens=min(snapshot.max_output_tokens, 128))
+        facts.update(
+            schema_version=2,
+            max_output_tokens=min(
+                snapshot.max_output_tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+            ),
+        )
         settings = CityCognitionEffectiveSettingsV2.model_validate(facts)
     return WorkbenchProviderCompatibilityKey.model_validate(
         {

@@ -21,6 +21,7 @@ from adlife.core.domain.city_cognition import (
 )
 from adlife.core.domain.city_cognition_v2 import (
     _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2,
+    _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CityCognitionCoverageCountsV2,
     CityCognitionEvaluationV2,
     CityCognitionInputV2,
@@ -868,7 +869,10 @@ class CityCognitionManifestReceiptV2(DomainModel):
                 canonical_json(
                     {
                         "aggregate_output_token_ceiling": (
-                            0 if offline else 512 * self.funded_response_limit
+                            0
+                            if offline
+                            else _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                            * self.funded_response_limit
                         ),
                         "reservations": [],
                     }

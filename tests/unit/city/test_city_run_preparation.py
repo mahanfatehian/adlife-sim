@@ -27,6 +27,10 @@ from adlife.core.domain.city_cognition import (
     CITY_COGNITION_PROMPT_CONTRACT_SHA256,
     CITY_COGNITION_RESULT_SCHEMA_SHA256,
 )
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+)
 from adlife.core.domain.city_run import CityRunManifestV7
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import DuplicateRun
@@ -189,7 +193,7 @@ def test_v2_preparation_binds_profile_caps_output_and_reserves_whole_requests(
     frozen = prepared.cognition_input
     assert canonical_json(frozen.provider_profile) == canonical_json(profile)
     settings = frozen.effective_settings
-    assert settings.max_output_tokens == min(tokens, 128)
+    assert settings.max_output_tokens == min(tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT)
     for field in (
         "protocol",
         "temperature",
@@ -202,11 +206,14 @@ def test_v2_preparation_binds_profile_caps_output_and_reserves_whole_requests(
     ):
         assert getattr(settings, field) == getattr(profile, field)
     assert frozen.funded_response_limit == limit
-    assert frozen.aggregate_output_token_ceiling == limit * 512
-    assert frozen.max_output_tokens_per_attempt == 128
-    assert frozen.reservation_tokens_per_request == 512
+    assert (
+        frozen.aggregate_output_token_ceiling
+        == limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    )
+    assert frozen.max_output_tokens_per_attempt == CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+    assert frozen.reservation_tokens_per_request == CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
     assert [(r.funded, r.reserved_output_tokens) for r in frozen.reservations] == [
-        (index < limit, 512 if index < limit else 0)
+        (index < limit, CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST if index < limit else 0)
         for index in range(len(prepared.cognition_requests))
     ]
 

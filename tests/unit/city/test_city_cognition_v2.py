@@ -13,11 +13,14 @@ from types import SimpleNamespace
 import pytest
 
 from adlife.core.domain.city_cognition import (
+    CITY_COGNITION_OUTPUT_TOKENS_PER_ATTEMPT,
     CityCognitionCreativeSnapshotV1,
     CityCognitionProviderProfileSnapshotV1,
 )
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CityCognitionCausalAgentV2,
     CityCognitionCausalCampaignV2,
     CityCognitionInitialRuleStateV2,
@@ -1066,7 +1069,7 @@ def test_reservations_distinguish_offline_funding_from_provider_tokens() -> None
         for limit in (10, 20, 40, 60):
             reservations = allocate(requests, mode=mode, funded_response_limit=limit)
             assert [(r.funded, r.reserved_output_tokens) for r in reservations] == [
-                (True, 512)
+                (True, CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST)
             ] * limit + [(False, 0)] * (60 - limit)
             assert [r.selection_index for r in reservations] == list(range(60))
             assert [r.request_id for r in reservations] == [r.request_id for r in requests]
@@ -1095,13 +1098,17 @@ def test_input_freezes_complete_policy_and_profile_without_mutation(mode, count)
         provider_profile=profile,
     )
     assert document.run_input_sha256 == context.run_input_sha256
-    assert document.aggregate_output_token_ceiling == (0 if profile is None else 5120)
+    assert document.aggregate_output_token_ceiling == (
+        0 if profile is None else 10 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    )
     assert len(document.reservations) == count
     assert document.causal_contract_sha256 == document.causal_contract.fingerprint
     if profile:
         assert document.provider_profile == profile
         assert canonical_json(profile) == before
-        assert document.effective_settings.max_output_tokens == 128
+        assert document.effective_settings.max_output_tokens == min(
+            profile.max_output_tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+        )
         for field in (
             "protocol",
             "temperature",
@@ -1489,7 +1496,16 @@ def test_request_materialization_retains_validated_mobility_activity(monkeypatch
 
 
 @pytest.mark.parametrize("mode", ["local", "remote"])
-@pytest.mark.parametrize("tokens", [64, 128, 256])
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        64,
+        CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+        CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT + 1,
+        # The largest profile output limit any revision can carry.
+        CITY_COGNITION_OUTPUT_TOKENS_PER_ATTEMPT,
+    ],
+)
 def test_effective_settings_cap_only_output_tokens(mode, tokens) -> None:
     from adlife.core.domain.city_cognition import city_cognition_provider_profile_revision_sha256
 
@@ -1510,7 +1526,7 @@ def test_effective_settings_cap_only_output_tokens(mode, tokens) -> None:
         context, (), mode=mode, funded_response_limit=20, provider_profile=profile
     )
     settings = document.effective_settings
-    assert settings.max_output_tokens == min(tokens, 128)
+    assert settings.max_output_tokens == min(tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT)
     assert settings.temperature == 0.6
     assert settings.top_p == 0.8
     assert settings.seed_policy == "fixed" and settings.seed == 42

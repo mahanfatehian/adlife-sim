@@ -36,7 +36,11 @@ from adlife.city.workbench_input import (
     materialize_workbench_population,
 )
 from adlife.core.domain.city import CityPackV2
-from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
     PhoneOpportunityPlacement,
@@ -176,8 +180,8 @@ def _normalize_draft(
                 max_request_bytes=8192,
                 max_terminal_record_bytes=8192,
                 max_wire_response_bytes=1_048_576,
-                max_output_tokens_per_attempt=128,
-                reservation_tokens_per_request=512,
+                max_output_tokens_per_attempt=CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+                reservation_tokens_per_request=CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
                 initial_attempts=1,
                 transient_retries=2,
                 repair_attempts=1,
@@ -185,7 +189,8 @@ def _normalize_draft(
                 aggregate_deadline_seconds=180,
                 aggregate_output_token_ceiling=0
                 if selection.mode in {"rules", "mock"}
-                else selection.funded_response_limit * 512,
+                else selection.funded_response_limit
+                * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
                 response_model="spatial-response-v2",
                 rule_state_noninterference=True,
             ),

@@ -62,6 +62,7 @@ from adlife.city.workbench_workspace import (
 )
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CityCognitionEvaluationV2,
     CityCognitionInputV2,
 )
@@ -345,7 +346,10 @@ class WorkbenchRunSummary(DomainModel):
             if provider_mode:
                 if self.provider_profile_id is None or self.provider_revision_sha256 is None:
                     raise ValueError("V10 provider binding is incomplete")
-                if self.aggregate_output_token_ceiling != self.funded_response_limit * 512:
+                if (
+                    self.aggregate_output_token_ceiling
+                    != self.funded_response_limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                ):
                     raise ValueError("V10 provider funding ceiling is inconsistent")
             elif (
                 self.provider_profile_id is not None

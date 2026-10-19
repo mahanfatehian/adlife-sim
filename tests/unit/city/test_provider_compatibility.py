@@ -14,6 +14,7 @@ from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CityCognitionEffectiveSettingsV2,
 )
 from tests.unit.city.test_provider_profiles import _draft
@@ -59,7 +60,7 @@ def test_v2_key_binds_original_profile_and_capped_exact_settings(tmp_path: Path)
         {
             name: 2
             if name == "schema_version"
-            else 128
+            else min(profile.max_output_tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT)
             if name == "max_output_tokens"
             else getattr(profile, name)
             for name in CityCognitionEffectiveSettingsV2.model_fields

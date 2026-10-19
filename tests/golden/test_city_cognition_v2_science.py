@@ -24,6 +24,7 @@ from adlife.core.domain.city_cognition import (
     city_cognition_provider_profile_revision_sha256,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CityCognitionCausalAgentV2,
     CityCognitionCausalCampaignV2,
     CityCognitionInitialRuleStateV2,
@@ -293,7 +294,9 @@ def build_v10_scientific_document() -> dict[str, Any]:
             provider_profile=_recorded_profile() if mode == "local" else None,
         )
         if mode == "local":
-            assert [r.reserved_output_tokens for r in frozen.reservations] == [512, 512]
+            assert [r.reserved_output_tokens for r in frozen.reservations] == [
+                CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+            ] * 2
         terminals = []
         for index, request in enumerate(requests):
             if mode == "rules":
@@ -425,6 +428,6 @@ def test_v10_core_golden_is_identical_across_hash_seeds() -> None:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         assert result.stdout == (
-            "7dcf107caaf4cef44075c2cc03218e04cb429001f567de925fce74fde45e5b52\n"
+            "3319863bde856117a8e01d3718cbf3bca3dc35c500317d8f36242d21faa724f5\n"
         )
         assert result.stderr == ""

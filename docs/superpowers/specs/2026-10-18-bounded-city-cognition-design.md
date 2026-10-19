@@ -495,8 +495,8 @@ Provider modes use:
 | concurrent requests | 4 |
 | decoded request bytes | 8,192 |
 | wire response bytes | 1,048,576 |
-| output tokens per attempt | 128 |
-| whole-request reservation | 512 output tokens |
+| output tokens per attempt | 256 |
+| whole-request reservation | 1,024 output tokens |
 | initial attempts | 1 |
 | transient retries | at most 2 |
 | schema repair attempts | at most 1 |
@@ -504,12 +504,18 @@ Provider modes use:
 | aggregate deadline | 180 seconds |
 | selected responses per agent | 4 |
 | selected responses per run | 60 |
-| maximum aggregate reservation | 30,720 output tokens |
+| maximum aggregate reservation | 61,440 output tokens |
 
 The UI exposes a funded AI-response count in whole requests: `10`, `20`, `40`, or `60`,
 defaulting to `20` when a provider mode is selected. The frozen aggregate output ceiling is
-the count multiplied by 512. Rules and mock modes process all selected responses without
+the count multiplied by 1,024. Rules and mock modes process all selected responses without
 reserving provider output tokens.
+
+The per-attempt cap fits the strict result: echoing the 64-hex request ID and the exact
+disclosure takes a local instruction model such as `qwen2.5:7b-instruct` about 140-160
+output tokens, so a 128-token cap truncated every answer (`finish_reason=length`). The
+whole-request reservation is the worst case of one initial attempt, two transient retries,
+and one schema repair at the per-attempt cap.
 
 Reservations are allocated before cache lookup in canonical order and are never reassigned
 because a request finishes early, fails, or hits cache. Usage is informational and bounded;

@@ -13,6 +13,8 @@ from adlife.core.domain.city_cognition_v2 import (
     _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256,
     _CITY_COGNITION_MOCK_POLICY_V1_SHA256,
     _CITY_COGNITION_MOCK_VECTOR_V1,
+    _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
     CITY_COGNITION_DEFAULT_MOCK_POLICY_V1,
@@ -455,7 +457,11 @@ def allocate_city_cognition_reservations_v2(
             request_id=request.request_id,
             request_record_sha256=request.request_record_sha256,
             funded=offline or index < funded_response_limit,
-            reserved_output_tokens=512 if not offline and index < funded_response_limit else 0,
+            reserved_output_tokens=(
+                _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                if not offline and index < funded_response_limit
+                else 0
+            ),
         )
         for index, request in enumerate(checked)
     )
@@ -517,7 +523,9 @@ def build_city_cognition_input_v2(
             if field != "schema_version"
         }
         fields["schema_version"] = 2
-        fields["max_output_tokens"] = min(profile.max_output_tokens, 128)
+        fields["max_output_tokens"] = min(
+            profile.max_output_tokens, _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+        )
         settings = CityCognitionEffectiveSettingsV2.model_validate(fields)
     return CityCognitionInputV2(
         schema_version=2,
@@ -535,8 +543,8 @@ def build_city_cognition_input_v2(
         max_request_bytes=8192,
         max_terminal_record_bytes=8192,
         max_wire_response_bytes=1_048_576,
-        max_output_tokens_per_attempt=128,
-        reservation_tokens_per_request=512,
+        max_output_tokens_per_attempt=_CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+        reservation_tokens_per_request=_CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
         initial_attempts=1,
         transient_retries_ceiling=2,
         repair_attempts_ceiling=1,
@@ -544,7 +552,7 @@ def build_city_cognition_input_v2(
         aggregate_deadline_seconds=180,
         aggregate_output_token_ceiling=0
         if mode in {"rules", "mock"}
-        else funded_response_limit * 512,
+        else funded_response_limit * _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
         reservations=allocate_city_cognition_reservations_v2(
             checked, mode=mode, funded_response_limit=funded_response_limit
         ),

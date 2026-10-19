@@ -12,7 +12,12 @@ from pydantic import TypeAdapter, ValidationError
 from adlife.city import workbench_transport as transport
 from adlife.city.workbench_security import strict_json_object
 from adlife.city.workbench_validation import construct_workbench_run
-from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+)
 from adlife.core.domain.serialization import canonical_json
 from tests.unit.city.test_workbench_input import (
     draft_v3_data,
@@ -55,7 +60,10 @@ def test_schema4_normalizes_exact_bounded_cognition_contract():
     assert cognition.effect_scope == "bounded-signals-v1"
     assert cognition.causal_contract == CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
     assert cognition.causal_contract_sha256 == cognition.causal_contract.fingerprint
-    assert cognition.aggregate_output_token_ceiling == 10_240
+    assert (
+        cognition.aggregate_output_token_ceiling
+        == 20 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    )
     expected = {
         "request_schema_version": 2,
         "selected_requests_per_agent": 4,
@@ -64,8 +72,8 @@ def test_schema4_normalizes_exact_bounded_cognition_contract():
         "max_request_bytes": 8192,
         "max_terminal_record_bytes": 8192,
         "max_wire_response_bytes": 1_048_576,
-        "max_output_tokens_per_attempt": 128,
-        "reservation_tokens_per_request": 512,
+        "max_output_tokens_per_attempt": CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+        "reservation_tokens_per_request": CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
         "initial_attempts": 1,
         "transient_retries": 2,
         "repair_attempts": 1,
@@ -82,7 +90,9 @@ def test_schema4_normalizes_exact_bounded_cognition_contract():
 def test_schema4_funding_defaults_and_derived_ceiling(mode):
     cognition = compiled_v4(mode=mode).workbench_input.draft.cognition
     assert cognition.funded_response_limit == (60 if mode in {"rules", "mock"} else 20)
-    assert cognition.aggregate_output_token_ceiling == (0 if mode in {"rules", "mock"} else 10240)
+    assert cognition.aggregate_output_token_ceiling == (
+        0 if mode in {"rules", "mock"} else 20 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    )
     assert set(v4_model("WorkbenchCognitionDraftV4").model_fields) == {
         "effect_scope",
         "mode",
@@ -105,7 +115,10 @@ def test_schema4_invalid_mode_is_a_validation_refusal(mode):
 @pytest.mark.parametrize("limit", [10, 20, 40, 60])
 def test_schema4_provider_whole_response_limits(mode, limit):
     cognition = compiled_v4(mode=mode, limit=limit).workbench_input.draft.cognition
-    assert cognition.aggregate_output_token_ceiling == limit * 512
+    assert (
+        cognition.aggregate_output_token_ceiling
+        == limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    )
 
 
 @pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
@@ -222,7 +235,7 @@ def test_schema4_normalized_contract_cannot_be_rebound(mutation):
     elif mutation == "policy-document":
         payload["causal_contract"]["influence_policy"]["affect_adjustments"][2]["weight"] = -0.0
     elif mutation == "ceiling":
-        payload["aggregate_output_token_ceiling"] = 30720
+        payload["aggregate_output_token_ceiling"] = CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
     else:
         payload["rule_state_noninterference"] = 1
     with pytest.raises(ValidationError):

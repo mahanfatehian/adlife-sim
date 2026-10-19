@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from adlife.city import workbench_input as models
+from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
 from adlife.core.domain.serialization import canonical_json
 from tests.unit.city.test_workbench_input import (
     normalized_v2_input,
@@ -104,7 +105,7 @@ def test_v10_summary_requires_city_v2_and_exact_provider_funding() -> None:
         "provider_profile_id": "provider-main",
         "provider_revision_sha256": "c" * 64,
         "funded_response_limit": 10,
-        "aggregate_output_token_ceiling": 5_120,
+        "aggregate_output_token_ceiling": 10 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
         "eligible_response_count": 12,
         "selected_request_count": 12,
         "funded_request_count": 10,

@@ -12,6 +12,7 @@ import pytest
 
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CityCognitionRunContextV2,
     CityProviderRepairContextV2,
 )
@@ -200,7 +201,13 @@ def test_payload_uses_frozen_profile_settings_and_strict_schema(fixed) -> None:
         payload["top_p"],
         payload["max_tokens"],
         payload["stream"],
-    ) == ("example-model", 0.2, 0.9, 128, False)
+    ) == (
+        "example-model",
+        0.2,
+        0.9,
+        min(profile.max_output_tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT),
+        False,
+    )
     assert payload.get("seed") == (42 if fixed else None)
     assert payload["response_format"] == module.city_cognition_response_format_v2(frozen)
     assert payload["response_format"] == {

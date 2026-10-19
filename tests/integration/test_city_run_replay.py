@@ -1109,4 +1109,4 @@ print(
     seed_zero = witness("0")
     seed_other = witness("12345")
     assert seed_zero == seed_other
-    assert seed_zero == "93b064c34f56d84b94217c91378855f8f065bb69441e147b95f02ec3393045f8"
+    assert seed_zero == "cf608d0b538a585c4a5091fde268f7012ceeb2eb0b3ca0586d272be3ad4c829a"

@@ -7,7 +7,11 @@ import pytest
 
 from adlife.core.domain import city_run
 from adlife.core.domain.city_cognition import city_cognition_provider_profile_revision_sha256
-from adlife.core.domain.city_cognition_v2 import CityCognitionEvaluationV2, CityCognitionInputV2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CityCognitionEvaluationV2,
+    CityCognitionInputV2,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.simulation.city_cognition_v2 import validate_city_cognition_evaluation_v2
 from tests.unit.city.test_city_cognition_v2 import _bypass, _rehash_terminal, _terminal_evidence
@@ -380,7 +384,10 @@ def test_receipt_preserves_frozen_funding_limit_and_cached_usage_without_reserva
     )
     receipt = city_run.build_city_cognition_manifest_receipt_v2(frozen, evaluation)
     assert receipt.funded_response_limit == limit
-    assert frozen.aggregate_output_token_ceiling == 512 * limit
+    assert (
+        frozen.aggregate_output_token_ceiling
+        == CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST * limit
+    )
     assert receipt.attempt_count == 1
     assert receipt.outcomes.provider == 1
     assert receipt.outcomes.cache == len(records) - 1
@@ -483,7 +490,11 @@ def test_empty_receipt_budget_hash_is_internally_reconstructible(boundary, unsel
         update=dict(
             reservations=(),
             funded_response_limit=limit,
-            aggregate_output_token_ceiling=0 if mode in {"rules", "mock"} else 512 * limit,
+            aggregate_output_token_ceiling=(
+                0
+                if mode in {"rules", "mock"}
+                else CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST * limit
+            ),
         )
     )
     evaluation = CityCognitionEvaluationV2.model_validate_json(

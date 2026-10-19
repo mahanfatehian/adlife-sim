@@ -1,5 +1,6 @@
 """Provider categories cannot alter deterministic rule authority."""
 
+import json
 import math
 import os
 import re
@@ -15,6 +16,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.simulation import city_cognition_v2 as cognition
 from tests.unit.city.test_city_cognition_v2 import (
@@ -585,7 +587,11 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
         <= module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
     )
     assert len(canonical_json(frozen).encode()) <= 131_072
-    assert len(canonical_json(frozen).encode()) == 20_855
+    # The frozen input embeds the prompt contract text; pin every other byte.
+    prompt_bytes = len(
+        json.dumps(frozen.causal_contract.prompt_contract_text, ensure_ascii=False).encode()
+    )
+    assert len(canonical_json(frozen).encode()) - prompt_bytes == 20_345
     assert sum(map(len, cognition.city_cognition_terminal_lines_v2(signals))) <= 1_048_576
     assert signals.summary.terminal_stream_bytes == 153_530
     assert len((canonical_json(summary) + "\n").encode()) == 1314
@@ -596,7 +602,9 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     assert module.MAX_SPATIAL_RESPONSE_STATE_BYTES_V2 == 8_388_608
     assert module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2 == 131_072
     assert frozen.aggregate_output_token_ceiling == 0
-    assert 60 * frozen.reservation_tokens_per_request == 30_720
+    assert (
+        60 * frozen.reservation_tokens_per_request == CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    )
 
     # A real admitted max-text pair witnesses why independently valid maxima do not compose.
     wide = _dense_evidence(
@@ -645,7 +653,11 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
         _structural_capacity_high_water_documents()
     )
     assert len(remote.reservations) == 60
-    assert len(canonical_json(remote).encode()) == 24_796 < 131_072
+    remote_prompt_bytes = len(
+        json.dumps(remote.causal_contract.prompt_contract_text, ensure_ascii=False).encode()
+    )
+    assert len(canonical_json(remote).encode()) - remote_prompt_bytes == 24_346
+    assert len(canonical_json(remote).encode()) < 131_072
     terminal_sizes = tuple(map(len, cognition.city_cognition_terminal_lines_v2(terminals)))
     assert len(terminal_sizes) == 60
     assert (min(terminal_sizes), max(terminal_sizes), sum(terminal_sizes)) == (3090, 3091, 185_450)

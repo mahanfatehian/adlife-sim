@@ -126,6 +126,16 @@ def module() -> ModuleType:
     return importlib.import_module("adlife.core.domain.city_cognition_v2")
 
 
+def output_cap() -> int:
+    """The frozen per-attempt output cap, never a test-local copy."""
+    return module().CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+
+
+def reservation_tokens() -> int:
+    """The frozen whole-request reservation, never a test-local copy."""
+    return module().CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+
+
 def digest(value: Any) -> str:
     text = json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
@@ -836,7 +846,7 @@ def settings_data(profile: dict[str, Any]) -> dict[str, Any]:
                 "repair_attempts",
             )
         },
-        max_output_tokens=min(profile["max_output_tokens"], 128),
+        max_output_tokens=min(profile["max_output_tokens"], output_cap()),
     )
 
 
@@ -860,14 +870,14 @@ def input_data(mode: str = "rules", count: int = 2, limit: int = 60) -> dict[str
         max_request_bytes=8192,
         max_terminal_record_bytes=8192,
         max_wire_response_bytes=1048576,
-        max_output_tokens_per_attempt=128,
-        reservation_tokens_per_request=512,
+        max_output_tokens_per_attempt=output_cap(),
+        reservation_tokens_per_request=reservation_tokens(),
         initial_attempts=1,
         transient_retries_ceiling=2,
         repair_attempts_ceiling=1,
         attempt_timeout_seconds_ceiling=30,
         aggregate_deadline_seconds=180,
-        aggregate_output_token_ceiling=0 if offline else limit * 512,
+        aggregate_output_token_ceiling=0 if offline else limit * reservation_tokens(),
         reservations=tuple(
             dict(
                 schema_version=2,
@@ -875,7 +885,7 @@ def input_data(mode: str = "rules", count: int = 2, limit: int = 60) -> dict[str
                 request_id=f"cog-{i + 1:064x}",
                 request_record_sha256=f"{i + 101:064x}",
                 funded=offline or i < limit,
-                reserved_output_tokens=0 if offline or i >= limit else 512,
+                reserved_output_tokens=0 if offline or i >= limit else reservation_tokens(),
             )
             for i in range(count)
         ),
@@ -895,6 +905,52 @@ def assert_closed_required_round_trip(model: Any, data: dict[str, Any]) -> Any:
     return parsed
 
 
+def test_v2_output_budget_is_one_closed_derived_contract() -> None:
+    from typing import get_args
+
+    from adlife.city.workbench_input import NormalizedWorkbenchCognitionV4
+
+    m = module()
+    cap = m.CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+    attempts = m.CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST
+    # A live local model needs about 140-160 output tokens for the strict result:
+    # the 64-hex request ID echo and the exact disclosure dominate the answer.
+    assert cap >= 160
+    assert (
+        reservation_tokens()
+        == attempts * cap
+        == m._CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    )
+    frozen = m.CityCognitionInputV2.model_fields
+    assert attempts == sum(
+        get_args(frozen[name].annotation)[0]
+        for name in ("initial_attempts", "transient_retries_ceiling", "repair_attempts_ceiling")
+    )
+    assert (
+        get_args(frozen["selected_requests_per_run"].annotation)[0] * reservation_tokens()
+    ) == m.CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    workbench = NormalizedWorkbenchCognitionV4.model_fields
+    for fields in (frozen, workbench):
+        assert get_args(fields["max_output_tokens_per_attempt"].annotation) == (cap,)
+        assert get_args(fields["reservation_tokens_per_request"].annotation) == (
+            reservation_tokens(),
+        )
+    assert get_args(
+        m.CityCognitionReservationV2.model_fields["reserved_output_tokens"].annotation
+    ) == (
+        0,
+        reservation_tokens(),
+    )
+    settings = m.CityCognitionEffectiveSettingsV2.model_validate(
+        settings_data(profile_data("local", 384))
+    )
+    assert settings.max_output_tokens == cap
+    with pytest.raises(ValidationError):
+        m.CityCognitionEffectiveSettingsV2.model_validate(
+            settings_data(profile_data("local", 384)) | {"max_output_tokens": cap + 1}
+        )
+
+
 @pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
 def test_v2_input_freezes_exact_limits_profiles_and_reservations(mode: str) -> None:
     m = module()
@@ -903,7 +959,9 @@ def test_v2_input_freezes_exact_limits_profiles_and_reservations(mode: str) -> N
     for limit in (60,) if offline else (10, 20, 40, 60):
         data = input_data(mode, count=12, limit=limit)
         value = assert_closed_required_round_trip(model, data)
-        assert value.aggregate_output_token_ceiling == (0 if offline else limit * 512)
+        assert value.aggregate_output_token_ceiling == (
+            0 if offline else limit * reservation_tokens()
+        )
         assert sum(item.funded for item in value.reservations) == (
             12 if offline else min(12, limit)
         )
@@ -927,11 +985,11 @@ def test_v2_input_freezes_exact_limits_profiles_and_reservations(mode: str) -> N
             {"funded": 1},
             {"funded": False},
             {"reserved_output_tokens": True},
-            {"reserved_output_tokens": 512.0},
+            {"reserved_output_tokens": float(reservation_tokens())},
             {"reserved_output_tokens": 1536},
             {"request_id": data["reservations"][1]["request_id"]},
             {"request_record_sha256": data["reservations"][1]["request_record_sha256"]},
-            {"reserved_output_tokens": 512 if offline else 0},
+            {"reserved_output_tokens": reservation_tokens() if offline else 0},
         ):
             bad_inputs.append(
                 {"reservations": (data["reservations"][0] | patch, *data["reservations"][1:])}
@@ -946,25 +1004,27 @@ def test_v2_input_freezes_exact_limits_profiles_and_reservations(mode: str) -> N
             )
         else:
             assert value.provider_profile.max_output_tokens == 256
-            assert value.effective_settings.max_output_tokens == 128
+            assert value.effective_settings.max_output_tokens == min(
+                value.provider_profile.max_output_tokens, output_cap()
+            )
             bad_inputs.extend(
                 [
                     {"provider_profile": None},
                     {"effective_settings": None},
                     {"provider_profile": profile_data("remote" if mode == "local" else "local")},
                     {"effective_settings": data["effective_settings"] | {"temperature": 0.5}},
-                    {"aggregate_output_token_ceiling": min(12, limit) * 512 - 512},
+                    {"aggregate_output_token_ceiling": (min(12, limit) - 1) * reservation_tokens()},
                 ]
             )
             assert_closed_required_round_trip(
                 m.CityCognitionEffectiveSettingsV2, data["effective_settings"]
             )
-            for tokens in (1, 100, 128, 384):
+            for tokens in (1, 100, output_cap() - 1, output_cap(), output_cap() + 1, 384):
                 profile = profile_data(mode, tokens)
                 assert model.model_validate(
                     data
                     | {"provider_profile": profile, "effective_settings": settings_data(profile)}
-                ).effective_settings.max_output_tokens == min(tokens, 128)
+                ).effective_settings.max_output_tokens == min(tokens, output_cap())
         for patch in bad_inputs:
             with pytest.raises(ValidationError):
                 model.model_validate(data | patch)
@@ -1024,7 +1084,7 @@ def test_v2_attempts_require_complete_closed_screened_outcomes(status: str) -> N
 @pytest.mark.parametrize(
     "field,invalid",
     [
-        ("max_output_tokens", 129),
+        ("max_output_tokens", output_cap() + 1),
         ("max_output_tokens", 0),
         ("max_output_tokens", True),
         ("attempt_timeout_seconds", 31),
@@ -1478,7 +1538,7 @@ def test_v2_complete_request_enforces_exact_canonical_byte_boundary(size: int) -
 def test_v2_reservations_refuse_unfunded_token_claims() -> None:
     m = module()
     data = input_data()["reservations"][0]
-    for funded, tokens in ((True, 0), (True, 512), (False, 0)):
+    for funded, tokens in ((True, 0), (True, reservation_tokens()), (False, 0)):
         assert (
             m.CityCognitionReservationV2.model_validate(
                 data | {"funded": funded, "reserved_output_tokens": tokens}
@@ -1487,7 +1547,7 @@ def test_v2_reservations_refuse_unfunded_token_claims() -> None:
         )
     with pytest.raises(ValidationError):
         m.CityCognitionReservationV2.model_validate(
-            data | {"funded": False, "reserved_output_tokens": 512}
+            data | {"funded": False, "reserved_output_tokens": reservation_tokens()}
         )
 
 
@@ -1607,7 +1667,7 @@ def test_v2_parent_boundaries_revalidate_nested_evidence(boundary: str, form: st
         ("funded", 1),
         ("reserved_output_tokens", False),
         ("reserved_output_tokens", 0.0),
-        ("reserved_output_tokens", 512.0),
+        ("reserved_output_tokens", float(reservation_tokens())),
     ],
 )
 def test_v2_reservations_require_exact_funding_and_integer_tokens(field: str, value: Any) -> None:
@@ -1628,7 +1688,9 @@ def test_v2_input_admits_empty_small_and_full_canonical_reservation_sets(
     assert sum(item.funded for item in parsed.reservations) == (
         count if mode in {"rules", "mock"} else min(count, 10)
     )
-    assert parsed.aggregate_output_token_ceiling == (0 if mode in {"rules", "mock"} else 5120)
+    assert parsed.aggregate_output_token_ceiling == (
+        0 if mode in {"rules", "mock"} else 10 * reservation_tokens()
+    )
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,7 @@ from adlife.city.workbench_workspace import WorkbenchWorkspace
 from adlife.core.domain.city_cognition import MAX_CITY_COGNITION_USAGE_INTEGER, Hash, RequestId
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CityCognitionInputV2,
     CityCognitionRequestV2,
     CityCognitionResultV2,
@@ -89,7 +90,7 @@ def _cache_key_material_v2(
         reservation is None
         or reservation.request_record_sha256 != request.request_record_sha256
         or not reservation.funded
-        or reservation.reserved_output_tokens != 512
+        or reservation.reserved_output_tokens != CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
     ):
         raise ValueError("city cognition V2 cache requires a funded frozen selection")
     profile, settings = frozen.provider_profile, frozen.effective_settings

@@ -16,6 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
 from adlife.core.domain.serialization import canonical_json
 from tests.unit.city.test_city_run_preparation import _validated
 
@@ -1580,7 +1581,7 @@ def test_v10_accepted_settings_refuse_misplaced_provider_and_funding(updates) ->
             provider_profile_id="provider-main",
             provider_revision_sha256="a" * 64,
             funded_response_limit=10,
-            aggregate_output_token_ceiling=5_120,
+            aggregate_output_token_ceiling=10 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
         )
     document.update(updates)
     with pytest.raises(ValidationError):
@@ -1838,7 +1839,7 @@ def test_nested_constructed_v10_settings_and_summary_are_revalidated(tmp_path: P
         provider_profile_id="provider-main",
         provider_revision_sha256="c" * 64,
         funded_response_limit=10,
-        aggregate_output_token_ceiling=5_120,
+        aggregate_output_token_ceiling=10 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     )
     provider_summary = runs.WorkbenchRunSummary(
         run_id="nested-provider-v10",
@@ -1864,7 +1865,7 @@ def test_nested_constructed_v10_settings_and_summary_are_revalidated(tmp_path: P
         provider_profile_id="provider-main",
         provider_revision_sha256="c" * 64,
         funded_response_limit=10,
-        aggregate_output_token_ceiling=5_120,
+        aggregate_output_token_ceiling=10 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
         eligible_response_count=12,
         selected_request_count=12,
         funded_request_count=10,

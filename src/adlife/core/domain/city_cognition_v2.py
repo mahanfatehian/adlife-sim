@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from hashlib import sha256
-from typing import Annotated, Literal, Self, get_args, get_origin
+from typing import Annotated, Final, Literal, Self, get_args, get_origin
 
 from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -63,6 +63,43 @@ CityCognitionRuntimeFallbackReasonV2 = Literal[
 CityProviderRepairReasonV2 = Literal[
     "invalid-json", "invalid-schema", "request-id-mismatch", "unsafe-content"
 ]
+
+# Frozen provider output budget. The strict result echoes a 64-hex request ID and the
+# exact disclosure, which local instruction models need about 140-160 output tokens to
+# emit, so each attempt may use at most 256 output tokens. A funded request may make
+# one initial attempt, at most two transient retries, and at most one schema repair;
+# its whole-request reservation covers that worst case, and 60 selected requests bound
+# the aggregate. The literal aliases are the closed wire types of the same values.
+# Validators read only the private snapshots; the public names are current-default
+# aliases for adapters and the workbench, never historical validation authority.
+CityCognitionOutputTokensPerAttemptV2 = Literal[256]
+CityCognitionReservationTokensPerRequestV2 = Literal[1024]
+CityCognitionReservedOutputTokensV2 = Literal[0, CityCognitionReservationTokensPerRequestV2]
+_CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT: Final = 256
+_CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST: Final = 4
+_CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST: Final = 1024
+_CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS: Final = 61_440
+if (
+    get_args(CityCognitionOutputTokensPerAttemptV2)
+    != (_CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,)
+    or get_args(CityCognitionReservationTokensPerRequestV2)
+    != (_CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,)
+    or get_args(CityCognitionReservedOutputTokensV2)
+    != (0, _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST)
+    or _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+    != _CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST * _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+    or _CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    != 60 * _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+):
+    raise RuntimeError("bounded city cognition output token limits are inconsistent")
+CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT: Final = _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST: Final = _CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST
+CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST: Final = (
+    _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+)
+CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS: Final = (
+    _CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+)
 
 CITY_COGNITION_V2_DISCLOSURE: Literal["synthetic-bounded-cognition-not-observed-behavior"] = (
     "synthetic-bounded-cognition-not-observed-behavior"
@@ -739,7 +776,7 @@ class CityCognitionEffectiveSettingsV2(_CityCognitionModelV2):
     top_p: float = Field(gt=0, le=1)
     seed_policy: Literal["omit", "fixed"]
     seed: int | None = Field(ge=0, le=2**63 - 1)
-    max_output_tokens: int = Field(ge=1, le=128)
+    max_output_tokens: int = Field(ge=1, le=_CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT)
     attempt_timeout_seconds: int = Field(ge=1, le=30)
     transient_retries: int = Field(ge=0, le=2)
     repair_attempts: int = Field(ge=0, le=1)
@@ -757,7 +794,7 @@ class CityCognitionReservationV2(_CityCognitionModelV2):
     request_id: RequestId
     request_record_sha256: Hash
     funded: bool
-    reserved_output_tokens: Literal[0, 512]
+    reserved_output_tokens: CityCognitionReservedOutputTokensV2
 
     @model_validator(mode="after")
     def coherent_unfunded_tokens(self) -> Self:
@@ -784,14 +821,16 @@ class CityCognitionInputV2(_CityCognitionModelV2):
     max_request_bytes: Literal[8192]
     max_terminal_record_bytes: Literal[8192]
     max_wire_response_bytes: Literal[1048576]
-    max_output_tokens_per_attempt: Literal[128]
-    reservation_tokens_per_request: Literal[512]
+    max_output_tokens_per_attempt: CityCognitionOutputTokensPerAttemptV2
+    reservation_tokens_per_request: CityCognitionReservationTokensPerRequestV2
     initial_attempts: Literal[1]
     transient_retries_ceiling: Literal[2]
     repair_attempts_ceiling: Literal[1]
     attempt_timeout_seconds_ceiling: Literal[30]
     aggregate_deadline_seconds: Literal[180]
-    aggregate_output_token_ceiling: int = Field(ge=0, le=30_720)
+    aggregate_output_token_ceiling: int = Field(
+        ge=0, le=_CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    )
     reservations: tuple[CityCognitionReservationV2, ...] = Field(max_length=60)
 
     @model_validator(mode="after")
@@ -822,13 +861,18 @@ class CityCognitionInputV2(_CityCognitionModelV2):
                 if field != "schema_version"
             }
             expected_settings["schema_version"] = 2
-            expected_settings["max_output_tokens"] = min(profile.max_output_tokens, 128)
+            expected_settings["max_output_tokens"] = min(
+                profile.max_output_tokens, _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+            )
             if (
                 settings.fingerprint
                 != CityCognitionEffectiveSettingsV2.model_validate(expected_settings).fingerprint
             ):
                 raise ValueError("effective settings do not match the capped frozen profile")
-            if self.aggregate_output_token_ceiling != self.funded_response_limit * 512:
+            if (
+                self.aggregate_output_token_ceiling
+                != self.funded_response_limit * _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+            ):
                 raise ValueError("aggregate ceiling must reserve the configured funded limit")
         if tuple(item.selection_index for item in self.reservations) != tuple(
             range(len(self.reservations))
@@ -839,7 +883,11 @@ class CityCognitionInputV2(_CityCognitionModelV2):
                 raise ValueError("reservations must reference unique requests and hashes")
         for item in self.reservations:
             expected_funded = offline or item.selection_index < self.funded_response_limit
-            expected_tokens = 0 if offline or not expected_funded else 512
+            expected_tokens = (
+                0
+                if offline or not expected_funded
+                else _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+            )
             if item.funded != expected_funded or item.reserved_output_tokens != expected_tokens:
                 raise ValueError("reservations do not match the canonical funding prefix")
         if len(canonical_json(self).encode("utf-8")) > 131_072:

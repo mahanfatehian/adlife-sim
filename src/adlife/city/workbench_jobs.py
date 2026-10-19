@@ -33,7 +33,10 @@ from adlife.city.workbench_runs import (
     WorkbenchRunSummary,
 )
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
-from adlife.core.domain.city_cognition_v2 import CityCognitionEvaluationV2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CityCognitionEvaluationV2,
+)
 from adlife.core.domain.person import DomainModel
 from adlife.core.ports.run_store import ISO_UTC_PATTERN
 
@@ -190,7 +193,10 @@ class WorkbenchAcceptedSettings(DomainModel):
             if provider_mode:
                 if self.provider_profile_id is None or self.provider_revision_sha256 is None:
                     raise ValueError("schema-4 provider binding is incomplete")
-                if self.aggregate_output_token_ceiling != self.funded_response_limit * 512:
+                if (
+                    self.aggregate_output_token_ceiling
+                    != self.funded_response_limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                ):
                     raise ValueError("schema-4 provider funding ceiling is inconsistent")
             elif (
                 self.provider_profile_id is not None
