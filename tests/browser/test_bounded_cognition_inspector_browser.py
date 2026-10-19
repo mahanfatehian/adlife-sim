@@ -1503,6 +1503,30 @@ def test_v10_purchase_intention_stays_on_rule_cards(
         )
         expect(final.locator(".bounded-cognition-card")).to_contain_text("LAST RESPONSE")
         expect(page.locator("#response-state-claim")).to_contain_text("rule-owned")
+        # The final cognition card states its exact gap from the rule track.
+        document = spatial_response_state_document_v2(run.stored.response_evaluation)
+        rule, cognition = next(
+            pair
+            for pair in zip(document.rule.states, document.cognition.states, strict=True)
+            if pair[0].agent_id == first.agent_id
+        )
+        sentiment_gap = cognition.synthetic_sentiment - rule.brand_sentiment
+        recall_gap = cognition.synthetic_recall - rule.recall_strength
+        gap = final.locator(".bounded-track-gap")
+        identical = sentiment_gap == 0 and recall_gap == 0
+        assert gap.get_attribute("data-identical") == str(identical).lower()
+        if identical:
+            expect(gap).to_have_text("IDENTICAL TO THE RULE TRACK")
+        else:
+            match = re.fullmatch(
+                r"VS RULE TRACK · SENTIMENT ([+-][0-9.e-]+) · RECALL ([+-][0-9.e-]+)",
+                gap.inner_text(),
+            )
+            assert match is not None, gap.inner_text()
+            assert float(match.group(1)) == pytest.approx(sentiment_gap, abs=5e-5)
+            assert float(match.group(2)) == pytest.approx(recall_gap, abs=5e-5)
+        if name == "rules":
+            assert identical
 
 
 @pytest.mark.parametrize(

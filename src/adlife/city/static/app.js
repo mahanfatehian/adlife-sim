@@ -3255,6 +3255,18 @@ function renderBoundedResponseState() {
       "response-state-card bounded-cognition-card",
     );
     cognitionCard.dataset.track = "cognition";
+    // Both tracks start from one initial state, so the gap is exactly what the bounded
+    // signals did to the synthetic cognition track for this agent and campaign.
+    const sentimentGap = cognition.synthetic_sentiment - rule.brand_sentiment;
+    const recallGap = cognition.synthetic_recall - rule.recall_strength;
+    const gap = createTextElement(
+      "small",
+      "bounded-track-gap",
+      sentimentGap === 0 && recallGap === 0
+        ? "IDENTICAL TO THE RULE TRACK"
+        : `VS RULE TRACK · SENTIMENT ${signedProxyText(sentimentGap, "Sentiment gap")} · RECALL ${signedProxyText(recallGap, "Recall gap")}`,
+    );
+    gap.dataset.identical = String(sentimentGap === 0 && recallGap === 0);
     cognitionCard.append(
       createTextElement("strong", "", "COGNITION TRACK · SYNTHETIC"),
       createTextElement("span", "", `${cognition.response_count} RESPONSES`),
@@ -3264,6 +3276,7 @@ function renderBoundedResponseState() {
         `SENTIMENT ${proxyText(cognition.synthetic_sentiment, "Final cognition sentiment")} · RECALL ${proxyText(cognition.synthetic_recall, "Final cognition recall")}`,
       ),
       createTextElement("small", "", timing(cognition.last_response_minute)),
+      gap,
     );
     group.append(ruleCard, cognitionCard);
     fragment.append(group);

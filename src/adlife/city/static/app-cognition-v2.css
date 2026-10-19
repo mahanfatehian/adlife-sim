@@ -140,6 +140,7 @@
 .bounded-state-pair .bounded-rule-card{box-shadow:inset 2px 0 0 var(--bounded-rule)}
 .bounded-state-pair .bounded-cognition-card{box-shadow:inset 2px 0 0 var(--bounded-cognition)}
 .bounded-state-pair .bounded-cognition-card strong,.bounded-state-pair .bounded-cognition-card span{color:var(--bounded-cognition)}
+.bounded-state-pair .bounded-track-gap{margin-top:2px;padding-top:5px;border-top:1px dashed #c9a9f74d;color:#e5d6fb;font-weight:700}
 
 /* Exploratory cognition metrics, visually separate from the rule baseline tables */
 .bounded-cognition-metrics{margin-top:18px;padding-top:14px;border-top:1px solid #c9a9f766}
