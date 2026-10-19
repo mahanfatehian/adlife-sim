@@ -2012,6 +2012,13 @@ def test_v10_hostile_text_stays_inert_and_controls_stay_accessible(
             "executable": 0,
             "pwned": True,
         }
+        # macOS has no Segoe UI, and its wider fallback face once pushed the long hostile
+        # scenario token past a phone screen. Widen the heading's glyphs on every platform:
+        # the token must wrap instead of widening the page.
+        page.locator("#opportunity-scenario").evaluate(
+            "node => { node.style.letterSpacing = '0.25em'; }"
+        )
+        assert page.evaluate("() => document.documentElement.scrollWidth") == viewport["width"]
         assert session.page_errors == [] and session.console_errors == []
 
 

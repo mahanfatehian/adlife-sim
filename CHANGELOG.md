@@ -184,6 +184,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overlapped a city-registry root anchor (for example `GET /api/cities`) hit a sharing
   violation and reported the run unavailable; run reads now wait out the anchor for up to
   10 seconds, as the registry already did.
+- **Long scenario names on phone-width inspectors (2026-10-19)** — the inspector's
+  current-minute scenario heading could not wrap a long unbroken token. On macOS, whose
+  fallback for `Segoe UI` is the wider Tahoma, a long scenario name widened a 390-pixel page to
+  417 pixels. The heading now wraps anywhere, like the other user-supplied names.
 - **Release smoke on Windows short temporary paths (2026-10-19)** — when the temporary
   directory is reached through an 8.3 short name, as on GitHub's Windows runners
   (`C:\Users\RUNNER~1\...`), `scripts/smoke_release.py` failed its spatial runs with
