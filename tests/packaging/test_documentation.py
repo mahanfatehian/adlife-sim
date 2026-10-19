@@ -1204,17 +1204,17 @@ def test_persona_authoring_docs_publish_version_and_scientific_boundaries() -> N
         (
             "docs/architecture.md",
             "Saved city studies use separate strict",
-            "v1/v2/v3/v4/v5/v6/v7/v8/v9",
+            "v1/v2/v3/v4/v5/v6/v7/v8/v9/v10",
         ),
         (
             "docs/architecture.md",
             "validates before serving one immutable mobility projection",
-            "V4 through V9",
+            "V4 through V10",
         ),
         (
             "docs/architecture.md",
             "The adapter-free core exposes the original read-only",
-            "V5, V6, V7, V8, and V9",
+            "V5, V6, V7, V8, V9, and V10",
         ),
         ("docs/architecture.md", "Schema V6", "V6, V7, V8, and V9"),
         ("docs/city-pilot.md", "Use `city-metrics --layer response`", "V6/V7/V8/V9"),
@@ -1812,7 +1812,12 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
                 int(count) == max(_FUNDED_RESPONSE_LIMITS)
                 and _integer(reserved) == CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
             )
-    for required in ("CHANGELOG.md", "README.md", "docs/cli-reference.md"):
+    for required in (
+        "CHANGELOG.md",
+        "README.md",
+        "docs/cli-reference.md",
+        "docs/architecture.md",
+    ):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
 
@@ -1894,6 +1899,56 @@ def test_cli_reference_documents_the_v10_operation_matrix_and_commands() -> None
         "/api/cognition-records",
         "final-end-of-run-not-scrubbed-minute",
     )
+
+
+def test_architecture_documents_the_v10_data_flow_and_adapter_boundary() -> None:
+    architecture = _read("docs", "architecture.md")
+    heading = "## The bounded city cognition seam (schema-v10)"
+    assert heading in architecture, "V10 cognition seam section is missing"
+    section = architecture.split(heading, maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+    flow = re.search(r"```text\n(.*?)```", section, flags=re.DOTALL)
+    assert flow is not None, "V10 data flow diagram is missing"
+    steps = flow.group(1)
+    ordered = [
+        "deterministic baseline proposals",
+        "city-cognition-selection-v2",
+        "one terminal record per selected request",
+        "the whole applied vector becomes neutral",
+        "city-cognition-influence-v1",
+        "one atomic dual-state update",
+        "manifest-V10 publication last",
+    ]
+    positions = [steps.index(step) for step in ordered]
+    assert positions == sorted(positions), "V10 data flow steps are out of order"
+    for source in ("rules", "mock", "provider", "cache", "fallback", "budget-skipped"):
+        assert source in steps, source
+    policy = CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2
+    assert (
+        f"at most {policy.selected_requests_per_agent} per agent and "
+        f"{policy.selected_requests_per_run} per run"
+    ) in steps
+
+    _assert_terms_share_paragraph(
+        section,
+        "core/simulation/city_cognition_v2.py",
+        "core/simulation/spatial_response_v2.py",
+        "none imports a provider",
+        "adapters/cognition",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "name, age, occupation, background, mbti, and purchase intention are excluded",
+        "completion order cannot change",
+        "finish_reason",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "city-replay",
+        "without a provider, cache, keyring, environment variable, profile registry, or network",
+        "capabilities.bounded_cognition",
+        "app-cognition-v2.js",
+    )
+    assert "(4,10)" in architecture
 
 
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:

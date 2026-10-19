@@ -53,12 +53,15 @@ bounded:
 
 ```text
 CITY -> CAMPAIGN -> RUN -> INSPECT (packaged vanilla browser)
-        -> loopback schema-3 HTTP (schema-1/schema-2 compatibility)
+        -> loopback schema-3 or schema-4 HTTP (schema-1/schema-2 compatibility)
         -> same-origin, CSRF, size and strict-JSON boundary
         -> packaged/workspace city + fictional creative resolution
         -> immutable CityMobility / SpatialCampaignScenario / SpatialResponseInput
-        -> one process-local worker: simulate -> explain -> publish -> verify
-        -> schema-v9 artifact (schema-v7/schema-v8 compatibility) + immutable viewer
+        -> one process-local worker:
+             schema 3: simulate -> explain -> publish -> verify
+             schema 4: plan cognition -> request signals -> apply mapping -> publish -> verify
+        -> schema-v9 or schema-v10 artifact (schema-v7/schema-v8 compatibility)
+           + immutable viewer
 ```
 
 `adlife city-workbench --workspace PATH` first checks every unresolved workspace path
@@ -75,7 +78,8 @@ persistence starts; publication and independent verification continue, may still
 safely, and reach `completed` only after the verified result matches the frozen receipt.
 Wall-clock transition timestamps are operational display metadata and never enter
   scientific state or hashes. Schema-3 adds `simulating`, `selecting-explanations`, and
-  `requesting-explanations` before the same manifest-last persistence boundary.
+  `requesting-explanations` before the same manifest-last persistence boundary; schema 4
+  instead reports `planning-cognition`, `requesting-cognition`, and `applying-cognition`.
 Every job view also carries the same frozen `accepted_settings` receipt through every
 phase (city, scenario, campaign, exact decimal seed, agent count, days, and rules mode);
 completion is accepted only when the verified result matches that receipt.
@@ -123,10 +127,12 @@ opportunity/attention/response pages, and selected-agent final state are built f
 one immutable context. The legacy `/api/timeline` contract uses its startup-validated
 immutable context, and legacy individual endpoints remain compatible. FastAPI, the worker,
 workspace pinning, CSRF and packaged-resource loading stay outside `adlife.core`. The
-core includes pure road-coordinate, V9 manifest and native experiment contracts; none
+core includes pure road-coordinate, V9 and V10 manifest and native experiment contracts; none
 imports workbench adapters, providers, HTTP, or storage frameworks.
 
 A schema-3 workbench execution adds frozen noncausal cognition evidence as schema-v9;
+a schema-4 execution adds frozen bounded cognition signals and a dual rule/cognition state as
+schema-v10 (see [the bounded city cognition seam](#the-bounded-city-cognition-seam-schema-v10));
 schema-2 remains schema-v8 and schema-1 remains schema-v7. Canonical
 `inputs/workbench.json` freezes the complete accepted draft and selected creative-template
 snapshot; the final manifest binds its schema and `workbench_input_sha256`. Publication,
@@ -207,7 +213,7 @@ arbitrary resource URL. A source URL inside a pack remains inert metadata, not a
 target.
 
 This boundary is deliberate: animating old abstract zone changes on a city map would
-misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6/v7/v8/v9
+misrepresent the science. Saved city studies use separate strict v1/v2/v3/v4/v5/v6/v7/v8/v9/v10
 `CityRunManifest` contracts, a core full-minute trace digest, and a no-clobber
 `CityRunStore`; v1-v3 remain mobility-only.
 V3 freezes the canonical place set and its generated assignment document alongside the
@@ -223,27 +229,32 @@ workbench input sidecar described above.
 V8 freezes schema-2 persona definitions and assignments in that same sidecar while
 retaining V6 scientific evidence and the exact input-2/manifest-8 binding. V9 retains that
 science and adds manifest-bound, independently verified noncausal explanation evidence.
+V10 binds input schema 4, keeps the V5 opportunity/attention evidence, and replaces the
+response layer with the dual-state `spatial-response-v2` stream, final rule and cognition
+states, and version-2 cognition artifacts.
 For both packaged and workspace-selected runs, canonical `inputs/city.json` is the
 authoritative frozen city. Replay, metrics, reports, and run inspection read and verify the
 artifact and remain independent of later registry removal, replacement, or corruption.
 `city-run` publishes the manifest last,
 `city-replay` regenerates every minute and each applicable evidence layer before reporting
 equality, and `city-view`
-validates before serving one immutable mobility projection. For V4 through V9, the same
+validates before serving one immutable mobility projection. For V4 through V10, the same
 loopback-only read-only adapter serves a bounded summary and canonical, paged
-current-minute opportunity evidence; V5, V6, V7, V8, and V9 additionally serve
-current-minute attention evidence. V6, V7, V8, and V9 add bounded current-minute response records plus final
-end-of-run campaign state, explicitly not state at the scrubbed minute. `city-view` also
+current-minute opportunity evidence; V5, V6, V7, V8, V9, and V10 additionally serve
+current-minute attention evidence. V6, V7, V8, V9, and V10 add bounded current-minute response
+records plus final end-of-run campaign state, explicitly not state at the scrubbed minute;
+V10 serves its rule and cognition states side by side. `city-view` also
 presents the verified
 full-run `/api/spatial-response-metrics` projection as separate direct-rule and committed-state
 receipts. It does not create or mutate evidence.
 V4 remains opportunity-only evidence, V5 adds bounded synthetic attention evidence, V6
-adds bounded rules-only response evidence, V7/V8 freeze workbench provenance, and V9 freezes
-noncausal explanations; none is an
+adds bounded rules-only response evidence, V7/V8 freeze workbench provenance, V9 freezes
+noncausal explanations, and V10 freezes bounded cognition signals that change only a
+separate cognition state; none is an
 observed advertising-outcome run.
 
 The adapter-free core exposes the original read-only spatial-metrics projection over
-verified V5, V6, V7, V8, and V9 artifacts. That C4a projection remains attention-only:
+verified V5, V6, V7, V8, V9, and V10 artifacts. That C4a projection remains attention-only:
 it folds opportunity and attention evidence, not response or final-state evidence. Each
 value has an exact numerator, denominator, and source paths and carries
 `synthetic-metrics-not-observed-outcomes`. The matched comparison requires identical city,
@@ -262,6 +273,18 @@ state update, so allocating that state to a channel would invent evidence. The r
 comparison requires V6, V7, V8 or V9 and reports opportunity and response-assumption classifications
 independently. `/api/spatial-metrics` remains the attention-only endpoint;
 `/api/spatial-response-metrics` is a separate GET-only, path-free V6/V7/V8/V9 endpoint.
+
+V10 does not widen that V1 contract. `core/experiments/spatial_response_metrics_v2.py`
+derives a separate `spatial-response-metrics-v2` document from verified V10 evidence, selected
+by the exact manifest class with no trial parsing. Its rule-baseline family folds only the
+deterministic baselines embedded in the applied responses and the committed rule states, so it
+equals the V1 derivation for the same rule evidence and is the only family with the
+purchase-intention proxy. Its provider-dependent cognition family reports applied means,
+cognition-state receipts, categories, sources, fallbacks, neutralization, funded coverage,
+and provenance under `provider-dependent-exploratory-not-campaign-effect`. The same V2
+document backs `/api/spatial-response-metrics` for a V10 viewer. The V1 response comparison
+and the paired-study analysis refuse V10 runs, and the attention comparison pairs a V10 run
+only with another V10 run.
 
 Bounded C4b evidence is complete without closing the parent C4 gate. The immutable,
 path-free study definition names 2–100 committed seed pairs. `city-study` verifies and
@@ -311,6 +334,67 @@ fallback contracts, budgets, record counts, byte counts, and hashes. Loading ind
 regenerates the deterministic evidence and verifies every cross-reference. A live provider
 answer is nondeterministic; frozen schema-v9 replay is deterministic and performs no
 provider call, keyring lookup, environment lookup, cache read, or network request.
+
+## The bounded city cognition seam (schema-v10)
+
+Workbench schema 4 with Operation `Bounded AI cognition` makes provider inference part of the
+modeled cognition path without granting it numeric, state, event, or identity authority. A
+source selects closed synthetic appraisal categories for a noticed response; AdLife maps them
+through a frozen policy into a separate cognition state before the response group commits.
+The data flow of one run is:
+
+```text
+frozen schema-4 inputs/workbench.json (city, scenario, personas, settings, cognition)
+  -> rules: mobility -> opportunities -> attention -> deterministic baseline proposals
+  -> city-cognition-selection-v2: canonical (minute, agent, campaign, response) order,
+     at most 4 per agent and 60 per run; every other eligible response is `unselected`
+  -> content-addressed requests and output reservations, all built before provider work
+  -> one terminal record per selected request:
+       rules (neutral) | mock (deterministic) | provider | cache | fallback | budget-skipped
+  -> uncertain category or safety flag -> the whole applied vector becomes neutral
+  -> city-cognition-influence-v1 tables and clamps -> applied sentiment/recall deltas
+  -> one atomic dual-state update per (minute, agent, campaign):
+       rule state <- baseline deltas    cognition state <- applied deltas
+  -> manifest-V10 publication last -> independent load verification -> inspector
+```
+
+The core owns every identifier. `core/simulation/city_cognition_v2.py` builds the selected
+requests, reservations, rules/mock/fallback results, terminal records, and the frozen
+mapping; `core/simulation/spatial_response_v2.py` commits the dual-state stream; and
+`core/domain/city_cognition_v2.py` and `core/domain/city_run.py` hold the strict V2 contracts
+and the V10 manifest. None imports a provider, HTTP client, cache, credential store, or
+framework. Provider transport stays in `adapters/cognition` (`city_openai_compatible_v2.py`,
+`city_prompts_v2.py`, `city_service_v2.py`, `city_cache_v2.py`), and the workbench worker
+drives the phases `planning-cognition`, `requesting-cognition`, and `applying-cognition`
+before the shared persist and verify steps.
+
+Each request binds a canonical causal identity: the response-input, scenario, and city
+hashes, the baseline proposal and its bindings, the channel and time, the pre-minute rule
+state, and a minimized causal profile of interests, response traits, and initial sentiment
+and recall. Name, age, occupation, background, MBTI, and purchase intention are excluded.
+Because every request and reservation exists before provider work starts and no request reads
+an earlier provider answer, completion order cannot change prompts, identifiers, ordering,
+floating-point folding, or artifacts. The adapter sends only a minimized wire projection with
+campaign creative delimited as untrusted data, keeps every schema-v9 transport control
+(approved origins, loopback-only plain HTTP, HTTPS remotes, pinned peers, no redirects,
+`trust_env=False`, no streaming or tools, bounded bodies, time, retries, and repair), and
+accepts a result only when the strict `city-cognition-signal-result-v2` schema holds, the
+request ID is echoed exactly, no key is duplicated, and `finish_reason` is `stop`. Each funded
+request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output tokens
+each. Expected provider failures become typed neutral fallback records; cache corruption,
+cancellation, storage failure, or a verification mismatch fails the run instead.
+
+V10 freezes `inputs/workbench.json` (schema 4), `inputs/cognition.json`,
+`outputs/cognition.jsonl`, `outputs/cognition-summary.json`, the dual-state
+`outputs/spatial-responses.jsonl`, `outputs/response-state.json`, and
+`outputs/response-summary.json`, then publishes `run.json` last. Loading and `city-replay`
+regenerate the deterministic layers and request identities, validate every frozen result
+against its exact request and policies, reapply the mapping, and require exact equality,
+without a provider, cache, keyring, environment variable, profile registry, or network
+request. The browser workbench reads its limits from `GET /api/workbench`
+`capabilities.bounded_cognition`; the saved-run page loads the frozen
+`window.AdLifeBoundedCognition` helper from `app-cognition-v2.js`, which re-verifies hashes
+and mapping arithmetic and renders provider values only as inert text.
 
 ## The zone-simulation cognition seam
 
@@ -429,9 +513,12 @@ its own script tag.
 
 ## Persona compilation and version binding
 
-The only workbench input/manifest pairs are (1,7), (2,8), and (3,9): schema-1 homogeneous
-cohort maps to schema-v7, schema-2 fictional population maps to schema-v8, and schema-3
-adds exact explanation settings and maps to schema-v9. The application layer
+The only workbench input/manifest pairs are (1,7), (2,8), (3,9), and (4,10): schema-1
+homogeneous cohort maps to schema-v7, schema-2 fictional population maps to schema-v8,
+schema-3 adds exact explanation settings and maps to schema-v9, and schema 4 adds the
+bounded-cognition effect scope, source, profile revision, and funded response limit and maps
+to schema-v10. Future versions, booleans, floats, and other pairs are refused. The
+application layer
 materializes canonical persona-ID order into contiguous person-NNN assignments and compiles
 only explicit interests, six response traits and initial campaign state into SpatialResponseInput.
 Name, age, occupation, background and MBTI are noncausal descriptive metadata, excluded from
