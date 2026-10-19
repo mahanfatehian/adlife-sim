@@ -42,6 +42,7 @@ from adlife.city.provider_compatibility import (
     ProviderEffectScope,
     WorkbenchProviderCompatibilityRegistry,
     WorkbenchProviderCompatibilityRequired,
+    build_workbench_provider_compatibility_key,
 )
 from adlife.city.provider_profiles import (
     InvalidProviderProfile,
@@ -103,6 +104,7 @@ from adlife.city.workbench_providers import (
     WorkbenchCheckProviderFactoryV2,
     WorkbenchOperationState,
     WorkbenchProviderBusy,
+    WorkbenchProviderCheckResultV2,
     WorkbenchProviderClosed,
     WorkbenchProviderController,
     WorkbenchProviderEndpointRefused,
@@ -1223,14 +1225,33 @@ def create_city_workbench_app(
             "The request could not be completed.",
         )
 
+    def render_shell(reuse_run_id: str = "") -> HTMLResponse:
+        template = _read_packaged_text("workbench.html")
+        markers = {"__ADLIFE_CSRF_TOKEN__": token, "__ADLIFE_REUSE_RUN__": reuse_run_id}
+        if any(template.count(marker) != 1 for marker in markers):
+            raise RuntimeError("workbench interface token marker is invalid")
+        rendered = template
+        for marker, value in markers.items():
+            rendered = rendered.replace(marker, html.escape(value, quote=True))
+        return HTMLResponse(rendered, headers=_SHELL_HEADERS)
+
     @app.get("/", include_in_schema=False)
     def shell() -> HTMLResponse:
-        template = _read_packaged_text("workbench.html")
-        marker = "__ADLIFE_CSRF_TOKEN__"
-        if template.count(marker) != 1:
-            raise RuntimeError("workbench interface token marker is invalid")
-        rendered = template.replace(marker, html.escape(token, quote=True))
-        return HTMLResponse(rendered, headers=_SHELL_HEADERS)
+        return render_shell()
+
+    @app.get("/runs/{run_id}/reuse", include_in_schema=False)
+    def reuse_shell(run_id: str, request: Request) -> HTMLResponse:
+        """The workbench, asked to start a new draft from one saved run's verified inputs.
+
+        Only a portable run ID reaches the page; the browser then reads the run's frozen
+        input through the same verified read-only route the inspector uses.
+        """
+        _require_empty_query(request)
+        try:
+            portable_run_id = validate_run_id(run_id)
+        except UnsafeRunLocation:
+            raise WorkbenchRunNotFound from None
+        return render_shell(portable_run_id)
 
     @app.get("/assets/workbench.css", include_in_schema=False)
     def stylesheet() -> Response:
@@ -1442,6 +1463,54 @@ def create_city_workbench_app(
         effect_scope: ProviderEffectScope = scope
         result = await providers.check(profile_id, revision_id, effect_scope=effect_scope)
         return JSONResponse(content=result.model_dump(mode="json"))
+
+    @app.get("/api/providers/{profile_id}/revisions/{revision_id}/bounded-check")
+    def recorded_bounded_check(
+        profile_id: str,
+        revision_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        """Read, never run, this process's bounded-signal check for one exact revision.
+
+        A page reopened after inspecting a run can show the result the server already
+        enforces at job submission; nothing is re-checked or contacted here.
+        """
+        _require_empty_query(request)
+        profile = provider_registry.load(profile_id, revision_id)
+        key = build_workbench_provider_compatibility_key(profile, effect_scope="bounded-signals-v1")
+        record = compatibility_registry.lookup(key)
+        if record is None:
+            return workbench_error(
+                404,
+                "provider-check-not-recorded",
+                "No bounded-signal check has run for this profile revision since the workbench "
+                "started.",
+            )
+        result = WorkbenchProviderCheckResultV2.model_validate(
+            {
+                "status": record.status,
+                "reason_code": record.reason_code,
+                "compatibility_key_sha256": key.fingerprint,
+                **{
+                    name: getattr(key, name)
+                    for name in (
+                        "effect_scope",
+                        "profile_id",
+                        "revision_sha256",
+                        "causal_contract_sha256",
+                        "prompt_contract_sha256",
+                        "result_schema_contract_sha256",
+                        "selection_policy_sha256",
+                        "fallback_policy_sha256",
+                        "mock_policy_sha256",
+                        "influence_policy_sha256",
+                    )
+                },
+            }
+        )
+        return JSONResponse(
+            content=result.model_dump(mode="json"), headers={"Cache-Control": "no-store"}
+        )
 
     @app.post("/api/scenarios/validate")
     async def validate_scenario(request: Request) -> dict[str, object]:

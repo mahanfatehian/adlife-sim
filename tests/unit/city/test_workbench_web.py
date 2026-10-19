@@ -634,6 +634,93 @@ def test_compatibility_route_dispatches_exact_effect_scope(tmp_path, payload, sc
         assert listed["last_check"] is None
 
 
+def test_reuse_page_serves_the_shell_with_only_a_portable_run_id(tmp_path: Path) -> None:
+    client, root = _client(tmp_path)
+    before = _artifact_snapshot(root)
+    with client:
+        plain = client.get("/")
+        reuse = client.get("/runs/demo-v10-001/reuse")
+        queried = client.get("/runs/demo-v10-001/reuse?again=1")
+        malformed = [client.get(f"/runs/{value}/reuse") for value in ("Demo_V10", "a" * 41, "-x")]
+
+    marker = '<meta name="adlife-reuse-run" content="{}">'
+    assert plain.status_code == reuse.status_code == 200
+    assert marker.format("") in plain.text
+    assert marker.format("demo-v10-001") in reuse.text
+    # Apart from the requested run ID, the reuse page is the ordinary workbench shell.
+    assert reuse.text.replace(marker.format("demo-v10-001"), marker.format("")) == plain.text
+    assert reuse.headers["content-security-policy"] == plain.headers["content-security-policy"]
+    assert "__ADLIFE_" not in plain.text + reuse.text
+    assert queried.status_code == 422
+    assert [response.status_code for response in malformed] == [404, 404, 404]
+    assert all("Demo_V10" not in response.text for response in malformed)
+    # Opening the page reads nothing and writes nothing; the browser verifies the run later.
+    assert _artifact_snapshot(root) == before
+
+
+def test_recorded_bounded_check_is_read_only_exact_and_scope_bound(tmp_path: Path) -> None:
+    """A reopened page may read, never run, the process-local bounded-signal check."""
+    from tests.unit.city.test_workbench_providers import _Provider, _ProviderV2
+
+    calls = {"v1": 0, "v2": 0}
+
+    def v1(**kwargs):
+        calls["v1"] += 1
+        return _Provider(**kwargs)
+
+    def v2(**kwargs):
+        calls["v2"] += 1
+        return _ProviderV2(**kwargs)
+
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    app = _module().create_city_workbench_app(
+        workspace,
+        csrf_token=TOKEN,
+        provider_factory=v1,
+        provider_factory_v2=v2,
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+        path = f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/bounded-check"
+        before = client.get(path)
+        explained = _secure_post(
+            client,
+            f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/check",
+            {},
+        )
+        after_explanation = client.get(path)
+        checked = _secure_post(
+            client,
+            f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/check",
+            {"effect_scope": "bounded-signals-v1"},
+        )
+        recorded = client.get(path)
+        again = client.get(path)
+        queried = client.get(f"{path}?refresh=1")
+        unknown = client.get(f"/api/providers/local-ollama/revisions/{'e' * 64}/bounded-check")
+        posted = _secure_post(client, path, {})
+
+    assert before.status_code == 404
+    assert before.json()["error"]["code"] == "provider-check-not-recorded"
+    # A V1 explanation success never stands in for the bounded-signal check.
+    assert explained.status_code == 200
+    assert after_explanation.status_code == 404
+    assert checked.status_code == 200
+    assert recorded.status_code == again.status_code == 200
+    assert recorded.json() == checked.json() == again.json()
+    assert recorded.json()["effect_scope"] == "bounded-signals-v1"
+    assert recorded.json()["status"] == "compatible"
+    assert recorded.headers["cache-control"] == "no-store"
+    # Reading never contacts a provider: exactly one V1 and one V2 check ran.
+    assert calls == {"v1": 1, "v2": 1}
+    assert queried.status_code == 422
+    assert unknown.status_code == 404
+    assert posted.status_code in {404, 405}
+    exposed = recorded.text + before.text
+    assert str(workspace.root) not in exposed
+    assert "11434" not in exposed
+
+
 def test_provider_routes_create_list_and_run_explicit_compatibility_check(
     tmp_path: Path,
 ) -> None:
