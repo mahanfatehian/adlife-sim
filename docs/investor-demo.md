@@ -211,9 +211,11 @@ Click **Inspect run**.
 
 The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 seconds).
 
-1. **Map and timeline.** Press ▶ or drag the timeline: fictional agents move along roads
-   through the model day, and phone opportunities and notices appear at their minute. Say:
-   *"All of this is rule-owned and identical on every rerun."*
+1. **Map and timeline.** Press ▶ or drag the **City timeline**: fictional agents move along
+   roads through the model day. For the current minute, the sidebar lists the phone
+   opportunities, **Modeled attention** (noticed or ignored, from a fixed 0.5 draw), and
+   **Responses & bounded cognition**; choose a person to follow one agent. Say: *"All of this
+   is rule-owned and identical on every rerun."*
 2. **Bounded AI cognition signals panel.** Model `qwen2.5:7b-instruct` with its profile
    revision; tiles Eligible 18, Selected 18, Funded 10, Unselected 0, Provider 10, Cache 0,
    Fallback 0, Budget skipped 8; `How the 18 eligible responses were resolved`
@@ -240,11 +242,11 @@ The page opens `/runs/demo-v10-001` after verifying every saved file (1-3 second
    the model's categories, and therefore stages 2-5, can differ in a live run. Then set
    **Show** to `Budget skipped (8)` and open an entry: the neutral vector leaves the applied
    delta exactly equal to the baseline.
-4. **Final states.** For a selected agent, the rule card carries the purchase-intention proxy;
-   the cognition card has synthetic sentiment and recall only, with its gap from the rule
-   track. Purchase intention never reads the cognition track.
-5. **Metrics.** The rule-baseline tables keep the uncalibrated purchase-intention proxy; the
-   cognition metrics are labelled exploratory.
+4. **Final states.** Under **Final campaign state** for a selected agent, the rule card
+   carries the purchase-intention proxy; the cognition card has synthetic sentiment and recall
+   only, with its gap from the rule track. Purchase intention never reads the cognition track.
+5. **Metrics.** Open **Response metrics**: the rule-baseline tables keep the uncalibrated
+   purchase-intention proxy, and the cognition metrics are labelled exploratory.
 
 ### 13. Metrics from the command line (about 6 seconds)
 
