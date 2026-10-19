@@ -115,6 +115,11 @@ EFFECT_BADGES = {
     "neutral": "Neutral · equals baseline",
 }
 NEUTRAL_VECTOR = ["neutral", "medium", "medium", "medium"]
+CHIP_NOTES = {
+    "applied": None,
+    "set-aside": "Model answer recorded for audit · not applied to cognition",
+    "neutral": "Fixed neutral vector · no model answer",
+}
 MIXED_PLAN: tuple[tuple[str, dict[str, str] | None, tuple[str, ...]], ...] = (
     (
         "provider",
@@ -836,6 +841,20 @@ def test_pure_v2_helpers_validate_and_freeze_evidence(
             "recall": item["applied_recall_delta"],
         }
         assert presentation["terminalRecordHash"] == item["terminal_record_hash"]
+        status = item["neutralization_status"]
+        kind = (
+            None
+            if item["source"] == "unselected"
+            else "applied"
+            if status == "none"
+            else "set-aside"
+            if status in {"safety", "uncertain"}
+            else "neutral"
+        )
+        assert presentation["stages"][1]["chipsKind"] == kind
+        assert presentation["stages"][1]["chipsNote"] == (
+            None if kind is None else CHIP_NOTES[kind]
+        )
         if item["source"] == "unselected":
             assert presentation["selected"] is False
             assert presentation["stages"][1]["chips"] == []
@@ -1309,8 +1328,8 @@ def _stage_texts(page: Page, selector: str) -> list[dict[str, Any]]:
             flags: Array.from(stage.querySelectorAll('.bounded-chip[data-flag]')).map(
               (chip) => chip.dataset.flag,
             ),
-            chipsApplied: stage.querySelector('.bounded-chips')
-              ? stage.querySelector('.bounded-chips').dataset.applied
+            chipsKind: stage.querySelector('.bounded-chips')
+              ? stage.querySelector('.bounded-chips').dataset.kind
               : null,
             note: stage.querySelector('.bounded-chips-note')
               ? stage.querySelector('.bounded-chips-note').textContent
@@ -1398,7 +1417,7 @@ def test_v10_inspector_traces_every_eligible_response_in_order(
             vector: list[str] = []
             if source == "unselected":
                 assert signal["chips"] == [] and signal["flags"] == []
-                assert signal["chipsApplied"] is None
+                assert signal["chipsKind"] is None and signal["note"] is None
             else:
                 result = terminals[record.terminal_record_hash].result
                 vector = [result.affect, result.relevance, result.credibility, result.salience]
@@ -1409,10 +1428,19 @@ def test_v10_inspector_traces_every_eligible_response_in_order(
                     ["salience", result.salience],
                 ]
                 assert signal["flags"] == list(result.safety_flags)
-                assert signal["chipsApplied"] == ("true" if status == "none" else "false")
-                assert signal["note"] == (
-                    None if status == "none" else "Recorded for audit · not applied to cognition"
+                # An applied answer, an audited set-aside answer, and the fixed neutral
+                # vector (applied as identity) are three different things.
+                kind = (
+                    "applied"
+                    if status == "none"
+                    else "set-aside"
+                    if status in {"safety", "uncertain"}
+                    else "neutral"
                 )
+                assert signal["chipsKind"] == kind
+                assert signal["note"] == CHIP_NOTES[kind]
+                if kind == "neutral":
+                    assert vector == NEUTRAL_VECTOR
             if status in NEUTRAL_STATUS:
                 assert signal["status"] == NEUTRAL_STATUS[status]
             if status == "safety":

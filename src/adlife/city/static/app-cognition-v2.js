@@ -895,13 +895,23 @@
       detail = "The model chose these four closed categories for the noticed ad. Only the"
         + " fixed mapping below can turn them into a cognition change.";
     }
+    // A model or mock answer is applied, a set-aside answer is only audited, and a rules,
+    // fallback, or budget-skipped record holds the fixed neutral vector, applied as identity.
+    const chipsKind = chips.length === 0
+      ? null
+      : status === "none"
+        ? "applied"
+        : ["safety", "uncertain"].includes(status) ? "set-aside" : "neutral";
     return Object.freeze({
       key: "signal",
       title: SOURCE_LABELS[source],
       status: statusLabel,
       detail,
       chips: Object.freeze(chips),
-      chipsApplied: status === "none",
+      chipsKind,
+      chipsNote: chipsKind === "set-aside"
+        ? "Model answer recorded for audit · not applied to cognition"
+        : chipsKind === "neutral" ? "Fixed neutral vector · no model answer" : null,
       safetyFlags: Object.freeze(flags),
       uncertainDimensions: Object.freeze(uncertain),
       reason: terminal === null ? null : terminal.reason,

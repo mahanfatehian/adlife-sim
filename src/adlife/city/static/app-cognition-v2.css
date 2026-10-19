@@ -114,10 +114,12 @@
 .bounded-chip span{color:var(--muted);font:700 .5625rem Consolas,monospace;text-transform:uppercase}
 .bounded-chip strong{font-weight:650;overflow-wrap:anywhere}
 .bounded-chip[data-value="uncertain"]{border-style:dashed;border-color:#f0c87a}
-.bounded-chips.not-applied .bounded-chip{border-style:dashed;background:transparent}
+.bounded-chips.chips-set-aside .bounded-chip{border-style:dashed;background:transparent}
+.bounded-chips.chips-neutral .bounded-chip{border-color:var(--bounded-neutral);background:transparent}
 .bounded-chips .bounded-chip.chip-flag{border:3px double #f0c87a;background:transparent}
 .bounded-chips .bounded-chip.chip-flag strong{color:#fbe3b4}
 .bounded-chips-note{margin:5px 0 0;color:#f0d9a8;font:700 .625rem/1.35 Consolas,monospace;letter-spacing:.02em}
+.bounded-chips-note[data-kind="neutral"]{color:#b9c6c9}
 .bounded-trace-pending{margin:0 9px 12px 13px;color:var(--muted);font-size:.6875rem}
 
 /* Dual-state update and final state: purchase intention lives only on the rule track */

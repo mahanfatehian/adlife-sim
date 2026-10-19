@@ -3005,16 +3005,17 @@ function createBoundedBadges(presentation) {
   return row;
 }
 
+const boundedChipLabels = {
+  applied: "Recorded appraisal categories passed to the fixed mapping",
+  neutral: "Fixed neutral vector, applied as an exact identity",
+  "set-aside": "Recorded model categories, set aside and not applied",
+};
+
 function createBoundedChips(stage) {
   const chips = document.createElement("ul");
-  chips.className = `bounded-chips${stage.chipsApplied ? "" : " not-applied"}`;
-  chips.dataset.applied = String(stage.chipsApplied);
-  chips.setAttribute(
-    "aria-label",
-    stage.chipsApplied
-      ? "Recorded appraisal categories passed to the fixed mapping"
-      : "Recorded appraisal categories, set aside and not applied",
-  );
+  chips.className = `bounded-chips chips-${stage.chipsKind}`;
+  chips.dataset.kind = stage.chipsKind;
+  chips.setAttribute("aria-label", boundedChipLabels[stage.chipsKind]);
   for (const chip of stage.chips) {
     const chipItem = createTextElement("li", `bounded-chip chip-${chip.key}`);
     chipItem.dataset.dimension = chip.key;
@@ -3060,12 +3061,10 @@ function createBoundedTrace(presentation, update) {
     body.append(header);
     if (stage.key === "signal" && stage.chips.length > 0) {
       body.append(createBoundedChips(stage));
-      if (!stage.chipsApplied) {
-        body.append(createTextElement(
-          "p",
-          "bounded-chips-note",
-          "Recorded for audit · not applied to cognition",
-        ));
+      if (stage.chipsNote !== null) {
+        const note = createTextElement("p", "bounded-chips-note", stage.chipsNote);
+        note.dataset.kind = stage.chipsKind;
+        body.append(note);
       }
     }
     const detail = stage.key === "dual"
