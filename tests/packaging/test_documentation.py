@@ -1820,6 +1820,7 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
         "docs/cli-reference.md",
         "docs/architecture.md",
         "docs/city-pilot.md",
+        "docs/investor-demo.md",
     ):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
@@ -2018,6 +2019,101 @@ def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
         "exploratory evidence, not a campaign effect",
         "refuse v10 runs for now",
     )
+
+
+def _section(text: str, heading: str) -> str:
+    assert heading in text, f"section is missing: {heading}"
+    return text.split(heading, maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+
+
+def test_investor_demo_is_the_two_part_bounded_cognition_script() -> None:
+    demo = _read("docs", "investor-demo.md")
+    setup = _section(demo, "## Part 1 — SETUP")
+    simulation = _section(demo, "## Part 2 — SIMULATION")
+    assert demo.index("## Part 1 — SETUP") < demo.index("## Part 2 — SIMULATION")
+    assert "```powershell" in demo and "```bash" not in demo
+
+    for setup_step in (
+        "ollama pull qwen2.5:7b-instruct",
+        "uv sync",
+        "uv run adlife doctor --offline",
+        "8/8 checks passed",
+        "ollama run qwen2.5:7b-instruct --keepalive 30m hello",
+        r"uv run adlife city-workbench --workspace .\demo-workbench --port 50050",
+        "http://127.0.0.1:50050",
+        "`local-ollama`",
+        "http://127.0.0.1:11434/v1",
+        "--provider-origin ID=URL",
+        "--provider-key-env ID=ENVIRONMENT_VARIABLE",
+        "**Save profile revision**",
+        "**Check compatibility**",
+        "Bounded-signal contract confirmed.",
+    ):
+        assert setup_step in setup, setup_step
+    _assert_terms_share_paragraph(
+        setup, "chatgpt or codex subscription", "oauth token", "not accepted"
+    )
+
+    ordered_simulation = (
+        "`Fictional Grid City V2`",
+        "`Fictional Nuvin`",
+        "Operation `Bounded AI cognition`, Source `Local compatible model`",
+        "Funded responses `10 requests`",
+        "**Validate study**",
+        "**Start bounded cognition run**",
+        "Planning cognition",
+        "Requesting cognition",
+        "Applying cognition",
+        "**Inspect run**",
+        "**Saved signal timeline.**",
+        r"uv run adlife city-metrics .\demo-workbench demo-v10-001 --layer response",
+        r"uv run adlife city-replay .\demo-workbench demo-v10-001",
+    )
+    positions = [simulation.index(step) for step in ordered_simulation]
+    assert positions == sorted(positions), "the simulation steps are out of live order"
+    assert "Workbench schema 4 → run V10" in simulation
+    assert "frozen offline replay" in simulation
+
+    fallback = _section(demo, "## Without a working model: mock and rules")
+    assert "`Mock — reproducible demo`" in fallback
+    assert "makes no network call" in _squash(fallback)
+    troubleshooting = _section(demo, "## Troubleshooting")
+    for symptom in (
+        "endpoint resolution refused",
+        "protocol incompatible",
+        "did not answer within the check's time limit",
+        "Check bounded-signal compatibility for this profile revision to enable the run.",
+        "**Fallback**",
+        "Set aside · safety flag",
+        "**Cache**",
+        "Errno 10048",
+        "winerror 10013",
+    ):
+        assert symptom in troubleshooting, symptom
+    talking_points = _squash(_section(demo, "## Talking points"))
+    for claim in (
+        "chooses only closed categories",
+        "city-cognition-influence-v1",
+        "purchase-intention proxy stay rule-owned",
+        "names, ages, occupations, biographies, and mbti never reach the model",
+        "live model answers are not reproducible",
+        "city-replay",
+        "not validated psychology",
+        "not a sales forecast or campaign effect",
+        "unsigned",
+    ):
+        assert claim in talking_points, claim
+    assert _RESERVATION_SENTENCE.search(talking_points), "talking points omit the reservation"
+
+    lowered = demo.lower()
+    for superseded in (
+        "adlife demo --headless",
+        "adlife compare",
+        "shares",
+        "five-minute",
+        "purchase count is structurally zero",
+    ):
+        assert superseded not in lowered, superseded
 
 
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
