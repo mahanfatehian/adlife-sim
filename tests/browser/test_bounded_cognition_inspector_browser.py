@@ -1337,6 +1337,9 @@ def _stage_texts(page: Page, selector: str) -> list[dict[str, Any]]:
             formula: Array.from(stage.querySelectorAll('.bounded-stage-formula')).map(
               (line) => line.textContent,
             ),
+            usage: stage.querySelector('.bounded-stage-usage')
+              ? stage.querySelector('.bounded-stage-usage').textContent
+              : null,
             visible: stage.getBoundingClientRect().height > 0,
           })),
         }))""",
@@ -1345,6 +1348,57 @@ def _stage_texts(page: Page, selector: str) -> list[dict[str, Any]]:
 
 
 MIXED_STATUSES = {"none", "uncertain", "safety", "fallback", "budget-skipped", "unselected"}
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word if count == 1 else word + 's'}"
+
+
+def record_usage_text(record: Any) -> str:
+    """One saved request's provider work, worded exactly as the inspector states it."""
+    attempts = (
+        f"{record.attempt_count} HTTP {'attempt' if record.attempt_count == 1 else 'attempts'}"
+    )
+    tokens = (
+        ""
+        if record.prompt_tokens is None
+        else f" · {record.prompt_tokens:,} prompt + {record.completion_tokens:,} completion tokens"
+    )
+    return {
+        "provider": f"{attempts}"
+        f"{' (a retry or schema repair)' if record.attempt_count > 1 else ''}{tokens}",
+        "cache": "Verified cached answer · no new provider call in this run",
+        "fallback": f"{attempts}{tokens}, then the frozen neutral fallback",
+        "budget-skipped": "Not funded · no provider call",
+        "mock": "Offline mock · no provider call",
+        "rules": "Rules identity · no provider call",
+    }[record.source]
+
+
+def run_usage_text(cognition_input: Any, records: tuple[Any, ...]) -> str:
+    """The run's actual provider work, apart from its reservation and cache reuse."""
+    if cognition_input.mode in {"rules", "mock"}:
+        return "None · every signal resolved offline without a provider call"
+    fresh = [record for record in records if record.source in {"provider", "fallback"}]
+    attempts = sum(record.attempt_count for record in records)
+    reported = [record for record in fresh if record.prompt_tokens is not None]
+    prompt = sum(record.prompt_tokens for record in reported)
+    completion = sum(record.completion_tokens for record in reported)
+    parts = [
+        f"{_plural(attempts, 'HTTP attempt')} in this run",
+        f"{prompt:,} prompt + {completion:,} completion tokens",
+    ]
+    unreported = sum(
+        1 for record in fresh if record.prompt_tokens is None and record.attempt_count > 0
+    )
+    if unreported:
+        parts.append(f"usage not reported for {unreported}")
+    cached = sum(record.source == "cache" for record in records)
+    if cached:
+        parts.append(
+            f"{cached} cached {'answer' if cached == 1 else 'answers'} reused without a call"
+        )
+    return " · ".join(parts)
 
 
 @pytest.mark.parametrize(
@@ -1418,7 +1472,10 @@ def test_v10_inspector_traces_every_eligible_response_in_order(
             if source == "unselected":
                 assert signal["chips"] == [] and signal["flags"] == []
                 assert signal["chipsKind"] is None and signal["note"] is None
+                assert signal["usage"] is None
             else:
+                # Each saved request states its actual provider work under its signal.
+                assert signal["usage"] == record_usage_text(terminals[record.terminal_record_hash])
                 result = terminals[record.terminal_record_hash].result
                 vector = [result.affect, result.relevance, result.credibility, result.salience]
                 assert [chip[:2] for chip in signal["chips"]] == [
@@ -1646,6 +1703,9 @@ def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
         )
         assert facts["cognition-input"] == cognition_input.fingerprint
         assert facts["causal-contract"] == cognition_input.causal_contract_sha256
+        assert facts["usage"] == run_usage_text(
+            cognition_input, run.stored.cognition_evaluation.records
+        )
         limit = cognition_input.funded_response_limit
         model_line = page.locator("#bounded-cognition-model")
         if profile is None:

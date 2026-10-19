@@ -2833,6 +2833,44 @@ const boundedOutcomeRows = [
   ["unselected", "Neutral · not selected", "Beyond 4 per agent or 60 per run; no request."],
 ];
 
+// Actual provider work in this run, kept apart from the reservation and from cache reuse.
+function boundedUsageText(documentValue, records) {
+  if (["rules", "mock"].includes(documentValue.mode)) {
+    return "None · every signal resolved offline without a provider call";
+  }
+  const fresh = records.filter((record) => record.source === "provider" || record.source === "fallback");
+  const attempts = records.reduce((total, record) => total + record.attempt_count, 0);
+  const reported = fresh.filter((record) => record.prompt_tokens !== null);
+  const prompt = reported.reduce((total, record) => total + record.prompt_tokens, 0);
+  const completion = reported.reduce((total, record) => total + record.completion_tokens, 0);
+  const cached = records.filter((record) => record.source === "cache").length;
+  const parts = [
+    `${attempts} HTTP ${attempts === 1 ? "attempt" : "attempts"} in this run`,
+    `${prompt.toLocaleString("en-US")} prompt + ${completion.toLocaleString("en-US")} completion tokens`,
+  ];
+  const unreported = fresh.filter((record) => record.prompt_tokens === null && record.attempt_count > 0).length;
+  if (unreported > 0) parts.push(`usage not reported for ${unreported}`);
+  if (cached > 0) parts.push(`${cached} cached ${cached === 1 ? "answer" : "answers"} reused without a call`);
+  return parts.join(" · ");
+}
+
+// One saved request's provider work, shown under its signal stage.
+function boundedRecordUsageText(record) {
+  if (!record) return null;
+  const attempts = `${record.attempt_count} HTTP ${record.attempt_count === 1 ? "attempt" : "attempts"}`;
+  const tokens = record.prompt_tokens === null
+    ? ""
+    : ` · ${record.prompt_tokens.toLocaleString("en-US")} prompt + ${record.completion_tokens.toLocaleString("en-US")} completion tokens`;
+  return {
+    provider: `${attempts}${record.attempt_count > 1 ? " (a retry or schema repair)" : ""}${tokens}`,
+    cache: "Verified cached answer · no new provider call in this run",
+    fallback: `${attempts}${tokens}, then the frozen neutral fallback`,
+    "budget-skipped": "Not funded · no provider call",
+    mock: "Offline mock · no provider call",
+    rules: "Rules identity · no provider call",
+  }[record.source] || null;
+}
+
 function renderBoundedOutcomes(documentValue, records) {
   const coverage = documentValue.summary.coverage;
   const counts = Object.fromEntries(boundedOutcomeRows.map(([key]) => [key, 0]));
@@ -2954,6 +2992,10 @@ function renderBoundedCognitionSummary() {
     offline
       ? `${documentValue.funded_response_limit} · resolved locally, no provider tokens`
       : `${documentValue.funded_response_limit} · ${frozenCognition.aggregate_output_token_ceiling} reserved output tokens (${frozenCognition.reservation_tokens_per_request} per request, at most ${frozenCognition.max_output_tokens_per_attempt} per attempt)`,
+  );
+  appendBoundedFact(
+    provenance, "usage", "Provider usage",
+    boundedUsageText(documentValue, state.boundedCognition.records.records),
   );
   appendBoundedFact(
     provenance, "prompt", "Prompt contract",
@@ -3185,6 +3227,12 @@ function createBoundedTrace(presentation, update) {
       ? boundedDualStageText(presentation.appliedEventId, update)
       : stage.detail;
     body.append(createTextElement("p", "bounded-stage-detail", detail));
+    if (stage.key === "signal" && presentation.terminalRecordHash !== null && state.boundedCognition) {
+      const usage = boundedRecordUsageText(
+        state.boundedCognition.index.get(presentation.terminalRecordHash),
+      );
+      if (usage !== null) body.append(createTextElement("p", "bounded-stage-usage", usage));
+    }
     if (stage.key === "mapping") {
       for (const line of stage.formula) {
         body.append(createTextElement("p", "bounded-stage-formula", line));

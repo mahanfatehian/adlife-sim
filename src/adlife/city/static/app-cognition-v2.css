@@ -108,6 +108,7 @@
 .bounded-stage.stage-baseline .bounded-stage-status,.bounded-stage.stage-dual .bounded-stage-status{color:var(--bounded-rule)}
 .bounded-applied-item [data-neutralization]:not([data-neutralization="none"])~.bounded-trace .stage-signal .bounded-stage-status{color:var(--bounded-neutral)}
 .bounded-stage-detail{margin:3px 0 0;color:#cbd7da;font-size:.75rem;line-height:1.5;overflow-wrap:anywhere}
+.bounded-stage-usage{margin:4px 0 0;color:#9fb6bb;font:500 .6875rem/1.45 Consolas,monospace;overflow-wrap:anywhere}
 .bounded-stage-formula{margin:5px 0 0;padding:4px 7px;border-left:2px solid #c9a9f766;background:#ffffff06;color:#e6dbf7;font:500 .6875rem/1.5 Consolas,monospace;overflow-wrap:anywhere}
 .bounded-chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 0;padding:0;list-style:none}
 .bounded-chip{display:inline-flex;align-items:baseline;gap:5px;min-width:0;padding:3px 7px;border:1px solid #c9a9f770;background:#c9a9f714;font-size:.75rem;line-height:1.3}
