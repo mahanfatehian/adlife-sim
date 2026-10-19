@@ -2974,7 +2974,11 @@ async function jumpToBoundedSignal(record) {
   renderMapTextAlternative();
   announceTimeline(`Saved request ${record.selection_index + 1} selected. ${byId("map-text-summary").textContent}`);
   const card = document.querySelector(`[data-evidence-id="${applied.event_id}"]`);
-  if (card instanceof HTMLElement) card.focus();
+  if (card instanceof HTMLElement) {
+    // Start the selected response at the top so its whole ordered trace stays in view.
+    card.scrollIntoView({ block: "start" });
+    card.focus({ preventScroll: true });
+  }
 }
 
 function boundedDualStageText(appliedId, update) {
@@ -4374,6 +4378,12 @@ function renderBoundedResponseMetrics() {
     );
   }
   table.append(caption, body);
+  const selected = cognition.coverage.selected_request_count;
+  const categoriesNote = createTextElement(
+    "p",
+    "bounded-category-note",
+    `Recorded categories across all ${selected} selected ${selected === 1 ? "request" : "requests"}, including the fixed neutral vector of rules, fallback, and budget-skipped requests and answers later set aside as uncertain or safety-flagged.`,
+  );
   const categories = document.createElement("dl");
   categories.className = "bounded-category-counts";
   for (const [family, values] of boundedCategoryFamilies) {
@@ -4391,7 +4401,7 @@ function renderBoundedResponseMetrics() {
     );
     categories.append(row);
   }
-  section.replaceChildren(title, claim, table, categories);
+  section.replaceChildren(title, claim, table, categoriesNote, categories);
 }
 
 function evidencePageUrl(kind, minute, offset) {

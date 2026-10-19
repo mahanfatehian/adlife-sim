@@ -150,7 +150,8 @@
 .bounded-metrics-table td{text-align:right}
 .bounded-metrics-table td strong{display:block;font:600 .75rem Consolas,monospace}
 .bounded-metrics-table td small{display:block;margin-top:3px;color:var(--bounded-cognition);font:500 .625rem Consolas,monospace;overflow-wrap:anywhere}
-.bounded-category-counts{display:grid;gap:5px;margin:10px 0 0}
+.bounded-category-note{margin:12px 0 0;color:var(--muted);font-size:.6875rem;line-height:1.45}
+.bounded-category-counts{display:grid;gap:5px;margin:8px 0 0}
 .bounded-category-counts>div{display:grid;grid-template-columns:minmax(0,5.75rem) minmax(0,1fr);gap:8px}
 .bounded-category-counts dt{color:var(--muted);font:700 .625rem Consolas,monospace}
 .bounded-category-counts dd{margin:0;font-size:.6875rem;overflow-wrap:anywhere}

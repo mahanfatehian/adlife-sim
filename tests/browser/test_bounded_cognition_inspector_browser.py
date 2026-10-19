@@ -1815,6 +1815,18 @@ def test_v10_hostile_text_stays_inert_and_controls_stay_accessible(
         assert page.evaluate("() => state.selectedEvidence && state.selectedEvidence.kind") == (
             "response"
         )
+        # The jump starts the selected response at the top, so its trace begins in view.
+        assert page.evaluate(
+            """hash => {
+              const card = document.querySelector(`[data-terminal-record-hash="${hash}"]`);
+              const item = card.closest('.bounded-applied-item');
+              const first = item.querySelector('.bounded-stage.stage-baseline');
+              const cardRect = card.getBoundingClientRect();
+              const stageRect = first.getBoundingClientRect();
+              return cardRect.top >= -0.5 && stageRect.bottom <= window.innerHeight + 0.5;
+            }""",
+            first.record_hash,
+        )
         layout = page.evaluate(
             """() => ({
               documentWidth: document.documentElement.scrollWidth,
@@ -2110,6 +2122,14 @@ def test_v10_response_metrics_keep_the_rule_baseline_separate_from_cognition(
             "rows => rows.map((row) => row.dataset.family)"
         )
         assert families == ["affect", "relevance", "credibility", "salience"]
+        # Category counts include fixed neutral vectors; the caption says so plainly.
+        selected = coverage.selected_request_count
+        expect(cognition.locator(".bounded-category-note")).to_have_text(
+            f"Recorded categories across all {selected} selected "
+            f"{'request' if selected == 1 else 'requests'}, including the fixed neutral vector "
+            "of rules, fallback, and budget-skipped requests and answers later set aside as "
+            "uncertain or safety-flagged."
+        )
         assert session.page_errors == [] and session.console_errors == []
 
 
