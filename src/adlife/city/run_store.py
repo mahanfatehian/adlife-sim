@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import sys
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -193,6 +194,49 @@ class _HeldArtifact:
 
 _WINDOWS_PINS: dict[Path, _DirectoryPin] = {}
 _PIN_LOCK = RLock()
+# ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION. The workbench city registry
+# anchors the workspace root with DELETE access for short critical sections and
+# waits out read leases on the same bound, so a read lease waits out that anchor.
+_WINDOWS_SHARING_ERRORS = frozenset({32, 33})
+_WINDOWS_PIN_RETRY_SECONDS = 10.0
+_WINDOWS_PIN_RETRY_INTERVAL_SECONDS = 0.01
+
+
+def _acquire_windows_pin(path: Path) -> None:
+    """Take one shared directory read lease, waiting out brief exclusive anchors."""
+    if sys.platform == "win32":
+        # Reuse the registry's native handle owner: no FILE_SHARE_DELETE keeps each
+        # Windows directory entry pinned for the operation.
+        from adlife.city.workbench_city_registry import _windows_create_file
+
+        deadline = time.monotonic() + _WINDOWS_PIN_RETRY_SECONDS
+        while True:
+            with _PIN_LOCK:
+                pin = _WINDOWS_PINS.get(path)
+                if pin is not None:
+                    pin.references += 1
+                    return
+                try:
+                    # LIST_DIRECTORY participates in Windows sharing checks;
+                    # READ_ATTRIBUTES alone does not deny rename. Read leases
+                    # remain mutually compatible while excluding DELETE.
+                    owner = _windows_create_file(
+                        path,
+                        desired_access=0x0001 | 0x0080,
+                        share_mode=0x00000003,
+                        creation_disposition=3,
+                        flags=0x02000000,
+                    )
+                except OSError as error:
+                    if error.errno not in _WINDOWS_SHARING_ERRORS or time.monotonic() >= deadline:
+                        raise
+                else:
+                    _WINDOWS_PINS[path] = _DirectoryPin(owner, 1)
+                    return
+            # Retry outside the lock so other leases can still be released meanwhile.
+            time.sleep(_WINDOWS_PIN_RETRY_INTERVAL_SECONDS)
+    else:  # pragma: no cover - platform guard, unreachable off Windows
+        raise OSError("Windows directory pins require a Windows interpreter")
 
 
 def _release_windows_pin(path: Path) -> None:
@@ -277,29 +321,8 @@ def _hold_parents(path: Path) -> Iterator[int | None]:
         descriptor = None
         for parent, identity in observed:
             if sys.platform == "win32":
-                # Reuse the registry's native handle owner: no FILE_SHARE_DELETE
-                # keeps each Windows directory entry pinned for the operation.
-                from adlife.city.workbench_city_registry import (
-                    _windows_create_file,
-                )
-
-                with _PIN_LOCK:
-                    pin = _WINDOWS_PINS.get(parent)
-                    if pin is not None:
-                        pin.references += 1
-                    else:
-                        # LIST_DIRECTORY participates in Windows sharing checks;
-                        # READ_ATTRIBUTES alone does not deny rename. Read leases
-                        # remain mutually compatible while excluding DELETE.
-                        owner = _windows_create_file(
-                            parent,
-                            desired_access=0x0001 | 0x0080,
-                            share_mode=0x00000003,
-                            creation_disposition=3,
-                            flags=0x02000000,
-                        )
-                        _WINDOWS_PINS[parent] = _DirectoryPin(owner, 1)
-                    stack.callback(_release_windows_pin, parent)
+                _acquire_windows_pin(parent)
+                stack.callback(_release_windows_pin, parent)
             else:
                 flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
                 descriptor = os.open(parent, flags)

@@ -1108,6 +1108,61 @@ def test_open_inspector_snapshot_stays_atomic_and_reload_reverifies_artifacts(
     )
 
 
+@pytest.mark.parametrize("route", ["inspector", "library"])
+def test_verified_runs_stay_available_while_the_city_registry_anchors_the_root(
+    tmp_path: Path, route: str
+) -> None:
+    """A run read overlapping a city-registry operation waits instead of failing.
+
+    Regression: on Windows the city registry anchors the workspace root with DELETE
+    access during, for example, GET /api/cities, while every run read pins the same
+    directory as a shared read lease. A run load that began inside that short critical
+    section hit a sharing violation, so a verified run was reported unavailable.
+    """
+    from adlife.city import workbench_city_registry as registry
+
+    client, root = _client(tmp_path)
+    run_id = "registry-overlap"
+    _saved_workbench_run(root, run_id=run_id, schema_version=7)
+    anchored = threading.Event()
+    release = threading.Event()
+    failures: list[BaseException] = []
+
+    def anchor_root() -> None:
+        try:
+            with registry._hold_workspace_root(prepare_workbench_workspace(root)):
+                anchored.set()
+                release.wait(timeout=30)
+        except BaseException as error:  # surfaced by the assertion below
+            failures.append(error)
+        finally:
+            anchored.set()
+
+    holder = threading.Thread(target=anchor_root, daemon=True)
+    with client:
+        holder.start()
+        assert anchored.wait(timeout=30)
+        timer = threading.Timer(0.3, release.set)
+        timer.start()
+        try:
+            response = client.get(f"/runs/{run_id}" if route == "inspector" else "/api/runs")
+        finally:
+            release.set()
+            timer.cancel()
+            holder.join(timeout=30)
+
+    assert failures == []
+    assert response.status_code == 200
+    if route == "inspector":
+        assert re.search(
+            r'<meta name="adlife-view-token" content="[A-Za-z0-9_-]{43}">', response.text
+        )
+    else:
+        page = response.json()
+        assert (page["verified_total"], page["corrupt_count"]) == (1, 0)
+        assert [run["run_id"] for run in page["runs"]] == [run_id]
+
+
 def test_completed_inspector_url_serves_the_existing_dashboard_with_a_scoped_api_base(
     tmp_path: Path,
 ) -> None:
