@@ -2335,6 +2335,24 @@ def test_smoke_cleans_workspace_and_returns_no_dead_artifact_path(
     assert result is None
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="8.3 short names exist only on Windows")
+def test_smoke_workspace_expands_a_windows_short_temporary_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A temporary root reached through an 8.3 name would be refused as a run location."""
+    import ctypes
+
+    workspace = tmp_path / "adlife-smoke-long-workspace"
+    workspace.mkdir()
+    buffer = ctypes.create_unicode_buffer(32_768)
+    length = ctypes.windll.kernel32.GetShortPathNameW(str(workspace), buffer, len(buffer))
+    if length == 0 or buffer.value == str(workspace):
+        pytest.skip("this volume creates no 8.3 short names")
+    monkeypatch.setattr(smoke_release.tempfile, "mkdtemp", lambda **kwargs: buffer.value)
+
+    assert smoke_release._smoke_workspace() == workspace
+
+
 def test_smoke_cleans_workspace_when_installation_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

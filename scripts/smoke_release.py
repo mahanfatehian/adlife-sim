@@ -5051,9 +5051,19 @@ def _certify_spatial_study(
     return len(report_bytes)
 
 
+def _smoke_workspace() -> Path:
+    """Create the smoke workspace and return its final, long-form path.
+
+    A Windows temporary directory is often reached through an 8.3 short name such as
+    ``C:\\Users\\RUNNER~1``, which the run store refuses as an unsafe location; resolving
+    expands it, as pytest does for its own temporary root.
+    """
+    return Path(tempfile.mkdtemp(prefix="adlife-smoke-")).resolve()
+
+
 def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
     """Verify the wheel, then remove all temporary artifacts before returning."""
-    workspace = Path(tempfile.mkdtemp(prefix="adlife-smoke-"))
+    workspace = _smoke_workspace()
     try:
         scratch = workspace / "scratch"
         scratch.mkdir(parents=True)

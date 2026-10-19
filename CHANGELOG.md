@@ -184,6 +184,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overlapped a city-registry root anchor (for example `GET /api/cities`) hit a sharing
   violation and reported the run unavailable; run reads now wait out the anchor for up to
   10 seconds, as the registry already did.
+- **Release smoke on Windows short temporary paths (2026-10-19)** — when the temporary
+  directory is reached through an 8.3 short name, as on GitHub's Windows runners
+  (`C:\Users\RUNNER~1\...`), `scripts/smoke_release.py` failed its spatial runs with
+  `city run opportunity stream has an unsafe location`. The smoke now resolves its workspace
+  to the long form before using it, as pytest does for its own temporary root.
 - **Workbench cognition field errors (2026-10-19)** — server-side cognition validation errors
   now name their exact `cognition.*` fields, so the browser highlights the matching control.
 - **Counts, labels and help text (2026-10-19)** — a count of exactly one now reads in the
