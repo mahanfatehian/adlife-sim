@@ -29,8 +29,10 @@ opportunity/attention-only.
 
 The loopback workbench publishes schema-v9 for schema-3 requests, retaining
 schema-2/schema-v8 and schema-1/schema-v7 compatibility. V9 can add optional bounded
-noncausal explanations after deterministic response evaluation.
-No version adds a new behavioral model: canonical `inputs/workbench.json` freezes the
+noncausal explanations after deterministic response evaluation. Schema-4 requests publish
+schema-v10, whose bounded AI cognition signals feed a separate synthetic cognition state
+(see [the LLM's role in schema-v10 city runs](#the-llms-role-in-schema-v10-city-runs)).
+Up to V9, no version adds a new behavioral model: canonical `inputs/workbench.json` freezes the
 complete accepted draft and exact fictional creative-template snapshot, and the manifest's
 `workbench_input_sha256` binds it to the other run inputs. Verified discovery, replay and
 run-scoped inspection refuse a missing, changed, noncanonical or inconsistent sidecar.
@@ -46,7 +48,8 @@ homogeneous response cohort, not demographic calibration or evidence about a rea
 population. The model clock, map animation, playback speed, filtering, and selection are
 presentation only and cannot change the frozen run. Optional provider-backed city
 explanations annotate those transparent deterministic rules; they do not become agent state
-or a decision input.
+or a decision input. Schema-v10 bounded cognition signals, by contrast, change only a
+separate synthetic cognition state and never a rule-owned decision.
 
 - Studying **mechanisms** of advertising exposure, attention, memory, fatigue, social
   transmission, and intention formation inside a small, fully controlled synthetic
@@ -106,6 +109,43 @@ nondeterministic; frozen schema-v9 replay is deterministic and performs no provi
 credential lookup, cache lookup, registry lookup, or network access. Replay verifies the
 recorded terminal stream against the same numeric evidence and leaves the source unchanged.
 
+## The LLM's role in schema-v10 city runs
+
+In bounded AI cognition (workbench schema 4, manifest V10), the rules first compute movement,
+opportunities, attention, and every deterministic baseline response. For at most 4 noticed
+responses per agent and 60 per run, a local or remote OpenAI-compatible model then chooses
+one closed category for each of affect, relevance, credibility, and salience, plus optional
+safety flags. It writes no prose, number, identifier, event, or state. AdLife maps the
+categories through the frozen `city-cognition-influence-v1` tables and clamps into bounded
+deltas on a separate synthetic cognition sentiment/recall track. The model cannot move
+agents, create or select events, change attention, the baseline responses, the rule state,
+budgets, or the purchase-intention proxy, which never reads the cognition track; purchases
+are not modeled. The tables are explicit synthetic assumptions, not calibrated psychological
+effects, and the categories are not an agent's private thoughts, observed behavior, validated
+psychology, or a prediction about any person.
+
+The request contains only causal facts: interests, response traits, the initial rule
+sentiment and recall, the campaign's target interests and relative price, the creative as
+delimited untrusted data, and the channel, time, frequency, and rule factors. Name, age,
+occupation, background, and MBTI are excluded, so these descriptive labels cannot steer the
+model. An `uncertain` category or any safety flag (`stereotype-risk`,
+`unsupported-inference`, `unsafe-content`) neutralizes the whole answer; unavailable,
+timed-out, or invalid answers become typed neutral fallbacks; selected requests beyond the
+funded 10, 20, 40, or 60 are budget-skipped and neutral. Each funded request reserves 1,024
+output tokens: at most 4 HTTP attempts of up to 256 output tokens each; input tokens and
+vendor charges are outside that reservation. Rules and mock sources are offline: rules apply
+the exact neutral vector and mock derives a deterministic vector from each request.
+
+A general-purpose model brings its own tendencies. In rehearsal a local `qwen2.5:7b-instruct`
+gave nearly the same vector (neutral affect, high relevance and credibility) to most
+responses, and before its prompt stated when each safety flag applies it flagged about 95% of
+ordinary answers. The resulting cognition evidence is therefore provider-dependent and
+exploratory: `city-metrics` reports it beside, never inside, the rule baseline, and it is not a
+campaign effect. `city-compare --layer response`, `city-study`, and `city-report` refuse V10
+runs until a paired-cognition protocol exists. Live provider signals are nondeterministic;
+frozen schema-v10 replay reapplies the saved signals and performs no provider call, so a
+saved run is reproducible while a fresh run is not.
+
 ## The zone engine LLM role (and its limits)
 
 In hybrid mode an OpenAI-compatible provider supplies narrative text and bounded numeric
@@ -142,7 +182,7 @@ source provenance, but it contains no real-person trajectories. Its IANA time zo
 source metadata: it does not make the fixed schedule calendar-accurate. The mobility
 pilot can optionally assign synthetic home, workplace and leisure points supplied in a
 pack-hash-bound place set. Those points must be routable road nodes, carry explicit
-authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6/v7/v8/v9 replay;
+authored/source-derived/inferred provenance, and are frozen for v3/v4/v5/v6/v7/v8/v9/v10 replay;
 they are
 scenario inputs, not addresses, mobility observations or evidence about residents. The
 model has no dated calendar, holiday rules, daylight-saving transition policy, local
@@ -216,6 +256,16 @@ comparison classifies opportunity structure and numeric response assumptions ind
 All of these uncalibrated values are model summaries, not observed outcomes, sales, or
 causal effects.
 
+Schema-v10 runs use the attention default unchanged and a separate
+`spatial-response-metrics-v2` fold with two families. The rule baseline,
+`rule-owned-synthetic-baseline-not-observed-outcomes`, equals the V1 receipts over the same
+deterministic rule evidence and is the only family with the uncalibrated purchase-intention
+proxy. The provider-dependent cognition family,
+`provider-dependent-exploratory-not-campaign-effect`, reports applied sentiment/recall means,
+synthetic cognition-state receipts, category, source, fallback, and neutralization counts,
+and funded coverage; it has no purchase, effect, or lift member, and its category counts
+include the fixed neutral vectors of rules, fallback, and budget-skipped requests.
+
 `city-study` treats one verified seed pair as the experimental unit and produces
 `spatial-paired-study-v1` under `synthetic-study-not-observed-or-causal-effect`; it never
 pools agents or events across seeds. Its deterministic bootstrap describes simulator-seed
@@ -241,6 +291,12 @@ not evidence about corresponding real-world groups; names come from fictional li
 Consumers of results should not
 read agent archetypes as claims about real populations.
 
+In schema-v10 runs the descriptive persona fields never reach the model, but a
+general-purpose model can still bring stereotyped associations to interests, creative copy,
+or channel. The bounded result offers a `stereotype-risk` safety flag, and any flagged answer
+is recorded but fully neutralized; that relies on the model flagging itself and is not a
+guarantee that unflagged categories are free of bias.
+
 ## Prompt-injection boundary
 
 Campaign files and population files are **untrusted input**: YAML is parsed with a safe
@@ -257,6 +313,13 @@ screen. The configured transport credential is additionally screened by exact va
 provider responses, even when it has no recognizable vendor pattern. Never put
 credentials or real-person data in campaign text.
 
+For schema-v10 bounded signals, prompt injection in campaign creative may influence which
+allowed category the model selects. The guarantee is bounded authority rather than perfect
+obedience: the creative is delimited as untrusted data, the result must match the strict
+closed schema with the exact request ID and `finish_reason` `stop`, an uncertain or flagged
+answer is neutralized, failures fall back to the neutral vector, and no category can reach
+movement, attention, baseline responses, rule state, budgets, or purchase intention.
+
 ## Reproducibility limits
 
 Rules and mock modes are exactly reproducible (the same stream, event for event;
@@ -267,6 +330,11 @@ guarantee the same numeric outcomes. Two runs on different code versions are
 different models — the manifest records the version, and cross-version comparisons should
 re-baseline.
 
+A saved schema-v10 run is exactly reproducible offline: `city-replay` reapplies its frozen
+signals and frozen mapping and requires identical evidence. A fresh run with the same inputs
+is not, because live provider categories vary even at temperature 0 with a fixed seed; only
+its rule-owned layers and rule baseline are guaranteed to repeat.
+
 ## External-validity status
 
 **Unknown.** The model has not been calibrated against any real-world data, and no claim
@@ -275,8 +343,9 @@ inside the synthetic world, not absolute prediction.
 
 ## Fictional personas and external validity
 
-Default schema-3 authoring creates schema-v9, with schema-2/schema-v8 persona and
-schema-1/schema-v7 homogeneous compatibility.
+Default schema-3 authoring creates schema-v9, schema-4 bounded AI cognition authoring creates
+schema-v10, and schema-2/schema-v8 persona and schema-1/schema-v7 homogeneous compatibility
+remain.
 Four fictional templates are editable starting assumptions, not real residents or population
 samples. Name, age, occupation, background and MBTI are noncausal descriptive context;
 no personality predictive power, demographic calibration or real-person validity is claimed.

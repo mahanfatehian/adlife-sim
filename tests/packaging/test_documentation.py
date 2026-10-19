@@ -1821,6 +1821,7 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
         "docs/architecture.md",
         "docs/city-pilot.md",
         "docs/investor-demo.md",
+        "docs/methodology/model-card.md",
     ):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
@@ -2160,6 +2161,49 @@ def test_reproducibility_separates_live_v10_signals_from_frozen_offline_replay()
         "earlier development builds",
     )
     _assert_terms_share_paragraph(reproducibility, "all-v9", "schema-v10", "refused", "city-report")
+
+
+def test_model_card_states_the_v10_llm_role_and_its_limits() -> None:
+    model_card = _read("docs", "methodology", "model-card.md")
+    section = _section(model_card, "## The LLM's role in schema-v10 city runs")
+    _assert_terms_share_paragraph(
+        section,
+        "one closed category",
+        "city-cognition-influence-v1",
+        "separate synthetic cognition",
+        "purchase-intention proxy, which never reads the cognition track",
+        "not calibrated psychological effects",
+        "not an agent's private thoughts",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "name, age, occupation, background, and mbti are excluded",
+        "uncertain",
+        "stereotype-risk",
+        "budget-skipped",
+        "input tokens and vendor charges are outside that reservation",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "provider-dependent and exploratory",
+        "not a campaign effect",
+        "refuse v10",
+        "live provider signals are nondeterministic",
+        "frozen schema-v10 replay",
+        "no provider call",
+    )
+    _assert_terms_share_paragraph(
+        _section(model_card, "## Stereotype risks"),
+        "descriptive persona fields never reach the model",
+        "stereotype-risk",
+        "not a guarantee",
+    )
+    _assert_terms_share_paragraph(
+        _section(model_card, "## Prompt-injection boundary"),
+        "schema-v10",
+        "bounded authority rather than perfect obedience",
+        "neutralized",
+    )
 
 
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
