@@ -1,3 +1,4 @@
+import json
 import warnings
 
 import httpx
@@ -601,7 +602,7 @@ def test_saved_v5_view_requires_matching_attention_evidence() -> None:
         )
     with pytest.raises(
         ValueError,
-        match="only valid for a saved schema version 5, 6, 7, 8 or 9 run",
+        match="only valid for a saved schema version 5, 6, 7, 8, 9 or 10 run",
     ):
         create_city_app(
             simulation,
@@ -761,7 +762,7 @@ def test_spatial_view_requires_a_complete_schema_v4_saved_run() -> None:
         )
     with pytest.raises(
         ValueError,
-        match="only valid for a saved schema version 4, 5, 6, 7, 8 or 9 run",
+        match="only valid for a saved schema version 4, 5, 6, 7, 8, 9 or 10 run",
     ):
         create_city_app(
             simulation,
@@ -1138,7 +1139,7 @@ def test_saved_view_rederives_response_metrics_and_rejects_wrong_schema() -> Non
         )
     with pytest.raises(
         ValueError,
-        match="only valid for a saved schema version 6, 7, 8 or 9 run",
+        match="only valid for a saved schema version 6, 7, 8, 9 or 10 run",
     ):
         create_city_app(
             simulation,
@@ -1416,7 +1417,7 @@ def test_saved_v6_view_requires_complete_matching_revalidated_response_evidence(
             create_city_app(simulation, **common, **partial)
     with pytest.raises(
         ValueError,
-        match="only valid for a saved schema version 6, 7, 8 or 9 run",
+        match="only valid for a saved schema version 6, 7, 8, 9 or 10 run",
     ):
         create_city_app(
             simulation,
@@ -1476,3 +1477,475 @@ def test_saved_v9_view_accepts_complete_response_and_workbench_evidence() -> Non
     assert context.run_schema_version == 9
     assert context.response_evaluation == responses
     assert context.workbench_input_sha256 == "a" * 64
+
+
+def _v10_view_arguments(stored) -> dict[str, object]:
+    """Complete exact V10 evidence, deriving metrics directly from the core models."""
+    from adlife.city.workbench_cognition_views import (
+        build_workbench_cognition_records_view,
+        build_workbench_cognition_summary_view,
+        build_workbench_run_input_view_v4,
+    )
+    from adlife.core.experiments.spatial_response_metrics_v2 import (
+        derive_spatial_response_metrics_v2,
+    )
+
+    agent_ids = tuple(agent.agent_id for agent in stored.mobility.agents)
+    attention_metrics = derive_spatial_metrics(
+        stored.opportunity_evaluation,
+        stored.attention_evaluation,
+        agent_ids=agent_ids,
+        agents_sha256=stored.manifest.agents_sha256,
+        trace_sha256=stored.manifest.trace_sha256,
+        days=stored.manifest.days,
+        source_run_schema_version=10,
+    )
+    return {
+        "run_id": stored.manifest.run_id,
+        "run_schema_version": 10,
+        "spatial_scenario": stored.spatial_scenario,
+        "opportunity_evaluation": stored.opportunity_evaluation,
+        "attention_evaluation": stored.attention_evaluation,
+        "spatial_metrics": attention_metrics,
+        "response_input": stored.response_input,
+        "response_evaluation": stored.response_evaluation,
+        "spatial_response_metrics": derive_spatial_response_metrics_v2(
+            stored.response_input,
+            stored.response_evaluation,
+            scenario=stored.spatial_scenario,
+            opportunities=stored.opportunity_evaluation,
+            attention=stored.attention_evaluation,
+            agent_ids=agent_ids,
+            attention_metrics=attention_metrics,
+            cognition_input=stored.cognition_input,
+            cognition=stored.cognition_evaluation,
+        ),
+        "cognition_input": stored.cognition_input,
+        "cognition_evaluation": stored.cognition_evaluation,
+        "workbench_input_view": build_workbench_run_input_view_v4(stored),
+        "cognition_summary_view": build_workbench_cognition_summary_view(stored),
+        "cognition_records_view": build_workbench_cognition_records_view(stored),
+    }
+
+
+@pytest.fixture(scope="module")
+def saved_v10(tmp_path_factory: pytest.TempPathFactory):
+    from adlife.city.run_store import CityRunStore
+    from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
+    from tests.unit.city.test_workbench_cognition_views import dense_phone
+
+    root = tmp_path_factory.mktemp("city-web-v10")
+    _saved_v10(root, mode="mock", run_id="dense-v10", agents=4, mutation=dense_phone)
+    _saved_v10(root, mode="rules", run_id="rules-v10")
+    _saved_v10(root, mode="rules", run_id="empty-v10", empty=True)
+    store = CityRunStore(root)
+    return {name: store.load(f"{name}-v10") for name in ("dense", "rules", "empty")}
+
+
+def _v10_client(stored, **changes: object) -> httpx.AsyncClient:
+    arguments = _v10_view_arguments(stored) | changes
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_city_app(stored.mobility, **arguments)),
+        base_url="http://127.0.0.1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_v10_response_pages_keep_canonical_dual_state_stream_order(saved_v10) -> None:
+    stored = saved_v10["dense"]
+    evaluation = stored.response_evaluation
+    records = evaluation.records
+    minutes = sorted(
+        {
+            record.baseline.model_minute
+            if record.event_type == "spatial.applied-response"
+            else record.model_minute
+            for record in records
+        }
+    )
+    async with _v10_client(stored) as web:
+        pages = {
+            minute: (await web.get(f"/api/response-events?minute={minute}&limit=100")).json()
+            for minute in minutes
+        }
+        busiest = max(minutes, key=lambda minute: pages[minute]["total"])
+        split = [
+            (await web.get(f"/api/response-events?minute={busiest}&offset={offset}&limit=1")).json()
+            for offset in range(pages[busiest]["total"])
+        ]
+        agent = pages[busiest]["items"][-1]["agent_id"]
+        filtered = (await web.get(f"/api/response-events?minute={busiest}&agent_id={agent}")).json()
+
+    streamed = [item for minute in minutes for item in pages[minute]["items"]]
+    assert streamed == [record.model_dump(mode="json") for record in records]
+    for minute, page in pages.items():
+        assert page["schema_version"] == 2
+        assert page["response_model_id"] == "spatial-response-v2"
+        assert page["claim_scope"] == "synthetic-bounded-cognition-not-observed-behavior"
+        items = page["items"]
+        applied = [item for item in items if item["event_type"] == "spatial.applied-response"]
+        assert {item["event_type"] for item in items} <= {
+            "spatial.applied-response",
+            "spatial.dual-state-updated",
+        }
+        assert page["event_type_counts"] == {
+            "spatial.applied-response": len(applied),
+            "spatial.dual-state-updated": len(items) - len(applied),
+        }
+        assert page["channel_counts"] == {
+            "roadside-billboard": sum(
+                item["baseline"]["channel"] == "roadside-billboard" for item in applied
+            ),
+            "mobile-feed": sum(item["baseline"]["channel"] == "mobile-feed" for item in applied),
+        }
+        # Every applied record embeds its deterministic baseline; there is no
+        # standalone baseline line, and each group ends with exactly one dual update.
+        assert all(item["baseline"]["event_type"] == "spatial.response" for item in applied)
+        assert all(item["baseline"]["model_minute"] == minute for item in applied)
+        pending: list[str] = []
+        for item in items:
+            if item["event_type"] == "spatial.applied-response":
+                pending.append(item["event_id"])
+            else:
+                assert item["caused_by_event_ids"] == pending
+                assert item["model_minute"] == minute
+                pending = []
+        assert pending == []
+    # A page may end with an applied response whose dual update starts the next page.
+    assert [page["items"][0] for page in split] == pages[busiest]["items"]
+    assert [page["next_offset"] for page in split] == [
+        *range(1, pages[busiest]["total"]),
+        None,
+    ]
+    assert split[0]["items"][0]["event_type"] == "spatial.applied-response"
+    assert filtered["items"] == [
+        item
+        for item in pages[busiest]["items"]
+        if item.get("agent_id", item.get("baseline", {}).get("agent_id")) == agent
+    ]
+    assert filtered["agent_counts"] == {agent: filtered["total"]}
+
+
+@pytest.mark.asyncio
+async def test_saved_v10_state_pages_expose_separate_rule_and_cognition_tracks(saved_v10) -> None:
+    from adlife.core.simulation.spatial_response_v2 import spatial_response_state_document_v2
+
+    stored = saved_v10["dense"]
+    document = spatial_response_state_document_v2(stored.response_evaluation)
+    async with _v10_client(stored) as web:
+        everything = (await web.get("/api/response-state")).json()
+        first = (await web.get("/api/response-state?offset=0&limit=1")).json()
+        agent = (await web.get("/api/response-state?agent_id=person-002")).json()
+
+    assert {key: value for key, value in everything.items() if key != "items"} == {
+        "schema_version": 2,
+        "model_id": "spatial-response-state-v2",
+        "claim_scope": "synthetic-bounded-cognition-not-observed-behavior",
+        "response_input_sha256": document.response_input_sha256,
+        "scenario_sha256": document.scenario_sha256,
+        "city_sha256": document.city_sha256,
+        "cognition_input_sha256": document.cognition_input_sha256,
+        "rule_state_model_id": "spatial-rule-state-v2",
+        "cognition_state_model_id": "spatial-cognition-state-v2",
+        "state_scope": "final-end-of-run-not-scrubbed-minute",
+        "agent_id": None,
+        "offset": 0,
+        "limit": 100,
+        "total": len(document.rule.states),
+        "next_offset": None,
+    }
+    assert everything["items"] == [
+        {
+            "rule_state": rule.model_dump(mode="json"),
+            "cognition_state": cognition.model_dump(mode="json"),
+        }
+        for rule, cognition in zip(document.rule.states, document.cognition.states, strict=True)
+    ]
+    for item in everything["items"]:
+        assert "purchase_intention" in item["rule_state"]
+        assert "purchase" not in json.dumps(item["cognition_state"])
+        assert item["rule_state"]["response_count"] == item["cognition_state"]["response_count"]
+    assert first["items"] == everything["items"][:1]
+    assert first["next_offset"] == 1
+    assert {item["rule_state"]["agent_id"] for item in agent["items"]} == {"person-002"}
+
+
+@pytest.mark.asyncio
+async def test_saved_v10_meta_documents_and_timeline_share_one_exact_projection(
+    saved_v10,
+) -> None:
+    from adlife.core.simulation.spatial_response_v2 import summarize_spatial_response_artifact_v2
+
+    stored = saved_v10["dense"]
+    arguments = _v10_view_arguments(stored)
+    evaluation = stored.response_evaluation
+    minute = next(
+        record.model_minute
+        for record in evaluation.records
+        if record.event_type == "spatial.dual-state-updated"
+    )
+    params = {"minute": minute, "agent_id": "person-001", "response_offset": 1, "limit": 2}
+    async with _v10_client(stored) as web:
+        meta = (await web.get("/api/meta")).json()
+        summary = (await web.get("/api/response-summary")).json()
+        metrics = (await web.get("/api/spatial-response-metrics")).json()
+        attention_metrics = (await web.get("/api/spatial-metrics")).json()
+        timeline = (await web.get("/api/timeline", params=params)).json()
+        page = (await web.get(f"/api/response-events?minute={minute}&offset=1&limit=2")).json()
+        state = (await web.get("/api/response-state?agent_id=person-001&limit=2")).json()
+        saved_input = (await web.get("/api/workbench-input")).json()
+        cognition_summary = (await web.get("/api/cognition-summary")).json()
+        cognition_records = (await web.get("/api/cognition-records")).json()
+
+    counts = evaluation.counts
+    assert {
+        key: meta[key]
+        for key in (
+            "saved",
+            "run_id",
+            "run_schema_version",
+            "workbench_input_available",
+            "workbench_input_sha256",
+            "spatial_response",
+            "response_model_id",
+            "response_claim_scope",
+            "response_count",
+            "state_update_count",
+            "response_campaign_count",
+            "final_state_count",
+            "bounded_cognition",
+            "cognition_effect_scope",
+            "spatial_metrics",
+            "spatial_response_metrics",
+        )
+    } == {
+        "saved": True,
+        "run_id": "dense-v10",
+        "run_schema_version": 10,
+        "workbench_input_available": True,
+        "workbench_input_sha256": stored.manifest.workbench_input_sha256,
+        "spatial_response": True,
+        "response_model_id": "spatial-response-v2",
+        "response_claim_scope": "synthetic-bounded-cognition-not-observed-behavior",
+        "response_count": counts.baseline_response_count,
+        "state_update_count": counts.dual_state_update_count,
+        "response_campaign_count": counts.campaign_count,
+        "final_state_count": counts.final_rule_state_count,
+        "bounded_cognition": True,
+        "cognition_effect_scope": "bounded-signals-v1",
+        "spatial_metrics": True,
+        "spatial_response_metrics": True,
+    }
+    assert summary == summarize_spatial_response_artifact_v2(evaluation).model_dump(mode="json")
+    assert metrics == arguments["spatial_response_metrics"].model_dump(mode="json")
+    assert metrics["schema_version"] == 2 and metrics["source_run_schema_version"] == 10
+    assert attention_metrics["source_run_schema_version"] == 10
+    assert timeline["schema_version"] == 1
+    assert timeline["response_page"] == page
+    assert timeline["response_state_page"] == state
+    assert saved_input == arguments["workbench_input_view"].model_dump(mode="json")
+    assert cognition_summary == arguments["cognition_summary_view"].model_dump(mode="json")
+    assert cognition_records == arguments["cognition_records_view"].model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_standalone_saved_run_routes_are_v10_only_get_only_and_value_free(
+    saved_v10,
+) -> None:
+    simulation, scenario, opportunities, attention, response_input, responses = (
+        _response_view_case()
+    )
+    legacy = create_city_app(
+        simulation,
+        run_id="saved-cognition-study",
+        run_schema_version=9,
+        spatial_scenario=scenario,
+        opportunity_evaluation=opportunities,
+        attention_evaluation=attention,
+        response_input=response_input,
+        response_evaluation=responses,
+    )
+    marker = "sk-never-echo-standalone-1234567890"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=legacy), base_url="http://127.0.0.1"
+    ) as web:
+        legacy_meta = (await web.get("/api/meta")).json()
+        legacy_routes = [
+            await web.get(f"/api/{suffix}")
+            for suffix in ("workbench-input", "cognition-summary", "cognition-records")
+        ]
+    async with _v10_client(saved_v10["rules"]) as web:
+        query = await web.get(f"/api/cognition-summary?private={marker}")
+        write = await web.post("/api/cognition-records", json={})
+        timeline = await web.get("/api/timeline?minute=0&agent_id=person-001")
+
+    assert "bounded_cognition" not in legacy_meta
+    assert "workbench_input_available" not in legacy_meta
+    assert all(route.status_code == 404 for route in legacy_routes)
+    assert all(route.json() == {"detail": "Not Found"} for route in legacy_routes)
+    assert query.status_code == 422
+    assert query.json() == {"detail": "request validation failed"}
+    assert marker not in query.text
+    assert write.status_code == 405
+    assert timeline.status_code == 200
+    assert timeline.json()["response_page"]["schema_version"] == 2
+
+
+def test_saved_v10_view_refuses_wrong_version_or_cross_bound_evidence(saved_v10) -> None:
+    stored = saved_v10["dense"]
+    other = saved_v10["rules"]
+    arguments = _v10_view_arguments(stored)
+    context = create_city_view_context(
+        stored.mobility,
+        workbench_input_sha256=stored.manifest.workbench_input_sha256,
+        **arguments,
+    )
+    assert context.run_schema_version == 10
+    assert context.response_minutes == tuple(
+        record.baseline.model_minute
+        if record.event_type == "spatial.applied-response"
+        else record.model_minute
+        for record in stored.response_evaluation.records
+    )
+    baseline = evaluate_spatial_responses(
+        stored.response_input,
+        stored.spatial_scenario,
+        stored.opportunity_evaluation,
+        stored.attention_evaluation,
+        agent_ids=tuple(agent.agent_id for agent in stored.mobility.agents),
+    )
+    other_views = _v10_view_arguments(other)
+    hostile = {
+        "v1-response": {"response_evaluation": baseline, "spatial_response_metrics": None},
+        "v1-metrics": {"spatial_response_metrics": _response_view_metrics_v1(stored, baseline)},
+        "no-cognition": {"cognition_input": None, "cognition_evaluation": None},
+        "half-cognition": {"cognition_evaluation": None},
+        "foreign-cognition": {
+            "cognition_input": other.cognition_input,
+            "cognition_evaluation": other.cognition_evaluation,
+        },
+        "no-workbench-hash": {
+            "workbench_input_view": None,
+            "cognition_summary_view": None,
+            "cognition_records_view": None,
+        },
+        "partial-views": {"cognition_records_view": None},
+        "foreign-input-view": {"workbench_input_view": other_views["workbench_input_view"]},
+        "foreign-summary": {"cognition_summary_view": other_views["cognition_summary_view"]},
+        "foreign-records": {"cognition_records_view": other_views["cognition_records_view"]},
+        "v9": {"run_schema_version": 9},
+        "boolean": {"run_schema_version": True},
+        "float": {"run_schema_version": 10.0},
+        "future": {"run_schema_version": 11},
+    }
+    for name, changes in hostile.items():
+        candidate = arguments | changes
+        sha = candidate["workbench_input_view"]
+        with pytest.raises(ValueError):
+            create_city_view_context(
+                stored.mobility,
+                workbench_input_sha256=(
+                    None if sha is None else stored.manifest.workbench_input_sha256
+                ),
+                **candidate,
+            )
+            pytest.fail(f"{name} was accepted")
+    # V9 contexts keep V1 evidence only: a V2 response or bounded cognition is refused.
+    legacy = _response_view_case()
+    simulation, scenario, opportunities, attention, response_input, responses = legacy
+    with pytest.raises(ValueError, match="schema version 10 run"):
+        create_city_view_context(
+            simulation,
+            run_id="legacy",
+            run_schema_version=9,
+            spatial_scenario=scenario,
+            opportunity_evaluation=opportunities,
+            attention_evaluation=attention,
+            response_input=response_input,
+            response_evaluation=responses,
+            cognition_input=stored.cognition_input,
+            cognition_evaluation=stored.cognition_evaluation,
+        )
+
+
+def _response_view_metrics_v1(stored, baseline):
+    attention_metrics = derive_spatial_metrics(
+        stored.opportunity_evaluation,
+        stored.attention_evaluation,
+        agent_ids=tuple(agent.agent_id for agent in stored.mobility.agents),
+        agents_sha256=stored.manifest.agents_sha256,
+        trace_sha256=stored.manifest.trace_sha256,
+        days=stored.manifest.days,
+        source_run_schema_version=9,
+    )
+    return derive_spatial_response_metrics(
+        stored.response_input,
+        baseline,
+        scenario=stored.spatial_scenario,
+        opportunities=stored.opportunity_evaluation,
+        attention=stored.attention_evaluation,
+        attention_metrics=attention_metrics,
+        agent_ids=tuple(agent.agent_id for agent in stored.mobility.agents),
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_v10_zero_response_view_keeps_complete_states_and_empty_pages(
+    saved_v10,
+) -> None:
+    stored = saved_v10["empty"]
+    assert stored.response_evaluation.records == ()
+    async with _v10_client(stored) as web:
+        meta = (await web.get("/api/meta")).json()
+        events = (await web.get("/api/response-events?minute=480")).json()
+        state = (await web.get("/api/response-state")).json()
+        summary = (await web.get("/api/cognition-summary")).json()
+        records = (await web.get("/api/cognition-records")).json()
+        timeline = (await web.get("/api/timeline?minute=480&agent_id=person-001")).json()
+
+    assert (meta["response_count"], meta["state_update_count"]) == (0, 0)
+    assert events["schema_version"] == 2
+    assert (events["total"], events["items"], events["next_offset"]) == (0, [], None)
+    assert events["event_type_counts"] == {
+        "spatial.applied-response": 0,
+        "spatial.dual-state-updated": 0,
+    }
+    assert events["channel_counts"] == {"roadside-billboard": 0, "mobile-feed": 0}
+    assert events["agent_counts"] == {}
+    assert state["total"] == len(stored.mobility.agents) == len(state["items"])
+    assert all(item["cognition_state"]["response_count"] == 0 for item in state["items"])
+    assert summary["summary"]["coverage"]["eligible_response_count"] == 0
+    assert summary["summary"]["terminal_record_count"] == 0
+    assert records["records"] == []
+    assert timeline["response_page"] == events
+
+
+@pytest.mark.asyncio
+async def test_saved_v10_pages_enforce_the_existing_exact_bounds(saved_v10) -> None:
+    stored = saved_v10["dense"]
+    minute = next(
+        record.model_minute
+        for record in stored.response_evaluation.records
+        if record.event_type == "spatial.dual-state-updated"
+    )
+    base = f"/api/response-events?minute={minute}"
+    async with _v10_client(stored) as web:
+        total = (await web.get(base)).json()["total"]
+        at_end = (await web.get(f"{base}&offset={total}")).json()
+        last = (await web.get(f"{base}&offset={total - 1}&limit=1")).json()
+        refusals = [
+            await web.get(f"{base}&limit=0"),
+            await web.get(f"{base}&limit=101"),
+            await web.get(f"{base}&offset={MAX_SPATIAL_RESPONSE_RECORDS + 1}"),
+            await web.get("/api/response-events?minute=2880"),
+            await web.get(f"{base}&agent_id=person-999"),
+            await web.get("/api/response-state?offset=601"),
+            await web.get("/api/response-state?agent_id=person-999"),
+        ]
+        write = await web.post(base, json={})
+
+    assert (at_end["items"], at_end["next_offset"], at_end["total"]) == ([], None, total)
+    assert last["items"][0]["event_type"] == "spatial.dual-state-updated"
+    assert last["next_offset"] is None
+    assert [response.status_code for response in refusals] == [422, 422, 422, 422, 400, 422, 400]
+    assert write.status_code == 405
