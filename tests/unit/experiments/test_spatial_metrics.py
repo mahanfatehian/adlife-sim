@@ -219,7 +219,7 @@ def test_spatial_metrics_golden_contract_has_exact_values_and_receipts() -> None
         result.__setattr__("days", 2)
 
 
-@pytest.mark.parametrize("version", [5, 6, 7, 8, 9])
+@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10])
 def test_spatial_metrics_records_exact_supported_source_run_schema(version: int) -> None:
     opportunities, attention = _mixed_evidence()
 
@@ -236,15 +236,78 @@ def test_spatial_metrics_records_exact_supported_source_run_schema(version: int)
     assert result.source_run_schema_version == version
 
 
-@pytest.mark.parametrize("version", [True, 5.0, 6.0, 9.0, "6", "9", 4, 10])
+@pytest.mark.parametrize("version", [True, 5.0, 6.0, 9.0, 10.0, "6", "9", "10", 4, 11])
 def test_spatial_metrics_refuses_noninteger_or_unsupported_source_schema(
     version: object,
 ) -> None:
+    # The 10.0, "10" and 11 cases are characterization-only: they were refused before
+    # V10 support too, and pin that admitting integer 10 admits no other token.
     document = _derive().model_dump(mode="python")
     document["source_run_schema_version"] = version
 
     with pytest.raises(ValidationError, match="source run schema version"):
         SpatialMetrics.model_validate(document)
+
+
+def _assert_unchanged_attention_receipt_graph(version: int) -> None:
+    # The pinned golden contract above is the schema-5 document. Every supported
+    # source schema serializes the same attention evidence byte for byte; only the
+    # explicit source-version token differs.
+    golden = canonical_json(_derive())
+    opportunities, attention = _mixed_evidence()
+
+    result = derive_spatial_metrics(
+        opportunities,
+        attention,
+        agent_ids=("person-001", "person-002"),
+        agents_sha256=AGENTS_SHA256,
+        trace_sha256=TRACE_SHA256,
+        days=1,
+        source_run_schema_version=version,
+    )
+
+    assert golden.count('"source_run_schema_version":5') == 1
+    assert canonical_json(result) == golden.replace(
+        '"source_run_schema_version":5', f'"source_run_schema_version":{version}'
+    )
+    assert SpatialMetrics.model_validate_json(canonical_json(result)) == result
+
+
+@pytest.mark.parametrize("version", [5, 6, 7, 8, 9])
+def test_spatial_metrics_v5_to_v9_keep_the_unchanged_attention_receipt_graph(
+    version: int,
+) -> None:
+    """Characterization-only: these cases are green before V10 support as well.
+
+    They pin the existing schema 5-9 bytes while V10 is added and authorize no behavior
+    change; the schema-10 test below is the behavior test.
+    """
+    _assert_unchanged_attention_receipt_graph(version)
+
+
+def test_spatial_metrics_v10_shares_the_unchanged_attention_receipt_graph() -> None:
+    _assert_unchanged_attention_receipt_graph(10)
+
+
+@pytest.mark.parametrize("version", [True, 10.0, "10", 4, 11])
+def test_spatial_metrics_derivation_refuses_unsupported_source_schema(version: object) -> None:
+    """Characterization-only: derivation refused these tokens before V10 support too.
+
+    The cases pin that admitting integer 10 admits no bool, float, string, or unknown
+    source schema; they authorize no behavior change.
+    """
+    opportunities, attention = _mixed_evidence()
+
+    with pytest.raises(ValidationError, match="source run schema version"):
+        derive_spatial_metrics(
+            opportunities,
+            attention,
+            agent_ids=("person-001", "person-002"),
+            agents_sha256=AGENTS_SHA256,
+            trace_sha256=TRACE_SHA256,
+            days=1,
+            source_run_schema_version=version,
+        )
 
 
 def test_structure_hash_is_exact_and_excludes_campaign_identity() -> None:
