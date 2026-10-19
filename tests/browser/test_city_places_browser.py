@@ -1316,6 +1316,43 @@ def test_schema_v9_inspector_renders_provider_sources_and_hostile_text_inertly(
         expect(first.locator(".explanation-model")).to_contain_text("مدل آزمایشی")
         expect(first.locator(".explanation-source")).to_have_text("provider")
         expect(first.locator(".explanation-safety")).to_contain_text("Unsupported Inference")
+        # A model-reported flag is labelled as the model's own self-assessment, in plain words,
+        # with the statement that it changes nothing in the saved results.
+        expect(first.locator(".explanation-safety")).to_have_text(
+            "Model's own caution flags: Unsupported Inference "
+            "(it may say more than the supplied facts)"
+        )
+        expect(first.locator(".explanation-safety-note")).to_contain_text(
+            "change nothing in the saved results"
+        )
+        # Model fragments of one sentence read as that sentence; distinct factors stay apart.
+        assert page.evaluate(
+            """() => [
+              displayedDecisionFactors([
+                'Their curiosity suggests they are likely to be open',
+                'to exploring new ideas about the device.',
+                'Price matters to them.',
+              ]),
+              displayedDecisionFactors(['price sensitivity is high', 'interest match is low']),
+              displayedDecisionFactors(['A complete first factor.', 'to be continued later']),
+              displayedDecisionFactors([
+                'Declared fictional interests and campaign assumptions',
+                'Rule-owned attention and response evidence',
+              ]),
+            ]"""
+        ) == [
+            [
+                "Their curiosity suggests they are likely to be open to exploring new ideas "
+                "about the device.",
+                "Price matters to them.",
+            ],
+            ["price sensitivity is high", "interest match is low"],
+            ["A complete first factor.", "to be continued later"],
+            [
+                "Declared fictional interests and campaign assumptions",
+                "Rule-owned attention and response evidence",
+            ],
+        ]
         assert first.locator("bdi").first.get_attribute("dir") == "auto"
         assert (
             page.locator(

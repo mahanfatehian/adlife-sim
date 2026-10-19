@@ -2358,7 +2358,7 @@ function createResponseExplanation(record, response) {
   factorsTitle.textContent = "Decision factors";
   const factors = document.createElement("ul");
   factors.className = "explanation-factors";
-  for (const value of record.result.decision_factors) {
+  for (const value of displayedDecisionFactors(record.result.decision_factors)) {
     const item = document.createElement("li");
     const isolated = document.createElement("bdi");
     isolated.className = "explanation-factor";
@@ -2369,15 +2369,51 @@ function createResponseExplanation(record, response) {
   }
   const safety = document.createElement("p");
   safety.className = "explanation-safety";
-  safety.textContent = record.result.safety_flags.length === 0
+  const flags = record.result.safety_flags;
+  safety.textContent = flags.length === 0
     ? "Safety flags: None recorded"
-    : `Safety flags: ${record.result.safety_flags.map(readableCognitionToken).join(" · ")}`;
+    : `Model's own caution flags: ${flags.map((flag) => `${readableCognitionToken(flag)} (${explanationFlagMeaning(flag)})`).join(" · ")}`;
   const disclosure = document.createElement("p");
   disclosure.className = "explanation-disclosure";
   disclosure.textContent = "Synthetic narrative, not observed behavior. The deterministic response above was already committed.";
-  body.append(copy, facts, factorsTitle, factors, safety, disclosure);
+  body.append(copy, facts, factorsTitle, factors, safety);
+  if (flags.length !== 0) {
+    body.append(createTextElement(
+      "p",
+      "explanation-safety-note",
+      "These flags are the model's self-assessment of its own explanation text, not a finding about this synthetic person. In explanation mode they change nothing in the saved results.",
+    ));
+  }
+  body.append(disclosure);
   details.append(summary, body);
   return details;
+}
+
+// Plain-language meaning of each closed V1 flag, as the model applies it to its own wording.
+function explanationFlagMeaning(flag) {
+  return {
+    "stereotype-risk": "its wording may lean on a stereotype",
+    "unsupported-inference": "it may say more than the supplied facts",
+    "unsafe-content": "it judged the content possibly unsafe",
+  }[flag] || "self-reported";
+}
+
+// Words that continue a sentence and cannot open a decision factor of their own.
+const continuationStart = /^(?:to|and|or|of|for|with|in|on|at|by|from|that|which|who|whose|but|as|than|because|while|so|into|onto|over|about|without)\b/;
+
+// A model that runs into the 120-character cap sometimes splits one sentence across two
+// factors; show the fragments as the one sentence they are. The saved record is unchanged.
+function displayedDecisionFactors(values) {
+  const joined = [];
+  for (const value of values) {
+    const previous = joined.length === 0 ? null : joined[joined.length - 1];
+    const continues = previous !== null
+      && !/[.!?;:)\]»”"]\s*$/.test(previous)
+      && (continuationStart.test(value) || (previous.length >= 100 && /^[a-z]/.test(value)));
+    if (continues) joined[joined.length - 1] = `${previous} ${value}`;
+    else joined.push(value);
+  }
+  return joined;
 }
 
 function cognitionSummaryPresentation(documentValue) {
