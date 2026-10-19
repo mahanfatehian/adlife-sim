@@ -3857,3 +3857,48 @@ def test_run_again_restores_every_saved_input_with_a_sibling_run_id(tmp_path: Pa
         finally:
             browser.close()
             playwright.stop()
+
+
+def test_projector_text_keeps_a_readable_floor_in_setup_and_the_library(tmp_path: Path) -> None:
+    """The labels a presenter reads aloud at 1440 x 900 stay at least 11 or 12 pixels."""
+    floors = {
+        ".field-help": 11,
+        ".section-note": 11,
+        ".field label span": 11,
+        ".schedule-row label": 11,
+        ".validation-state": 12,
+        ".library-summary": 12,
+        ".run-card dt": 10,
+        ".run-card dd": 12,
+    }
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill("projector-text")
+            page.locator("#agent-count").fill("1")
+            _set_audience_count(page, 1)
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#start-run").click()
+            expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
+            page.locator("#stage-inspect").click()
+            expect(page.locator("#run-library .run-card")).to_have_count(1, timeout=30_000)
+            sizes = page.evaluate(
+                """selectors => Object.fromEntries(selectors.map((selector) => [
+                  selector,
+                  Math.min(...Array.from(document.querySelectorAll(selector)).map(
+                    (node) => Number.parseFloat(getComputedStyle(node).fontSize),
+                  )),
+                ]))""",
+                list(floors),
+            )
+            assert {key: sizes[key] >= floor for key, floor in floors.items()} == {
+                key: True for key in floors
+            }, sizes
+        finally:
+            browser.close()
+            playwright.stop()

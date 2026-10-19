@@ -2552,3 +2552,28 @@ def test_v10_map_fits_the_city_clear_of_the_legend_and_map_controls(
             canvas["bottom"] - canvas["top"]
         ), layout
         assert session.page_errors == [] and session.console_errors == []
+
+
+def test_v10_panel_text_keeps_a_readable_floor_at_projector_size(
+    browser: Browser, saved_runs: Callable[[str], SavedRun]
+) -> None:
+    floors = {
+        ".bounded-tile span": 10,
+        ".bounded-tile small": 11,
+        ".bounded-pipeline small": 10,
+        ".workbench-back": 12,
+    }
+    with inspector(browser, saved_runs("mock"), viewport={"width": 1440, "height": 900}) as session:
+        page = session.page
+        expect(page.locator("#bounded-cognition-panel")).to_be_visible()
+        sizes = page.evaluate(
+            """selectors => Object.fromEntries(selectors.map((selector) => [
+              selector,
+              Math.min(...Array.from(document.querySelectorAll(selector)).map(
+                (node) => Number.parseFloat(getComputedStyle(node).fontSize),
+              )),
+            ]))""",
+            list(floors),
+        )
+        assert all(sizes[key] >= floor for key, floor in floors.items()), sizes
+        assert session.page_errors == [] and session.console_errors == []

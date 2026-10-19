@@ -21,7 +21,7 @@
 .bounded-pipeline li:before{content:counter(bounded-step);display:block;margin-bottom:3px;color:var(--bounded-cognition);font:700 .6875rem Consolas,monospace}
 .bounded-pipeline li:first-child:before,.bounded-pipeline li:last-child:before{color:var(--bounded-rule)}
 .bounded-pipeline strong{display:block;font-size:.6875rem;font-weight:650;line-height:1.3;overflow-wrap:break-word;hyphens:auto}
-.bounded-pipeline small{display:block;margin-top:2px;color:var(--muted);font-size:.5625rem;line-height:1.3;overflow-wrap:break-word}
+.bounded-pipeline small{display:block;margin-top:2px;color:var(--muted);font-size:.625rem;line-height:1.3;overflow-wrap:break-word}
 .bounded-authority{display:grid;gap:4px;margin:0 0 12px;padding:0;list-style:none}
 .bounded-authority li{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #ffffff10;font-size:.6875rem}
 .bounded-authority li span{color:var(--muted)}
@@ -29,11 +29,11 @@
 .bounded-coverage{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-style:solid;border-color:var(--line);border-width:1px 0 0 1px}
 .bounded-coverage[data-offline="true"]{grid-template-columns:repeat(3,minmax(0,1fr))}
 .bounded-tile{min-width:0;display:flex;flex-direction:column;gap:3px;padding:8px 7px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
-.bounded-tile span{color:var(--muted);font:700 .5625rem/1.25 Consolas,monospace;letter-spacing:.03em;text-transform:uppercase;overflow-wrap:anywhere}
+.bounded-tile span{color:var(--muted);font:700 .625rem/1.25 Consolas,monospace;letter-spacing:.03em;text-transform:uppercase;overflow-wrap:anywhere}
 .bounded-tile strong{font:600 1.125rem/1.1 Consolas,monospace}
 .bounded-tile[data-count="provider"] strong,.bounded-tile[data-count="cache"] strong,.bounded-tile[data-count="mock"] strong{color:var(--bounded-cognition)}
 .bounded-tile[data-count="selected"] strong,.bounded-tile[data-count="funded"] strong{color:var(--bounded-ink)}
-.bounded-tile small{color:#a9b9bd;font-size:.625rem;line-height:1.3;overflow-wrap:anywhere}
+.bounded-tile small{color:#a9b9bd;font-size:.6875rem;line-height:1.3;overflow-wrap:anywhere}
 .bounded-outcomes{margin:12px 0 0}
 .bounded-outcomes-title{margin:0 0 7px;color:var(--bounded-ink);font:700 .6875rem/1.35 Consolas,monospace;letter-spacing:.03em;text-transform:uppercase}
 .bounded-outcome-list{display:grid;gap:4px;margin:0}
@@ -85,7 +85,7 @@
 .bounded-applied-card small,.bounded-dual-card small{font-size:.625rem}
 .bounded-badges{display:flex;flex-wrap:wrap;gap:6px;margin:0 9px 8px 13px}
 .bounded-badge{display:inline-flex;align-items:baseline;gap:6px;min-width:0;padding:3px 8px;border:1px solid var(--bounded-cognition);color:var(--bounded-ink);font-size:.75rem;line-height:1.35}
-.bounded-badge-kind{color:var(--muted);font:700 .5625rem/1.35 Consolas,monospace;letter-spacing:.04em;text-transform:uppercase}
+.bounded-badge-kind{color:var(--muted);font:700 .625rem/1.35 Consolas,monospace;letter-spacing:.04em;text-transform:uppercase}
 .bounded-badge strong{font-weight:650;overflow-wrap:anywhere}
 /* Badge shape repeats the text: solid = model or mock answer, dashed = neutral by design,
    double = a model answer that was set aside. */
