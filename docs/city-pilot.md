@@ -52,7 +52,9 @@ use the source lawfully.
 Seed input is an exact canonical decimal string from `0` through `9223372036854775807` and
 is never converted through JavaScript `Number`. Polling exposes truthful coarse phases;
 schema-3 uses `queued`, `simulating`, `selecting-explanations`,
-`requesting-explanations`, `persisting`, `verifying`, and a terminal state. Cancellation is
+`requesting-explanations`, `persisting`, `verifying`, and a terminal state, and schema 4 uses
+`queued`, `planning-cognition`, `requesting-cognition`, `applying-cognition`, `persisting`,
+`verifying`, and a terminal state. Cancellation is
 cooperative before publication; persistence and the final independent artifact load are
 not interrupted. Refreshing the page can resume the current server-owned job while the
 same process lives. A process restart loses that operational record, while completed-run
@@ -75,8 +77,10 @@ verification against the immutable source artifact.
 
 Default schema-3 workbench runs are schema-v9; schema-2/schema-v8 and
 schema-1/schema-v7 requests remain compatible. They retain the schema-v6 opportunity, attention,
-response, state, and metric semantics and add canonical `inputs/workbench.json`. The final
-manifest binds `workbench_input_schema_version: 3` (2 for V8, 1 for V7) and
+response, state, and metric semantics and add canonical `inputs/workbench.json`. Schema-4
+bounded AI cognition runs are schema-v10, described [below](#bounded-ai-cognition-schema-v10).
+The final
+manifest binds `workbench_input_schema_version: 3` (4 for V10, 2 for V8, 1 for V7) and
 `workbench_input_sha256`; the sidecar
 freezes the accepted city, settings, scenario, population assumptions, and exact fictional
 creative-template snapshot. Load and replay refuse any missing, noncanonical, changed, or
@@ -92,10 +96,15 @@ attention, and response state are illustrative synthetic evidence. Workbench stu
 capped at seven model days; month navigation, observed traffic, and calendar-accurate local
 behavior are not claimed.
 
-### Optional explanation source
+### Optional model assistance: explanation and bounded cognition sources
 
-Rules is the offline default and mock mode is also deterministic, offline, and
-credential-free. To expose additional startup-approved endpoints, run:
+The RUN step's Model assistance section has two separate choices. **Operation** decides what
+a model may do: `Explanation only` (schema 3, saved as V9) or `Bounded AI cognition`
+(schema 4, saved as V10). **Source** decides where the output comes from: `Rules — offline`,
+`Mock — reproducible demo`, `Local compatible model`, or `Remote compatible model`. Rules is
+the offline default and mock mode is also deterministic, offline, and credential-free. The
+fixed `local-ollama` origin approves `http://127.0.0.1:11434/v1`. To expose additional
+startup-approved endpoints, run:
 
 ```bash
 uv run adlife city-workbench --workspace ./workbench \
@@ -124,10 +133,101 @@ replay is deterministic and performs no provider call. The inspector renders eac
 record beside its matching response and distinguishes AI-generated, deterministic, mock,
 fallback, and budget-skipped explanations.
 
+### Bounded AI cognition (schema-v10)
+
+Operation `Bounded AI cognition` submits workbench schema 4 and publishes manifest V10 under
+`spatial-response-v2`. Rules still compute movement, opportunities, attention, and every
+deterministic baseline response with the `spatial-response-v1` formulas below. AdLife then
+selects, in canonical `(model_minute, agent_id, campaign_id, baseline_response_id)` order, at
+most 4 noticed responses per agent and 60 per run; every other eligible response is
+`unselected` and keeps the neutral vector. For each selected response the source returns one
+closed `CityCognitionResultV2`: the echoed request ID, the exact disclosure
+`synthetic-bounded-cognition-not-observed-behavior`, and these categories.
+
+| Field | Allowed values |
+| --- | --- |
+| `affect` | `annoyed`, `skeptical`, `neutral`, `curious`, `positive`, `uncertain` |
+| `relevance` | `none`, `low`, `medium`, `high`, `uncertain` |
+| `credibility` | `low`, `medium`, `high`, `uncertain` |
+| `salience` | `none`, `low`, `medium`, `high`, `uncertain` |
+| `safety_flags` | unique subset of `stereotype-risk`, `unsupported-inference`, `unsafe-content` |
+
+There is no provider prose and no provider-authored number, identifier, state, event, budget,
+probability, or purchase field; unknown fields, duplicate keys, a wrong request ID, truncation,
+and refusal are invalid results. The causal request carries only interests, price sensitivity,
+novelty seeking, advertising skepticism, impulsivity, the recall encoding of the response's
+channel, the initial rule sentiment and recall, the campaign's target interests and relative
+price, the creative (delimited as untrusted data), and the channel, time, frequency, and rule
+factors. Name, age, occupation, background, and MBTI stay descriptive and are omitted from the
+causal prompt, and purchase intention is never sent. A descriptive-only edit changes the
+provenance hashes but not the causal request ID, the mock signal, the cache identity, or the
+V10 numeric cognition.
+
+AdLife, not the model, applies the frozen `city-cognition-influence-v1` policy. The neutral
+vector `affect=neutral, relevance=medium, credibility=medium, salience=medium` is an exact
+identity over the baseline. For a fully applicable vector:
+
+| Affect | Adjustment | Relevance or salience | Factor | Credibility | Factor |
+| --- | ---: | --- | ---: | --- | ---: |
+| annoyed | -0.04 | none | 0.50 | low | 0.75 |
+| skeptical | -0.02 | low | 0.75 | medium | 1.00 |
+| neutral | 0.00 | medium | 1.00 | high | 1.10 |
+| curious | 0.02 | high | 1.15 | | |
+| positive | 0.04 | | | | |
+
+```text
+applied_sentiment_delta = clamp((s + affect_adjustment) * relevance_factor * credibility_factor, -0.20, 0.20)
+applied_recall_delta = clamp(r * relevance_factor * credibility_factor * salience_factor, 0.00, 0.30)
+```
+
+Here `s` and `r` are the deterministic baseline `sentiment_delta` and `recall_delta`. An
+`uncertain` category or any safety flag keeps the result auditable but applies the neutral
+vector to the whole result; a result cannot be applied partially. Rules mode always uses the
+exact neutral vector, and mock mode derives a deterministic, flag-free vector from each request
+under `city-cognition-mock-signal-v1` without any network call. These tables are explicit
+synthetic assumptions, not calibrated psychological effects.
+
+Every agent/campaign pair keeps two tracks that start from the same initial sentiment and
+recall. The rule track folds baseline deltas with the V6 equations and alone carries purchase
+intention. The cognition track folds applied deltas:
+
+```text
+cognition_sentiment_after = clamp(cognition_sentiment_before + sum(applied_sentiment_delta), -1, 1)
+cognition_recall_after = 1 - (1 - cognition_recall_before) * product(1 - applied_recall_delta)
+```
+
+All responses of one agent and campaign in the same minute read one immutable pre-minute rule
+state and one immutable pre-minute cognition state and commit one atomic dual-state update, so
+provider completion order cannot change the result. Every eligible response, including
+unselected, fallback, budget-skipped, uncertain, and safety-neutralized ones, produces one
+applied response, so final response counts match between the tracks and only sentiment and
+recall may differ.
+
+Rules and mock resolve every selected request offline. Local and remote sources fund 10, 20
+(default), 40, or 60 requests; the remaining selected requests are budget-skipped and neutral.
+Each funded request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output
+tokens each. Input tokens and vendor charges are outside that reservation. A provider run
+needs a passing bounded-signal compatibility check for the exact profile revision first.
+Unavailable, timed-out, rate-limited, oversized, protocol-incompatible, or invalid answers
+become typed neutral `fallback` records; corrupt cache content, cancellation, and storage or
+verification failure fail the run instead.
+
+`city-metrics --layer response` keeps the two tracks apart: the rule-baseline family uses the
+receipts below and holds the uncalibrated purchase-intention proxy, while the
+provider-dependent cognition family reports applied means, cognition-state receipts,
+categories, sources, fallbacks, neutralization, and funded coverage as exploratory evidence,
+not a campaign effect. The saved-run inspector shows the same separation for every response:
+deterministic baseline, signal or neutral status, fixed mapping, applied cognition delta, and
+the atomic rule/cognition state update. `city-compare --layer response`, `city-study`, and
+`city-report` refuse V10 runs for now. The [live demo script](investor-demo.md) walks through
+one run with a local Ollama model.
+
 This local profile still lacks authentication or multi-user authorization, report download,
 comparison/paired-study operation, a rights-reviewed real-city/worldwide catalog, calibrated
 traffic/population behavior, and sales prediction. Operator-supplied packs remain unreviewed
 for rights even when they pass every technical check.
+
+## Local street packs: import or author
 
 To use a **local street extract you are authorized to use**, import a complete local
 OpenStreetMap Overpass JSON document and run:
@@ -522,6 +622,11 @@ the same verified response projection through GET-only `/api/spatial-response-me
 `/api/spatial-metrics` remains attention-only. Response comparisons carry
 `synthetic-response-comparison-not-causal-or-observed-effect`.
 
+Schema-v10 runs use the separate version-2 response metrics described under
+[Bounded AI cognition](#bounded-ai-cognition-schema-v10): `city-metrics --layer response`
+prints the rule-baseline family, computed with exactly these receipts, separately from the
+provider-dependent cognition family, and `city-compare --layer response` refuses V10 runs.
+
 ## Repeated-seed spatial studies
 
 `city-study` analyzes an explicit 2–100-pair definition over already committed runs. One
@@ -534,6 +639,8 @@ attention-and-response scope accepts homogeneous schema-v6 (`all-v6`), schema-v7
 (`all-v7`), schema-v8 (`all-v8`), or schema-v9 (`all-v9`) inputs. Opportunity classification is independently
 `matched-opportunity-structure` or `opportunity-confounded`; response assumptions are
 independently `matched-response-assumptions` or `response-assumption-confounded`.
+Schema-v10 runs are refused in both scopes for now, so `city-report` cannot publish them
+either: no paired-cognition protocol yet freezes compatible signals across arms.
 
 The `spatial-paired-study-v1` result carries
 `synthetic-study-not-observed-or-causal-effect`. Each treatment-minus-control statistic
@@ -548,9 +655,9 @@ exploratory; 50–100 are `full-protocol-50-or-more-seeds`, not a registered,
 representative, validated, or statistically powered study.
 
 Bounded C4b evidence is complete: `city-report` turns the verified result into a fixed-path
-zero-JavaScript evidence ledger. Broader C3/C4 cognition, memory, social propagation and
-rule-owned purchase integration remain open, as do automatic jobs, a write-capable
-workbench, authentication, calibration, and external validity.
+zero-JavaScript evidence ledger. Broader C3/C4 memory, social propagation and rule-owned
+purchase integration remain open, as do V10 studies and reports, authentication,
+calibration, and external validity.
 
 Weekdays place fictional agents at home until 08:00, at work after road travel, and
 return them at 17:00. Weekends replace work with a leisure visit from 11:00 to 16:00.
@@ -659,24 +766,30 @@ response/state-update counts, campaign count, and complete final-state count. Ea
 v1/v2/v3 runs and schema-v4 opportunity-only runs remain readable. `city-replay` refuses a changed,
 missing, incompatible, or partial artifact and never repairs or mutates the source.
 `city-view` validates the full trace before opening a loopback-only viewer; its HTTP
-API has no path or run-selection endpoint. For v4, v5, v6, v7, v8, and v9, a bounded summary endpoint
+API has no path or run-selection endpoint. For v4, v5, v6, v7, v8, v9, and v10, a bounded
+summary endpoint
 and canonical 100-record pages of current-minute opportunity records drive the read-only
-evidence rail and page-scoped map markers. V5, v6, v7, v8, and v9 add bounded summary and page endpoints
+evidence rail and page-scoped map markers. V5, v6, v7, v8, v9, and v10 add bounded summary
+and page endpoints
 for current-minute attention; noticed markers reflect only persisted model evidence. The
 browser can traverse every opportunity, attention, and response page with exact ranges while
 keeping only one bounded page per rail in the DOM. Selecting a record changes presentation
 only. The panels retain the literal synthetic claim scopes and create no downstream event.
-V6, V7, V8, and V9 add `/api/response-summary`, paged `/api/response-events`, and paged
-`/api/response-state`. The state endpoint always labels its values
+V6, V7, V8, V9, and V10 add `/api/response-summary`, paged `/api/response-events`, and paged
+`/api/response-state`; V10 pages carry applied responses with their dual-state updates and
+pair each final rule state with its cognition state. The state endpoint always labels its values
 `final-end-of-run-not-scrubbed-minute`: changing the timeline does not pretend that final
-state belongs to the scrubbed minute. Schema-v5, schema-v6, schema-v7, schema-v8, and schema-v9 runs also expose
+state belongs to the scrubbed minute. Schema-v5, schema-v6, schema-v7, schema-v8, schema-v9,
+and schema-v10 runs also expose
 `/api/spatial-metrics` and a metrics evidence ledger. The projection is derived only after
 full artifact validation and has exact
 numerator/denominator/source receipts; it remains attention-only and is not written back to
 the run. A fully prevalidated schema-v6, schema-v7, schema-v8 or schema-v9 viewer additionally exposes the
 separate GET-only `/api/spatial-response-metrics` projection as a full-run response ledger;
 it is likewise derived in memory, never written back, and keeps channel receipts event-only
-rather than inventing channel attribution for nonlinear committed state.
+rather than inventing channel attribution for nonlinear committed state. A schema-v10 viewer
+serves the version-2 rule-baseline and cognition metrics there instead, plus its bounded
+cognition summary, terminal records, and frozen workbench input.
 `city-compare` requires matched city, assignment, trace, seed, duration, and population
 provenance. Identical A/A inputs produce exact-zero deltas. A different normalized
 placement/channel structure is labeled `opportunity-confounded`, and every result carries
@@ -688,13 +801,16 @@ detect accidental or adversarial edits to individual files but do not authentica
 against an owner who rewrites the entire artifact consistently.
 
 This is an early product-track slice. The packaged browser now operates the complete
-local single-run city workbench workflow with optional noncausal provider explanations, but
+local single-run city workbench workflow with optional noncausal provider explanations and
+bounded AI cognition signals, but
 authentication, OAuth, browser comparison/report operation, rights-reviewed real-city
 data, traffic data, and population calibration are not implemented. Schema-v6 through
 schema-v9 saved runs retain bounded, uncalibrated rule response and campaign-state evidence
-over schema-v5 opportunity/attention evidence; schema-v7 through schema-v9 additionally
+over schema-v5 opportunity/attention evidence; schema-v7 through schema-v10 additionally
 freeze workbench inputs. Schema-v9 adds explanation artifacts but no causal cognition,
-memory, social, or purchase events, and none is a
+memory, social, or purchase events. Schema-v10 keeps the same rule evidence as a baseline and
+adds bounded cognition signals that change only a separate synthetic cognition state, still
+without memory, social, budget, or purchase events. None is a
 validated geographic advertising-outcome study. Descriptive, noncausal MBTI labels are
 allowed as optional fictional context. Using MBTI as a causal or predictive input is
 not implemented and is not scientifically validated by this simulator.

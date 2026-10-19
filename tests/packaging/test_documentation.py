@@ -19,12 +19,14 @@ import yaml
 
 from adlife import __version__
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
     CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2,
     CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
     CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CityCognitionInputV2,
+    CityCognitionResultV2,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -1221,12 +1223,12 @@ def test_persona_authoring_docs_publish_version_and_scientific_boundaries() -> N
         (
             "docs/city-pilot.md",
             "`city-view` validates the full trace before opening",
-            "v4, v5, v6, v7, v8, and v9",
+            "v4, v5, v6, v7, v8, v9, and v10",
         ),
         (
             "docs/city-pilot.md",
             "`/api/response-summary`, paged",
-            "V6, V7, V8, and V9",
+            "V6, V7, V8, V9, and V10",
         ),
         (
             "docs/methodology/model-card.md",
@@ -1817,6 +1819,7 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
         "README.md",
         "docs/cli-reference.md",
         "docs/architecture.md",
+        "docs/city-pilot.md",
     ):
         assert required in reservation_documents, f"{required} omits the V10 output reservation"
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
@@ -1951,6 +1954,72 @@ def test_architecture_documents_the_v10_data_flow_and_adapter_boundary() -> None
     assert "(4,10)" in architecture
 
 
+def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
+    city_pilot = _read("docs", "city-pilot.md")
+    heading = "### Bounded AI cognition (schema-v10)"
+    assert heading in city_pilot, "bounded cognition science section is missing"
+    section = city_pilot.split(heading, maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+
+    for field in ("affect", "relevance", "credibility", "salience"):
+        row = _table_row(section, f"`{field}`")
+        assert row is not None, f"closed {field} categories are undocumented"
+        for value in typing.get_args(CityCognitionResultV2.model_fields[field].annotation):
+            assert f"`{value}`" in row, (field, value)
+    flags_row = _table_row(section, "`safety_flags`")
+    assert flags_row is not None
+    (flag_literal, _) = typing.get_args(
+        CityCognitionResultV2.model_fields["safety_flags"].annotation
+    )
+    for flag in typing.get_args(flag_literal):
+        assert f"`{flag}`" in flags_row, flag
+
+    policy = CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1
+    for rows in (
+        policy.affect_adjustments,
+        policy.relevance_factors,
+        policy.credibility_factors,
+        policy.salience_factors,
+    ):
+        for row in rows:
+            assert f"| {row.category} | {row.weight:.2f} |" in section, (row.category, row.weight)
+    assert (
+        f"* credibility_factor, {policy.sentiment_minimum:.2f}, {policy.sentiment_maximum:.2f})"
+        in section
+    )
+    assert (
+        f"* salience_factor, {policy.recall_minimum:.2f}, {policy.recall_maximum:.2f})" in section
+    )
+    assert "affect=neutral, relevance=medium, credibility=medium, salience=medium" in section
+
+    _assert_terms_share_paragraph(
+        section,
+        "name, age, occupation, background, and mbti",
+        "omitted from the causal prompt",
+        "purchase intention is never sent",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "uncertain",
+        "safety flag",
+        "neutral vector to the whole result",
+        "cannot be applied partially",
+        "city-cognition-mock-signal-v1",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "immutable pre-minute rule state",
+        "immutable pre-minute cognition state",
+        "one atomic dual-state update",
+    )
+    _assert_terms_share_paragraph(
+        section,
+        "rule-baseline family",
+        "purchase-intention proxy",
+        "exploratory evidence, not a campaign effect",
+        "refuse v10 runs for now",
+    )
+
+
 def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
     policy = CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2
     documented: set[str] = set()
@@ -1959,7 +2028,8 @@ def test_bounded_selection_caps_match_the_frozen_selection_policy() -> None:
             documented.add(name)
             assert int(per_agent) == policy.selected_requests_per_agent, name
             assert int(per_run) == policy.selected_requests_per_run, name
-    assert "README.md" in documented, "README omits the V10 selection caps"
+    for required in ("README.md", "docs/city-pilot.md"):
+        assert required in documented, f"{required} omits the V10 selection caps"
 
 
 def test_readme_presents_the_three_mode_matrix_and_the_live_demo() -> None:
