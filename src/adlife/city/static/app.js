@@ -5449,7 +5449,14 @@ function renderWorkbenchAssumptions(input) {
   byId("assumptions-drawer").open = false;
   // Only the workbench inspector (/api/runs/{id}) has a workbench to return to; the
   // standalone viewer of a V10 run verifies the same input without one.
-  byId("workbench-back-link").hidden = !validatedApiBase().startsWith("/api/runs/");
+  const inWorkbench = validatedApiBase().startsWith("/api/runs/");
+  byId("workbench-back-link").hidden = !inWorkbench;
+  // A persona-audience run (V8 on) can seed the next draft: the workbench loads its verified
+  // inputs into the form and suggests a new run ID.
+  const reuse = byId("workbench-reuse-link");
+  const reusable = inWorkbench && !cohort && /^[a-z0-9][a-z0-9-]{0,39}$/.test(input.run_id);
+  reuse.hidden = !reusable;
+  reuse.href = reusable ? `/runs/${input.run_id}/reuse` : "/";
 }
 
 function renderWorkbenchUnavailable(meta) {
@@ -5460,6 +5467,7 @@ function renderWorkbenchUnavailable(meta) {
   byId("assumptions-content").hidden = true;
   byId("assumptions-drawer").open = false;
   byId("workbench-back-link").hidden = true;
+  byId("workbench-reuse-link").hidden = true;
 }
 
 function renderWorkbenchFailure() {
@@ -5467,6 +5475,7 @@ function renderWorkbenchFailure() {
   byId("assumptions-content").hidden = true;
   byId("assumptions-drawer").open = false;
   byId("workbench-back-link").hidden = true;
+  byId("workbench-reuse-link").hidden = true;
 }
 
 function reducedMotionRequested() {

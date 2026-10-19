@@ -1513,6 +1513,112 @@ def test_check_outcomes_are_stated_and_a_refused_local_model_points_at_its_id(
         expect(status).to_have_text("")
 
 
+def test_inspector_run_again_restores_a_local_v10_draft_and_its_server_check(
+    tmp_path: Path,
+) -> None:
+    """Inspect, then run again: the draft and this server's bounded check both come back."""
+    providers: list[_SignalProvider] = []
+
+    def factory(**kwargs: object) -> _SignalProvider:
+        provider = _SignalProvider(**kwargs)
+        providers.append(provider)
+        return provider
+
+    checks: list[str] = []
+    posted: list[dict[str, Any]] = []
+    with _session(tmp_path, provider_factory_v2=factory) as (page, base_url, _root):
+        page.on(
+            "request",
+            lambda request: (
+                checks.append(request.url)
+                if request.method == "POST" and request.url.endswith("/check")
+                else posted.append(json.loads(request.post_data or "{}"))
+                if request.method == "POST" and request.url.endswith("/api/scenarios/validate")
+                else None
+            ),
+        )
+        _to_run_step(page, base_url)
+        page.locator("#run-id").fill("bounded-reuse-001")
+        page.locator("#agent-count").fill("2")
+        _set_audience_count(page, 2)
+        _choose(page, BOUNDED, "local")
+        page.locator("#provider-create-submit").click()
+        expect(page.locator("#provider-profile")).to_be_enabled(timeout=10_000)
+        funded = str(LIMITS["funded_response_limits"][0])
+        page.locator("#cognition-funded-responses").select_option(funded)
+        page.locator("#provider-check").click()
+        expect(page.locator("#provider-check-status")).to_have_text(
+            "Bounded-signal contract confirmed.", timeout=15_000
+        )
+        expect(page.locator("#provider-check-scope")).to_have_text(
+            "Bounded-signal contract · confirmed for this revision"
+        )
+        expect(page.locator("#provider-check-panel")).to_have_attribute(
+            "data-check-state", "confirmed"
+        )
+        original = _validate(page)
+        page.locator("#start-run").click()
+        inspect_link = page.locator("#job-inspect-link")
+        expect(inspect_link).to_be_visible(timeout=60_000)
+        inspect_link.click()
+        page.wait_for_url(f"{base_url}/runs/bounded-reuse-001")
+        reuse = page.locator("#workbench-reuse-link")
+        expect(reuse).to_be_visible(timeout=30_000)
+        expect(reuse).to_have_attribute("href", "/runs/bounded-reuse-001/reuse")
+        expect(page.locator("#workbench-back-link")).to_have_attribute("href", "/")
+        reuse.click()
+        page.wait_for_url(f"{base_url}/runs/bounded-reuse-001/reuse")
+        expect(page.locator("#panel-run")).to_be_visible(timeout=30_000)
+        expect(page.locator("#run-id")).to_have_value("bounded-reuse-002")
+        expect(page.locator("#cognition-effect-scope")).to_have_value(BOUNDED)
+        expect(page.locator("#cognition-mode")).to_have_value("local")
+        expect(page.locator("#cognition-funded-responses")).to_have_value(funded)
+        # The server enforces the same process-local check at submission; showing it again
+        # needs no second inference.
+        expect(page.locator("#provider-check-status")).to_have_text(
+            "Bounded-signal contract confirmed.", timeout=15_000
+        )
+        expect(page.locator("#provider-check-scope")).to_have_text(
+            "Bounded-signal contract · confirmed earlier in this workbench session"
+        )
+        restored = _validate(page)
+        expect(page.locator("#start-run")).to_be_enabled()
+        expect(page.locator("#review-compatibility")).to_have_text(
+            "Bounded-signal check passed for this revision"
+        )
+        assert len(checks) == 1
+        assert restored["settings"]["run_id"] == "bounded-reuse-002"
+        assert {**restored, "settings": {**restored["settings"], "run_id": "x"}} == {
+            **original,
+            "settings": {**original["settings"], "run_id": "x"},
+        }
+        assert original == posted[0]
+
+
+def test_reuse_page_admits_only_portable_run_ids_and_unknown_runs_change_nothing(
+    tmp_path: Path,
+) -> None:
+    with _session(tmp_path) as (page, base_url, _root):
+        # The server refuses a malformed run ID before any page or script is served.
+        for malformed in ("Not_A_Run", "a" * 41):
+            refused = page.request.get(f"{base_url}/runs/{malformed}/reuse")
+            assert refused.status == 404
+            assert refused.headers["content-type"].startswith("application/json")
+        assert page.request.get(f"{base_url}/runs/missing-run/reuse?then=x").status == 422
+
+        # An unknown run is refused in the banner and the default draft is untouched.
+        page.goto(f"{base_url}/runs/missing-run/reuse", wait_until="networkidle")
+        expect(page.locator("#error-banner")).to_be_visible(timeout=15_000)
+        expect(page.locator("#scenario-name")).to_have_value("Synthetic city study")
+        expect(page.locator("#panel-city")).to_be_visible()
+        assert page.locator('meta[name="adlife-reuse-run"]').get_attribute("content") == (
+            "missing-run"
+        )
+        # The plain workbench never asks for a reuse.
+        page.goto(base_url, wait_until="networkidle")
+        assert page.locator('meta[name="adlife-reuse-run"]').get_attribute("content") == ""
+
+
 def test_library_and_job_facts_keep_cache_apart_and_read_plainly(tmp_path: Path) -> None:
     from tests.security.test_workbench_browser_security import _job_documents
 
@@ -1603,3 +1709,9 @@ def test_library_and_job_facts_keep_cache_apart_and_read_plainly(tmp_path: Path)
         )
         expect(cards.nth(1)).to_contain_text("ExplanationsLocal model · 10 funded explanations")
         expect(cards.nth(2)).not_to_contain_text("Explanations")
+        # V8 and later runs can seed a new draft; a homogeneous-cohort V7 run cannot.
+        reuse = page.get_by_role("button", name="Run again with these inputs")
+        expect(reuse).to_have_count(2)
+        expect(
+            cards.nth(2).get_by_role("button", name="Run again with these inputs")
+        ).to_have_count(0)

@@ -111,6 +111,8 @@
     fundingChoices: 16,
   });
   const MAX_V10_RESPONSES = 520_800;
+  // Saved runs from schema V8 on carry a persona audience the form can restore exactly.
+  const REUSABLE_RUN_SCHEMA = 8;
   const RUN_ID_IN_USE_MESSAGE = "A saved run already uses this ID. Choose a new run ID.";
   const WORKER_FAILURE_MESSAGES = new Map([
     ["evaluation-failed", "The deterministic city evaluation failed."],
@@ -128,6 +130,9 @@
   const byId = (id) => document.getElementById(id);
   const csrfMeta = document.querySelector('meta[name="adlife-csrf-token"]');
   const csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+  // The server sets this only on /runs/<run-id>/reuse, after checking the run ID's form.
+  const reuseMeta = document.querySelector('meta[name="adlife-reuse-run"]');
+  const reuseRunId = reuseMeta ? reuseMeta.getAttribute("content") : "";
   let markCapabilityReady = () => {};
   const capabilityReady = new Promise((resolve) => {
     markCapabilityReady = resolve;
@@ -161,6 +166,9 @@
     lastLibraryPage: null,
     shuttingDown: false,
     resetting: false,
+    // The saved run whose inputs seeded this draft; new run IDs are suggested as its siblings.
+    reusedRunId: null,
+    reuseGeneration: 0,
   };
 
   class DraftError extends Error {
@@ -877,6 +885,8 @@
     }
     state.personaEditor?.reset(20);
     state.providerPanel?.reset();
+    state.reusedRunId = null;
+    state.reuseGeneration += 1;
     byId("run-id").dataset.touched = "false";
     byId("run-id").value = suggestedRunId();
     resetSchedules();
@@ -2258,8 +2268,28 @@
     );
   }
 
+  /** The next free sibling of a reused run ID: demo-v10-001 -> demo-v10-002, study -> study-2. */
+  function nextRunId(previous, used) {
+    const match = /^(.*[a-z0-9])-([0-9]{1,4})$/.exec(previous);
+    const base = match ? match[1] : previous;
+    const width = match ? match[2].length : 1;
+    let index = match ? Number(match[2]) + 1 : 2;
+    for (let attempt = 0; attempt < 999; attempt += 1, index += 1) {
+      const suffix = `-${String(index).padStart(width, "0")}`;
+      const candidate = `${base.slice(0, 40 - suffix.length).replace(/-+$/, "")}${suffix}`;
+      if (RUN_ID_PATTERN.test(candidate) && candidate !== previous && !used.has(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
   function suggestedRunId() {
     const used = libraryRunIds();
+    if (state.reusedRunId !== null) {
+      const sibling = nextRunId(state.reusedRunId, used);
+      if (sibling !== null) return sibling;
+    }
     for (let index = 1; index <= 999; index += 1) {
       const candidate = `city-study-${String(index).padStart(3, "0")}`;
       if (!used.has(candidate)) {
@@ -2308,9 +2338,21 @@
             explanationFact(run.cognition_mode, run.aggregate_output_token_ceiling),
           );
         }
+        const actions = makeElement("div", null, "run-card-actions");
         const link = makeElement("a", "View timeline and results", "button primary");
         link.href = run.inspector_url;
-        article.append(header, facts, link);
+        actions.append(link);
+        if (run.run_schema_version >= REUSABLE_RUN_SCHEMA) {
+          // Start the next study from this run's frozen inputs instead of re-entering them.
+          const reuse = makeElement("button", "Run again with these inputs", "button quiet run-reuse");
+          reuse.type = "button";
+          reuse.dataset.runId = run.run_id;
+          reuse.addEventListener("click", () => {
+            void reuseRunInputs(run.run_id);
+          });
+          actions.append(reuse);
+        }
+        article.append(header, facts, actions);
         return article;
       });
       library.replaceChildren(...cards);
@@ -2357,6 +2399,241 @@
       return;
     }
     await renderLibraryRequest(fetchJson(`/api/runs?offset=${offset}&limit=${state.libraryLimit}`));
+  }
+
+  class ReuseError extends Error {}
+
+  function clockFromMinute(minute) {
+    return `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+  }
+
+  /** Saved absolute windows back to the day/start/end rows that the campaign form edits. */
+  function scheduleRowsFrom(windows) {
+    if (!Array.isArray(windows) || windows.length < 1 || windows.length > 14) {
+      throw new ReuseError("The saved run's delivery windows cannot be shown in this form.");
+    }
+    return windows.map((item) => {
+      if (!isObject(item) || !Number.isInteger(item.start_minute) || !Number.isInteger(item.end_minute)) {
+        throw new ReuseError("The saved run's delivery windows cannot be shown in this form.");
+      }
+      const dayIndex = Math.floor(item.start_minute / 1440);
+      const start = item.start_minute - dayIndex * 1440;
+      const end = item.end_minute - dayIndex * 1440;
+      if (dayIndex < 0 || dayIndex > 6 || end <= start || end > 1440) {
+        throw new ReuseError("The saved run's delivery windows cannot be shown in this form.");
+      }
+      // The form's "00:00" end time means the end of that model day.
+      return [dayIndex + 1, clockFromMinute(start), end === 1440 ? "00:00" : clockFromMinute(end)];
+    });
+  }
+
+  function formValues(name) {
+    return new Set([...document.querySelectorAll(`input[name="${name}"]`)].map((input) => input.value));
+  }
+
+  function requireFormValues(values, name, message) {
+    const offered = formValues(name);
+    if (!Array.isArray(values) || values.length < 1 || values.some((value) => !offered.has(value))) {
+      throw new ReuseError(message);
+    }
+    return values;
+  }
+
+  /** Check one saved V8-V10 input view and turn it into exact form values, touching nothing. */
+  function planRunReuse(view, runId) {
+    const versions = { 8: 2, 9: 3, 10: BOUNDED_WORKBENCH_SCHEMA };
+    if (
+      !isObject(view) || view.run_id !== runId ||
+      !Number.isInteger(view.run_schema_version) ||
+      !Object.hasOwn(versions, view.run_schema_version) ||
+      versions[view.run_schema_version] !== view.workbench_input_schema_version ||
+      !HASH_PATTERN.test(view.city_sha256 || "") ||
+      !isObject(view.scenario) || !isObject(view.scenario.campaign) ||
+      !isObject(view.population) || !Array.isArray(view.population.personas) ||
+      view.population.personas.length < 1 || view.population.personas.length > 30 ||
+      view.population.personas.some((persona) => !isObject(persona) || !ID_PATTERN.test(persona.persona_id || "")) ||
+      !isObject(view.settings) || !Number.isInteger(view.settings.agent_count) ||
+      view.settings.agent_count < 1 || view.settings.agent_count > 30 ||
+      !Number.isInteger(view.settings.days) || view.settings.days < 1 || view.settings.days > 7 ||
+      !SEED_PATTERN.test(view.settings.seed || "") || BigInt(view.settings.seed) > MAX_SEED
+    ) {
+      throw new ReuseError("The saved run's inputs are incompatible with this workbench.");
+    }
+    const city = state.cities.find((item) => item.pack_sha256 === view.city_sha256);
+    if (!city) {
+      throw new ReuseError("The city used by that run is no longer installed in this workspace.");
+    }
+    const scenario = view.scenario;
+    const campaign = scenario.campaign;
+    if (!state.templates.some((item) => item.template_id === campaign.creative_template_id)) {
+      throw new ReuseError("That run's creative template is not offered by this workbench.");
+    }
+    requireFormValues(
+      campaign.target_interests, "target-interest", "That run's target interests cannot be shown in this form.",
+    );
+    const phone = isObject(scenario.phone) ? scenario.phone : null;
+    const roadside = isObject(scenario.roadside) ? scenario.roadside : null;
+    if (phone === null && roadside === null) {
+      throw new ReuseError("The saved run's inputs are incompatible with this workbench.");
+    }
+    if (phone !== null) {
+      requireFormValues(
+        phone.eligible_activities, "phone-activity", "That run's phone activities cannot be shown in this form.",
+      );
+    }
+    let cognition = { scope: "explanation-only", mode: "rules", profileKey: null, fundedLimit: null, budget: 0 };
+    if (view.run_schema_version >= 9) {
+      const saved = view.cognition;
+      if (!isObject(saved) || !COGNITION_MODES.includes(saved.mode)) {
+        throw new ReuseError("The saved run's inputs are incompatible with this workbench.");
+      }
+      const profileKey = isProviderMode(saved.mode)
+        ? `${saved.provider_profile_id}/${saved.provider_revision_sha256}`
+        : null;
+      cognition = view.run_schema_version === BOUNDED_RUN_SCHEMA
+        ? { scope: BOUNDED_SCOPE, mode: saved.mode, profileKey, fundedLimit: saved.funded_response_limit, budget: 0 }
+        : {
+            scope: "explanation-only",
+            mode: saved.mode,
+            profileKey,
+            fundedLimit: null,
+            budget: saved.aggregate_output_token_ceiling,
+          };
+      if (cognition.scope === BOUNDED_SCOPE && state.boundedCapability === null) {
+        throw new ReuseError("This workbench does not offer bounded AI cognition, which that run used.");
+      }
+      // The form shows exactly the saved funding, or the reuse is refused as a whole.
+      const fundingShown = !isProviderMode(saved.mode) || (cognition.scope === BOUNDED_SCOPE
+        ? state.boundedCapability.funded_response_limits.includes(saved.funded_response_limit)
+        : Number.isInteger(saved.aggregate_output_token_ceiling) &&
+          saved.aggregate_output_token_ceiling >= 0 && saved.aggregate_output_token_ceiling <= 92160 &&
+          saved.aggregate_output_token_ceiling % V9_TOKENS_PER_EXPLANATION === 0);
+      if (!fundingShown) {
+        throw new ReuseError("That run's model funding is not offered by this workbench.");
+      }
+    }
+    return deepFreeze(JSON.parse(JSON.stringify({
+      runId,
+      cityId: city.city_id,
+      scenario,
+      phoneRows: phone === null ? null : scheduleRowsFrom(phone.active_windows),
+      roadRows: roadside === null ? null : scheduleRowsFrom(roadside.active_windows),
+      personas: view.population.personas,
+      settings: view.settings,
+      cognition,
+    })));
+  }
+
+  function replaceScheduleRows(containerId, rows, defaults) {
+    byId(containerId).replaceChildren();
+    byId(containerId).dataset.nextIndex = "0";
+    for (const [day, start, end] of rows || defaults) addScheduleRow(containerId, day, start, end);
+  }
+
+  /** Fill every draft control from a checked plan; each refusal is decided before any control changes. */
+  function applyRunReuse(plan) {
+    const editor = state.personaEditor;
+    if (!editor || !Array.isArray(editor.personas) || typeof editor.render !== "function") {
+      throw new ReuseError("The fictional audience controls are unavailable.");
+    }
+    const { scenario, settings } = plan;
+    const campaign = scenario.campaign;
+    const phone = scenario.phone || null;
+    const roadside = scenario.roadside || null;
+    const road = roadside === null
+      ? null
+      : state.cityDetail.pack.roads.find((item) => item.road_id === roadside.road_id);
+    if (roadside !== null && (!road || !road.directions.includes(roadside.travel_direction))) {
+      throw new ReuseError("That run's roadside billboard road is not part of this city.");
+    }
+    state.resetting = true;
+    try {
+      byId("scenario-id").value = scenario.scenario_id;
+      byId("scenario-name").value = scenario.name;
+      byId("campaign-id").value = campaign.campaign_id;
+      byId("campaign-name").value = campaign.name;
+      byId("creative-template").value = campaign.creative_template_id;
+      setNamedChecks("target-interest", campaign.target_interests);
+      byId("relative-price").value = String(campaign.relative_price);
+      byId("phone-enabled").checked = phone !== null;
+      if (phone !== null) {
+        setNamedChecks("phone-activity", phone.eligible_activities);
+        byId("phone-probability").value = String(phone.opportunity_probability_per_minute);
+        byId("phone-cap").value = String(phone.frequency_cap_per_agent_per_day);
+      }
+      replaceScheduleRows("phone-windows", plan.phoneRows, [[1, "08:00", "18:00"], [2, "08:00", "18:00"]]);
+      byId("roadside-enabled").checked = roadside !== null;
+      if (roadside !== null) {
+        byId("road-id").value = roadside.road_id;
+        populateRoadDirections();
+        byId("road-direction").value = roadside.travel_direction;
+        byId("road-fraction").value = String(roadside.road_fraction);
+        byId("road-side").value = roadside.side;
+        byId("road-orientation").value = String(roadside.orientation_degrees);
+        byId("road-distance").value = String(roadside.max_view_distance_meters);
+        byId("road-cap").value = String(roadside.frequency_cap_per_agent_per_day);
+      }
+      replaceScheduleRows("road-windows", plan.roadRows, [[1, "07:00", "19:00"], [2, "07:00", "19:00"]]);
+      byId("agent-count").value = String(settings.agent_count);
+      byId("days").value = String(settings.days);
+      byId("seed").value = settings.seed;
+      editor.personas = JSON.parse(JSON.stringify(plan.personas));
+      editor.selected = editor.personas[0].persona_id;
+      if (editor.disclosures instanceof Map) editor.disclosures.clear();
+      editor.render();
+      state.reusedRunId = plan.runId;
+      byId("run-id").dataset.touched = "false";
+      byId("run-id").value = suggestedRunId();
+      const profileFound = state.providerPanel.restoreSelection(plan.cognition);
+      updatePlacementVisibility();
+      renderCreative();
+      renderMap();
+      clearFieldErrors();
+      clearBanner();
+      return profileFound;
+    } finally {
+      state.resetting = false;
+    }
+  }
+
+  /** Start a new draft from a saved run's frozen inputs, then open the run step. */
+  async function reuseRunInputs(runId) {
+    if (!RUN_ID_PATTERN.test(runId || "")) return false;
+    const generation = ++state.reuseGeneration;
+    announce(`Loading the inputs of run ${runId}…`);
+    try {
+      const plan = planRunReuse(await fetchJson(`/api/runs/${runId}/workbench-input`), runId);
+      if (generation !== state.reuseGeneration) return false;
+      if (!state.cityDetail || state.cityDetail.city_id !== plan.cityId) {
+        byId("city-select").value = plan.cityId;
+        const detail = await loadCity(plan.cityId);
+        if (generation !== state.reuseGeneration) return false;
+        if (!detail) return false;
+      }
+      const profileFound = applyRunReuse(plan);
+      byId("stage-run").disabled = false;
+      showStage("run");
+      const provider = isProviderMode(plan.cognition.mode);
+      invalidateValidation(
+        provider && !profileFound
+          ? `Inputs restored from run ${runId}, but its model profile revision is not available here. Choose a profile, then validate.`
+          : `Inputs restored from run ${runId} with a new run ID. Review them, then validate.`,
+      );
+      byId("run-id").focus();
+      announce(`Inputs restored from run ${runId}.`);
+      if (provider && profileFound && plan.cognition.scope === BOUNDED_SCOPE) {
+        await state.providerPanel.restoreBoundedCheck();
+      }
+      return true;
+    } catch (error) {
+      if (generation !== state.reuseGeneration) return false;
+      showBanner(
+        error instanceof ReuseError || error instanceof RequestError
+          ? error.message
+          : "The inputs of that run could not be restored.",
+      );
+      return false;
+    }
   }
 
   function installCityPackUploader() {
@@ -2496,6 +2773,9 @@
       // Listing re-verifies every saved run, which can take seconds. It starts once the city is
       // verified, so setup never waits for it and the two never contend for the workspace.
       void loadRunPage(0);
+      if (reuseRunId) {
+        await reuseRunInputs(reuseRunId);
+      }
       const active = state.capabilities.active_job;
       if (active !== null) {
         const job = assertJob(active);

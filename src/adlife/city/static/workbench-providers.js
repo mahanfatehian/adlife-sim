@@ -729,7 +729,8 @@
           : `${formatCount(effective)} per attempt for signals (profile allows ${formatCount(profile.max_output_tokens)})`,
       );
       if (bounded) {
-        if (this.currentBoundedCheck(profile) !== null) this.renderCheck(this.boundedCheck.result, BOUNDED_SCOPE);
+        const check = this.currentBoundedCheck(profile);
+        if (check !== null) this.renderCheck(check.result, BOUNDED_SCOPE, { restored: check.restored === true });
       } else if (profile.last_check !== null) {
         this.renderCheck(profile.last_check, EXPLANATION_SCOPE);
       }
@@ -992,6 +993,72 @@
         this.busy = false;
         this.refreshActionControls();
       }
+    }
+
+    /**
+     * Re-select a saved run's operation, source, exact profile revision, and funding as one
+     * authority step. Returns false when the run's profile revision is no longer selectable.
+     */
+    restoreSelection({ scope, mode, profileKey: wanted = null, fundedLimit = null, budget = 0 }) {
+      const bounded = scope === BOUNDED_SCOPE && this.bounded !== null;
+      byId("cognition-effect-scope").value = bounded ? BOUNDED_SCOPE : EXPLANATION_SCOPE;
+      byId("cognition-mode").value = MODES.includes(mode) ? mode : "rules";
+      const provider = PROVIDER_MODES.has(byId("cognition-mode").value);
+      if (bounded && provider && this.bounded.funded_response_limits.includes(fundedLimit)) {
+        this.providerFundedLimit = fundedLimit;
+      }
+      this.advanceAuthority();
+      this.clearActionStatuses();
+      this.renderMode();
+      if (!provider) return true;
+      this.renderProfiles(wanted);
+      if (!bounded && Number.isInteger(budget)) {
+        byId("cognition-budget").value = String(budget);
+        this.renderBudget();
+      }
+      const selected = this.selectedProfile();
+      return selected !== null && profileKey(selected) === wanted;
+    }
+
+    /**
+     * Show the bounded-signal result this server process already holds for the selected
+     * revision (it enforces the same result at job submission). Nothing is re-checked; a
+     * missing, stale, or superseded answer simply leaves the check required.
+     */
+    async restoreBoundedCheck() {
+      const profile = this.selectedProfile();
+      if (
+        this.busy || this.bounded === null || this.scopeValue() !== BOUNDED_SCOPE ||
+        profile === null || !PROVIDER_MODES.has(profile.mode) ||
+        this.currentBoundedCheck(profile) !== null
+      ) {
+        return false;
+      }
+      const generation = this.generation;
+      const key = profileKey(profile);
+      let result;
+      try {
+        result = assertBoundedCheck(
+          await this.requestJson(
+            `/api/providers/${profile.profile_id}/revisions/${profile.revision_sha256}/bounded-check`,
+          ),
+          profile,
+        );
+      } catch (_error) {
+        return false;
+      }
+      const selected = this.selectedProfile();
+      if (
+        generation !== this.generation || this.busy || selected === null ||
+        profileKey(selected) !== key || this.scopeValue() !== BOUNDED_SCOPE ||
+        this.boundedCheck !== null
+      ) {
+        return false;
+      }
+      this.boundedCheck = Object.freeze({ key, generation, result, restored: true });
+      this.renderCheck(result, BOUNDED_SCOPE, { restored: true });
+      this.onAuthorityChange();
+      return result.status === "compatible";
     }
 
     /** The server no longer holds a success for this profile; require a fresh explicit check. */

@@ -351,3 +351,108 @@ def test_hostile_bounded_check_receipts_never_authorize_or_render(
         assert page.locator("img").count() == 0
         assert HOSTILE not in page.content()
         assert json.dumps(receipt) not in page.content()
+
+
+FORM_VALUES = """() => Array.from(
+  document.querySelectorAll('#main-content input, #main-content select'),
+).map((node) => [node.id || node.name, node.type === 'checkbox' ? node.checked : node.value])"""
+
+
+def _reuse_tamper(change: Callable[[dict[str, Any]], None]) -> Callable[[Route], None]:
+    def tampered(route: Route) -> None:
+        response = route.fetch()
+        document = response.json()
+        change(document)
+        route.fulfill(response=response, json=document)
+
+    return tampered
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    [
+        (
+            lambda view: view.update(run_id="another-run"),
+            "The saved run's inputs are incompatible with this workbench.",
+        ),
+        (
+            lambda view: view.update(run_schema_version=11),
+            "The saved run's inputs are incompatible with this workbench.",
+        ),
+        (
+            lambda view: view["scenario"]["campaign"].update(target_interests=[HOSTILE]),
+            "That run's target interests cannot be shown in this form.",
+        ),
+        (
+            lambda view: view.update(city_sha256="f" * 64),
+            "The city used by that run is no longer installed in this workspace.",
+        ),
+        (
+            lambda view: view["scenario"]["phone"].update(
+                active_windows=[{"start_minute": 600, "end_minute": 300}]
+            ),
+            "The saved run's delivery windows cannot be shown in this form.",
+        ),
+    ],
+    ids=["other-run", "future-schema", "hostile-interest", "missing-city", "inverted-window"],
+)
+def test_untrusted_reuse_inputs_are_refused_whole_and_change_nothing(
+    tmp_path: Path, tamper: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    with _session(tmp_path) as (page, base_url, _root):
+        _to_run_step(page, base_url)
+        page.locator("#run-id").fill("reuse-secure-001")
+        _choose(page, BOUNDED, "mock")
+        _validate(page)
+        page.locator("#start-run").click()
+        expect(page.locator("#job-inspect-link")).to_be_visible(timeout=60_000)
+        page.locator("#reset-draft").click()
+        before = page.evaluate(FORM_VALUES)
+        page.route("**/api/runs/reuse-secure-001/workbench-input", _reuse_tamper(tamper))
+        page.locator("#stage-inspect").click()
+        card = page.locator("#run-library .run-card", has_text="reuse-secure-001")
+        card.get_by_role("button", name="Run again with these inputs").click()
+        expect(page.locator("#error-banner-message")).to_have_text(message)
+        after = page.evaluate(FORM_VALUES)
+        assert after == before
+        assert page.locator("main img").count() == 0
+
+
+def test_reused_v10_inputs_restore_only_form_values_never_the_frozen_contract(
+    tmp_path: Path,
+) -> None:
+    hostile_name = f"Reuse {HOSTILE}"
+    with _session(tmp_path) as (page, base_url, _root):
+        _to_run_step(page, base_url)
+        page.locator("#stage-campaign").click()
+        page.locator("#scenario-name").fill(hostile_name)
+        page.locator("#campaign-continue").click()
+        page.locator("#run-id").fill("reuse-contract-001")
+        _choose(page, BOUNDED, "mock")
+        _validate(page)
+        page.locator("#start-run").click()
+        expect(page.locator("#job-inspect-link")).to_be_visible(timeout=60_000)
+        view = page.request.get(f"{base_url}/api/runs/reuse-contract-001/workbench-input").json()
+        prompt = view["cognition"]["causal_contract"]["prompt_contract_text"]
+        page.locator("#reset-draft").click()
+        page.locator("#stage-inspect").click()
+        card = page.locator("#run-library .run-card", has_text="reuse-contract-001")
+        card.get_by_role("button", name="Run again with these inputs").click()
+        expect(page.locator("#panel-run")).to_be_visible()
+        expect(page.locator("#scenario-name")).to_have_value(hostile_name)
+        expect(page.locator("#cognition-effect-scope")).to_have_value(BOUNDED)
+        expect(page.locator("#cognition-mode")).to_have_value("mock")
+        content = page.content()
+        assert prompt not in content
+        assert view["cognition"]["causal_contract_sha256"] not in content
+        assert view["manifest_sha256"] not in content
+        assert page.locator("main img").count() == 0
+        draft = _validate(page)
+        assert draft["schema_version"] == 4
+        assert set(draft["cognition"]) == {
+            "effect_scope",
+            "mode",
+            "provider_profile_id",
+            "provider_revision_sha256",
+            "funded_response_limit",
+        }

@@ -787,6 +787,8 @@ def test_schema_v7_inspector_renders_verified_frozen_assumptions_as_inert_text(
         expect(page.locator("#assumptions-status")).to_have_text("Verified")
         expect(page.locator("#workbench-back-link")).to_be_visible()
         assert page.locator("#workbench-back-link").get_attribute("href") == "/"
+        # A homogeneous-cohort V7 input cannot seed the persona audience form.
+        expect(page.locator("#workbench-reuse-link")).to_be_hidden()
         page.locator("#assumptions-drawer summary").click()
         expect(page.locator("#assumptions-drawer")).to_have_attribute("open", "")
         assert page.locator("#assumptions-run").inner_text() == _MAXIMUM_RUN_ID
@@ -870,6 +872,7 @@ def test_schema_v1_through_v6_inspector_never_requests_workbench_input() -> None
             )
             expect(page.locator("#assumptions-content")).to_be_hidden()
             expect(page.locator("#workbench-back-link")).to_be_hidden()
+            expect(page.locator("#workbench-reuse-link")).to_be_hidden()
             assert not page.locator("#error-banner").is_visible(), version
             page.close()
         assert input_requests == []

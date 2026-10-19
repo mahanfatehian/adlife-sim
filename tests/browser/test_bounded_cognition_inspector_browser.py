@@ -1753,10 +1753,25 @@ def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
         expect(page.locator("#assumptions-status")).to_have_text("Verified")
         # Only the workbench inspector has a workbench to return to.
         back = page.locator("#workbench-back-link")
+        reuse = page.locator("#workbench-reuse-link")
         if server == "workbench":
             expect(back).to_be_visible()
+            expect(reuse).to_be_visible()
+            expect(reuse).to_have_attribute("href", f"/runs/{run.stored.manifest.run_id}/reuse")
+            # The header keeps a visible gap between the run label and each link.
+            label_box = page.locator("#saved-run-label").bounding_box()
+            back_box = back.bounding_box()
+            reuse_box = reuse.bounding_box()
+            assert label_box is not None and back_box is not None and reuse_box is not None
+            assert back_box["x"] >= label_box["x"] + label_box["width"] + 8 or (
+                back_box["y"] >= label_box["y"] + label_box["height"] - 1
+            )
+            assert reuse_box["x"] >= back_box["x"] + back_box["width"] + 8 or (
+                reuse_box["y"] >= back_box["y"] + back_box["height"] - 1
+            )
         else:
             expect(back).to_be_hidden()
+            expect(reuse).to_be_hidden()
         shortcut = page.locator("#bounded-cognition-shortcut")
         expect(shortcut).to_contain_text(
             f"{coverage.selected_request_count} saved "

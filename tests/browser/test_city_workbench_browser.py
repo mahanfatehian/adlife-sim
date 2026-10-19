@@ -3792,3 +3792,68 @@ def test_a_start_refusal_without_a_field_is_shown_and_focused_on_screen(
         finally:
             browser.close()
             playwright.stop()
+
+
+def test_run_again_restores_every_saved_input_with_a_sibling_run_id(tmp_path: Path) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        posted: list[dict[str, object]] = []
+        page.on(
+            "request",
+            lambda request: (
+                posted.append(json.loads(request.post_data or "{}"))
+                if request.method == "POST" and request.url.endswith("/api/scenarios/validate")
+                else None
+            ),
+        )
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#scenario-name").fill("Reuse study")
+            page.locator("#campaign-name").fill("Reuse campaign")
+            page.locator("#relative-price").fill("1.25")
+            page.locator("input[name='phone-activity'][value='home']").check()
+            page.locator("#phone-cap").fill("4")
+            page.locator("#phone-windows .remove-window").nth(1).click()
+            page.locator("#phone-window-0-start").fill("07:00")
+            page.locator("#phone-window-0-end").fill("21:00")
+            page.locator("#persona-count").fill("2")
+            page.locator("#persona-template").select_option("persona-004")
+            page.locator("#persona-add").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill("reuse-source-001")
+            page.locator("#agent-count").fill("3")
+            page.locator("#days").fill("1")
+            page.locator("#seed").fill("7")
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            original = posted[-1]
+            page.locator("#start-run").click()
+            expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
+
+            page.locator("#reset-draft").click()
+            expect(page.locator("#scenario-name")).to_have_value("Synthetic city study")
+            page.locator("#stage-inspect").click()
+            card = page.locator("#run-library .run-card", has_text="reuse-source-001")
+            expect(card).to_be_visible(timeout=15_000)
+            expect(card).to_contain_text("Explanations")
+            card.get_by_role("button", name="Run again with these inputs").click()
+
+            expect(page.locator("#panel-run")).to_be_visible()
+            expect(page.locator("#run-id")).to_have_value("reuse-source-002")
+            expect(page.locator("#run-id")).to_be_focused()
+            expect(page.locator("#validation-state")).to_contain_text(
+                "Inputs restored from run reuse-source-001"
+            )
+            expect(page.locator("#start-run")).to_be_disabled()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            restored = posted[-1]
+            assert restored["settings"]["run_id"] == "reuse-source-002"
+            assert {**restored, "settings": {**restored["settings"], "run_id": "x"}} == {
+                **original,
+                "settings": {**original["settings"], "run_id": "x"},
+            }
+        finally:
+            browser.close()
+            playwright.stop()
