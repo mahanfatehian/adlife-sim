@@ -1690,6 +1690,13 @@ def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
         assert "rule-owned uncalibrated proxy · purchases not modeled" in ownership
         assert "frozen and offline" in ownership
         expect(page.locator("#saved-run-label")).to_contain_text(" · V10")
+        expect(page.locator("#assumptions-status")).to_have_text("Verified")
+        # Only the workbench inspector has a workbench to return to.
+        back = page.locator("#workbench-back-link")
+        if server == "workbench":
+            expect(back).to_be_visible()
+        else:
+            expect(back).to_be_hidden()
         shortcut = page.locator("#bounded-cognition-shortcut")
         expect(shortcut).to_contain_text(
             f"{coverage.selected_request_count} saved "

@@ -5281,7 +5281,9 @@ function renderWorkbenchAssumptions(input) {
   byId("assumptions-content").hidden = false;
   byId("assumptions-status").textContent = "Verified";
   byId("assumptions-drawer").open = false;
-  byId("workbench-back-link").hidden = false;
+  // Only the workbench inspector (/api/runs/{id}) has a workbench to return to; the
+  // standalone viewer of a V10 run verifies the same input without one.
+  byId("workbench-back-link").hidden = !validatedApiBase().startsWith("/api/runs/");
 }
 
 function renderWorkbenchUnavailable(meta) {
