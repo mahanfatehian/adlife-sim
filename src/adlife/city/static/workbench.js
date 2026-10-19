@@ -111,6 +111,7 @@
     fundingChoices: 16,
   });
   const MAX_V10_RESPONSES = 520_800;
+  const RUN_ID_IN_USE_MESSAGE = "A saved run already uses this ID. Choose a new run ID.";
   const WORKER_FAILURE_MESSAGES = new Map([
     ["evaluation-failed", "The deterministic city evaluation failed."],
     ["persistence-failed", "The city run could not be persisted."],
@@ -186,6 +187,7 @@
     ["scenario.campaign.creative_template_id", ["creative-template-error", "creative-template"]],
     ["scenario.campaign.target_interests", ["target-interests-error", null]],
     ["scenario.campaign.relative_price", ["relative-price-error", "relative-price"]],
+    ["scenario", ["placements-error", "phone-enabled"]],
     ["scenario.phone", ["placements-error", "phone-enabled"]],
     ["scenario.phone.active_windows", ["phone-windows-error", "phone-add-window"]],
     ["scenario.phone.eligible_activities", ["phone-activities-error", null]],
@@ -279,14 +281,36 @@
     if (input) input.value = "";
   }
 
-  function showBanner(message) {
+  /**
+   * Show one refusal. A refusal answering a click far down the page is scrolled into view
+   * and focused, so it never lands off-screen; background refreshes pass `reveal: false`
+   * and leave scroll position and focus alone.
+   */
+  function showBanner(message, { reveal = true } = {}) {
     clearCredentialInput();
     const safeMessage = boundedText(message, 500)
       ? message
       : "The local workbench could not complete the request.";
     setText("error-banner-message", safeMessage);
-    byId("error-banner").hidden = false;
+    const banner = byId("error-banner");
+    banner.hidden = false;
     announce(safeMessage);
+    if (reveal) {
+      banner.scrollIntoView({ block: "nearest" });
+      banner.focus({ preventScroll: true });
+    }
+  }
+
+  /** Open the stage panel holding an element, so focus never lands inside a hidden panel. */
+  function revealStageOf(element) {
+    const panel = element ? element.closest("[data-stage-panel]") : null;
+    if (panel && panel.hidden) showStage(panel.dataset.stagePanel);
+  }
+
+  /** The control that should take focus for an error that names no control of its own. */
+  function focusableNear(element) {
+    const group = element ? element.closest("fieldset, .field, .schedule-editor, .form-section") : null;
+    return group ? group.querySelector("input:not([type=hidden]), select, textarea, button") : null;
   }
 
   function clearFieldErrors() {
@@ -318,6 +342,8 @@
   function renderFieldErrors(fields) {
     clearFieldErrors();
     let firstControl = null;
+    let firstMessage = null;
+    let firstError = null;
     let hasRootError = false;
     let hasAdditionalPersonaErrors = false;
     if (!isObject(fields)) {
@@ -345,11 +371,13 @@
       if (!byId(errorId).textContent) {
         setText(errorId, message);
       }
-      if (controlId) {
-        const control = byId(controlId);
-        control.setAttribute("aria-invalid", "true");
+      const control = controlId ? byId(controlId) : focusableNear(byId(errorId));
+      if (control) {
+        if (controlId) control.setAttribute("aria-invalid", "true");
         if (!firstControl) {
           firstControl = control;
+          firstMessage = message;
+          firstError = byId(errorId);
         }
       }
     }
@@ -359,8 +387,12 @@
       showBanner("The server refused one or more study fields. Review the draft and try again.");
     }
     if (firstControl) {
+      // A refused campaign field is revealed in its own stage instead of failing silently.
+      revealStageOf(firstControl);
       firstControl.focus();
+      firstError?.scrollIntoView({ block: "center" });
     }
+    return firstMessage;
   }
 
   function requestErrorMessage(documentValue) {
@@ -1506,18 +1538,24 @@
     setText("validation-state", "Validated. Review the immutable binding receipt before starting.");
   }
 
-  function renderLocalDraftError(error) {
+  function renderLocalDraftError(error, action = "Validation") {
     clearFieldErrors();
+    // The run step keeps a visible receipt of why nothing happened, wherever the field is.
+    invalidateValidation(`${action} was refused: ${error.message}`);
     if (state.personaEditor?.focusError(error.path, error.message)) return;
     const target = targetForField(error.path);
     if (target) {
       const [errorId, mappedControl] = target;
       setText(errorId, error.message);
-      const control = byId(error.controlId || mappedControl);
+      const named = error.controlId || mappedControl;
+      const control = named ? byId(named) : focusableNear(byId(errorId));
+      // A draft error in the hidden campaign step opens that step before taking focus.
+      revealStageOf(control || byId(errorId));
       if (control) {
-        control.setAttribute("aria-invalid", "true");
+        if (named) control.setAttribute("aria-invalid", "true");
         control.focus();
       }
+      byId(errorId).scrollIntoView({ block: "center" });
     } else {
       showBanner(error.message);
     }
@@ -1530,6 +1568,11 @@
     let draft;
     try {
       draft = readDraft();
+      // Validation never touches the run store; the verified library already shown here is
+      // enough to catch the common slip of reusing a saved run ID before starting.
+      if (libraryRunIds().has(draft.settings.run_id)) {
+        throw new DraftError("settings.run_id", RUN_ID_IN_USE_MESSAGE, "run-id");
+      }
     } catch (error) {
       if (error instanceof DraftError) {
         renderLocalDraftError(error);
@@ -1560,7 +1603,8 @@
       }
       invalidateValidation("Validation was refused. Revise the highlighted fields and try again.");
       if (error instanceof RequestError && isObject(error.documentValue) && isObject(error.documentValue.error)) {
-        renderFieldErrors(error.documentValue.error.fields);
+        const firstMessage = renderFieldErrors(error.documentValue.error.fields);
+        if (firstMessage) setText("validation-state", `Validation was refused: ${firstMessage}`);
       } else {
         showBanner(error instanceof Error ? error.message : "The study could not be validated.");
       }
@@ -2062,7 +2106,7 @@
       draft = readDraft();
     } catch (error) {
       if (error instanceof DraftError) {
-        renderLocalDraftError(error);
+        renderLocalDraftError(error, "Start");
         return;
       }
       showBanner("The draft could not be read safely.");
@@ -2113,7 +2157,11 @@
       if (error instanceof RequestError && isObject(error.documentValue) && isObject(error.documentValue.error)) {
         const fields = error.documentValue.error.fields;
         if (isObject(fields) && Object.keys(fields).length > 0) {
-          renderFieldErrors(fields);
+          // A refused field (for example a run ID that is already saved) is shown on the
+          // field itself; the draft must be revised and validated again before a start.
+          invalidateValidation(`Start was refused: ${error.message}`);
+          const firstMessage = renderFieldErrors(fields);
+          if (firstMessage) setText("validation-state", `Start was refused: ${firstMessage}`);
         } else {
           showBanner(error.message);
         }
@@ -2171,12 +2219,16 @@
     return documentValue;
   }
 
-  function suggestedRunId() {
-    const used = new Set(
+  function libraryRunIds() {
+    return new Set(
       state.lastLibraryPage && Array.isArray(state.lastLibraryPage.runs)
         ? state.lastLibraryPage.runs.map((run) => run.run_id)
         : [],
     );
+  }
+
+  function suggestedRunId() {
+    const used = libraryRunIds();
     for (let index = 1; index <= 999; index += 1) {
       const candidate = `city-study-${String(index).padStart(3, "0")}`;
       if (!used.has(candidate)) {
@@ -2418,6 +2470,11 @@
         const job = assertJob(active);
         beginPolling(job, `/api/jobs/${job.job_id}`);
         byId("stage-run").disabled = false;
+        if (!TERMINAL_PHASES.has(job.phase)) {
+          // A reload during a run reopens on the live job, not on an empty city step.
+          showStage("run");
+          byId("job-panel").scrollIntoView({ block: "nearest" });
+        }
       }
     } catch (error) {
       state.libraryLoading = false;

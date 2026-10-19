@@ -3322,6 +3322,10 @@ def test_refresh_resumes_the_exact_active_job_and_polling(
 
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator("#stage-run")).to_be_enabled(timeout=10_000)
+                # The reload reopens on the live job rather than on an empty city step.
+                expect(page.locator("#panel-run")).to_be_visible()
+                expect(page.locator("#stage-run")).to_have_attribute("aria-current", "step")
+                expect(page.locator("#job-panel")).to_be_visible()
                 page.locator("#stage-run").click()
                 expect(page.locator("#job-panel")).to_be_visible()
                 expect(page.locator("#job-settings")).to_contain_text("refresh-resume")
@@ -3590,6 +3594,201 @@ def test_workbench_is_keyboard_legible_and_contained_at_390_pixels(tmp_path: Pat
             assert provider_snapshot["active"] == "cognition-mode"
             assert provider_snapshot["outline"] != "none"
             assert provider_snapshot["transitions"] in {"0s", "0ms"}
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def _wait_in_viewport(page, selector: str) -> None:
+    """Wait out smooth scrolling until the element sits fully inside the viewport."""
+    page.wait_for_function(
+        """selector => {
+          const box = document.querySelector(selector).getBoundingClientRect();
+          return box.height > 0 && box.top >= -1 && box.bottom <= window.innerHeight + 1;
+        }""",
+        arg=selector,
+        timeout=5_000,
+    )
+
+
+def test_a_refused_campaign_field_opens_its_hidden_step_with_a_receipt(tmp_path: Path) -> None:
+    """Shortening the run below a delivery window must never make Validate a silent no-op."""
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#days").fill("1")
+            page.locator("#validate-run").click()
+
+            message = "Window 2 must use a day from 1 through 1."
+            expect(page.locator("#panel-campaign")).to_be_visible()
+            expect(page.locator("#panel-run")).to_be_hidden()
+            expect(page.locator("#stage-campaign")).to_have_attribute("aria-current", "step")
+            expect(page.locator("#phone-windows-error")).to_have_text(message)
+            day = page.locator("#phone-windows .schedule-row").nth(1).locator("input").first
+            expect(day).to_be_focused()
+            expect(day).to_have_attribute("aria-invalid", "true")
+            _wait_in_viewport(page, "#phone-windows-error")
+            expect(page.locator("#validation-state")).to_have_text(
+                f"Validation was refused: {message}"
+            )
+
+            # A server refusal of a campaign field opens the campaign step the same way.
+            page.locator("#phone-windows .remove-window").nth(1).click()
+            page.route(
+                "**/api/scenarios/validate",
+                lambda route: route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "schema_version": 1,
+                            "error": {
+                                "code": "invalid-fields",
+                                "message": "One or more request fields are invalid.",
+                                "fields": {
+                                    "scenario.campaign.relative_price": "Use a positive price."
+                                },
+                            },
+                        }
+                    ),
+                ),
+            )
+            page.locator("#campaign-continue").click()
+            expect(page.locator("#panel-run")).to_be_visible()
+            page.locator("#validate-run").click()
+            expect(page.locator("#panel-campaign")).to_be_visible()
+            expect(page.locator("#relative-price")).to_be_focused()
+            expect(page.locator("#relative-price-error")).to_have_text("Use a positive price.")
+            page.locator("#stage-run").click()
+            expect(page.locator("#validation-state")).to_have_text(
+                "Validation was refused: Use a positive price."
+            )
+            expect(page.locator("#start-run")).to_be_disabled()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_a_saved_run_id_is_refused_on_its_field_at_validation_and_at_start(
+    tmp_path: Path,
+) -> None:
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        validations: list[str] = []
+        page.on(
+            "request",
+            lambda request: (
+                validations.append(request.url)
+                if request.method == "POST" and request.url.endswith("/api/scenarios/validate")
+                else None
+            ),
+        )
+        try:
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#run-id").fill("browser-duplicate")
+            page.locator("#agent-count").fill("1")
+            _set_audience_count(page, 1)
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#start-run").click()
+            expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
+            page.wait_for_function(
+                "() => document.querySelector("
+                "'#run-library a[href=\"/runs/browser-duplicate\"]') !== null",
+                timeout=30_000,
+            )
+
+            # The verified library already shows the saved ID: refuse it before any request.
+            sent = len(validations)
+            page.locator("#run-id").fill("browser-duplicate")
+            page.locator("#validate-run").click()
+            message = "A saved run already uses this ID. Choose a new run ID."
+            expect(page.locator("#run-id-error")).to_have_text(message)
+            expect(page.locator("#run-id")).to_be_focused()
+            expect(page.locator("#run-id")).to_have_attribute("aria-invalid", "true")
+            expect(page.locator("#validation-state")).to_have_text(
+                f"Validation was refused: {message}"
+            )
+            assert len(validations) == sent
+
+            # A listing that has not caught up still gets the server's refusal on the field.
+            empty = {
+                "schema_version": 1,
+                "offset": 0,
+                "limit": 20,
+                "returned_count": 0,
+                "verified_total": 0,
+                "scanned_count": 0,
+                "corrupt_count": 0,
+                "truncated": False,
+                "runs": [],
+            }
+            page.route(
+                "**/api/runs?offset=0&limit=20",
+                lambda route: route.fulfill(
+                    status=200, content_type="application/json", body=json.dumps(empty)
+                ),
+            )
+            page.locator("#stage-inspect").click()
+            expect(page.locator("#library-count")).to_have_text("0 verified runs")
+            page.locator("#stage-run").click()
+            page.locator("#run-id").fill("browser-duplicate")
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.locator("#start-run").scroll_into_view_if_needed()
+            with page.expect_response("**/api/jobs") as refused:
+                page.locator("#start-run").click()
+            assert refused.value.status == 409
+            expect(page.locator("#run-id-error")).to_have_text(message)
+            expect(page.locator("#run-id")).to_be_focused()
+            _wait_in_viewport(page, "#run-id")
+            expect(page.locator("#validation-state")).to_have_text(f"Start was refused: {message}")
+            expect(page.locator("#validation-review")).to_be_hidden()
+            expect(page.locator("#start-run")).to_be_disabled()
+            expect(page.locator("#error-banner")).to_be_hidden()
+        finally:
+            browser.close()
+            playwright.stop()
+
+
+def test_a_start_refusal_without_a_field_is_shown_and_focused_on_screen(
+    tmp_path: Path,
+) -> None:
+    busy = {
+        "schema_version": 1,
+        "error": {
+            "code": "job-busy",
+            "message": "Another workbench run is already active.",
+            "fields": {},
+        },
+    }
+    with _workbench(tmp_path) as (base_url, _root):
+        playwright, browser, page = _open_page(_installed_browser(), base_url)
+        try:
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(base_url, wait_until="networkidle")
+            page.locator("#city-continue").click()
+            page.locator("#campaign-continue").click()
+            page.locator("#validate-run").click()
+            expect(page.locator("#start-run")).to_be_enabled(timeout=15_000)
+            page.route(
+                "**/api/jobs",
+                lambda route: route.fulfill(
+                    status=409, content_type="application/json", body=json.dumps(busy)
+                ),
+            )
+            page.locator("#start-run").scroll_into_view_if_needed()
+            page.locator("#start-run").click()
+            expect(page.locator("#error-banner-message")).to_have_text(
+                "Another workbench run is already active."
+            )
+            expect(page.locator("#error-banner")).to_be_focused()
+            _wait_in_viewport(page, "#error-banner")
         finally:
             browser.close()
             playwright.stop()

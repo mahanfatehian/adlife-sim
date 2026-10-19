@@ -195,6 +195,8 @@ main { padding: 16px 0 48px; }
 
 .error-banner strong { color: #ffc2aa; font-size: 13px; }
 .error-banner p { margin: 4px 0 0; color: #e9cbc0; font-size: 12px; }
+.error-banner:focus { outline: 3px solid var(--focus); outline-offset: 3px; }
+.error-banner { scroll-margin-top: 16px; }
 
 .workbench-shell {
   display: grid;
@@ -402,7 +404,7 @@ code { color: #b5dded; font: 500 9px Consolas, monospace; }
 .boundary-note { border-left: 3px solid var(--amber); }
 .boundary-note strong { color: var(--amber); font-size: 12px; }
 .boundary-note p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.validation-state { margin-top: 20px; padding: 13px 15px; border: 1px dashed var(--line-strong); color: var(--muted); font-size: 11px; }
+.validation-state { margin-top: 20px; padding: 13px 15px; border: 1px dashed var(--line-strong); color: var(--muted); font-size: 12px; line-height: 1.45; }
 .validation-state.valid { border-style: solid; border-color: rgba(132, 223, 194, .4); color: var(--mint); }
 .validation-review { border-top: 2px solid var(--mint); }
 .review-facts { margin-top: 14px; }
