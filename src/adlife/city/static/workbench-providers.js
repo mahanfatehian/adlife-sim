@@ -69,6 +69,9 @@
   const PURCHASE_OWNERSHIP = "Rules: an uncalibrated proxy score; purchases are not modeled";
   const TIMEOUT_REASON = "timeout-exhausted";
   const PROTOCOL_REASON = "protocol-incompatible";
+  // Explanation runs default to 10 funded explanations (10 x 1,536 output tokens): a local
+  // model answers one at a time, so funding all 60 can keep a live demo waiting minutes.
+  const V9_DEFAULT_BUDGET = 15360;
 
   const byId = (id) => document.getElementById(id);
   const formatCount = (value) => Number(value).toLocaleString("en-US");
@@ -530,7 +533,7 @@
         return;
       }
       if (byId("cognition-budget").value === "0") {
-        byId("cognition-budget").value = "92160";
+        byId("cognition-budget").value = String(V9_DEFAULT_BUDGET);
       }
       this.renderOrigins();
       this.renderProfiles();

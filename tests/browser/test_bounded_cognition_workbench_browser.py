@@ -99,6 +99,9 @@ SELECTED = LIMITS["selected_requests_per_run"]
 OFFLINE = LIMITS["offline_funded_response_limit"]
 # V9 reserves output per explanation in whole 1,536-token steps; never a V10 ceiling.
 V9_TOKENS_PER_EXPLANATION = 1536
+# The explanation form funds 10 explanations by default so a live local model answers in
+# under a minute; the operator may raise it to the full V9 ceiling.
+V9_DEFAULT_RESERVATION = 10 * V9_TOKENS_PER_EXPLANATION
 BOUNDARY = (
     "External AI selects a small set of synthetic appraisal categories. AdLife applies a "
     "fixed mapping. These categories may change only the displayed cognition state. They "
@@ -339,10 +342,13 @@ def test_operation_and_source_controls_select_exact_schema(tmp_path: Path) -> No
         expected = {
             (EXPLANATION, "rules"): (3, {"mode": "rules", "aggregate_output_token_ceiling": 0}),
             (EXPLANATION, "mock"): (3, {"mode": "mock", "aggregate_output_token_ceiling": 0}),
-            (EXPLANATION, "local"): (3, {"mode": "local", "aggregate_output_token_ceiling": 92160}),
+            (
+                EXPLANATION,
+                "local",
+            ): (3, {"mode": "local", "aggregate_output_token_ceiling": V9_DEFAULT_RESERVATION}),
             (EXPLANATION, "remote"): (
                 3,
-                {"mode": "remote", "aggregate_output_token_ceiling": 92160},
+                {"mode": "remote", "aggregate_output_token_ceiling": V9_DEFAULT_RESERVATION},
             ),
             (BOUNDED, "rules"): (4, {"mode": "rules", "funded_response_limit": int(offline)}),
             (BOUNDED, "mock"): (4, {"mode": "mock", "funded_response_limit": int(offline)}),
