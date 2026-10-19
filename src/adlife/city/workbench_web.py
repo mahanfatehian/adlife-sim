@@ -158,6 +158,7 @@ from adlife.core.ports.run_store import (
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _ASSET_LIMIT_BYTES = 262_144
+_RUN_ID_IN_USE_MESSAGE = "A saved run already uses this ID. Choose a new run ID."
 _CANONICAL_UNSIGNED_INTEGER = re.compile(r"^(?:0|[1-9][0-9]*)$")
 _JOB_ID = re.compile(r"^job-[0-9a-f]{32}$")
 _INSPECTOR_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
@@ -948,10 +949,12 @@ def create_city_workbench_app(
         _request: Request,
         _error: DuplicateRun,
     ) -> JSONResponse:
+        # The conflict names its field, so the browser marks the run ID input itself.
         return workbench_error(
             409,
             "run-conflict",
             "The run identifier is already in use.",
+            {"settings.run_id": _RUN_ID_IN_USE_MESSAGE},
         )
 
     @app.exception_handler(WorkbenchJobBusy)

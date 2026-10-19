@@ -1768,6 +1768,10 @@ def test_duplicate_unknown_job_late_cancel_and_cancel_body_are_stable_refusals(
 
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "run-conflict"
+    # The conflict names the run ID field, so the browser marks that input in place.
+    assert duplicate.json()["error"]["fields"] == {
+        "settings.run_id": "A saved run already uses this ID. Choose a new run ID."
+    }
     assert missing.status_code == malformed.status_code == 404
     assert missing.json()["error"]["code"] == "job-not-found"
     assert malformed.json()["error"]["code"] == "job-not-found"
