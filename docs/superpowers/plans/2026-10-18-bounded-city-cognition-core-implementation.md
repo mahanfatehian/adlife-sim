@@ -103,22 +103,31 @@ CityCognitionRelevanceV2 = Literal["none", "low", "medium", "high", "uncertain"]
 CityCognitionCredibilityV2 = Literal["low", "medium", "high", "uncertain"]
 CityCognitionSalienceV2 = Literal["none", "low", "medium", "high", "uncertain"]
 CityCognitionModeV2 = Literal["rules", "mock", "local", "remote"]
-CityCognitionSourceV2 = Literal[
-    "rules", "mock", "provider", "cache", "fallback", "budget-skipped"
-]
+CityCognitionSourceV2 = Literal["rules", "mock", "provider", "cache", "fallback", "budget-skipped"]
 CityCognitionAppliedSourceV2 = CityCognitionSourceV2 | Literal["unselected"]
 CityCognitionNeutralizationStatusV2 = Literal[
     "none", "uncertain", "safety", "rules", "fallback", "budget-skipped", "unselected"
 ]
 CityCognitionFallbackReasonV2 = Literal[
-    "endpoint-resolution-refused", "authentication-refused", "timeout-exhausted",
-    "rate-limit-exhausted", "server-error-exhausted", "response-too-large",
-    "protocol-incompatible", "invalid-result", "budget-skipped"
+    "endpoint-resolution-refused",
+    "authentication-refused",
+    "timeout-exhausted",
+    "rate-limit-exhausted",
+    "server-error-exhausted",
+    "response-too-large",
+    "protocol-incompatible",
+    "invalid-result",
+    "budget-skipped",
 ]
 CityCognitionRuntimeFallbackReasonV2 = Literal[
-    "endpoint-resolution-refused", "authentication-refused", "timeout-exhausted",
-    "rate-limit-exhausted", "server-error-exhausted", "response-too-large",
-    "protocol-incompatible", "invalid-result"
+    "endpoint-resolution-refused",
+    "authentication-refused",
+    "timeout-exhausted",
+    "rate-limit-exhausted",
+    "server-error-exhausted",
+    "response-too-large",
+    "protocol-incompatible",
+    "invalid-result",
 ]
 CityProviderRepairReasonV2 = Literal[
     "invalid-json", "invalid-schema", "request-id-mismatch", "unsafe-content"
@@ -134,12 +143,14 @@ class _CityCognitionModelV2(DomainModel):
         revalidate_instances="always",
     )
 
+
 class CityCognitionSignalVectorV2(_CityCognitionModelV2):
     affect: CityCognitionAffectV2
     relevance: CityCognitionRelevanceV2
     credibility: CityCognitionCredibilityV2
     salience: CityCognitionSalienceV2
     safety_flags: tuple[CityCognitionSafetyFlag, ...]
+
 
 class CityCognitionResultV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -151,14 +162,21 @@ class CityCognitionResultV2(_CityCognitionModelV2):
     safety_flags: tuple[CityCognitionSafetyFlag, ...]
     disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
 
+
 class CityCognitionSelectionPolicyV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     policy_id: Literal["city-cognition-selection-v2"]
     eligible_event_type: Literal["spatial.response"]
     noticed_responses_only: Literal[True]
-    sort_order: tuple[Literal["model_minute"], Literal["agent_id"], Literal["campaign_id"], Literal["baseline_response_id"]]
+    sort_order: tuple[
+        Literal["model_minute"],
+        Literal["agent_id"],
+        Literal["campaign_id"],
+        Literal["baseline_response_id"],
+    ]
     selected_requests_per_agent: Literal[4]
     selected_requests_per_run: Literal[60]
+
 
 class CityCognitionFallbackPolicyV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -166,18 +184,27 @@ class CityCognitionFallbackPolicyV2(_CityCognitionModelV2):
     runtime_reasons: tuple[CityCognitionRuntimeFallbackReasonV2, ...]
     neutral_vector: CityCognitionSignalVectorV2
 
+
 class CityCognitionMockPolicyV1(_CityCognitionModelV2):
     schema_version: Literal[1]
     policy_id: Literal["city-cognition-mock-signal-v1"]
     digest_prefix: Literal["city-cognition-mock-signal-v1\0"]
-    affect_order: tuple[Literal["annoyed"], Literal["skeptical"], Literal["neutral"], Literal["curious"], Literal["positive"]]
+    affect_order: tuple[
+        Literal["annoyed"],
+        Literal["skeptical"],
+        Literal["neutral"],
+        Literal["curious"],
+        Literal["positive"],
+    ]
     relevance_order: tuple[Literal["none"], Literal["low"], Literal["medium"], Literal["high"]]
     credibility_order: tuple[Literal["low"], Literal["medium"], Literal["high"]]
     salience_order: tuple[Literal["none"], Literal["low"], Literal["medium"], Literal["high"]]
 
+
 class CityCognitionInfluenceWeightV1(_CityCognitionModelV2):
     category: str
     weight: float
+
 
 class CityCognitionInfluencePolicyV1(_CityCognitionModelV2):
     schema_version: Literal[1]
@@ -205,6 +232,7 @@ class CityCognitionCausalAgentV2(_CityCognitionModelV2):
     interests: tuple[str, ...]
     traits: SpatialResponseTraits
 
+
 class CityCognitionCausalCampaignV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     campaign_id: str
@@ -213,6 +241,7 @@ class CityCognitionCausalCampaignV2(_CityCognitionModelV2):
     target_interests: tuple[str, ...]
     relative_price: float
 
+
 class CityCognitionInitialRuleStateV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     agent_id: str
@@ -220,10 +249,12 @@ class CityCognitionInitialRuleStateV2(_CityCognitionModelV2):
     brand_sentiment: float
     recall_strength: float
 
+
 class CityCognitionInitialStateDocumentV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     model_id: Literal["spatial-cognition-initial-state-v2"]
     states: tuple[CityCognitionInitialRuleStateV2, ...]
+
 
 class CityCognitionRunContextV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -234,6 +265,7 @@ class CityCognitionRunContextV2(_CityCognitionModelV2):
     agents: tuple[CityCognitionCausalAgentV2, ...]
     campaigns: tuple[CityCognitionCausalCampaignV2, ...]
     initial_states: tuple[CityCognitionInitialRuleStateV2, ...]
+
 
 class CityCognitionRuleFactorsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -251,6 +283,7 @@ class CityCognitionRuleFactorsV2(_CityCognitionModelV2):
     value_match: float
     baseline_sentiment_delta: float
     baseline_recall_delta: float
+
 
 class CityCognitionBaselineProposalV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -270,6 +303,7 @@ class CityCognitionBaselineProposalV2(_CityCognitionModelV2):
     pre_minute_rule_state_sha256: Hash
     rule_factors: CityCognitionRuleFactorsV2
 
+
 class CityCognitionCausalRequestIdentityV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     causal_contract_sha256: Hash
@@ -283,6 +317,7 @@ class CityCognitionCausalRequestIdentityV2(_CityCognitionModelV2):
     campaign: CityCognitionCausalCampaignV2
     initial_rule_state: CityCognitionInitialRuleStateV2
     disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
+
 
 class CityCognitionRequestV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -354,9 +389,14 @@ def test_v2_result_and_policy_documents_are_closed_frozen_and_exact() -> None:
         "disclosure": "synthetic-bounded-cognition-not-observed-behavior",
     }
     assert module.CITY_COGNITION_DEFAULT_FALLBACK_POLICY_V2.runtime_reasons == (
-        "endpoint-resolution-refused", "authentication-refused", "timeout-exhausted",
-        "rate-limit-exhausted", "server-error-exhausted", "response-too-large",
-        "protocol-incompatible", "invalid-result",
+        "endpoint-resolution-refused",
+        "authentication-refused",
+        "timeout-exhausted",
+        "rate-limit-exhausted",
+        "server-error-exhausted",
+        "response-too-large",
+        "protocol-incompatible",
+        "invalid-result",
     )
 ```
 
@@ -436,10 +476,12 @@ class CityProviderRepairContextV2(_CityCognitionModelV2):
     reason_code: CityProviderRepairReasonV2
     safe_excerpt: str  # 1..240 screened characters
 
+
 class CityProviderUsageV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     prompt_tokens: int  # exact int, 0..2_147_483_647
     completion_tokens: int  # exact int, 0..2_147_483_647
+
 
 class CityProviderAttemptV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -447,6 +489,7 @@ class CityProviderAttemptV2(_CityCognitionModelV2):
     result: CityCognitionResultV2 | None
     repair_context: CityProviderRepairContextV2 | None
     usage: CityProviderUsageV2 | None
+
 
 class CityCognitionEffectiveSettingsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -459,6 +502,7 @@ class CityCognitionEffectiveSettingsV2(_CityCognitionModelV2):
     attempt_timeout_seconds: int
     transient_retries: int
     repair_attempts: int
+
 
 class CityCognitionReservationV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -548,6 +592,7 @@ class CityCognitionTerminalRecordV2(_CityCognitionModelV2):
     disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
     record_hash: Hash
 
+
 class CityCognitionCoverageCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     eligible_response_count: int
@@ -557,6 +602,7 @@ class CityCognitionCoverageCountsV2(_CityCognitionModelV2):
     unselected_response_count: int
     applied_response_count: int
 
+
 class CityCognitionOutcomeCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     rules: int
@@ -565,6 +611,7 @@ class CityCognitionOutcomeCountsV2(_CityCognitionModelV2):
     cache: int
     fallback: int
     budget_skipped: int
+
 
 class CityCognitionReasonCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -578,11 +625,13 @@ class CityCognitionReasonCountsV2(_CityCognitionModelV2):
     invalid_result: int
     budget_skipped: int
 
+
 class CityCognitionNeutralizationCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     neutralized_response_count: int
     uncertain_result_count: int
     safety_neutralized_result_count: int
+
 
 class CityCognitionSummaryV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -602,6 +651,7 @@ class CityCognitionSummaryV2(_CityCognitionModelV2):
     terminal_stream_bytes: int
     terminal_record_count: int
     disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
+
 
 class CityCognitionEvaluationV2(_CityCognitionModelV2):
     schema_version: Literal[2]
@@ -687,6 +737,7 @@ def build_city_cognition_initial_state_document_v2(
     context: CityCognitionRunContextV2,
 ) -> CityCognitionInitialStateDocumentV2: ...
 
+
 def build_city_cognition_requests_v2(
     context: CityCognitionRunContextV2,
     mobility: CityMobility,
@@ -695,12 +746,14 @@ def build_city_cognition_requests_v2(
     causal_contract: CityCognitionCausalContractV2 = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
 ) -> tuple[CityCognitionRequestV2, ...]: ...
 
+
 def allocate_city_cognition_reservations_v2(
     requests: tuple[CityCognitionRequestV2, ...],
     *,
     mode: CityCognitionModeV2,
     funded_response_limit: Literal[10, 20, 40, 60],
 ) -> tuple[CityCognitionReservationV2, ...]: ...
+
 
 def build_city_cognition_input_v2(
     context: CityCognitionRunContextV2,
@@ -721,7 +774,9 @@ def build_city_cognition_input_v2(
 
 ```python
 def test_descriptive_provenance_changes_record_hash_not_causal_identity() -> None:
-    first_context, second_context, mobility, baseline = equivalent_causal_contexts_with_distinct_run_hashes()
+    first_context, second_context, mobility, baseline = (
+        equivalent_causal_contexts_with_distinct_run_hashes()
+    )
     first = build_city_cognition_requests_v2(first_context, mobility, baseline)[0]
     second = build_city_cognition_requests_v2(second_context, mobility, baseline)[0]
     assert first.request_id == second.request_id
@@ -819,7 +874,9 @@ class CityCognitionAppliedVectorV2(_CityCognitionModelV2):
     applied_sentiment_delta: float
     applied_recall_delta: float
 
+
 def build_city_rules_result_v2(request: CityCognitionRequestV2) -> CityCognitionResultV2: ...
+
 
 def build_city_mock_result_v2(
     request: CityCognitionRequestV2,
@@ -827,15 +884,18 @@ def build_city_mock_result_v2(
     policy: CityCognitionMockPolicyV1 = CITY_COGNITION_DEFAULT_MOCK_POLICY_V1,
 ) -> CityCognitionResultV2: ...
 
+
 def build_city_fallback_result_v2(
     request: CityCognitionRequestV2,
     *,
     reason: CityCognitionRuntimeFallbackReasonV2,
 ) -> CityCognitionResultV2: ...
 
+
 def build_city_budget_skipped_result_v2(
     request: CityCognitionRequestV2,
 ) -> CityCognitionResultV2: ...
+
 
 def apply_city_cognition_influence_v1(
     baseline_sentiment_delta: float,
@@ -845,6 +905,7 @@ def apply_city_cognition_influence_v1(
     result: CityCognitionResultV2 | None,
     policy: CityCognitionInfluencePolicyV1 = CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
 ) -> CityCognitionAppliedVectorV2: ...
+
 
 def build_city_cognition_terminal_record_v2(
     request: CityCognitionRequestV2,
@@ -859,6 +920,7 @@ def build_city_cognition_terminal_record_v2(
     completion_tokens: int | None = None,
 ) -> CityCognitionTerminalRecordV2: ...
 
+
 def validate_city_cognition_evaluation_v2(
     cognition_input: CityCognitionInputV2,
     requests: tuple[CityCognitionRequestV2, ...],
@@ -866,6 +928,7 @@ def validate_city_cognition_evaluation_v2(
     *,
     baseline_evaluation: SpatialResponseEvaluation,
 ) -> CityCognitionEvaluationV2: ...
+
 
 def city_cognition_terminal_lines_v2(
     evaluation: CityCognitionEvaluationV2,
@@ -965,6 +1028,7 @@ class _SpatialResponseModelV2(DomainModel):
         revalidate_instances="always",
     )
 
+
 class SpatialCognitionStateV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
     agent_id: str
@@ -973,6 +1037,7 @@ class SpatialCognitionStateV2(_SpatialResponseModelV2):
     synthetic_recall: float
     response_count: int
     last_response_minute: int | None
+
 
 class SpatialAppliedResponseV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
@@ -991,6 +1056,7 @@ class SpatialAppliedResponseV2(_SpatialResponseModelV2):
     previous_cognition_state_sha256: Hash
     applied_sentiment_delta: float
     applied_recall_delta: float
+
 
 class SpatialDualStateUpdatedV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
@@ -1013,10 +1079,12 @@ class SpatialDualStateUpdatedV2(_SpatialResponseModelV2):
     previous_cognition_state: SpatialCognitionStateV2
     cognition_state: SpatialCognitionStateV2
 
+
 SpatialResponseRecordV2 = Annotated[
     SpatialAppliedResponseV2 | SpatialDualStateUpdatedV2,
     Field(discriminator="event_type"),
 ]
+
 
 class SpatialResponseCountsV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
@@ -1028,6 +1096,7 @@ class SpatialResponseCountsV2(_SpatialResponseModelV2):
     campaign_count: int
     final_rule_state_count: int
     final_cognition_state_count: int
+
 
 class SpatialResponseEvaluationV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
@@ -1044,15 +1113,18 @@ class SpatialResponseEvaluationV2(_SpatialResponseModelV2):
     final_rule_states: tuple[SpatialResponseState, ...]
     final_cognition_states: tuple[SpatialCognitionStateV2, ...]
 
+
 class SpatialRuleStateDocumentV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
     model_id: Literal["spatial-rule-state-v2"]
     states: tuple[SpatialResponseState, ...]
 
+
 class SpatialCognitionStateDocumentV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
     model_id: Literal["spatial-cognition-state-v2"]
     states: tuple[SpatialCognitionStateV2, ...]
+
 
 class SpatialResponseStateDocumentV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
@@ -1064,6 +1136,7 @@ class SpatialResponseStateDocumentV2(_SpatialResponseModelV2):
     cognition_input_sha256: Hash
     rule: SpatialRuleStateDocumentV2
     cognition: SpatialCognitionStateDocumentV2
+
 
 class SpatialResponseArtifactSummaryV2(_SpatialResponseModelV2):
     schema_version: Literal[2]
@@ -1094,21 +1167,26 @@ def apply_spatial_cognition_v2(
     cognition_evaluation: CityCognitionEvaluationV2,
 ) -> SpatialResponseEvaluationV2: ...
 
+
 def spatial_response_v2_lines(
     evaluation: SpatialResponseEvaluationV2,
 ) -> Iterator[bytes]: ...
+
 
 def spatial_rule_state_document_v2(
     evaluation: SpatialResponseEvaluationV2,
 ) -> SpatialRuleStateDocumentV2: ...
 
+
 def spatial_cognition_state_document_v2(
     evaluation: SpatialResponseEvaluationV2,
 ) -> SpatialCognitionStateDocumentV2: ...
 
+
 def spatial_response_state_document_v2(
     evaluation: SpatialResponseEvaluationV2,
 ) -> SpatialResponseStateDocumentV2: ...
+
 
 def summarize_spatial_response_artifact_v2(
     evaluation: SpatialResponseEvaluationV2,
@@ -1209,7 +1287,9 @@ Expected: PASS.
 
 ```python
 assert candidate.final_rule_states == baseline.final_rule_states
-assert [item.baseline for item in applied(candidate)] == [item.baseline for item in applied(baseline)]
+assert [item.baseline for item in applied(candidate)] == [
+    item.baseline for item in applied(baseline)
+]
 assert [state.purchase_intention for state in candidate.final_rule_states] == [
     state.purchase_intention for state in baseline.final_rule_states
 ]
@@ -1353,6 +1433,7 @@ class CityCognitionManifestReceiptV2(DomainModel):
     terminal_record_count: int
     summary_sha256: Hash
 
+
 class CityRunManifestV10(_CityRunResponseManifestCommon):
     model_config = ConfigDict(
         hide_input_in_errors=True,
@@ -1373,10 +1454,12 @@ class CityRunManifestV10(_CityRunResponseManifestCommon):
     influence_policy_sha256: Hash
     cognition: CityCognitionManifestReceiptV2
 
+
 def build_city_cognition_manifest_receipt_v2(
     cognition_input: CityCognitionInputV2,
     cognition_evaluation: CityCognitionEvaluationV2,
 ) -> CityCognitionManifestReceiptV2: ...
+
 
 CityRunManifestDocument = (
     CityRunManifest
@@ -1390,6 +1473,7 @@ CityRunManifestDocument = (
     | CityRunManifestV9
     | CityRunManifestV10
 )
+
 
 def parse_city_run_manifest_json(
     document: str | bytes,
@@ -1487,9 +1571,14 @@ assert all(
     ).hexdigest()
     for case in actual["cases"].values()
 )
-assert actual["combined_scientific_sha256"] == sha256(
-    canonical_json({key: value for key, value in actual.items() if key != "combined_scientific_sha256"}).encode("utf-8")
-).hexdigest()
+assert (
+    actual["combined_scientific_sha256"]
+    == sha256(
+        canonical_json(
+            {key: value for key, value in actual.items() if key != "combined_scientific_sha256"}
+        ).encode("utf-8")
+    ).hexdigest()
+)
 ```
 
 - [ ] **Step 2: Run the golden node and verify the intended red failure.**

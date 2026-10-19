@@ -84,6 +84,7 @@
   ```python
   StoredSpatialResponseMetrics: TypeAlias = SpatialResponseMetrics | SpatialResponseMetricsV2
 
+
   def response_metrics_for_stored_city_run(
       stored: StoredCityRun,
   ) -> StoredSpatialResponseMetrics: ...
@@ -207,6 +208,7 @@
       "incompatible-provider-provenance",
   ]
 
+
   def compare_spatial_response_metrics_v2(
       control: SpatialResponseMetricsV2,
       treatment: SpatialResponseMetricsV2,
@@ -322,6 +324,7 @@
   ```python
   SpatialStudyResultDocument: TypeAlias = SpatialStudyResult | SpatialStudyResultV2
 
+
   def analyze_stored_spatial_study(
       store: CityRunStore,
       definition: SpatialStudyDefinition,
@@ -336,9 +339,7 @@
   assert result.a_a_status == "rule-baseline-exact-zero-verified"
   assert all(item.mean_paired_difference == 0.0 for item in result.statistics)
   assert all("cognition" not in item.metric_key for item in result.statistics)
-  assert result.pairs[0].cognition_provenance_classification == (
-      "incompatible-provider-provenance"
-  )
+  assert result.pairs[0].cognition_provenance_classification == ("incompatible-provider-provenance")
   ```
 
 - [ ] **Step 3: Add mixed-version and provenance tests.** Refuse mixed V9/V10 arms or seeds, accept all-V10 rules/mock/provider pairs, and classify differing V10 cognition provenance without refusing otherwise matched baseline analysis.
@@ -440,6 +441,7 @@
   def render_spatial_study_html(
       result: SpatialStudyResult | SpatialStudyResultV2,
   ) -> bytes: ...
+
 
   def publish_spatial_study_report(
       result: SpatialStudyResult | SpatialStudyResultV2,
@@ -555,9 +557,11 @@
       WorkbenchCognitionRecordsViewV1 | WorkbenchCognitionRecordsViewV2
   )
 
+
   def build_workbench_cognition_summary_view(
       stored: StoredCityRun,
   ) -> WorkbenchCognitionSummaryView: ...
+
 
   def build_workbench_cognition_records_view(
       stored: StoredCityRun,
