@@ -384,9 +384,13 @@ campaign creative delimited as untrusted data, keeps every schema-v9 transport c
 (approved origins, loopback-only plain HTTP, HTTPS remotes, pinned peers, no redirects,
 `trust_env=False`, no streaming or tools, bounded bodies, time, retries, and repair), and
 accepts a result only when the strict `city-cognition-signal-result-v2` schema holds, the
-request ID is echoed exactly, no key is duplicated, and `finish_reason` is `stop`. Each funded
-request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output tokens
-each. Expected provider failures become typed neutral fallback records; cache corruption,
+request ID is echoed exactly, no key is duplicated, and `finish_reason` is `stop`, or `length`
+with text that is still a complete valid result; an answer the output cap cut short is a
+repairable `invalid-json` result. A vLLM server's own metadata members are admitted only as
+null or their observed type and are never parsed or kept, and a profile revision that turns
+model thinking off adds `chat_template_kwargs` `{"enable_thinking": false}` to each request.
+Each funded request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output
+tokens each. Expected provider failures become typed neutral fallback records; cache corruption,
 cancellation, storage failure, or a verification mismatch fails the run instead.
 
 V10 freezes `inputs/workbench.json` (schema 4), `inputs/cognition.json`,

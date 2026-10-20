@@ -153,8 +153,10 @@ closed `CityCognitionResultV2`: the echoed request ID, the exact disclosure
 | `safety_flags` | unique subset of `stereotype-risk`, `unsupported-inference`, `unsafe-content` |
 
 There is no provider prose and no provider-authored number, identifier, state, event, budget,
-probability, or purchase field; unknown fields, duplicate keys, a wrong request ID, truncation,
-and refusal are invalid results. The causal request carries only interests, price sensitivity,
+probability, or purchase field; unknown fields, duplicate keys or safety flags, a wrong request
+ID, an answer the output cap cut short, and refusal are invalid results. An answer that reached
+the cap with a complete valid object (for example followed by runaway whitespace) is still
+accepted. The causal request carries only interests, price sensitivity,
 novelty seeking, advertising skepticism, impulsivity, the recall encoding of the response's
 channel, the initial rule sentiment and recall, the campaign's target interests and relative
 price, the creative (delimited as untrusted data), and the channel, time, frequency, and rule

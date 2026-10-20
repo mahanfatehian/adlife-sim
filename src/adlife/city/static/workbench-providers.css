@@ -140,6 +140,25 @@
   background: #091920;
 }
 
+/* The model-thinking opt-in: one full-width row with a 44-pixel touch target. */
+.provider-thinking-field {
+  margin-top: 12px;
+}
+
+.field .provider-thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.provider-thinking-toggle input[type="checkbox"] {
+  flex: none;
+}
+
 .provider-advanced {
   margin: 14px 0;
   border-top: 1px solid var(--line);

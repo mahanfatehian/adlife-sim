@@ -6,6 +6,7 @@ import asyncio
 import os
 import stat
 from collections import OrderedDict
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 from hashlib import sha256
@@ -1070,8 +1071,14 @@ class WorkbenchRunRepository:
         prepared: PreparedCityScientificRunV2,
         operation: WorkbenchCognitionOperationV2,
         cancellation: CityCognitionCancellation,
+        *,
+        progress: Callable[[], None] | None = None,
     ) -> CityCognitionEvaluationV2:
-        """Resolve V2 terminal evidence while keeping provider ownership asynchronous."""
+        """Resolve V2 terminal evidence while keeping provider ownership asynchronous.
+
+        ``progress`` is passed to the cognition service unchanged; it is called once per
+        funded provider request that reaches a terminal outcome and never alters evidence.
+        """
         try:
             self._validate_v2_operation(prepared, operation)
             if not isinstance(cancellation, CityCognitionCancellation):
@@ -1105,6 +1112,7 @@ class WorkbenchRunRepository:
                     baseline_evaluation=prepared.baseline_evaluation,
                     provider=provider,
                     cancellation=cancellation,
+                    progress=progress,
                 )
 
             return asyncio.run(resolve())

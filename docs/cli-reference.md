@@ -274,9 +274,11 @@ reservation, and it is not a spending limit. Provider work is bounded to 4 concu
 at most 30 seconds per attempt, and 180 seconds in aggregate. `POST /api/jobs` returns 409
 `provider-compatibility-required` until a bounded-signal check for that exact profile revision
 has passed in the current process; an explanation check never satisfies it. A local check
-waits up to 120 seconds for a model that is still loading and a remote check up to 10 seconds;
-at most 5 checks start per 60 seconds, results are process-local, and a job cannot start
-while a check runs. `GET /api/workbench` publishes these limits as
+waits up to 120 seconds for a model that is still loading and a remote check up to 60 seconds
+for a slow gateway; each check's single attempt may use its whole deadline, while run attempts
+keep the profile's frozen timeout. At most 5 checks start per 60 seconds, results are
+process-local, and a job cannot start while a check runs. `GET /api/workbench` publishes
+these limits as
 `capabilities.bounded_cognition`, which the browser reads instead of pinning them. Movement,
 attention, baseline responses, and the purchase-intention proxy stay rule-owned: the source
 may only choose closed `affect`, `relevance`, `credibility`, `salience`, and `safety_flags`
@@ -285,8 +287,24 @@ the separate cognition state.
 
 The supported wire contract is a narrow OpenAI-compatible Chat Completions subset: a
 bounded, non-streaming `POST` to the exact startup-approved `/chat/completions` endpoint and
-one strict JSON result. A ChatGPT or Codex product login, subscription token, or OAuth token
-is not accepted as an API credential. The workbench reports `oauth: false`; it does not
+one strict JSON result. The bounded-signal result schema uses only keywords that OpenAI strict
+structured outputs and vLLM grammar decoding both accept (no `uniqueItems`; the result model
+refuses duplicate safety flags itself). A vLLM server's own metadata members, such as
+`prompt_token_ids`, `prompt_text`, `metrics`, `stop_reason`, `reasoning`, and an empty
+`tool_calls`, are admitted only as null or their observed type and are never parsed or kept;
+any other unknown member is refused. An answer cut at the output cap (`finish_reason`
+`length`) is accepted only when its text is a complete valid result; one that never closed,
+or has no text, is an `invalid-json` result that the one schema repair may recover. A
+profile revision may set `disable_thinking` (the browser's **Turn off model thinking (Qwen
+on vLLM servers)** checkbox, on by default for a remote model ID that names Qwen): every
+request, repair, and compatibility check of that revision then carries
+`chat_template_kwargs` `{"enable_thinking": false}`, so a Qwen model on vLLM, such as
+GapGPT's `gapgpt-qwen-3.6`, answers instead of spending the output cap thinking. The member
+is part of the revision and of the frozen V10 provider snapshot and effective settings; it is
+omitted while false, so existing revisions and runs keep their exact bytes, and it is never
+sent to an endpoint whose profile leaves it off, such as OpenAI, which refuses unknown request
+members. A ChatGPT or Codex product login, subscription token, or OAuth token is not accepted
+as an API credential. The workbench reports `oauth: false`; it does not
 implement product-login OAuth. Remote credentials resolve from an approved OS keyring or an
 explicitly bound environment-variable name. Values are never returned by the APIs or stored
 in profiles, artifacts, browser storage, prompts, logs, reports, or error text.

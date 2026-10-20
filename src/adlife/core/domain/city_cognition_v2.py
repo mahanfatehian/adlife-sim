@@ -8,9 +8,17 @@ from __future__ import annotations
 
 from collections import Counter
 from hashlib import sha256
-from typing import Annotated, Final, Literal, Self, get_args, get_origin
+from typing import Annotated, Any, Final, Literal, Self, get_args, get_origin
 
-from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidationInfo,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from adlife.core.domain.city_cognition import (
     MAX_CITY_COGNITION_USAGE_INTEGER,
@@ -22,6 +30,7 @@ from adlife.core.domain.city_cognition import (
     _reject_user_labelled_secret_sequence,
     _safe_text,
     _unique_sorted_text,
+    omit_default_thinking_control,
 )
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
@@ -144,6 +153,10 @@ _CITY_COGNITION_PROMPT_CONTRACT_V2_SHA256 = sha256(
 CITY_COGNITION_PROMPT_CONTRACT_V2_TEXT = _CITY_COGNITION_PROMPT_CONTRACT_V2_TEXT
 CITY_COGNITION_PROMPT_CONTRACT_V2_SHA256 = _CITY_COGNITION_PROMPT_CONTRACT_V2_SHA256
 CITY_COGNITION_RESULT_SCHEMA_V2_ID = "city-cognition-signal-result-v2"
+# The schema crosses the wire as the strict response format, so it uses only keywords that
+# OpenAI strict structured outputs and vLLM grammar decoding both accept. "uniqueItems" is
+# not one of them (a vLLM gateway answers HTTP 400 "Unimplemented keys"); the result model
+# below refuses duplicate safety flags instead.
 _CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT = canonical_json(
     {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -163,7 +176,6 @@ _CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT = canonical_json(
             "safety_flags": {
                 "type": "array",
                 "maxItems": 3,
-                "uniqueItems": True,
                 "items": {
                     "type": "string",
                     "enum": ["stereotype-risk", "unsupported-inference", "unsafe-content"],
@@ -230,6 +242,7 @@ class CityCognitionSignalVectorV2(_CityCognitionModelV2):
     def unique_flags(
         cls, value: tuple[CityCognitionSafetyFlag, ...]
     ) -> tuple[CityCognitionSafetyFlag, ...]:
+        # The only uniqueness check: the wire schema carries no "uniqueItems" keyword.
         if len(value) != len(set(value)):
             raise ValueError("safety flags must be unique")
         return value
@@ -805,6 +818,14 @@ class CityCognitionEffectiveSettingsV2(_CityCognitionModelV2):
     attempt_timeout_seconds: int = Field(ge=1, le=30)
     transient_retries: int = Field(ge=0, le=2)
     repair_attempts: int = Field(ge=0, le=1)
+    # Copied from the profile like every other setting; true adds chat_template_kwargs
+    # {"enable_thinking": false} to each request. Omitted from canonical bytes while false,
+    # so settings hashes of runs saved before the control existed are unchanged.
+    disable_thinking: bool = False
+
+    @model_serializer(mode="wrap")
+    def _canonical_thinking_control(self, handler: SerializerFunctionWrapHandler) -> Any:
+        return omit_default_thinking_control(handler(self))
 
     @model_validator(mode="after")
     def coherent_seed(self) -> Self:

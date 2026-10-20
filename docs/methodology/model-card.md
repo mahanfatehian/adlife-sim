@@ -330,8 +330,9 @@ credentials or real-person data in campaign text.
 For schema-v10 bounded signals, prompt injection in campaign creative may influence which
 allowed category the model selects. The guarantee is bounded authority rather than perfect
 obedience: the creative is delimited as untrusted data, the result must match the strict
-closed schema with the exact request ID and `finish_reason` `stop`, an uncertain or flagged
-answer is neutralized, failures fall back to the neutral vector, and no category can reach
+closed schema with the exact request ID and `finish_reason` `stop` (or `length` when the text
+is still a complete valid result), an uncertain or flagged answer is neutralized, failures
+fall back to the neutral vector, and no category can reach
 movement, attention, baseline responses, rule state, budgets, or purchase intention.
 
 ## Reproducibility limits

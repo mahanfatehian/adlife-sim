@@ -956,7 +956,9 @@ def test_public_records_are_exact_frozen_bounded_and_use_utc_operational_times(
             "can_cancel",
             "error",
             "result",
+            "cognition_progress",
         }
+        assert document["cognition_progress"] is None
         assert re.fullmatch(r"job-[0-9a-f]{32}", document["job_id"])
         assert re.fullmatch(
             r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z",
@@ -1370,13 +1372,15 @@ class _GatedCognitionRepositoryV2:
     def prepare_scientific(self, validated: Any, operation: Any):
         raise AssertionError("schema-4 input reached legacy scientific preparation")
 
-    def resolve_cognition_v2(self, prepared: Any, operation: Any, cancellation: Any):
+    def resolve_cognition_v2(
+        self, prepared: Any, operation: Any, cancellation: Any, *, progress: Any = None
+    ):
         self.requesting_entered.set()
         if not self.allow_requesting.wait(10):
             raise RuntimeError("V2 request gate timed out")
         if self.failure_phase == "requesting-cognition":
             raise self.failure_type("private V2 request defect")
-        return self.real.resolve_cognition_v2(prepared, operation, cancellation)
+        return self.real.resolve_cognition_v2(prepared, operation, cancellation, progress=progress)
 
     def resolve_cognition(self, prepared: Any, operation: Any, cancellation: Any):
         raise AssertionError("schema-4 input reached legacy cognition")
@@ -1821,6 +1825,8 @@ def test_nested_constructed_v10_settings_and_summary_are_revalidated(tmp_path: P
                 "cancellation_requested": False,
                 "can_cancel": False,
                 "result": forged_summary,
+                # Offline cognition sends no request to a model; only the summary is forged.
+                "cognition_progress": {"resolved": 0, "total": 0},
             }
         )
 
@@ -1908,5 +1914,6 @@ def test_nested_constructed_v10_settings_and_summary_are_revalidated(tmp_path: P
                     "cancellation_requested": False,
                     "can_cancel": False,
                     "result": forged,
+                    "cognition_progress": {"resolved": 10, "total": 10},
                 }
             )

@@ -82,23 +82,34 @@ cognition cache, and saved runs under `.\demo-workbench\city-runs\<run-id>\`.
 
 The server talks only to endpoints approved at startup. The built-in `local-ollama` origin
 (`http://127.0.0.1:11434/v1`) is always approved, so the local demo needs no other flag and
-no credential. To use a remote OpenAI-compatible endpoint instead, approve it with
-`--provider-origin ID=URL` and bind its API key to an environment-variable name with
-`--provider-key-env ID=ENVIRONMENT_VARIABLE`:
+no credential. To use a remote OpenAI-compatible endpoint instead, for example on a
+presenting laptop that cannot run Ollama, approve it with `--provider-origin ID=URL` and bind
+its API key to an environment-variable name with `--provider-key-env ID=ENVIRONMENT_VARIABLE`.
+For the GapGPT gateway:
 
 ```powershell
+$secureKey = Read-Host "GapGPT API key" -AsSecureString
+$env:GAPGPT_API_KEY = [System.Net.NetworkCredential]::new("", $secureKey).Password
 uv run adlife city-workbench --workspace .\demo-workbench --port 50050 `
-  --provider-origin remote-lab=https://llm.example.org/v1 `
-  --provider-key-env remote-lab=ADLIFE_REMOTE_API_KEY
+  --provider-origin gapgpt=https://api.gapgpt.app/v1 `
+  --provider-key-env gapgpt=GAPGPT_API_KEY
 ```
 
-A remote endpoint must use HTTPS with a host name and support non-streaming Chat Completions
-with a strict `json_schema` response format. Set `ADLIFE_REMOTE_API_KEY` in that PowerShell
-session before starting, without typing the key into a command that is saved in your
-history, or leave out `--provider-key-env` and paste the key once into the **API credential**
-field, which stores it in the operating-system keyring. A ChatGPT or Codex subscription,
-product login, or OAuth token is not accepted. A remote check allows 10 seconds instead of
-120.
+The first two lines ask for the key without showing it and keep it out of your command
+history; it lasts only for that PowerShell window. Alternatively leave out
+`--provider-key-env` and paste the key once into the **API credential** field, which stores it
+in the operating-system keyring. Then, in step 5, choose Source `Remote compatible model`,
+Approved endpoint `gapgpt`, and Model ID `gapgpt-qwen-3.6`. GapGPT serves that ID with
+Qwen/Qwen3.6-35B-A3B-FP8 on vLLM, which can otherwise spend the whole 256-token answer budget
+thinking and return no answer, so **Turn off model thinking (Qwen on vLLM servers)** switches
+itself on for a remote model ID that names Qwen: leave it checked. It adds
+`chat_template_kwargs` `{"enable_thinking": false}` to every request, repair, and
+compatibility check, and it is saved in the profile revision and frozen into each run; leave it
+off for OpenAI itself, which refuses unknown request fields. A remote endpoint must use HTTPS
+with a host name and support non-streaming Chat Completions with a strict `json_schema`
+response format. A ChatGPT or Codex subscription, product login, or OAuth token is not
+accepted. A remote check allows 60 seconds instead of 120 (single GapGPT calls took 3 to 26
+seconds in rehearsal), and each run attempt keeps the profile's 30-second timeout.
 
 ### 5. Create the local provider profile (once per workspace)
 
@@ -413,6 +424,9 @@ and starts the local run. Its line follows about 30 seconds later with a warm mo
 | `Not confirmed: the model did not answer within the check's time limit.` | The model was still loading after 120 seconds | Run the warm-up command the hint shows, `ollama run qwen2.5:7b-instruct --keepalive 30m hello`, then check again. |
 | **Start bounded cognition run** stays disabled: `Check bounded-signal compatibility for this profile revision to enable the run.` | No passing check in this server process for this exact revision | Click **Check compatibility**; repeat after a restart or after changing Operation, Source, or profile. |
 | A remote profile shows Credential `Required` and **Check compatibility** stays disabled | The server has no API key for that profile | Set the bound environment variable before starting the workbench, or save the key once in **API credential**. |
+| `Not compatible with bounded signals · invalid result.` for a remote Qwen profile such as `gapgpt-qwen-3.6` | The model spent its whole answer budget thinking: this profile revision does not turn thinking off | Save a new profile revision with **Turn off model thinking (Qwen on vLLM servers)** checked, select it, and check again. |
+| `Not compatible with bounded signals · authentication refused.` for a remote profile | The endpoint rejected the API key | Set the bound environment variable (for example `GAPGPT_API_KEY`) to the right key and restart the workbench, or save the key again in **API credential**. |
+| `Not confirmed: the model did not answer within the check's time limit.` for a remote profile | The gateway did not answer within 60 seconds | Check again; if it repeats, the gateway is overloaded: use the local model or [the offline mock path](#without-a-working-model-mock-and-rules). |
 | Every funded response shows **Fallback** with a reason such as `timeout-exhausted` | The model stopped, unloaded, or overloaded during the run | The run is still valid with neutral cognition. Warm the model, check again, and rerun with a new Run ID. |
 | Responses listed as `Set aside · safety flag` or `Set aside · uncertain answer` | The model set a safety flag or answered `uncertain` | Working as designed: the categories stay visible as recorded but not applied, and the whole vector is neutral. The `Uncertain or safety neutralized` filter lists them. |
 | Sources show **Cache** instead of **Provider** | Same inputs, seed, and profile revision as an earlier run in this workspace | Use a new seed or a fresh workspace folder. |

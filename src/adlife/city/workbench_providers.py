@@ -103,13 +103,15 @@ from adlife.core.simulation.city_cognition_v2 import (
 from adlife.core.simulation.spatial_attention import spatial_attention_event_id
 from adlife.core.simulation.spatial_opportunity import spatial_opportunity_id
 
-# A compatibility check is one explicit operator action with its own deadline. A remote
-# origin keeps the short deadline. A loopback model server may first have to load the
-# model into memory (about 12 s for a 7B model from the OS file cache and up to about
-# 100 s on the first load after a reboot), and cancelling the request aborts that load,
-# so a local-trust origin gets one longer attempt. Funded runs keep their frozen
-# per-attempt timeout; only the check transport is extended.
-_REMOTE_CHECK_DEADLINE_SECONDS: Final = 10
+# A compatibility check is one explicit operator action with its own deadline, and its
+# single attempt may use all of it. A remote gateway can be slow to answer one request:
+# single GapGPT calls (gapgpt-qwen-3.6 on vLLM) took 3 to 26 s, so a remote origin gets
+# 60 s. A loopback model server may first have to load the model into memory (about 12 s
+# for a 7B model from the OS file cache and up to about 100 s on the first load after a
+# reboot), and cancelling the request aborts that load, so a local-trust origin gets 120 s.
+# Funded runs keep their frozen per-attempt timeout (at most 30 s); only the check
+# transport is extended.
+_REMOTE_CHECK_DEADLINE_SECONDS: Final = 60
 _LOCAL_CHECK_DEADLINE_SECONDS: Final = 120
 
 
@@ -119,9 +121,13 @@ def _check_deadline_seconds(trust_class: Literal["local", "remote"]) -> float:
     )
 
 
-def _check_attempt_timeout(endpoint: BoundProviderEndpoint) -> int | None:
-    """Only a local-trust check outlasts the frozen per-attempt transport timeout."""
-    return _LOCAL_CHECK_DEADLINE_SECONDS if endpoint.trust_class == "local" else None
+def _check_attempt_timeout(endpoint: BoundProviderEndpoint) -> int:
+    """A check's one attempt may outlast the frozen run timeout, up to its check deadline."""
+    return (
+        _LOCAL_CHECK_DEADLINE_SECONDS
+        if endpoint.trust_class == "local"
+        else _REMOTE_CHECK_DEADLINE_SECONDS
+    )
 
 
 def _check_provider_v1(
@@ -793,8 +799,9 @@ class WorkbenchProviderController:
     ) -> WorkbenchProviderCheckResult | WorkbenchProviderCheckResultV2:
         """Perform one explicit bounded check; cancellation is never a success.
 
-        The deadline is ten seconds for a remote origin and two minutes for a
-        local-trust origin, whose model server may still be loading the model.
+        The deadline is 60 seconds for a remote origin, whose gateway may be slow to
+        answer, and two minutes for a local-trust origin, whose model server may still be
+        loading the model.
         """
         if effect_scope not in ("explanation-only", "bounded-signals-v1"):
             raise ValueError("provider effect scope is invalid")

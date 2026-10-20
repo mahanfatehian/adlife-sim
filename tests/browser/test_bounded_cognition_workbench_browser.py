@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import inspect
 import json
@@ -1882,3 +1883,231 @@ def test_job_panel_states_elapsed_and_total_time_while_the_model_answers(tmp_pat
         expect(elapsed.locator("dd")).not_to_have_text(f"{seconds} s", timeout=10_000)
         # Wall-clock time is operational only: it never enters a draft or an artifact.
         assert "Duration" not in page.locator("#job-settings").inner_text()
+
+
+class _HeldSignalProvider(_SignalProvider):
+    """A slow fake model: every answer waits until the test releases one permit."""
+
+    def __init__(self, permits: threading.Semaphore, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.permits = permits
+
+    async def call(self, request: Any) -> CityProviderAttemptV2:
+        while not self.permits.acquire(blocking=False):
+            await asyncio.sleep(0.01)
+        return await super().call(request)
+
+
+RECORD_ANNOUNCEMENTS = """() => {
+  const live = document.getElementById('workbench-live');
+  window.__announcements = [];
+  new MutationObserver(() => {
+    window.__announcements.push({text: live.textContent, at: performance.now()});
+  }).observe(live, {childList: true, characterData: true, subtree: true});
+}"""
+
+RECORD_PROGRESS = """() => {
+  const panel = document.getElementById('job-progress');
+  const line = document.getElementById('job-progress-text');
+  const bar = document.getElementById('job-progress-bar');
+  window.__progress = [];
+  new MutationObserver(() => {
+    const box = bar.getBoundingClientRect();
+    window.__progress.push({
+      visible: !panel.hidden,
+      text: line.textContent,
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+      barFits: box.width > 0 && box.left >= 0 && box.right <= window.innerWidth + 0.5,
+    });
+  }).observe(panel, {
+    attributes: true, attributeFilter: ['hidden'], childList: true, characterData: true,
+    subtree: true,
+  });
+}"""
+
+
+def test_slow_model_answers_are_counted_live_while_cognition_is_requested(
+    tmp_path: Path,
+) -> None:
+    permits = threading.Semaphore(0)
+    providers: list[_SignalProvider] = []
+
+    def factory(**kwargs: object) -> _SignalProvider:
+        # The compatibility check answers at once; the run's answers then arrive one by one.
+        provider = (
+            _HeldSignalProvider(permits, **kwargs) if providers else _SignalProvider(**kwargs)
+        )
+        providers.append(provider)
+        return provider
+
+    try:
+        with _session(tmp_path, provider_factory_v2=factory) as (page, base_url, root):
+            _to_run_step(page, base_url)
+            page.locator("#run-id").fill("bounded-progress")
+            page.locator("#agent-count").fill("10")
+            _set_audience_count(page, 10)
+            _choose(page, BOUNDED, "local")
+            page.locator("#provider-create-submit").click()
+            expect(page.locator("#provider-profile")).to_be_enabled(timeout=10_000)
+            page.locator("#provider-check").click()
+            expect(page.locator("#provider-check-status")).to_have_text(
+                "Bounded-signal contract confirmed.", timeout=15_000
+            )
+            _validate(page)
+            page.evaluate(RECORD_ANNOUNCEMENTS)
+            page.locator("#start-run").click()
+
+            expect(page.locator("#job-phase")).to_have_text("REQUESTING COGNITION", timeout=15_000)
+            job = page.request.get(f"{base_url}/api/workbench").json()["active_job"]
+            total = job["cognition_progress"]["total"]
+            assert job["cognition_progress"] == {"resolved": 0, "total": total}
+            assert total >= 3
+            line = page.locator("#job-progress-text")
+            bar = page.get_by_role("progressbar")
+            expect(page.locator("#job-progress")).to_be_visible()
+            expect(line).to_have_text(f"Model answered 0 of {total} requests")
+            for answered in (1, 2):
+                permits.release()
+                text = f"Model answered {answered} of {total} requests"
+                # Each poll moves the visible count; the bar carries the same words.
+                expect(line).to_have_text(text, timeout=10_000)
+                expect(bar).to_have_accessible_name(text)
+                expect(bar).to_have_attribute("aria-valuetext", text)
+                assert bar.evaluate("node => [node.value, node.max]") == [answered, total]
+            # The page's single polite live region speaks the count, at most every few seconds.
+            expect(page.locator("#workbench-live")).to_have_text(
+                re.compile(rf"^Model answered [0-2] of {total} requests$"), timeout=15_000
+            )
+            permits.release(total)
+            expect(page.locator("#job-inspect-link")).to_be_visible(timeout=30_000)
+            expect(page.locator("#job-progress")).to_be_hidden()
+
+            spoken = page.evaluate("window.__announcements")
+            counted = [
+                index
+                for index, entry in enumerate(spoken)
+                if entry["text"].startswith("Model answered")
+            ]
+            assert counted and counted[0] > 0
+            for index in counted:
+                assert spoken[index]["at"] - spoken[index - 1]["at"] >= 4_900, spoken
+            assert sum(provider.calls for provider in providers[1:]) == total
+            assert CityRunStore(root).load("bounded-progress").manifest.schema_version == 10
+    finally:
+        permits.release(64)
+
+
+@pytest.mark.parametrize("mode", ["local", "rules"])
+def test_scripted_progress_reads_singular_never_regresses_and_stays_hidden_offline(
+    tmp_path: Path, mode: str
+) -> None:
+    job_id = "job-" + "b" * 32
+    provider = mode == "local"
+    total = 1 if provider else 0
+
+    # A phone-width panel must hold the count and its bar without horizontal scrolling.
+    with _session(tmp_path, width=390) as (page, base_url, _root):
+        _providers(page, _provider_document())
+        page.route(
+            "**/api/providers/*/revisions/*/check",
+            lambda route: _fulfill(route, _v2_check("local-lab", LOCAL_REVISION)),
+        )
+        _to_run_step(page, base_url)
+        _choose(page, BOUNDED, mode)
+        if provider:
+            page.locator("#provider-check").click()
+            expect(page.locator("#provider-check-status")).to_have_text(
+                "Bounded-signal contract confirmed."
+            )
+        draft = _validate(page)
+        cognition = draft["cognition"]
+        accepted = {
+            "schema_version": 1,
+            "workbench_input_schema_version": 4,
+            "run_schema_version": 10,
+            "city_id": draft["city_id"],
+            "scenario_id": draft["scenario"]["scenario_id"],
+            "campaign_id": draft["scenario"]["campaign"]["campaign_id"],
+            "seed": draft["settings"]["seed"],
+            "agent_count": draft["settings"]["agent_count"],
+            "days": draft["settings"]["days"],
+            "response_mode": "deterministic-rules",
+            "effect_scope": BOUNDED,
+            "cognition_mode": mode,
+            "provider_profile_id": cognition["provider_profile_id"],
+            "provider_revision_sha256": cognition["provider_revision_sha256"],
+            "funded_response_limit": cognition["funded_response_limit"],
+            "aggregate_output_token_ceiling": (
+                cognition["funded_response_limit"] * RESERVED if provider else 0
+            ),
+        }
+
+        def job(phase: str, resolved: int | None) -> dict[str, object]:
+            failed = phase == "failed"
+            return {
+                "schema_version": 1,
+                "job_id": job_id,
+                "run_id": draft["settings"]["run_id"],
+                "accepted_settings": accepted,
+                "phase": phase,
+                "created_at": "2026-10-20T00:00:00.000000Z",
+                "updated_at": "2026-10-20T00:00:01.000000Z",
+                "cancellation_requested": False,
+                "can_cancel": not failed,
+                "error": (
+                    {
+                        "code": "evaluation-failed",
+                        "message": "The deterministic city evaluation failed.",
+                    }
+                    if failed
+                    else None
+                ),
+                "result": None,
+                "cognition_progress": (
+                    None if resolved is None else {"resolved": resolved, "total": total}
+                ),
+            }
+
+        script = [
+            job("planning-cognition", None),
+            job("requesting-cognition", 0),
+            job("requesting-cognition", total),
+            # A delayed lower count for the same phase must never move the line backwards.
+            job("requesting-cognition", 0),
+            job("applying-cognition", total),
+            job("failed", total),
+        ]
+        page.route(
+            "**/api/jobs",
+            lambda route: _fulfill(
+                route,
+                {
+                    "schema_version": 1,
+                    "job": job("queued", None),
+                    "status_url": f"/api/jobs/{job_id}",
+                },
+                202,
+            ),
+        )
+        page.route(
+            f"**/api/jobs/{job_id}",
+            lambda route: _fulfill(route, script.pop(0) if len(script) > 1 else script[0]),
+        )
+        page.evaluate(RECORD_PROGRESS)
+        page.locator("#start-run").click()
+        expect(page.locator("#job-message")).to_have_text(
+            "The deterministic city evaluation failed.", timeout=20_000
+        )
+
+        shown: list[str] = []
+        for entry in page.evaluate("window.__progress"):
+            if entry["visible"] and (not shown or shown[-1] != entry["text"]):
+                shown.append(entry["text"])
+            if entry["visible"]:
+                assert entry["overflow"] <= 0 and entry["barFits"], entry
+        # One funded request reads in the singular; offline sources never show a model count.
+        assert shown == (
+            ["Model answered 0 of 1 request", "Model answered 1 of 1 request"] if provider else []
+        )
+        expect(page.locator("#job-progress")).to_be_hidden()
+        expect(page.locator("#error-banner")).to_be_hidden()

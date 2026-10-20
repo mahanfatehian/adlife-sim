@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib
 import importlib.util
@@ -1708,8 +1709,10 @@ def test_submit_is_async_then_polls_to_verified_completion_and_restart_discovery
             "can_cancel",
             "error",
             "result",
+            "cognition_progress",
         }
         assert completed["phase"] == "completed"
+        assert completed["cognition_progress"] is None
         assert completed["error"] is None
         assert completed["result"]["run_id"] == "browser-run"
         assert completed["result"]["run_schema_version"] == 7
@@ -2266,6 +2269,105 @@ def test_schema4_checked_provider_runs_with_the_same_v2_factory(tmp_path: Path) 
     assert all(provider.closed for provider in providers)
     assert all(provider.kwargs["credential"].secret.cleared for provider in providers)
     assert CityRunStore(root).load("checked-provider-v10").manifest.schema_version == 10
+
+
+def _await_job_where(
+    client: TestClient,
+    status_url: str,
+    predicate: Any,
+    *,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    pause = threading.Event()
+    while time.monotonic() < deadline:
+        response = client.get(status_url)
+        assert response.status_code == 200
+        job = response.json()
+        if predicate(job):
+            return job
+        pause.wait(0.005)
+    raise AssertionError(f"job at {status_url} did not reach the expected state")
+
+
+def test_schema4_job_status_counts_slow_model_answers_as_they_arrive(tmp_path: Path) -> None:
+    from tests.unit.city.test_workbench_providers import _ProviderV2
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    permits = threading.Semaphore(0)
+    providers = []
+
+    class SlowProvider(_ProviderV2):
+        async def call(self, request):
+            while not permits.acquire(blocking=False):
+                await asyncio.sleep(0.002)
+            return await super().call(request)
+
+    def factory(**kwargs):
+        # The compatibility check answers at once; only the run's answers arrive slowly.
+        provider = _ProviderV2(**kwargs) if not providers else SlowProvider(**kwargs)
+        providers.append(provider)
+        return provider
+
+    def answered(job: dict[str, Any]) -> int:
+        progress = job["cognition_progress"]
+        return -1 if progress is None else progress["resolved"]
+
+    root = tmp_path / "workspace"
+    app = _module().create_city_workbench_app(
+        prepare_workbench_workspace(root),
+        csrf_token=TOKEN,
+        provider_factory_v2=factory,
+    )
+    polled: list[dict[str, Any]] = []
+    try:
+        with TestClient(app, base_url=ORIGIN) as client:
+            profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+            checked = _secure_post(
+                client,
+                f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}/check",
+                {"effect_scope": "bounded-signals-v1"},
+            )
+            assert checked.status_code == 200
+            payload = draft_v4_data(mode="local", limit=10)
+            payload["settings"].update(
+                run_id="progress-provider-v10", seed="42", agent_count=3, days=2
+            )
+            payload["population"]["personas"][0]["count"] = 3
+            payload["cognition"].update(
+                provider_profile_id=profile["profile_id"],
+                provider_revision_sha256=profile["revision_sha256"],
+            )
+            submitted = _secure_post(client, "/api/jobs", payload)
+            assert submitted.status_code == 202
+            status_url = submitted.json()["status_url"]
+            assert submitted.json()["job"]["cognition_progress"] is None
+
+            first = _await_job_where(client, status_url, lambda job: answered(job) >= 0)
+            assert first["phase"] == "requesting-cognition"
+            assert first["cognition_progress"] == {"resolved": 0, "total": 6}
+            polled.append(first)
+            for count in range(1, 7):
+                permits.release()
+                polled.append(
+                    _await_job_where(
+                        client, status_url, lambda job, expected=count: answered(job) >= expected
+                    )
+                )
+            terminal = _await_job(client, status_url)
+            active = client.get("/api/workbench").json()["active_job"]
+    finally:
+        permits.release(64)
+
+    assert [job["cognition_progress"] for job in polled] == [
+        {"resolved": count, "total": 6} for count in range(7)
+    ]
+    assert terminal["phase"] == "completed"
+    assert terminal["cognition_progress"] == {"resolved": 6, "total": 6}
+    assert terminal["result"]["funded_request_count"] == 6
+    assert terminal["result"]["provider_count"] == 6
+    assert active is None
+    assert len(providers) == 2 and all(provider.closed for provider in providers)
 
 
 def test_schema4_api_provider_failure_completes_with_fallback_evidence(tmp_path: Path) -> None:

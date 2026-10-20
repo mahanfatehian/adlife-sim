@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reopened RUN step shows the bounded-signal check this server process already recorded for
   the selected revision instead of asking for it again (a plain reload still asks), and refused
   fields now open their own step.
+- **Live model progress (2026-10-20)** — while a local or remote bounded-cognition job is
+  requesting cognition, the job panel shows **Model answered 3 of 10 requests** with a progress
+  bar that moves on every poll, and the page's polite live region speaks the count at most every
+  five seconds; rules and mock jobs, which contact no model, show no count.
+  `GET /api/jobs/{job_id}` adds `cognition_progress`: `null` for schema 1-3 jobs and before
+  planning ends, then `{"resolved": k, "total": N}`, where `N` is the run's funded provider
+  requests (0 for rules and mock) and `k` counts provider answers, cache hits and fallbacks; `k`
+  only grows, never exceeds `N` and equals it once cognition is applied. The count is
+  operational only and never enters a V10 artifact or replay.
 - **Two-part live demonstration script** — [docs/investor-demo.md](docs/investor-demo.md) is
   now the SETUP and SIMULATION script for presenting bounded AI cognition through a local
   Ollama `qwen2.5:7b-instruct` model, with the offline mock/rules fallback and
@@ -152,6 +161,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote OpenAI-compatible gateways such as GapGPT/vLLM (2026-10-20)** — a presenting laptop
+  that cannot run Ollama needs a remote endpoint, and GapGPT (`https://api.gapgpt.app/v1`,
+  model `gapgpt-qwen-3.6`, which resolves to Qwen/Qwen3.6-35B-A3B-FP8 served by vLLM) failed
+  the bounded-signal path in five ways; each is fixed and reproduced offline by a loopback
+  stand-in gateway in the tests. (1) The frozen `city-cognition-signal-result-v2` schema used
+  `uniqueItems`, which vLLM grammar decoding refuses with HTTP 400 and OpenAI strict
+  structured outputs does not support; the schema no longer carries it, and
+  `CityCognitionResultV2` still refuses duplicate safety flags. The result-schema and
+  causal-contract hashes change, and with them request IDs and mock signals: the V10 core
+  golden and the replay witness are re-frozen, and V10 runs saved before this change are
+  refused and must be recreated. (2) vLLM adds its own members to every answer
+  (`prompt_logprobs`, `prompt_token_ids`, `prompt_text`, `kv_transfer_params`,
+  `ec_transfer_params`, `metrics`; `stop_reason`, `token_ids`, `routed_experts`;
+  `annotations`, `audio`, `function_call`, `tool_calls`, `reasoning`, `reasoning_content`).
+  Each is now admitted only as null or the type vLLM sends, and is never parsed or kept; the
+  whole body still passes every credential and secret screen, and any other unknown member, a
+  real function or tool call, or non-text reasoning stays a protocol error. (3) An answer cut
+  at the 256-token attempt cap (`finish_reason` `length`) is accepted when its text is still a
+  complete object that passes every check, such as an object followed by runaway whitespace;
+  an object that never closed, or no text at all, is a repairable `invalid-json` result, so
+  the one schema repair runs instead of an immediate protocol fallback, and a complete object
+  that fails validation keeps its usual repair reason; no fallback or repair reason was added.
+  (4) Qwen on vLLM can spend the whole cap thinking and answer nothing. A provider profile
+  revision can now turn model thinking off: the profile form's **Turn off model thinking (Qwen
+  on vLLM servers)** checkbox, on by default for a remote model ID that names Qwen, adds
+  `chat_template_kwargs` `{"enable_thinking": false}` to every request, repair and
+  compatibility check of that revision (0 reasoning tokens in 8 of 8 live calls). The choice
+  is saved as `disable_thinking` in the revision and frozen into the V10 provider snapshot and
+  effective settings, so checks, cache entries, terminal records and replay bind it. While it
+  is off nothing is sent, so OpenAI, which refuses unknown request members, is unaffected, and
+  existing profile revisions, saved profiles and saved runs keep their exact bytes and hashes.
+  V9 explanations with such a profile send it too. (5) A remote compatibility check now waits
+  up to 60 seconds instead of 10 (single GapGPT calls took 3 to 26 seconds), and its single
+  attempt may use the whole deadline; a local check keeps 120 seconds, and run attempts keep
+  the profile's frozen timeout of at most 30 seconds. In a live rehearsal with fixes (1), (2),
+  (4) and (5) applied, a check passed in 6.2 seconds and a Part 2 study (seed 42, 10 funded)
+  completed in 31 seconds with 9 provider signals and 1 fallback from a whitespace runaway,
+  the case that (3) now sends to the schema repair.
+  [docs/investor-demo.md](docs/investor-demo.md) shows the GapGPT start command and profile.
 - **Real local-model provider path (2026-10-19)** — a local `qwen2.5:7b-instruct` needs
   about 140-160 output tokens for the strict bounded-signal result, so the V10 per-attempt
   cap is 256 output tokens instead of the development value that truncated every answer.
@@ -159,8 +207,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flagged almost every ordinary answer, so neutralization erased nearly every signal; in a
   44-request live check with the new wording, no ordinary answer was flagged. The
   neutralization rule itself is unchanged. A local compatibility check now waits up to 120
-  seconds for a model that is still loading (remote checks keep 10 seconds); run attempts
-  keep their frozen 30-second timeout.
+  seconds for a model that is still loading (remote checks: see the GapGPT/vLLM entry above);
+  run attempts keep their frozen 30-second timeout.
 - **Varied bounded signals from a local model (2026-10-19)** — with the earlier wording a
   local `qwen2.5:7b-instruct` returned one vector (neutral, high, high, medium) for 89% of 73
   varied requests, and changing one causal input moved the targeted category in 3% of

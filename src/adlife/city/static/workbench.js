@@ -42,6 +42,20 @@
     "failed",
     "cancelled",
   ]);
+  // Planning has frozen the funded requests in these phases, so a schema-4 job may carry a
+  // live cognition count; from applying-cognition on, every funded request has an answer.
+  const PROGRESS_PHASES = new Set([
+    "requesting-cognition",
+    "applying-cognition",
+    "persisting",
+    "verifying",
+    "completed",
+    "failed",
+    "cancelled",
+  ]);
+  const FINAL_PROGRESS_PHASES = new Set(["applying-cognition", "persisting", "verifying", "completed"]);
+  // The live count shares the page's one polite live region and speaks at most this often.
+  const PROGRESS_ANNOUNCEMENT_INTERVAL_MS = 5_000;
   const PHASE_TRACKS = new Map([
     [1, ["queued", "evaluating", "persisting", "verifying", "completed"]],
     [2, ["queued", "evaluating", "persisting", "verifying", "completed"]],
@@ -159,6 +173,9 @@
     jobBinding: null,
     jobGeneration: 0,
     pollTimer: null,
+    // When the live region last spoke, and the last progress line it spoke for this job.
+    lastAnnouncementAt: 0,
+    announcedProgress: null,
     libraryGeneration: 0,
     libraryLoading: false,
     libraryOffset: 0,
@@ -275,7 +292,20 @@
   }
 
   function announce(message) {
+    state.lastAnnouncementAt = Date.now();
     setText("workbench-live", message);
+  }
+
+  /** Progress speaks only when it changed and the live region has been quiet long enough. */
+  function announceProgress(text) {
+    if (
+      text === state.announcedProgress ||
+      Date.now() - state.lastAnnouncementAt < PROGRESS_ANNOUNCEMENT_INTERVAL_MS
+    ) {
+      return;
+    }
+    announce(text);
+    state.announcedProgress = text;
   }
 
   function clearBanner() {
@@ -1884,7 +1914,33 @@
     } else if (value.error !== null) {
       throw new RequestError("A non-failed worker record carried a failure.");
     }
+    assertCognitionProgress(value);
     return value;
+  }
+
+  /**
+   * Mirror the server's live count contract: only a planned schema-4 job carries one, it never
+   * resolves more than its frozen funding sends to a model, and it is final after cognition.
+   */
+  function assertCognitionProgress(value) {
+    const progress = value.cognition_progress;
+    if (progress === undefined || progress === null) return;
+    const settings = value.accepted_settings;
+    const funded = isProviderMode(settings.cognition_mode) ? settings.funded_response_limit : 0;
+    if (
+      settings.workbench_input_schema_version !== BOUNDED_WORKBENCH_SCHEMA ||
+      !PROGRESS_PHASES.has(value.phase) ||
+      !isObject(progress) ||
+      !sameJson(Object.keys(progress).sort(), ["resolved", "total"]) ||
+      !Number.isInteger(progress.resolved) ||
+      !Number.isInteger(progress.total) ||
+      progress.resolved < 0 ||
+      progress.resolved > progress.total ||
+      progress.total > funded ||
+      (FINAL_PROGRESS_PHASES.has(value.phase) && progress.resolved !== progress.total)
+    ) {
+      throw new RequestError("The worker returned an incompatible cognition progress record.");
+    }
   }
 
   function appendFact(list, label, value) {
@@ -1917,6 +1973,31 @@
       return item;
     });
     byId("job-phase-track").replaceChildren(...items);
+  }
+
+  /**
+   * While a local or remote model is asked for signals, show how many funded requests are
+   * answered: a model answer, a verified cache hit, or a neutral fallback each count. Rules
+   * and mock contact no model, so they never show a count.
+   */
+  function renderCognitionProgress(job) {
+    const progress = job.cognition_progress;
+    const visible = job.phase === "requesting-cognition" &&
+      isProviderMode(job.accepted_settings.cognition_mode) &&
+      isObject(progress) && progress.total > 0;
+    byId("job-progress").hidden = !visible;
+    if (!visible) return;
+    const text = `Model answered ${progress.resolved} of ${plural(progress.total, "request")}`;
+    setText("job-progress-text", text);
+    const bar = byId("job-progress-bar");
+    bar.max = progress.total;
+    bar.value = progress.resolved;
+    bar.setAttribute("aria-valuetext", text);
+    announceProgress(text);
+  }
+
+  function resolvedCount(job) {
+    return isObject(job.cognition_progress) ? job.cognition_progress.resolved : -1;
   }
 
   function boundedJobFact(settings) {
@@ -1980,10 +2061,11 @@
 
   function acceptsJobProgress(job) {
     const previous = state.activeJob;
-    return !(
-      previous !== null && previous.job_id === job.job_id &&
-      PHASE_RANKS.get(job.phase) < PHASE_RANKS.get(previous.phase)
-    );
+    if (previous === null || previous.job_id !== job.job_id) return true;
+    const rank = PHASE_RANKS.get(job.phase);
+    const previousRank = PHASE_RANKS.get(previous.phase);
+    // Within one phase a delayed snapshot can never lower the counted model answers either.
+    return rank > previousRank || (rank === previousRank && resolvedCount(job) >= resolvedCount(previous));
   }
 
   function renderJob(job) {
@@ -1996,6 +2078,7 @@
     byId("job-panel").hidden = false;
     setText("job-phase", (PHASE_LABELS.get(job.phase) ?? job.phase).toUpperCase());
     renderPhaseTrack(job);
+    renderCognitionProgress(job);
     const settings = job.accepted_settings;
     const bounded = settings.workbench_input_schema_version === BOUNDED_WORKBENCH_SCHEMA;
     const facts = byId("job-settings");
@@ -2131,6 +2214,7 @@
     stopPolling();
     state.activeJob = null;
     state.lastActivePhase = null;
+    state.announcedProgress = null;
     const generation = state.jobGeneration;
     state.jobBinding = Object.freeze({
       generation,

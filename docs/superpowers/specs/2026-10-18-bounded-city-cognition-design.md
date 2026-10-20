@@ -185,9 +185,32 @@ fields. A mismatched request ID is invalid.
 
 The adapter accepts a result only when the outer protocol is valid, the strict JSON schema
 is satisfied, duplicate JSON keys are absent, the response is within the wire and decoded
-bounds, and `finish_reason` is exactly `stop`. Refusal, content filtering, truncation,
-tools, streaming, arrays of content parts, malformed JSON, non-finite values, or any extra
-field produce a typed invalid-result outcome.
+bounds, and `finish_reason` is `stop`, or `length` with text that is still one complete
+object passing every check. Refusal, content filtering, tools, streaming, arrays of content
+parts, malformed JSON, non-finite values, or any extra field produce a typed invalid-result
+outcome; an answer the output cap cut short is the repairable `invalid-json` result.
+
+Revision 2026-10-20 (remote gateways). A GapGPT gateway serving Qwen/Qwen3.6-35B-A3B-FP8
+on vLLM showed that the original contract did not reach a vLLM server. The wire result
+schema no longer carries `uniqueItems`, which vLLM grammar decoding refuses with HTTP 400 and
+OpenAI strict structured outputs does not support; `CityCognitionResultV2` itself still
+refuses duplicate safety flags, so the closed result is unchanged, but the schema document,
+its hash, and the causal-contract hash change, and V10 runs saved before the revision are
+refused. vLLM's own metadata members (`prompt_logprobs`, `prompt_token_ids`, `prompt_text`,
+`kv_transfer_params`, `ec_transfer_params`, `metrics`; `stop_reason`, `token_ids`,
+`routed_experts`; `annotations`, `audio`, `function_call`, `tool_calls`, `reasoning`,
+`reasoning_content`) are admitted only as null or their observed type, never parsed or
+retained, after the unchanged whole-body credential and secret screens; any other member, a
+real function or tool call, or non-text reasoning stays a protocol mismatch. A `length` answer
+that is a complete valid object followed by runaway whitespace is accepted; one with no text or
+an object that never closed is a repairable `invalid-json` result rather than a protocol
+fallback, and a complete object that fails validation keeps the reason it has under `stop`. No
+fallback or repair reason was added. A profile revision may also set `disable_thinking`,
+which adds `chat_template_kwargs` `{"enable_thinking": false}` to every request, repair, and
+compatibility probe, because the Qwen chat template otherwise spends the 256-token attempt cap
+reasoning. It is a recorded profile fact, part of the frozen provider snapshot and of the V2
+effective settings (and therefore of the check, cache, and terminal bindings), omitted from
+canonical bytes while false so earlier profiles and runs keep their exact hashes.
 
 If any category is `uncertain`, or if `safety_flags` is nonempty, the record remains
 auditable but the complete applied vector becomes the neutral vector. The provider cannot
@@ -853,8 +876,10 @@ Important outcomes are:
 - Reject unknown fields, numeric signals, booleans-as-integers, NaN/Infinity, duplicate
   keys, provider-authored IDs/state/events/budget/probability/purchase fields, wrong request
   ID, wrong disclosure, and wrong schema version.
-- Accept only `finish_reason=stop`; reject tool calls, streaming/SSE, content arrays,
-  truncation, filtering, refusal, oversized bodies, and hostile encodings.
+- Accept only `finish_reason=stop`, or `length` with a complete valid result; make any other
+  truncated answer a repairable invalid result; reject tool calls, streaming/SSE, content
+  arrays, filtering, refusal, unknown or mistyped vendor members, oversized bodies, and hostile
+  encodings.
 - Prove minimized prompts omit name, age, occupation, biography, MBTI, credentials, paths,
   unrelated agents, post-state, and raw documents.
 - Extend the secret-redaction corpus across results, repair, cache, artifacts, usage,

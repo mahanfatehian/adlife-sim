@@ -159,6 +159,10 @@ def _base_payload(
     if settings.seed_policy == "fixed":
         assert settings.seed is not None
         payload["seed"] = settings.seed
+    # The V1 effective settings predate the thinking control, so the frozen profile
+    # snapshot, which every V9 terminal record binds by hash, carries it instead.
+    if profile.disable_thinking:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     return payload, checked_input
 
 

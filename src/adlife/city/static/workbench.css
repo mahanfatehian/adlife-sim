@@ -411,6 +411,13 @@ code { color: #b5dded; font: 500 9px Consolas, monospace; }
 .job-panel { border-top: 2px solid var(--amber); }
 .job-panel > p { color: #becdca; font-size: 12px; line-height: 1.55; }
 .job-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+/* The live count of model answers while bounded cognition is requested; offline sources hide it. */
+.job-progress { display: grid; gap: 6px; margin: 12px 0 2px; }
+.job-progress-text { margin: 0; color: var(--paper); font-size: 13px; font-weight: 700; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.job-progress-bar { display: block; width: 100%; height: 10px; appearance: none; border: 1px solid var(--line-strong); background: var(--ink-soft); }
+.job-progress-bar::-webkit-progress-bar { background: var(--ink-soft); }
+.job-progress-bar::-webkit-progress-value { background: var(--amber); }
+.job-progress-bar::-moz-progress-bar { background: var(--amber); }
 
 .validation-review > .review-facts dt,
 .validation-review > .review-facts dd { font-size: 11px; }
@@ -573,4 +580,9 @@ footer {
   .phase-step.current { outline: 2px solid Highlight; outline-offset: 1px; }
   .runtime-pulse,
   .map-legend i { forced-color-adjust: none; }
+  /* System colors keep the answered share visible against the track. */
+  .job-progress-bar { forced-color-adjust: none; border: 1px solid CanvasText; background: Canvas; }
+  .job-progress-bar::-webkit-progress-bar { background: Canvas; }
+  .job-progress-bar::-webkit-progress-value { background: Highlight; }
+  .job-progress-bar::-moz-progress-bar { background: Highlight; }
 }

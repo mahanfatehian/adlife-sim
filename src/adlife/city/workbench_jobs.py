@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -72,6 +73,14 @@ _CANCELLABLE_PHASES = frozenset(
     }
 )
 _SEED_PATTERN = r"^(?:0|[1-9][0-9]{0,18})$"
+# The frozen V10 selection admits at most 60 requests per run, so no run funds more.
+MAX_COGNITION_PROGRESS_REQUESTS = 60
+# Planning has frozen the funded requests in these phases, so each reports a live count.
+_PROGRESS_PHASES = frozenset(
+    {"requesting-cognition", "applying-cognition", "persisting", "verifying", "completed"}
+)
+# Once cognition has returned complete evidence, every funded request has an outcome.
+_FINAL_PROGRESS_PHASES = frozenset({"applying-cognition", "persisting", "verifying", "completed"})
 
 
 class WorkbenchJobBusy(RuntimeError):
@@ -254,8 +263,76 @@ def _summary_matches_accepted_settings(
     )
 
 
+class WorkbenchCognitionProgress(DomainModel):
+    """How many funded provider requests of one bounded-cognition job have an outcome.
+
+    ``total`` is fixed when planning freezes the funded requests: the requests a local or
+    remote run sends to its model, including those its verified cache then answers. Rules
+    and mock send none, so their total is zero; budget-skipped requests are never counted.
+    ``resolved`` counts provider answers, cache hits, and neutral fallbacks alike.
+    """
+
+    resolved: int = Field(ge=0, le=MAX_COGNITION_PROGRESS_REQUESTS)
+    total: int = Field(ge=0, le=MAX_COGNITION_PROGRESS_REQUESTS)
+
+    @model_validator(mode="after")
+    def bounded_count(self) -> Self:
+        if self.resolved > self.total:
+            raise ValueError("cognition progress cannot resolve more requests than it funds")
+        return self
+
+
+class WorkbenchCognitionProgressCounter:
+    """Thread-safe, monotonic count the job worker advances and status readers snapshot.
+
+    The worker creates one counter when planning has frozen the funded requests and hands
+    ``advance`` to the cognition service, which calls it once for every funded request that
+    reaches a terminal outcome. ``complete`` makes the count final after the service has
+    returned complete evidence. ``advance`` never raises and never counts past ``total``,
+    so reporting progress can neither fail nor alter a run; readers only ever receive an
+    immutable ``snapshot``.
+    """
+
+    __slots__ = ("_lock", "_resolved", "_total")
+
+    def __init__(self, total: int) -> None:
+        if type(total) is not int:
+            raise TypeError("cognition progress total must be an exact integer")
+        if not 0 <= total <= MAX_COGNITION_PROGRESS_REQUESTS:
+            raise ValueError("cognition progress total is outside the funded request range")
+        self._lock = Lock()
+        self._resolved = 0
+        self._total = total
+
+    def advance(self) -> None:
+        """Count one more funded request with a terminal outcome."""
+        with self._lock:
+            if self._resolved < self._total:
+                self._resolved += 1
+
+    def complete(self) -> None:
+        """Mark every funded request resolved once complete terminal evidence exists."""
+        with self._lock:
+            self._resolved = self._total
+
+    def snapshot(self) -> WorkbenchCognitionProgress:
+        """Return one immutable, internally consistent reading."""
+        with self._lock:
+            resolved, total = self._resolved, self._total
+        return WorkbenchCognitionProgress(resolved=resolved, total=total)
+
+
 class WorkbenchJobView(DomainModel):
-    """Immutable bounded operational state; timestamps never enter artifacts."""
+    """Immutable bounded operational state; timestamps never enter artifacts.
+
+    ``cognition_progress`` is the live count of a schema-4 job, ``{"resolved": k,
+    "total": N}`` (see ``WorkbenchCognitionProgress``). It is ``null`` for schema 1-3
+    jobs and until planning has frozen the funded requests, then present from
+    ``requesting-cognition`` on: ``N`` is fixed, ``k`` only grows, never exceeds ``N``, and
+    equals it from ``applying-cognition`` on. A failed or cancelled job keeps its last
+    count. Counts advance between lifecycle transitions without moving ``updated_at``, and
+    like the timestamps they never enter a run artifact, replay, or manifest.
+    """
 
     schema_version: Literal[1] = 1
     job_id: str = Field(pattern=r"^job-[0-9a-f]{32}$")
@@ -268,6 +345,7 @@ class WorkbenchJobView(DomainModel):
     can_cancel: bool
     error: WorkbenchJobFailure | None = None
     result: WorkbenchRunSummary | None = None
+    cognition_progress: WorkbenchCognitionProgress | None = None
 
     @field_validator("accepted_settings", mode="before")
     @classmethod
@@ -284,6 +362,15 @@ class WorkbenchJobView(DomainModel):
         if isinstance(value, WorkbenchRunSummary):
             value = value.model_dump(mode="python")
         return WorkbenchRunSummary.model_validate(value)
+
+    @field_validator("cognition_progress", mode="before")
+    @classmethod
+    def revalidate_cognition_progress(cls, value: object) -> WorkbenchCognitionProgress | None:
+        if value is None:
+            return None
+        if isinstance(value, WorkbenchCognitionProgress):
+            value = value.model_dump(mode="python")
+        return WorkbenchCognitionProgress.model_validate(value)
 
     @model_validator(mode="after")
     def coherent_state(self) -> Self:
@@ -311,6 +398,35 @@ class WorkbenchJobView(DomainModel):
                 raise ValueError("cancelled workbench job has inconsistent terminal data")
         elif self.error is not None or self.result is not None:
             raise ValueError("active workbench job cannot expose terminal data")
+        return self
+
+    @model_validator(mode="after")
+    def coherent_cognition_progress(self) -> Self:
+        progress = self.cognition_progress
+        settings = self.accepted_settings
+        if settings.workbench_input_schema_version != 4:
+            if progress is not None:
+                raise ValueError("pre-schema-4 workbench jobs cannot report cognition progress")
+            return self
+        if progress is None:
+            if self.phase in _PROGRESS_PHASES:
+                raise ValueError("planned bounded cognition requires progress")
+            return self
+        if self.phase not in _PROGRESS_PHASES | {"failed", "cancelled"}:
+            raise ValueError("cognition progress cannot precede planning")
+        provider_mode = settings.cognition_mode in {"local", "remote"}
+        funded_ceiling = (settings.funded_response_limit or 0) if provider_mode else 0
+        if progress.total > funded_ceiling:
+            raise ValueError("cognition progress exceeds the frozen provider funding")
+        if self.phase in _FINAL_PROGRESS_PHASES and progress.resolved != progress.total:
+            raise ValueError("cognition progress must be final after cognition")
+        if (
+            self.phase == "completed"
+            and provider_mode
+            and self.result is not None
+            and progress.total != self.result.funded_request_count
+        ):
+            raise ValueError("completed cognition progress does not match its funded requests")
         return self
 
 
@@ -357,6 +473,8 @@ class _RunOperations(Protocol):
         prepared: PreparedCityScientificRunV2,
         operation: WorkbenchCognitionOperationV2,
         cancellation: CityCognitionCancellation,
+        *,
+        progress: Callable[[], None],
     ) -> CityCognitionEvaluationV2: ...
 
     def finalize_cognition_v2(
@@ -382,6 +500,7 @@ class _JobRecord:
     cancellation_requested: bool = False
     error: WorkbenchJobFailure | None = None
     result: WorkbenchRunSummary | None = None
+    cognition_progress: WorkbenchCognitionProgressCounter | None = None
 
 
 def _utc_now() -> str:
@@ -473,6 +592,9 @@ class CityJobManager:
             can_cancel=(record.phase in _CANCELLABLE_PHASES and not record.cancellation_requested),
             error=record.error,
             result=record.result,
+            cognition_progress=(
+                None if record.cognition_progress is None else record.cognition_progress.snapshot()
+            ),
         )
 
     @staticmethod
@@ -867,6 +989,8 @@ class CityJobManager:
 
         try:
             scientific = self._repository.prepare_scientific_v2(validated, operation)
+            # Planning froze the funding: the count of funded provider requests is final.
+            progress = WorkbenchCognitionProgressCounter(scientific.funded_provider_request_count)
         except Exception:
             self._fail(job_id, "planning-cognition")
             return
@@ -875,12 +999,14 @@ class CityJobManager:
             record = self._records[job_id]
             if self._cancel_before_publication_locked(record):
                 return
+            record.cognition_progress = progress
             self._transition_locked(record, "requesting-cognition")
         try:
             evaluation = self._repository.resolve_cognition_v2(
                 scientific,
                 operation,
                 cancellation,
+                progress=progress.advance,
             )
         except asyncio.CancelledError:
             with self._lock:
@@ -899,6 +1025,8 @@ class CityJobManager:
             return
         finally:
             operation.clear()
+        # Complete validated evidence holds one terminal outcome for every funded request.
+        progress.complete()
 
         with self._lock:
             record = self._records[job_id]
@@ -1007,9 +1135,12 @@ class CityJobManager:
 
 
 __all__ = [
+    "MAX_COGNITION_PROGRESS_REQUESTS",
     "MAX_TERMINAL_JOBS",
     "CityJobManager",
     "WorkbenchAcceptedSettings",
+    "WorkbenchCognitionProgress",
+    "WorkbenchCognitionProgressCounter",
     "WorkbenchJobBusy",
     "WorkbenchJobCancellationConflict",
     "WorkbenchJobFailure",

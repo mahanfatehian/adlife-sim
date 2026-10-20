@@ -354,6 +354,7 @@ def test_repository_v2_provider_uses_exact_factory_service_baseline_and_clears_s
             baseline_evaluation,
             provider,
             cancellation,
+            progress,
         ):
             service_calls.append(
                 {
@@ -362,6 +363,7 @@ def test_repository_v2_provider_uses_exact_factory_service_baseline_and_clears_s
                     "baseline_evaluation": baseline_evaluation,
                     "provider": provider,
                     "cancellation": cancellation,
+                    "progress": progress,
                 }
             )
             await provider.aclose()
@@ -380,12 +382,16 @@ def test_repository_v2_provider_uses_exact_factory_service_baseline_and_clears_s
     staged = repository.prepare_scientific_v2(validated, operation)
     service.evaluation = _terminal_evaluation(staged)
 
+    def progress() -> None:  # pragma: no cover - the fake service never resolves a request
+        raise AssertionError("the fake service reports no progress")
+
     evaluation = repository.resolve_cognition_v2(
         staged,
         operation,
         importlib.import_module(
             "adlife.adapters.cognition.city_service"
         ).CityCognitionCancellation(),
+        progress=progress,
     )
 
     assert evaluation == service.evaluation
@@ -393,6 +399,8 @@ def test_repository_v2_provider_uses_exact_factory_service_baseline_and_clears_s
     assert factory_calls[0]["cognition_input"] == staged.cognition_input
     assert service_calls[0]["baseline_evaluation"] == staged.baseline_evaluation
     assert service_calls[0]["provider"] is provider
+    # The repository hands the job worker's progress hook to the service unchanged.
+    assert service_calls[0]["progress"] is progress
     assert provider.closed is True
     assert operation.credential.secret.cleared is True
 

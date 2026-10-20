@@ -214,11 +214,12 @@ def test_v2_result_and_policy_documents_are_closed_frozen_and_exact() -> None:
     assert set(schema["properties"]) == set(schema["required"])
     for field, values in CATEGORIES.items():
         assert schema["properties"][field] == {"type": "string", "enum": values}
+    # No "uniqueItems": vLLM grammar decoding refuses it with HTTP 400 and OpenAI strict
+    # structured outputs does not support it. The result model enforces uniqueness instead.
     assert schema["properties"]["safety_flags"] == {
         "type": "array",
         "items": {"type": "string", "enum": FLAGS},
         "maxItems": 3,
-        "uniqueItems": True,
     }
     assert schema["properties"]["schema_version"] == {"type": "integer", "const": 2}
     assert schema["properties"]["request_id"] == {
@@ -302,6 +303,71 @@ def test_v2_result_and_policy_documents_are_closed_frozen_and_exact() -> None:
             policy.schema_version = 99
     with pytest.raises(ValidationError):
         result.affect = "positive"
+
+
+def _schema_keywords(node: Any) -> set[str]:
+    """Every JSON-schema keyword used anywhere in a schema document (not property names)."""
+    keywords: set[str] = set()
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            for key, value in current.items():
+                keywords.add(key)
+                if key == "properties":
+                    pending.extend(value.values())
+                elif isinstance(value, (dict, list)):
+                    pending.append(value)
+        elif isinstance(current, list):
+            pending.extend(item for item in current if isinstance(item, dict))
+    return keywords
+
+
+def test_wire_result_schema_uses_only_keywords_strict_gateways_accept() -> None:
+    """The schema crosses the wire, so it may use only keywords every target decoder knows.
+
+    A vLLM gateway (GapGPT serving Qwen/Qwen3.6-35B-A3B-FP8) answered HTTP 400 "Grammar
+    error: Unimplemented keys: ["uniqueItems"]" to the bounded-signal request, and OpenAI
+    strict structured outputs does not support the keyword either.
+    """
+    schema = json.loads(module().CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT)
+    assert _schema_keywords(schema) == {
+        "$schema",
+        "title",
+        "type",
+        "additionalProperties",
+        "properties",
+        "required",
+        "const",
+        "enum",
+        "pattern",
+        "maxItems",
+        "items",
+    }
+    assert "uniqueItems" not in module().CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["unsafe-content", "unsafe-content"],
+        ["stereotype-risk", "unsupported-inference", "stereotype-risk"],
+    ],
+)
+def test_result_model_refuses_duplicate_safety_flags_the_wire_schema_allows(flags) -> None:
+    """Uniqueness moved from the wire schema to the result model: duplicates stay invalid."""
+    m = module()
+    document = {**result_data(), "safety_flags": flags}
+    with pytest.raises(ValidationError):
+        m.CityCognitionResultV2.model_validate_json(json.dumps(document))
+    with pytest.raises(ValidationError, match="safety flags must be unique"):
+        m.CityCognitionResultV2.model_validate({**document, "safety_flags": tuple(flags)})
+    unique = tuple(sorted(set(flags)))
+    accepted = m.CityCognitionResultV2.model_validate_json(
+        json.dumps({**document, "safety_flags": list(unique)})
+    )
+    assert accepted.safety_flags == unique
+    assert m.CityCognitionResultV2.model_validate({**document, "safety_flags": unique}) == accepted
 
 
 @pytest.mark.parametrize(

@@ -556,7 +556,10 @@ def test_load_refuses_missing_invalid_and_reserved_identifiers_without_echo(tmp_
         assert profile_id not in str(error.value)
 
 
-@pytest.mark.parametrize("mutation", ["whitespace", "extra", "wrong-hash", "oversized"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["whitespace", "extra", "wrong-hash", "oversized", "explicit-default-thinking"],
+)
 def test_list_and_load_fail_closed_on_noncanonical_or_corrupt_records(
     tmp_path: Path,
     mutation: str,
@@ -569,6 +572,9 @@ def test_list_and_load_fail_closed_on_noncanonical_or_corrupt_records(
         path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     elif mutation == "extra":
         path.write_text(canonical_json({**document, "api_key": "opaquevalue1234567890"}) + "\n")
+    elif mutation == "explicit-default-thinking":
+        # The same facts and hash, but not the canonical bytes: false is always omitted.
+        path.write_text(canonical_json({**document, "disable_thinking": False}) + "\n")
     elif mutation == "wrong-hash":
         document["revision_sha256"] = "f" * 64
         path.write_text(canonical_json(document) + "\n", encoding="utf-8")

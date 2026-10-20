@@ -471,6 +471,10 @@
           <section id="job-panel" class="job-panel" aria-labelledby="job-title" hidden>
             <div class="section-heading"><h2 id="job-title">Simulation status</h2><span id="job-phase">Queued</span></div>
             <ol id="job-phase-track" class="phase-track" aria-label="Run phases"></ol>
+            <div id="job-progress" class="job-progress" hidden>
+              <p id="job-progress-text" class="job-progress-text"></p>
+              <progress id="job-progress-bar" class="job-progress-bar" max="1" value="0" aria-labelledby="job-progress-text"></progress>
+            </div>
             <p id="job-message">The worker accepted this study.</p>
             <dl id="job-settings" class="compact-facts"></dl>
             <div class="job-actions">

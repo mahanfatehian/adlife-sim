@@ -7,6 +7,7 @@ import math
 import re
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
+from types import MappingProxyType
 from typing import Literal, Self
 from unicodedata import bidirectional
 
@@ -52,6 +53,11 @@ _ENVELOPE_FIELDS = frozenset(
 )
 _CHOICE_FIELDS = frozenset({"index", "message", "finish_reason", "logprobs"})
 _MESSAGE_FIELDS = frozenset({"role", "content", "refusal"})
+# "length" means the answer reached the frozen per-attempt output cap. Its text is still
+# validated like any other answer, so it can never be accepted for less than "stop" is.
+_FINISH_REASONS = ("stop", "length")
+# A vLLM stop string is operator configuration, never model output, and stays short.
+_MAX_STOP_REASON_CHARACTERS = 256
 _USAGE_FIELDS = frozenset(
     {
         "prompt_tokens",
@@ -181,10 +187,111 @@ def _wire_text(value: object, *, nullable: bool = False) -> bool:
     )
 
 
-def _content_and_usage(envelope: Mapping[str, object]) -> tuple[str, CityProviderUsageV2 | None]:
-    """V2-only envelope admission; completion must explicitly finish with stop."""
-    if set(envelope) - _ENVELOPE_FIELDS:
+def _null(value: object) -> bool:
+    return value is None
+
+
+def _null_or_text(value: object) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _null_or_object(value: object) -> bool:
+    return value is None or isinstance(value, dict)
+
+
+def _null_or_empty_list(value: object) -> bool:
+    return value is None or (isinstance(value, list) and not value)
+
+
+def _null_or_token_ids(value: object) -> bool:
+    return value is None or (isinstance(value, list) and all(_integer(item) for item in value))
+
+
+def _null_or_stop_reason(value: object) -> bool:
+    """Null, the token ID, or the bounded stop string that ended the answer."""
+    return (
+        value is None
+        or _integer(value)
+        or (isinstance(value, str) and len(value) <= _MAX_STOP_REASON_CHARACTERS)
+    )
+
+
+def _null_or_integer_tree(value: object) -> bool:
+    """Null, or arbitrarily nested lists of nonnegative integers (no bool or float)."""
+    if value is None:
+        return True
+    if not isinstance(value, list):
+        return False
+    pending: list[object] = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, list):
+            pending.extend(current)
+        elif not _integer(current):
+            return False
+    return True
+
+
+# A vLLM server, including one behind the GapGPT gateway, adds these members to the
+# OpenAI shape. Each is admitted only as null or the type vLLM sends. None is parsed,
+# interpreted, or retained: reasoning text, the echoed prompt, and the stop token or stop
+# string that ended an answer (vLLM reports a generation-config end token such as Qwen's
+# as an integer ID) are inert, and every string in them has already passed the whole-body
+# credential and secret screens. Any other unknown member is still refused, and a real
+# function call, audio part, or tool call stays a protocol error.
+_VLLM_ENVELOPE_MEMBERS: Mapping[str, Callable[[object], bool]] = MappingProxyType(
+    {
+        "prompt_logprobs": _null,
+        "prompt_token_ids": _null_or_token_ids,
+        "prompt_text": _null_or_text,
+        "kv_transfer_params": _null,
+        "ec_transfer_params": _null,
+        "metrics": _null_or_object,
+    }
+)
+_VLLM_CHOICE_MEMBERS: Mapping[str, Callable[[object], bool]] = MappingProxyType(
+    {
+        "stop_reason": _null_or_stop_reason,
+        "token_ids": _null_or_token_ids,
+        "routed_experts": _null_or_integer_tree,
+    }
+)
+_VLLM_MESSAGE_MEMBERS: Mapping[str, Callable[[object], bool]] = MappingProxyType(
+    {
+        "annotations": _null_or_empty_list,
+        "audio": _null,
+        "function_call": _null,
+        "tool_calls": _null_or_empty_list,
+        "reasoning": _null_or_text,
+        "reasoning_content": _null_or_text,
+    }
+)
+
+
+def _admit_members(
+    container: Mapping[str, object],
+    fields: frozenset[str],
+    vendor: Mapping[str, Callable[[object], bool]],
+) -> None:
+    """Refuse any unknown member, and any admitted vendor member of another type."""
+    if set(container) - fields - vendor.keys() or not all(
+        admitted(container[name]) for name, admitted in vendor.items() if name in container
+    ):
         raise CityProviderProtocolError
+
+
+def _content_and_usage(
+    envelope: Mapping[str, object],
+) -> tuple[str | None, CityProviderUsageV2 | None]:
+    """V2-only envelope admission; a completion must finish with stop or length.
+
+    ``length`` means the answer reached the frozen per-attempt output cap, so it may be a
+    complete object followed by runaway whitespace or an object that never closed. Its text
+    is returned for the same strict validation as a ``stop`` answer, and ``None`` means a
+    truncated answer carries no text at all (a model that spent the cap thinking). Neither
+    is a protocol mismatch, so the caller can return a repairable invalid result.
+    """
+    _admit_members(envelope, _ENVELOPE_FIELDS, _VLLM_ENVELOPE_MEMBERS)
     if "object" in envelope and envelope["object"] != "chat.completion":
         raise CityProviderProtocolError
     for field in ("id", "model", "system_fingerprint", "service_tier"):
@@ -198,23 +305,28 @@ def _content_and_usage(envelope: Mapping[str, object]) -> tuple[str, CityProvide
     if not isinstance(choices, list) or len(choices) != 1:
         raise CityProviderProtocolError
     choice = choices[0]
-    if (
-        not isinstance(choice, dict)
-        or set(choice) - _CHOICE_FIELDS
-        or choice.get("finish_reason") != "stop"
-    ):
+    if not isinstance(choice, dict):
+        raise CityProviderProtocolError
+    _admit_members(choice, _CHOICE_FIELDS, _VLLM_CHOICE_MEMBERS)
+    finish_reason = choice.get("finish_reason")
+    # Tuple membership compares by equality, so an unhashable value is refused, not raised.
+    if finish_reason not in _FINISH_REASONS:
         raise CityProviderProtocolError
     if "index" in choice and (type(choice["index"]) is not int or choice["index"] != 0):
         raise CityProviderProtocolError
     if choice.get("logprobs") is not None:
         raise CityProviderProtocolError
     message = choice.get("message")
-    if not isinstance(message, dict) or set(message) - _MESSAGE_FIELDS:
+    if not isinstance(message, dict):
         raise CityProviderProtocolError
+    _admit_members(message, _MESSAGE_FIELDS, _VLLM_MESSAGE_MEMBERS)
     if ("role" in message and message["role"] != "assistant") or message.get("refusal") is not None:
         raise CityProviderProtocolError
     content = message.get("content")
-    if not isinstance(content, str) or not content.strip():
+    if content is not None and not isinstance(content, str):
+        raise CityProviderProtocolError
+    answered = isinstance(content, str) and bool(content.strip())
+    if finish_reason == "stop" and not answered:
         raise CityProviderProtocolError
     raw = envelope.get("usage")
     usage = None
@@ -253,7 +365,7 @@ def _content_and_usage(envelope: Mapping[str, object]) -> tuple[str, CityProvide
         usage = CityProviderUsageV2(
             schema_version=2, prompt_tokens=prompt, completion_tokens=completion
         )
-    return content, usage
+    return (content if answered else None), usage
 
 
 class CityOpenAICompatibleProviderV2:
@@ -475,6 +587,9 @@ class CityOpenAICompatibleProviderV2:
         ):
             return _invalid("unsafe-content")
         content, usage = _content_and_usage(envelope)
+        if content is None:
+            # A length-truncated answer with no text at all; the schema repair may recover.
+            return _invalid("invalid-json")
         try:
             document = _strict_json(content)
         except _InvalidJson:

@@ -247,6 +247,20 @@ class PreparedCityScientificRunV2:
     cognition_input: CityCognitionInputV2
     cognition_requests: tuple[CityCognitionRequestV2, ...]
 
+    @property
+    def funded_provider_request_count(self) -> int:
+        """Requests the frozen funding sends to a provider, or that its cache answers.
+
+        Only provider modes reserve output tokens, so rules and mock count zero, and a
+        budget-skipped request reserves none. The count is operational: it is derived from
+        the frozen reservations and never written to an artifact.
+        """
+        return sum(
+            1
+            for reservation in self.cognition_input.reservations
+            if reservation.reserved_output_tokens > 0
+        )
+
 
 def _document_sha256(value: Mapping[str, object]) -> str:
     return sha256(canonical_json(value).encode("utf-8")).hexdigest()

@@ -180,6 +180,10 @@ def test_frozen_input_requires_every_serialized_top_level_field(field: str) -> N
         CityCognitionInputV1.model_validate_json(json.dumps(document))
 
 
+# The one optional profile fact. It is omitted from the canonical document while false, so
+# it is never a serialized field of a profile that leaves model thinking on.
+_OPTIONAL_PROFILE_FIELDS = frozenset({city_cognition_contract.CITY_PROVIDER_THINKING_CONTROL_FIELD})
+
 _REQUIRED_NESTED_INPUT_PATHS = (
     *(
         ("selection_policy", field)
@@ -194,10 +198,29 @@ _REQUIRED_NESTED_INPUT_PATHS = (
         for template in ("rules", "mock", "fallback", "budget_skipped")
         for field in city_cognition_contract.CityCognitionDeterministicResultTemplateV1.model_fields
     ),
-    *(("provider_profile", field) for field in CityCognitionProviderProfileSnapshotV1.model_fields),
+    *(
+        ("provider_profile", field)
+        for field in CityCognitionProviderProfileSnapshotV1.model_fields
+        if field not in _OPTIONAL_PROFILE_FIELDS
+    ),
     *(("effective_settings", field) for field in CityCognitionEffectiveSettingsV1.model_fields),
     *(("reservations", 0, field) for field in CityCognitionReservationV1.model_fields),
 )
+
+
+def test_the_thinking_control_is_the_only_optional_profile_fact() -> None:
+    document = _complete_provider_input().model_dump(mode="json")
+    profile = document["provider_profile"]
+    assert set(CityCognitionProviderProfileSnapshotV1.model_fields) - set(profile) == (
+        _OPTIONAL_PROFILE_FIELDS
+    )
+    assert not CityCognitionProviderProfileSnapshotV1.model_fields[
+        city_cognition_contract.CITY_PROVIDER_THINKING_CONTROL_FIELD
+    ].is_required()
+    assert all(
+        CityCognitionProviderProfileSnapshotV1.model_fields[field].is_required()
+        for field in profile
+    )
 
 
 @pytest.mark.parametrize("path", _REQUIRED_NESTED_INPUT_PATHS)

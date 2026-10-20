@@ -2205,6 +2205,8 @@ def test_investor_demo_is_the_two_part_bounded_cognition_script() -> None:
 _DEMO_INTERFACE_COPY = (
     "Bounded AI cognition",
     "Local compatible model",
+    "Remote compatible model",
+    "Turn off model thinking (Qwen on vLLM servers)",
     "Mock — reproducible demo",
     "Rules — offline",
     "Rules engine (offline)",

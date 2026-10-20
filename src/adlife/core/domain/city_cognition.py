@@ -14,11 +14,19 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 from hashlib import sha256
-from typing import Annotated, Literal, Self, TypeAlias
+from typing import Annotated, Any, Final, Literal, Self, TypeAlias
 from unicodedata import bidirectional
 from urllib.parse import urlsplit
 
-from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidationInfo,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from adlife.core.domain.person import (
     SECRET_LABEL_WORDS,
@@ -267,6 +275,29 @@ def _canonical_sha256(value: DomainModel | Mapping[str, object]) -> str:
     return sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
+CITY_PROVIDER_THINKING_CONTROL_FIELD: Final = "disable_thinking"
+"""The one optional provider-profile fact, written only when a revision turns it on.
+
+A Qwen model served by vLLM (for example GapGPT's ``gapgpt-qwen-3.6``) may spend a whole
+attempt's output cap reasoning and return no answer. A revision whose ``disable_thinking``
+is true adds ``chat_template_kwargs`` ``{"enable_thinking": false}`` to every request it
+sends; OpenAI itself refuses unknown request members, so nothing is sent otherwise.
+
+While false the member is OMITTED from every canonical document, so each profile revision,
+frozen snapshot, effective-settings document, and run written before it existed keeps its
+exact bytes and hashes, and an explicit false is the same fact as an absent one. When true it
+is part of the profile revision, of the frozen snapshot, and of the V2 effective settings,
+so the check key, cache key, terminal records, and manifest of a run all bind the choice.
+"""
+
+
+def omit_default_thinking_control(document: dict[str, Any]) -> dict[str, Any]:
+    """Drop the thinking control from a serialized document while it holds its default."""
+    if document.get(CITY_PROVIDER_THINKING_CONTROL_FIELD) is False:
+        del document[CITY_PROVIDER_THINKING_CONTROL_FIELD]
+    return document
+
+
 def canonical_city_cognition_provider_profile_payload(
     value: DomainModel | Mapping[str, object],
 ) -> bytes:
@@ -276,7 +307,7 @@ def canonical_city_cognition_provider_profile_payload(
     else:
         facts = dict(value)
         facts.pop("revision_sha256", None)
-    return (canonical_json(facts) + "\n").encode("utf-8")
+    return (canonical_json(omit_default_thinking_control(facts)) + "\n").encode("utf-8")
 
 
 def city_cognition_provider_profile_revision_sha256(
@@ -868,6 +899,12 @@ class CityCognitionProviderProfileSnapshotV1(_CityCognitionModel):
     transient_retries: int = Field(ge=0, le=MAX_CITY_COGNITION_TRANSIENT_RETRIES)
     repair_attempts: int = Field(ge=0, le=MAX_CITY_COGNITION_REPAIR_ATTEMPTS)
     origin_approval_id: str = Field(pattern=_PROFILE_ID_PATTERN)
+    # See CITY_PROVIDER_THINKING_CONTROL_FIELD: omitted from canonical bytes while false.
+    disable_thinking: bool = False
+
+    @model_serializer(mode="wrap")
+    def _canonical_thinking_control(self, handler: SerializerFunctionWrapHandler) -> Any:
+        return omit_default_thinking_control(handler(self))
 
     @field_validator("display_label", "model_id")
     @classmethod

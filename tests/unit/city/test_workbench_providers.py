@@ -25,6 +25,9 @@ from adlife.adapters.cognition.city_openai_compatible import (
     CityProviderServerError,
     CityProviderTransportError,
 )
+from adlife.adapters.cognition.city_provider_transport import (
+    MAX_CITY_PROVIDER_CHECK_ATTEMPT_TIMEOUT_SECONDS,
+)
 from adlife.city.provider_profiles import (
     InvalidProviderProfile,
     ProviderProfileConflict,
@@ -957,14 +960,18 @@ async def test_deadline_interrupts_hanging_attempt_and_closes_provider(
     assert providers[0].kwargs["credential"].secret.cleared
 
 
-def test_check_deadlines_keep_remote_short_and_wait_out_a_cold_local_model() -> None:
+def test_check_deadlines_outlast_a_slow_remote_gateway_and_a_cold_local_model() -> None:
     module = importlib.import_module("adlife.city.workbench_providers")
-    assert module._REMOTE_CHECK_DEADLINE_SECONDS == 10
+    # Single GapGPT calls (gapgpt-qwen-3.6 on vLLM) took 3 to 26 s; the earlier 10 s remote
+    # deadline failed the check intermittently, so a remote check now allows 60 s.
+    assert module._REMOTE_CHECK_DEADLINE_SECONDS == 60
     # A 7B local model loads in about 12 s from the OS file cache and in up to about
     # 100 s on the first load after a reboot; cancelling the request aborts the load.
-    assert 100 <= module._LOCAL_CHECK_DEADLINE_SECONDS <= 120
+    assert module._LOCAL_CHECK_DEADLINE_SECONDS == 120
     assert module._check_deadline_seconds("remote") == module._REMOTE_CHECK_DEADLINE_SECONDS
     assert module._check_deadline_seconds("local") == module._LOCAL_CHECK_DEADLINE_SECONDS
+    # Both stay within the transport's bound on any check-attempt override.
+    assert module._LOCAL_CHECK_DEADLINE_SECONDS <= MAX_CITY_PROVIDER_CHECK_ATTEMPT_TIMEOUT_SECONDS
 
 
 class _SlowLoadProvider(_Provider):
@@ -1025,9 +1032,10 @@ async def test_local_check_outlasts_a_cold_model_load_beyond_the_remote_deadline
 
 
 @pytest.mark.parametrize("scope", ["explanation-only", "bounded-signals-v1"])
-def test_default_check_providers_extend_only_the_local_transport_deadline(
+def test_default_check_providers_give_each_check_transport_its_full_check_deadline(
     tmp_path: Path, scope: str
 ) -> None:
+    """A check attempt may run for the whole check deadline; funded runs never get this."""
     module = importlib.import_module("adlife.city.workbench_providers")
     controller, _, _ = _controller(tmp_path)
     view = controller.create(_draft())
@@ -1054,8 +1062,11 @@ def test_default_check_providers_extend_only_the_local_transport_deadline(
         )
         frozen_timeout = cognition_input.effective_settings.attempt_timeout_seconds
         expected = (
-            module._LOCAL_CHECK_DEADLINE_SECONDS if profile.mode == "local" else frozen_timeout
+            module._LOCAL_CHECK_DEADLINE_SECONDS
+            if profile.mode == "local"
+            else module._REMOTE_CHECK_DEADLINE_SECONDS
         )
+        assert frozen_timeout < expected
         assert provider._transport._attempt_timeout_seconds == expected
         asyncio.run(provider.aclose())
         credential.secret.clear()

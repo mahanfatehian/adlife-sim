@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import re
 from hashlib import sha256
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from unicodedata import bidirectional
 
-from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from adlife.city.provider_runtime import normalize_provider_origin
 from adlife.city.workbench_immutable_registry import (
@@ -28,6 +36,7 @@ from adlife.core.domain.city_cognition import (
     Hash,
     canonical_city_cognition_provider_profile_payload,
     city_cognition_provider_profile_revision_sha256,
+    omit_default_thinking_control,
 )
 from adlife.core.domain.identifiers import WINDOWS_RESERVED_RUN_IDS
 from adlife.core.domain.person import (
@@ -159,6 +168,14 @@ class ProviderProfileDraftV1(_ProviderProfileModel):
     transient_retries: int = Field(ge=0, le=MAX_CITY_COGNITION_TRANSIENT_RETRIES)
     repair_attempts: int = Field(ge=0, le=MAX_CITY_COGNITION_REPAIR_ATTEMPTS)
     origin_approval_id: str = Field(pattern=_PROFILE_ID_PATTERN)
+    # True adds chat_template_kwargs {"enable_thinking": false} to every request, for a
+    # Qwen model on a vLLM server. Omitted from the canonical revision bytes while false, so
+    # every revision saved before this option existed keeps its exact hash and file.
+    disable_thinking: bool = False
+
+    @model_serializer(mode="wrap")
+    def _canonical_thinking_control(self, handler: SerializerFunctionWrapHandler) -> Any:
+        return omit_default_thinking_control(handler(self))
 
     @field_validator("profile_id", "origin_approval_id")
     @classmethod

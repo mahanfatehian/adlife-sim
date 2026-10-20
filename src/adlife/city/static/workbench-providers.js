@@ -69,6 +69,35 @@
   const PURCHASE_OWNERSHIP = "Rules: an uncalibrated proxy score; purchases are not modeled";
   const TIMEOUT_REASON = "timeout-exhausted";
   const PROTOCOL_REASON = "protocol-incompatible";
+  // A Qwen model on a vLLM server can spend its whole output budget thinking. The profile
+  // fact `disable_thinking` makes every request and check carry chat_template_kwargs
+  // {"enable_thinking": false}; the server omits it while false, so older revisions match.
+  const THINKING_FIELD = "disable_thinking";
+  const THINKING_LABEL = "Turn off model thinking (Qwen on vLLM servers)";
+  const THINKING_HELP = 'Sends chat_template_kwargs {"enable_thinking": false} with every request and compatibility check, so a Qwen model on a vLLM server (such as gapgpt-qwen-3.6) answers instead of spending its output tokens thinking. On by default for a remote model ID that names Qwen; leave it off for OpenAI, which refuses unknown request fields. Saved in the profile revision and frozen into each run.';
+  const PROFILE_KEYS = Object.freeze([
+    "schema_version",
+    "profile_id",
+    "display_label",
+    "mode",
+    "base_url",
+    "model_id",
+    "protocol",
+    "temperature",
+    "top_p",
+    "seed_policy",
+    "seed",
+    "max_output_tokens",
+    "attempt_timeout_seconds",
+    "transient_retries",
+    "repair_attempts",
+    "origin_approval_id",
+    "revision_sha256",
+    "credential_slot_id",
+    "credential_available",
+    "endpoint_policy_accepted",
+    "last_check",
+  ]);
   // Explanation runs default to 10 funded explanations (10 x 1,536 output tokens): a local
   // model answers one at a time, so funding all 60 can keep a live demo waiting minutes.
   const V9_DEFAULT_BUDGET = 15360;
@@ -140,6 +169,15 @@
     return `${profile.profile_id}/${profile.revision_sha256}`;
   }
 
+  /** True only for a revision that turns model thinking off; absent means it does not. */
+  function thinkingOff(profile) {
+    return profile?.[THINKING_FIELD] === true;
+  }
+
+  function modelLabel(profile) {
+    return thinkingOff(profile) ? `${profile.model_id} · thinking off` : profile.model_id;
+  }
+
   function assertCheck(value) {
     if (
       !hasExactKeys(value, ["status", "reason_code"]) ||
@@ -173,30 +211,10 @@
   }
 
   function assertProfile(value) {
+    const thinking = isObject(value) && Object.prototype.hasOwnProperty.call(value, THINKING_FIELD);
     if (
-      !hasExactKeys(value, [
-        "schema_version",
-        "profile_id",
-        "display_label",
-        "mode",
-        "base_url",
-        "model_id",
-        "protocol",
-        "temperature",
-        "top_p",
-        "seed_policy",
-        "seed",
-        "max_output_tokens",
-        "attempt_timeout_seconds",
-        "transient_retries",
-        "repair_attempts",
-        "origin_approval_id",
-        "revision_sha256",
-        "credential_slot_id",
-        "credential_available",
-        "endpoint_policy_accepted",
-        "last_check",
-      ]) ||
+      !hasExactKeys(value, thinking ? [...PROFILE_KEYS, THINKING_FIELD] : PROFILE_KEYS) ||
+      (thinking && typeof value[THINKING_FIELD] !== "boolean") ||
       value.schema_version !== 1 ||
       !PROFILE_ID_PATTERN.test(value.profile_id || "") ||
       !boundedText(value.display_label, 80) ||
@@ -305,8 +323,38 @@
       this.loadGeneration = 0;
       this.generation = 0;
       this.busy = false;
+      this.thinkingChosen = false;
+      this.installThinkingControl();
       this.installEvents();
       this.configureBounded(null);
+    }
+
+    /** Add the thinking checkbox below the profile identity fields; text stays inert. */
+    installThinkingControl() {
+      const field = document.createElement("div");
+      field.id = "provider-thinking-field";
+      field.className = "field provider-thinking-field";
+      const label = document.createElement("label");
+      label.className = "provider-thinking-toggle";
+      label.htmlFor = "provider-disable-thinking";
+      const input = document.createElement("input");
+      input.id = "provider-disable-thinking";
+      input.type = "checkbox";
+      input.setAttribute("aria-describedby", "provider-disable-thinking-help");
+      label.append(input, document.createTextNode(` ${THINKING_LABEL}`));
+      const help = document.createElement("small");
+      help.id = "provider-disable-thinking-help";
+      help.className = "field-help";
+      help.textContent = THINKING_HELP;
+      field.append(label, help);
+      byId("provider-create-form").querySelector(".field-grid").after(field);
+    }
+
+    /** Until the operator chooses, thinking is turned off only for a remote Qwen model ID. */
+    renderThinkingDefault() {
+      if (this.thinkingChosen) return;
+      byId("provider-disable-thinking").checked =
+        byId("cognition-mode").value === "remote" && /qwen/i.test(byId("provider-model").value);
     }
 
     installEvents() {
@@ -339,6 +387,10 @@
         this.renderFunding();
       });
       byId("provider-origin").addEventListener("change", () => this.renderOrigin());
+      byId("provider-model").addEventListener("input", () => this.renderThinkingDefault());
+      byId("provider-disable-thinking").addEventListener("change", () => {
+        this.thinkingChosen = true;
+      });
       byId("provider-seed-policy").addEventListener("change", () => this.renderSeedPolicy());
       byId("provider-create-form").addEventListener("submit", (event) => {
         event.preventDefault();
@@ -508,6 +560,7 @@
       byId("provider-check-panel").hidden = !usesProvider;
       byId("explanation-budget").hidden = bounded || !usesProvider;
       byId("provider-product-login-note").hidden = mode !== "remote";
+      this.renderThinkingDefault();
       setText(
         "explanation-source-label",
         `${SCOPE_LABELS[scope]} · ${MODE_LABELS[mode] || "Unavailable"}`,
@@ -639,6 +692,7 @@
       if (!byId("provider-model").value && origin.approval_id === DEFAULT_LOCAL_ORIGIN) {
         byId("provider-model").value = DEFAULT_LOCAL_MODEL;
       }
+      this.renderThinkingDefault();
     }
 
     renderProfiles(preferred = null) {
@@ -660,7 +714,7 @@
         for (const profile of matching) {
           const option = document.createElement("option");
           option.value = profileKey(profile);
-          option.textContent = `${profile.display_label} · ${profile.model_id} · ${profile.revision_sha256.slice(0, 10)}`;
+          option.textContent = `${profile.display_label} · ${modelLabel(profile)} · ${profile.revision_sha256.slice(0, 10)}`;
           option.disabled = !profile.endpoint_policy_accepted;
           select.append(option);
         }
@@ -718,7 +772,7 @@
         return;
       }
       setText("provider-endpoint", profile.base_url);
-      setText("provider-model-receipt", profile.model_id);
+      setText("provider-model-receipt", modelLabel(profile));
       setText(
         "provider-credential-state",
         profile.credential_available ? "Available on server" : "Required",
@@ -792,7 +846,7 @@
       } else if (seedPolicy !== "omit") {
         throw new ProviderDraftError("provider-seed-policy", "Choose a supported seed policy.");
       }
-      return {
+      const draft = {
         schema_version: 1,
         profile_id: profileId,
         display_label: requiredText("provider-label", 80),
@@ -810,6 +864,9 @@
         repair_attempts: exactInteger("provider-repair", 0, 1),
         origin_approval_id: origin.approval_id,
       };
+      // Sent only when chosen, so a draft without it is byte-for-byte the earlier draft.
+      if (byId("provider-disable-thinking").checked) draft[THINKING_FIELD] = true;
+      return draft;
     }
 
     async createProfile() {
@@ -1218,7 +1275,7 @@
         schema: bounded ? "Workbench schema 4 → run V10" : "Workbench schema 3 → run V9",
         sourceLabel: provider ? sourceLabel : `${sourceLabel} (offline)`,
         profileLabel: profile === null ? (provider ? cognition.provider_profile_id : null) : profile.display_label,
-        modelId: profile === null ? null : profile.model_id,
+        modelId: profile === null ? null : modelLabel(profile),
         revision: provider ? cognition.provider_revision_sha256.slice(0, 10) : null,
         funding,
         compatibilityRequired: bounded && provider,
@@ -1234,6 +1291,7 @@
       this.providerFundedLimit = this.bounded === null
         ? null
         : this.bounded.default_provider_funded_response_limit;
+      this.thinkingChosen = false;
       this.advanceAuthority();
       this.clearActionStatuses();
       this.renderMode();

@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from functools import wraps
 from hashlib import sha256
+from types import MappingProxyType
 from typing import Final, ParamSpec, TypeVar
 
 from adlife.core.domain.city_cognition_v2 import (
@@ -20,6 +21,10 @@ BEGIN_UNTRUSTED_CITY_COGNITION_DATA: Final = "BEGIN_UNTRUSTED_CITY_COGNITION_DAT
 END_UNTRUSTED_CITY_COGNITION_DATA: Final = "END_UNTRUSTED_CITY_COGNITION_DATA"
 CITY_COGNITION_JSON_SCHEMA_NAME_V2: Final = "city-cognition-signal-result-v2"
 CITY_COGNITION_PROMPT_CONTRACT_LABEL_V2: Final = "city-cognition-signal-prompt-v2"
+# vLLM's request extension for chat-template arguments. Qwen's template reads
+# enable_thinking; OpenAI refuses unknown members, so it is sent only when the frozen
+# effective settings turn thinking off.
+CHAT_TEMPLATE_THINKING_OFF: Final = MappingProxyType({"enable_thinking": False})
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
@@ -200,6 +205,8 @@ def build_city_cognition_payload_v2(
     }
     if settings.seed_policy == "fixed":
         payload["seed"] = settings.seed
+    if settings.disable_thinking:
+        payload["chat_template_kwargs"] = dict(CHAT_TEMPLATE_THINKING_OFF)
     return payload
 
 
@@ -231,6 +238,7 @@ def build_city_cognition_repair_payload_v2(
 
 
 __all__ = [
+    "CHAT_TEMPLATE_THINKING_OFF",
     "CITY_COGNITION_JSON_SCHEMA_NAME_V2",
     "CITY_COGNITION_PROMPT_CONTRACT_LABEL_V2",
     "build_city_cognition_messages_v2",

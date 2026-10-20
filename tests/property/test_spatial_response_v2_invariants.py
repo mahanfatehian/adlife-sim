@@ -587,11 +587,12 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
         <= module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
     )
     assert len(canonical_json(frozen).encode()) <= 131_072
-    # The frozen input embeds the prompt contract text; pin every other byte.
+    # The frozen input embeds the prompt contract text; pin every other byte. The embedded
+    # result schema no longer carries the 21 escaped bytes of `"uniqueItems":true,`.
     prompt_bytes = len(
         json.dumps(frozen.causal_contract.prompt_contract_text, ensure_ascii=False).encode()
     )
-    assert len(canonical_json(frozen).encode()) - prompt_bytes == 20_345
+    assert len(canonical_json(frozen).encode()) - prompt_bytes == 20_324
     assert sum(map(len, cognition.city_cognition_terminal_lines_v2(signals))) <= 1_048_576
     assert signals.summary.terminal_stream_bytes == 153_530
     assert len((canonical_json(summary) + "\n").encode()) == 1314
@@ -656,7 +657,8 @@ def test_maximum_supported_v10_core_documents_fit_frozen_ceilings(monkeypatch):
     remote_prompt_bytes = len(
         json.dumps(remote.causal_contract.prompt_contract_text, ensure_ascii=False).encode()
     )
-    assert len(canonical_json(remote).encode()) - remote_prompt_bytes == 24_346
+    # As above: 21 fewer schema bytes than when the result schema carried uniqueItems.
+    assert len(canonical_json(remote).encode()) - remote_prompt_bytes == 24_325
     assert len(canonical_json(remote).encode()) < 131_072
     terminal_sizes = tuple(map(len, cognition.city_cognition_terminal_lines_v2(terminals)))
     assert len(terminal_sizes) == 60

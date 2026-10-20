@@ -92,6 +92,10 @@ async def _default_sleep(delay: float) -> None:
     await asyncio.sleep(delay)
 
 
+def _no_progress() -> None:
+    """Accept a progress report that no caller observes."""
+
+
 def _preflight(
     cognition_input: CityCognitionInputV2,
     requests: tuple[CityCognitionRequestV2, ...],
@@ -243,14 +247,23 @@ class CityCognitionServiceV2:
         baseline_evaluation: SpatialResponseEvaluation,
         provider: CityCognitionProviderV2 | None,
         cancellation: CityCognitionCancellation,
+        progress: Callable[[], None] | None = None,
     ) -> CityCognitionEvaluationV2:
-        """Return only a complete, validated evaluation or raise without one."""
+        """Return only a complete, validated evaluation or raise without one.
+
+        ``progress`` is called synchronously on this event loop once for every funded
+        request that reaches a terminal outcome: a provider answer, a cache hit, or a
+        fallback. Offline modes and budget-skipped requests never report. It only observes
+        and must not raise; it cannot change the evaluation.
+        """
         checked_input: CityCognitionInputV2
         ordered: tuple[CityCognitionRequestV2, ...]
         resolutions: tuple[_Resolution, ...]
         try:
             if not isinstance(cancellation, CityCognitionCancellation):
                 raise TypeError("cancellation must be a CityCognitionCancellation")
+            if progress is not None and not callable(progress):
+                raise TypeError("progress must be callable")
             cancellation.bind_running_loop(asyncio.get_running_loop())
             cancellation.raise_if_cancelled()
             checked_input, ordered, checked_baseline = _preflight(
@@ -269,6 +282,7 @@ class CityCognitionServiceV2:
                     ordered,
                     provider=provider,
                     cancellation=cancellation,
+                    progress=_no_progress if progress is None else progress,
                 )
         finally:
             await _close_provider(provider)
@@ -327,6 +341,7 @@ class CityCognitionServiceV2:
         *,
         provider: CityCognitionProviderV2,
         cancellation: CityCognitionCancellation,
+        progress: Callable[[], None],
     ) -> tuple[_Resolution, ...]:
         profile = cognition_input.provider_profile
         settings = cognition_input.effective_settings
@@ -351,6 +366,7 @@ class CityCognitionServiceV2:
             cached = self._cache_resolution(request, cognition_input)
             if cached is not None:
                 resolved[index] = cached
+                progress()
             else:
                 pending.append((index, request))
 
@@ -360,6 +376,7 @@ class CityCognitionServiceV2:
                 tuple(pending),
                 provider=provider,
                 cancellation=cancellation,
+                progress=progress,
             )
             resolved.update(provider_results)
         cancellation.raise_if_cancelled()
@@ -410,6 +427,7 @@ class CityCognitionServiceV2:
         *,
         provider: CityCognitionProviderV2,
         cancellation: CityCognitionCancellation,
+        progress: Callable[[], None],
     ) -> dict[int, _Resolution]:
         semaphore = asyncio.Semaphore(cognition_input.concurrency_limit)
         states = {index: _AttemptState() for index, _request in pending_requests}
@@ -458,6 +476,7 @@ class CityCognitionServiceV2:
                         for task in worker_done:
                             pending_tasks.remove(task)
                             resolved[task_to_index[task]] = task.result()
+                            progress()
             except TimeoutError:
                 if not timeout_context.expired():
                     raise
@@ -480,6 +499,7 @@ class CityCognitionServiceV2:
             await asyncio.gather(cancellation_waiter, return_exceptions=True)
 
         if expired:
+            reported = len(resolved)
             # Only tasks complete at the deadline may contribute a live result.  A
             # coroutine that ignores cancellation cannot turn post-deadline work into
             # a provider outcome.
@@ -506,6 +526,8 @@ class CityCognitionServiceV2:
                         attempts=states[index].count,
                         reason="timeout-exhausted",
                     )
+            for _outcome in range(len(resolved) - reported):
+                progress()
         return resolved
 
     @staticmethod

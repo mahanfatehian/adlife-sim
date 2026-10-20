@@ -156,7 +156,7 @@ Provider creation and credential writes remain loopback-only, same-origin, CSRF-
 - endpoint policy accepted;
 - last explicit compatible inference succeeded.
 
-A successful model-list request is not treated as proof that strict JSON-schema inference works. Compatibility checking can incur provider usage and requires an explicit UI action and disclosure. Checks are single-flight, are refused while a simulation job is active, and are limited to five starts per rolling minute per process. Each check submits the full CityCognitionResultV1 schema with one attempt, a 10-second deadline, the normal 384-token output maximum, and a 1,048,576-byte wire-response maximum; it never retries or repairs. These limits are independent of run budgets.
+A successful model-list request is not treated as proof that strict JSON-schema inference works. Compatibility checking can incur provider usage and requires an explicit UI action and disclosure. Checks are single-flight, are refused while a simulation job is active, and are limited to five starts per rolling minute per process. Each check submits the full CityCognitionResultV1 schema with one attempt, a 10-second deadline, the normal 384-token output maximum, and a 1,048,576-byte wire-response maximum; it never retries or repairs. (Superseded deadline: a remote check now allows 60 seconds for a slow gateway and a local check 120 seconds for a loading model; see `docs/cli-reference.md`.) These limits are independent of run budgets.
 
 ## Credential handling
 
