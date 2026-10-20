@@ -261,14 +261,10 @@ def story_document(
                         (before["rules"]["liking"], before["rules"]["memory"]),
                         (after["rules"]["liking"], after["rules"]["memory"]),
                     ),
-                    with_ai_line=(
-                        {"key": "story.moment.with_ai_same"}
-                        if same
-                        else _state_line(
-                            "story.moment.with_ai_line",
-                            (before["with_ai"]["liking"], before["with_ai"]["memory"]),
-                            (after["with_ai"]["liking"], after["with_ai"]["memory"]),
-                        )
+                    with_ai_line=_state_line(
+                        "story.moment.with_ai_same" if same else "story.moment.with_ai_line",
+                        (before["with_ai"]["liking"], before["with_ai"]["memory"]),
+                        (after["with_ai"]["liking"], after["with_ai"]["memory"]),
                     ),
                 )
             if status in LABELLED:
@@ -868,6 +864,37 @@ def test_moment_lines_carry_sentence_ai_clause_labels_and_state_lines(remote_sto
     assert "stereotype risk" in text
     assert "The ad never reached this person." in text
     assert "Was shown the ad 2 times but never noticed it" in text
+
+
+def test_person_label_summary_names_every_tied_value(remote_story):
+    blocks = person_blocks(render(remote_story, "en").content)
+    english = english_messages()
+    orders = {
+        "affect": ("annoyed", "skeptical", "neutral", "curious", "positive", "uncertain"),
+        "relevance": ("none", "low", "medium", "high", "uncertain"),
+        "credibility": ("low", "medium", "high", "uncertain"),
+        "salience": ("none", "low", "medium", "high", "uncertain"),
+    }
+    ties = 0
+    for person in remote_story.people:
+        if person.label_answers < 2:
+            continue
+        answers = [
+            moment.labels
+            for moment in person.moments
+            if moment.labels is not None and moment.status in {"answered", "reused", "practice"}
+        ]
+        summary = blocks[person.agent_id].split('<div class="person-labels">', 1)[1]
+        summary = summary.split("</div>", 1)[0]
+        for dimension, order in orders.items():
+            counts = Counter(getattr(labels, dimension) for labels in answers)
+            top = max(counts.values())
+            tied = [value for value in order if counts[value] == top]
+            ties += len(tied) > 1
+            value = " / ".join(english[f"{dimension}.{item}"] for item in tied)
+            assert f"{english[f'label.{dimension}']}: {value}" in summary, person.agent_id
+    # The fixture has people whose answers disagree, so a tie is really shown.
+    assert ties > 0
 
 
 def test_people_are_grouped_by_persona_in_agent_order(remote_story):

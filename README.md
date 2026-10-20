@@ -25,14 +25,20 @@ for an ad an agent noticed; AdLife maps them through a fixed policy into a separ
 cognition state, while movement, attention, baseline responses, and the purchase-intention proxy
 stay rule-owned.
 
-> **Live demonstration:** [docs/investor-demo.md](docs/investor-demo.md) is the two-part
-> SETUP and SIMULATION script for presenting the city workbench with bounded AI cognition from a
-> local Ollama `qwen2.5:7b-instruct` model, including the offline fallback when no model is
-> available.
+> **Live demonstration:** [docs/guided-demo.md](docs/guided-demo.md) is the presenter guide for
+> the guided view: plain-language pages at `/guide` in English, German, and Persian (right to
+> left) that set up a study, show live "3 of 10 answered" progress, replay the run as a story on
+> a map, and open a printable HTML report of every person's ad moments and the AI's labels. On
+> Windows, `powershell -ExecutionPolicy Bypass -File scripts\start-guided-demo.ps1` starts it
+> with an online OpenAI-compatible AI (GapGPT by default); it asks for the key without showing
+> it and never writes it anywhere. The guide also covers backups, a 10-minute script, and a
+> rehearsal checklist.
+>
+> Technical view: [docs/investor-demo.md](docs/investor-demo.md) is the two-part SETUP and
+> SIMULATION script for the underlying city workbench with bounded AI cognition from a local
+> Ollama `qwen2.5:7b-instruct` model, including the offline fallback when no model is available.
 >
 > Backup: `scripts/demo_workspace.py` seeds a running workbench with ready-to-open runs; see [Backup: seed a demo workspace](docs/investor-demo.md#backup-seed-a-demo-workspace).
->
-> Guided view: [docs/guided-demo.md](docs/guided-demo.md) is the presenter guide for the plain-language pages at `/guide` in English, German, and Persian, with the online-AI start command, a 10-minute script, and a rehearsal checklist.
 
 ---
 

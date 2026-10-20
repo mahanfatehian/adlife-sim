@@ -9,6 +9,7 @@ refused for the whole module, and the provider runs use ``.invalid`` origins.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -39,6 +40,13 @@ PERSIAN_ONE = chr(0x06F1)
 PERSIAN_ZERO = chr(0x06F0)
 PERSIAN_CLOCK = re.compile(f"{PERSIAN_DIGIT}{{2}}:{PERSIAN_DIGIT}{{2}}")
 READY = 15_000
+# The closed label lists in their canonical order, as guide-story.js orders them.
+LABEL_ORDERS = {
+    "affect": ("annoyed", "skeptical", "neutral", "curious", "positive", "uncertain"),
+    "relevance": ("none", "low", "medium", "high", "uncertain"),
+    "credibility": ("low", "medium", "high", "uncertain"),
+    "salience": ("none", "low", "medium", "high", "uncertain"),
+}
 # Chrome reports every 4xx response as a console error; the error pages expect those.
 RESOURCE_ERROR = "Failed to load resource"
 
@@ -195,7 +203,7 @@ def test_intro_headline_and_funnel_match_the_story_and_page_keys_step(
         total = len(story.key_moments)
         counter = page.locator("#story-counter")
         card = page.locator("#story-card")
-        expect(counter).to_have_text(catalog.text("story.counter", index=0, total=total))
+        expect(counter).to_have_text(catalog.text("story.counter.intro", count=total))
         expect(card).to_be_hidden()
         assert _distinct_canvas_colours(page) >= 4
 
@@ -217,9 +225,9 @@ def test_intro_headline_and_funnel_match_the_story_and_page_keys_step(
         page.keyboard.press("Home")
         expect(page.locator("#story-intro")).to_be_visible()
         expect(card).to_be_hidden()
-        expect(counter).to_have_text(catalog.text("story.counter", index=0, total=total))
+        expect(counter).to_have_text(catalog.text("story.counter.intro", count=total))
         page.keyboard.press("PageUp")
-        expect(counter).to_have_text(catalog.text("story.counter", index=0, total=total))
+        expect(counter).to_have_text(catalog.text("story.counter.intro", count=total))
         assert _distinct_canvas_colours(page) >= 4
         assert session.errors == []
 
@@ -237,6 +245,9 @@ def test_presenter_keys_keep_stepping_after_clicks_and_tab_switches(
         play_text = page.locator("#story-play-text")
 
         def at(index: int) -> None:
+            if index == 0:
+                expect(counter).to_have_text(catalog.text("story.counter.intro", count=total))
+                return
             expect(counter).to_have_text(catalog.text("story.counter", index=index, total=total))
 
         page.locator("#story-next").click()
@@ -358,6 +369,149 @@ def test_map_positions_follow_the_story_tracks_at_every_moment(
         assert session.errors == []
 
 
+def _expected_places(story: RunStoryV1) -> str:
+    roles: dict[str, set[str]] = {}
+    for person in story.people:
+        anchors = person.anchors
+        for role, node_id in (
+            ("home", anchors.home),
+            ("work", anchors.work),
+            ("leisure", anchors.leisure),
+        ):
+            roles.setdefault(node_id, set()).add(role)
+    order = ("home", "work", "leisure")
+    return " ".join(
+        f"{node_id}:{'+'.join(role for role in order if role in found)}"
+        for node_id, found in sorted(roles.items())
+    )
+
+
+@pytest.mark.parametrize("lang", ["en", "fa"])
+def test_the_map_marks_every_place_and_the_legend_explains_the_marks(
+    browser: Browser, site: _Site, lang: str
+) -> None:
+    run_id = site.run_ids["mock"]
+    catalog = load_catalog(lang)
+    words = [catalog.text(f"story.map.place.{role}") for role in ("home", "work", "leisure")]
+    with _session(browser) as session:
+        page = session.page
+        _open(page, site, run_id, lang=lang)
+        story = _story(page, site, run_id)
+        legend = page.locator("#story-legend-places > li")
+        expect(legend).to_have_text(words)
+        expect(legend.locator("svg")).to_have_count(3)
+        # The legend draws the same glyphs as the map.
+        same = page.evaluate(
+            """async () => {
+              const { PLACE_GLYPHS, PLACE_ROLES } = await import('/guide/assets/guide-map.js');
+              return PLACE_ROLES.map((role) => {
+                const item = document.querySelector(`#story-legend-places [data-place="${role}"]`);
+                const path = item.querySelector('path');
+                return path.getAttribute('d') === PLACE_GLYPHS[role][0]
+                  && path.getAttribute('fill-rule') === PLACE_GLYPHS[role][1];
+              });
+            }"""
+        )
+        assert same == [True, True, True]
+        canvas = page.locator("#story-map")
+        expected = _expected_places(story)
+        assert "home" in expected and "work" in expected and "leisure" in expected
+        expect(canvas).to_have_attribute("data-places", expected)
+        # On a 1280 x 720 projector every English place label shows its words. In Persian
+        # the clock takes the left corner, so one crowded label may keep its glyphs only.
+        worded = int(canvas.get_attribute("data-places-worded") or "0")
+        places = len(expected.split())
+        assert worded == places if lang == "en" else places - 1 <= worded <= places
+        texts = page.evaluate(
+            """async () => {
+              const { placeLabel, PLACE_ROLES } = await import('/guide/assets/guide-map.js');
+              return PLACE_ROLES.map((role) => placeLabel(role));
+            }"""
+        )
+        assert texts == words
+        page.keyboard.press("PageDown")
+        expect(page.locator("#story-card")).to_be_visible()
+        expect(canvas).to_have_attribute("data-places", expected)
+        assert session.errors == []
+
+
+def test_people_at_one_spot_fan_out_and_the_highlighted_person_keeps_the_spot(
+    browser: Browser, site: _Site
+) -> None:
+    run_id = site.run_ids["mock"]
+    catalog = load_catalog("en")
+    with _session(browser) as session:
+        page = session.page
+        _open(page, site, run_id)
+        story = _story(page, site, run_id)
+        result = page.evaluate(
+            """async (runId) => {
+              const { StoryMap, positionAt } = await import('/guide/assets/guide-map.js');
+              const response = await fetch(`/api/runs/${runId}/story`, { cache: 'no-store' });
+              const story = await response.json();
+              const nodes = new Map(story.map.nodes.map((node) => [node.node_id, node]));
+              const frame = document.createElement('div');
+              frame.style.position = 'fixed';
+              frame.style.top = '0';
+              frame.style.left = '0';
+              frame.style.width = '640px';
+              frame.style.height = '400px';
+              const canvas = document.createElement('canvas');
+              frame.append(canvas);
+              document.body.append(frame);
+              const map = new StoryMap(canvas, story);
+              let closest = Infinity;
+              let shared = 0;
+              let drift = 0;
+              let checked = 0;
+              const bubbles = [];
+              const measure = (minute) => {
+                map.setTime(minute);
+                const { points } = map.layout();
+                const spots = new Set();
+                for (const person of story.people) {
+                  const [x, y] = map.project(...positionAt(person, minute, nodes));
+                  spots.add(`${Math.round(x)}:${Math.round(y)}`);
+                }
+                shared += spots.size < story.people.length ? 1 : 0;
+                for (let a = 0; a < points.length; a += 1) {
+                  for (let b = a + 1; b < points.length; b += 1) {
+                    const gap = Math.hypot(points[a].x - points[b].x, points[a].y - points[b].y);
+                    closest = Math.min(closest, gap);
+                  }
+                }
+                return points;
+              };
+              measure(0);
+              for (const person of story.people) {
+                for (const moment of person.moments) {
+                  map.highlight(person.agent_id, moment.status);
+                  map.setLabel('Someone');
+                  const points = measure(moment.minute);
+                  const focus = points.find((point) => point.focus);
+                  const [x, y] = map.project(...positionAt(person, moment.minute, nodes));
+                  drift = Math.max(drift, Math.hypot(focus.x - x, focus.y - y));
+                  bubbles.push([moment.activity, map.layout().bubble.text]);
+                  checked += 1;
+                }
+              }
+              map.destroy();
+              frame.remove();
+              return { closest, shared, drift, checked, bubbles };
+            }""",
+            run_id,
+        )
+        assert result["checked"] == sum(len(person.moments) for person in story.people)
+        # Several people share a home or a workplace; each still gets a marker of its own.
+        assert result["shared"] > 0
+        assert result["closest"] >= 12, result["closest"]
+        assert result["drift"] < 1e-6
+        for activity, text in result["bubbles"]:
+            assert text.startswith("Someone · ")
+            assert text.endswith(" · " + catalog.text(f"activity.{activity}")), text
+        assert session.errors == []
+
+
 @pytest.mark.parametrize(("width", "height"), [(1024, 576), (390, 844)])
 def test_persian_story_runs_right_to_left_with_persian_digits(
     browser: Browser, site: _Site, width: int, height: int
@@ -374,7 +528,8 @@ def test_persian_story_runs_right_to_left_with_persian_digits(
         counter = page.locator("#story-counter")
         clock = page.locator("#story-clock")
         intro_counter = counter.text_content() or ""
-        assert PERSIAN_ZERO in intro_counter
+        # The opening names how many moments follow, in Persian digits.
+        assert any(PERSIAN_ZERO <= character <= chr(0x06F9) for character in intro_counter)
         assert ASCII_DIGITS.search(intro_counter) is None
         page.keyboard.press("ArrowLeft")
         expect(page.locator("#story-card")).to_be_visible()
@@ -419,6 +574,32 @@ def test_follow_limits_the_steps_to_one_person_and_the_summary_funnel_matches(
         expect(page.locator("#story-pane-story")).to_be_hidden()
         expect(page.locator("#story-tab-people")).to_have_attribute("aria-selected", "true")
         expect(page.locator(".story-person")).to_have_count(len(story.people))
+        # A person's label summary names every tied value, so different answers are not
+        # reported as one.
+        for someone in story.people:
+            if someone.label_answers < 2:
+                continue
+            answers = [
+                moment.labels
+                for moment in someone.moments
+                if moment.labels is not None and moment.status in {"answered", "reused", "practice"}
+            ]
+            expected = []
+            for dimension, order in LABEL_ORDERS.items():
+                counts = Counter(getattr(labels, dimension) for labels in answers)
+                top = max(counts.values())
+                tied = [value for value in order if counts[value] == top]
+                expected.append(
+                    catalog.text(
+                        "label.chip",
+                        label=catalog.text(f"label.{dimension}"),
+                        value=" / ".join(catalog.text(f"{dimension}.{value}") for value in tied),
+                    )
+                )
+            card_of = page.locator(".story-person").filter(
+                has=page.locator(f".story-follow[data-agent='{someone.agent_id}']")
+            )
+            expect(card_of.locator(".story-person-labels .g-chip")).to_have_text(expected)
         page.locator(f".story-follow[data-agent='{person.agent_id}']").click()
         expect(page.locator("#story-pane-story")).to_be_visible()
         option = page.locator("#story-filter-person")

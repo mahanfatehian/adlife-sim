@@ -31,7 +31,30 @@ right.
 
 ### 1. Start the server with the online AI (about 5 seconds)
 
-Open a PowerShell window in the repository folder and run:
+Open a PowerShell window in the repository folder and run the start script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-guided-demo.ps1
+```
+
+It asks for the GapGPT key without showing it (paste it and press Enter), starts the server
+on port 50050 with the folder `.\demo-guided`, and opens the start page in the default
+browser. The key stays in the script's process only and is removed when the server stops.
+Expected: "Online AI: gapgpt at https://api.gapgpt.app/v1; …", then
+`city workbench: http://127.0.0.1:50050/guide`, then "Ready: http://127.0.0.1:50050/guide",
+and the start page opens. If the default browser is not Chrome or Edge, copy that address
+into one of them. Leave the window open: Ctrl+C stops the server.
+
+Options:
+
+- Press Enter without a key, or add `-PracticeOnly`, to start with practice answers only.
+  If `GAPGPT_API_KEY` is already set in the window, pressing Enter uses that key instead.
+- `-Workspace .\demo-guided-rehearsal -Port 48080` rehearses with a separate folder and port.
+- `-NoBrowser` skips opening the browser.
+- `-ProviderName`, `-ProviderUrl`, and `-KeyVariable` select another OpenAI-compatible service
+  (see [Another OpenAI-compatible service](#another-openai-compatible-service)).
+
+The same start by hand, if scripts are blocked on the computer:
 
 ```powershell
 $secureKey = Read-Host "GapGPT API key" -AsSecureString
@@ -47,9 +70,9 @@ uv run adlife city-workbench --workspace .\demo-guided --port 50050 `
 - The third command starts the server, approves the GapGPT address for this process only,
   and tells the server which environment variable holds that service's key.
 
-Expected: a single line, `city workbench: http://127.0.0.1:50050/guide`. Leave the window
-open (Ctrl+C stops the server). The command never opens a browser itself: open that address
-in Chrome or Edge.
+Expected from the manual start: a single line, `city workbench: http://127.0.0.1:50050/guide`.
+Leave the window open (Ctrl+C stops the server). The manual command never opens a browser
+itself: open that address in Chrome or Edge.
 
 - Use the fresh folder `.\demo-guided`. Runs saved by earlier development builds of this
   format are refused by this version, so an older folder such as `.\demo-workbench` may list
@@ -74,7 +97,8 @@ A passing test is remembered only while this server process runs. After a restar
 again, or let **Test the AI and run** on the setup page run the test before it starts.
 
 If the card says "This service needs an API key.", the server was started without the key:
-stop it, repeat step 1 in the same window, and reload the page. Saving the key on this
+stop it with Ctrl+C, start it again with the start script and paste the key when it asks,
+then reload the page. Saving the key on this
 computer is a separate opt-in under **Or save the key on this computer** (paste it, then
 **Save key**). It stores the key in Windows Credential Manager, under a name that contains
 `adlife.city-provider.v1`, until you remove it there. The environment variable is the
@@ -82,8 +106,9 @@ recommended path because nothing outlives the PowerShell window.
 
 ### 3. Prepare the room
 
-- Press Ctrl and + until the page fills the projector (125% suits a 1280×720 projector).
-  Every guided page reflows without sideways scrolling.
+- Press Ctrl and + until the page fills the projector. Every guided page reflows without
+  sideways scrolling. 125% suits the start, setup, and report pages on a 1280×720 projector;
+  keep the story page at 100–110% so a whole moment card, with its bars, fits beside the map.
 - A presentation clicker works on the story page: it sends Page Down and Page Up.
 - If the computer has animations turned off, the preflight says so and the story steps from
   moment to moment without motion. Nothing else changes.
@@ -132,7 +157,8 @@ rules part repeats exactly; the AI's labels can differ from run to run.
   noticed ad (reaction, relevance, believability, and how much it stood out); a fixed formula
   turns those labels into a separate "with AI" score, and the rules-only score stays next to
   it.
-- Point at the green preflight: AI connection tested, backups saved.
+- Scroll down to **Ready to present?** and point at the green ticks: AI connection tested,
+  backups saved.
 - Click **فارسی**: the page turns right to left with Persian digits. Click **English** to
   return.
 
@@ -146,7 +172,7 @@ rules part repeats exactly; the AI's labels can differ from run to run.
 - Card 3 keeps **Online AI** with the **AI limit** of 10 questions. Only noticed ads are sent,
   earliest first; noticed ads over the limit get no AI effect.
 - Leave **More options** closed: it holds tested defaults (one simulated day, ads from 07:00
-  to 21:00, an automatic random seed).
+  to 21:00, and seed 42 chosen automatically; the summary bar shows it).
 - Click **Run simulation**.
 
 ### 1:30–2:15 · Progress
@@ -156,8 +182,10 @@ rules part repeats exactly; the AI's labels can differ from run to run.
 - Say what the AI does here: for each noticed ad it only picks four labels from fixed lists.
   It writes no text, gives no numbers, and cannot move anyone or decide who notices an ad.
 - Answers arrive in small groups, so the counter can pause while the elapsed time keeps
-  running. With GapGPT a 10-question run took about 30 seconds in rehearsal. A question that
-  fails counts as "no AI effect" and the story shows why.
+  running. With GapGPT a 10-question run took about one minute in rehearsal. A question that
+  fails counts as "no AI effect" and the story shows why. The counter counts every finished
+  question, failed ones included; the line under "Done" says how many the AI answered and how
+  many failed.
 - When it reads "Done", focus moves to **Watch the story**: click it.
 
 ### 2:15–6:30 · Story
@@ -165,6 +193,9 @@ rules part repeats exactly; the AI's labels can differ from run to run.
 - The opening shows the headline and a five-number funnel: 8 people spent one simulated day in
   Fictional Grid City; the ad was shown 27 times and noticed 13 times. Press Page Down or click
   **Play the story**.
+- The story steps through 12 **Key moments**; **All ad moments** next to it shows all 27. The
+  first one (Veyra #5 at 07:07) is an ad that was shown but not noticed, so no AI is involved:
+  say so and move on.
 - Each moment card is one chain, read top to bottom: what happened ("07:17 · Veyra #6 noticed
   the Lumen Pocket ad on the phone at home."), the **Rules only** row, the AI labels, and the
   **With AI** row, with paired bars for liking and ad memory. **How was this computed?** opens
@@ -175,11 +206,16 @@ rules part repeats exactly; the AI's labels can differ from run to run.
   and compare the labels of a Veyra moment with those of a Lumo moment. The labels come from
   the AI, so they can differ from the rehearsal.
 - Stop at the first moment marked **Over the AI limit** (Veyra #8 at 20:18): it was noticed,
-  but the 10 questions were used up, so it gets no AI effect and the rules-only result stands.
+  but the 10 questions were used up, so it gets no AI effect: the rules' change is applied to
+  both rows. The two rows still show different values because of this person's earlier AI
+  moments.
 - Open the **People** tab: Lumo #3's card shows that this person never noticed the ad, so
   nothing changed for them. "Follow" on a card limits the story to that person.
 - Open the **Summary** tab: the funnel from ad moments to AI answers used, what the AI said
-  across all answers, and the averages with rules only and with AI side by side.
+  across all answers, and the averages with rules only and with AI side by side. All 13
+  noticed ads could go to the AI, but only the first 10 were sent (the AI limit); the other 3
+  are the over-the-limit moments. The AI line counts requests to the service, which can be more
+  than the questions when a request was retried or an unusable answer was asked again.
 
 Keys on the story page: Page Down or the arrow in reading direction for the next moment, Page
 Up for the previous one, Space to play or pause, Home to return to the opening, and 1, 2, or 3
@@ -199,7 +235,9 @@ for the tabs.
 ### 8:30–10:00 · Technical view
 
 - Take questions. **Technical view** opens the saved-run inspector in a new tab with the
-  per-response trace, the exact formula, the frozen inputs, and their fingerprints.
+  per-response trace, the exact formula, the frozen inputs, and their fingerprints. It uses the
+  model's own words: "saved requests" are all noticed ads (13), "funded" are the questions sent
+  to the AI (10), and "budget skipped" are the moments over the AI limit (3).
 - To show that a saved run is checkable offline, run
   `uv run adlife city-replay .\demo-guided <run-id>` in a second PowerShell window. It
   recomputes the saved run and never calls the AI.
@@ -215,6 +253,11 @@ The connection test and the setup page explain every failure in plain words:
 | "Not connected: no answer in time." | Test again; if it keeps happening, use practice answers. |
 | "Not connected: the service limited the number of requests." | Wait a minute, then test again or choose a smaller AI limit. |
 | "Not connected: the answer did not use the required labels." | Test again; if it repeats, choose another model or use practice answers. |
+| "Not connected: the service had an internal error." | Try again in a minute; if it repeats, use practice answers. |
+| "Not connected: the answer format cannot be used." or "…the answer was too large." | Check the model name (`gapgpt-qwen-3.6`), then test again. |
+| "Too many tests in one minute. Wait a minute and try again." | Wait a minute. Meanwhile, open a backup. |
+| "Another AI operation is running. Wait a moment and try again." | Wait for the running test or run to finish. |
+| "The test could not run. The technical view shows details." | Test again once; otherwise use practice answers and look at the details after the talk. |
 | "Online AI is not set up on this server." | Stop the server and start it again with step 1. |
 | "The local server did not answer. Is its terminal window still open?" | Start the server again with step 1 and reload the page. |
 
@@ -226,7 +269,30 @@ If the AI cannot be reached in time, do not debug on stage:
 - Or open a backup: on the start page, **Saved runs**, then **Open story** or **Report**.
 - If the AI fails during a live run, the run still completes: failed questions show
   **AI failed** with the reason and get no AI effect. **Stop** cancels a run before it is
-  saved; it asks once more before stopping.
+  saved: it first asks "Stop the simulation? Nothing will be saved. Select again to stop.";
+  click it again within 5 seconds to stop.
+
+## Another OpenAI-compatible service
+
+The guide works with any service that answers the OpenAI Chat Completions API with
+JSON-schema structured output; the exact wire contract is in the
+[CLI reference](cli-reference.md). Approve the service's exact base URL and name the
+environment variable that will hold its key:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-guided-demo.ps1 `
+  -ProviderName myai -ProviderUrl https://api.example.com/v1 -KeyVariable MYAI_API_KEY
+```
+
+- The name is lowercase letters, digits, and hyphens; the address must start with
+  `https://` and end where the service expects `/chat/completions` to follow.
+- On the setup page, card 3 shows **Online AI** with that service. Only GapGPT's model is
+  filled in for you: type the exact model name the service expects under **Model**, then
+  **Test connection**. Model thinking is turned off automatically for Qwen models.
+- AdLife was rehearsed with GapGPT's `gapgpt-qwen-3.6`. Before using another service in front
+  of an audience, pass its connection test and complete one 10-question run.
+- **AI on this computer** needs no start option: it uses a local Ollama server on this
+  computer when one is running with the model downloaded.
 
 ## Rehearsal checklist
 
@@ -238,6 +304,8 @@ If the AI cannot be reached in time, do not debug on stage:
 4. The zoom is set for the room, and the story page fits the projector without scrolling.
 5. Never touch `.\demo-workbench` or port 50050 from the development laptop while it is
    serving.
+6. After the last code change (a `git pull` or an edit), stop the server and start it again
+   with the start script. Never present from a server that was running while files changed.
 
 ## What to say, and what not to say
 

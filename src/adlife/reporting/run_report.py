@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import math
 import re
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
@@ -81,6 +82,8 @@ class RenderedRunReport:
 class _Chip:
     dimension: str
     key: str
+    # Further values tied with ``key`` for the most common label ("skeptical / annoyed").
+    also: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +339,31 @@ def _chips(labels: StoryLabels | None) -> tuple[_Chip, ...]:
     )
 
 
+def _mode_chips(person: StoryPerson) -> tuple[_Chip, ...]:
+    """The most common label per dimension over the moments listed in the story; a tie
+    names every tied value, so two different answers are never reported as one."""
+    labelled = [
+        moment.labels
+        for moment in person.moments
+        if moment.labels is not None and moment.status in {"answered", "reused", "practice"}
+    ]
+    if not labelled:
+        return _chips(person.label_mode)
+    chips: list[_Chip] = []
+    for name in _DIMENSIONS:
+        counts = Counter(getattr(labels, name) for labels in labelled)
+        top = max(counts.values())
+        tied = [value for value in _ORDERS[name] if counts[value] == top]
+        chips.append(
+            _Chip(
+                dimension=name,
+                key=f"{name}.{tied[0]}",
+                also=tuple(f"{name}.{value}" for value in tied[1:]),
+            )
+        )
+    return tuple(chips)
+
+
 def _moment(moment: StoryMoment, *, practice: bool) -> _Moment:
     status = moment.status
     set_aside = status in _SET_ASIDE
@@ -399,7 +427,7 @@ def _person(person: StoryPerson, *, practice: bool) -> _Person:
         summary=person.summary,
         label_answers=person.label_answers,
         # One answer's labels already show on its moment; a summary only helps from two on.
-        label_mode=_chips(person.label_mode) if person.label_answers >= 2 else (),
+        label_mode=_mode_chips(person) if person.label_answers >= 2 else (),
         moments=tuple(_moment(moment, practice=practice) for moment in listed),
         more=rest,
         end=_end(person),

@@ -974,14 +974,15 @@ def _story_moment(
         (before.rules.liking, before.rules.memory),
         (after.rules.liking, after.rules.memory),
     )
-    if effect.liking == "same" and effect.memory == "same":
-        with_ai_line = message_ref("story.moment.with_ai_same")
-    else:
-        with_ai_line = _state_line(
-            "story.moment.with_ai_line",
-            (before.with_ai.liking, before.with_ai.memory),
-            (after.with_ai.liking, after.with_ai.memory),
-        )
+    # The values always show: earlier AI moments can leave the two tracks apart even when this
+    # moment changed both the same way.
+    with_ai_line = _state_line(
+        "story.moment.with_ai_same"
+        if effect.liking == "same" and effect.memory == "same"
+        else "story.moment.with_ai_line",
+        (before.with_ai.liking, before.with_ai.memory),
+        (after.with_ai.liking, after.with_ai.memory),
+    )
     return StoryMoment(
         moment_id=moment.moment_id,
         minute=opportunity.model_minute,

@@ -24,7 +24,7 @@ reports/
 demo-study/
 # The live-demo workbench workspace from docs/investor-demo.md
 demo-workbench/
-# The guided-demo workspace from docs/guided-demo.md
-demo-guided/
+# The guided-demo workspace from docs/guided-demo.md, and renamed rehearsal copies of it
+demo-guided*/
 
 .freebuff/

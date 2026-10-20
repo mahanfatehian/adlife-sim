@@ -482,7 +482,11 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             expect(page.locator("#conn-key-needed")).to_be_focused()
             expect(page.locator("#setup-run-note")).to_have_text(_say("setup.blocked.key"))
             expect(page.locator("#conn-key-needed")).to_contain_text(
-                _say("connection.key.env_hint", variable="GAPGPT_API_KEY")
+                _say(
+                    "connection.key.env_hint",
+                    script="scripts\\start-guided-demo.ps1",
+                    variable="GAPGPT_API_KEY",
+                )
             )
             assert checks == []
             assert providers == []

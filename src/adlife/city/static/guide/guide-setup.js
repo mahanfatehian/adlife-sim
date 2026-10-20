@@ -477,7 +477,8 @@ function renderAi() {
   });
   byId("ai-explain").textContent = t("setup.ai.limit.explain", {
     per_person: PER_PERSON,
-    per_run: state.capabilities?.selected_requests_per_run ?? 60,
+    // What is sent is bounded by the chosen limit, not only by the server's selection cap.
+    per_run: Math.min(state.limit, state.capabilities?.selected_requests_per_run ?? 60),
   });
   byId("ai-cache").hidden = !(provider() && !state.seedAuto && takenSeeds().has(state.seed));
 }
@@ -533,7 +534,10 @@ function renderSummary() {
       from: { clock: phone ? state.from : ROADSIDE_START },
       until: { clock: phone ? state.until : ROADSIDE_END },
       cap: { int: phone ? state.cap : ROADSIDE.frequency_cap_per_agent_per_day },
-      seed: idParam(state.seed, validSeed(state.seed)),
+      // A short number reads in the page's digits (Persian too); anything else stays an id.
+      seed: /^[0-9]{1,4}$/.test(state.seed)
+        ? { int: Number(state.seed) }
+        : idParam(state.seed, validSeed(state.seed)),
       run_id: idParam(state.runId, RUN_ID_PATTERN.test(state.runId)),
     }),
   );

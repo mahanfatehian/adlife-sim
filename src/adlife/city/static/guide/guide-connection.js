@@ -518,6 +518,8 @@ class Connection {
         d.statusBlock,
       );
     }
+    // Until the provider listing arrives only the source choices show; update() decides the rest.
+    for (const node of [d.practiceBadge, d.noRemote, d.providerBlock, d.statusBlock]) node.hidden = true;
 
     this.sourceGroup = radioGroup(d.sources, { onSelect: (value) => this.selectSource(value) });
     d.model.addEventListener("input", () => this.onModelInput());
@@ -1170,7 +1172,12 @@ class Connection {
         typeof origin.environment_variable === "string" && origin.environment_variable !== ""
           ? origin.environment_variable
           : KEY_VARIABLE_FALLBACK;
-      d.keyEnv.append(message("connection.key.env_hint", { variable: { id: variable } }));
+      d.keyEnv.append(
+      message("connection.key.env_hint", {
+        script: { id: "scripts\\start-guided-demo.ps1" },
+        variable: { id: variable },
+      }),
+    );
     }
     d.keySave.disabled = locked;
     d.keyInput.disabled = locked;

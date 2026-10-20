@@ -415,6 +415,8 @@ function renderHeader() {
   if (ai.mode === "mock") {
     metaLine.append(h("span", { className: "g-chip g-chip--practice story-not-ai" }, t("common.not_an_ai")));
   }
+  // A practice run still says "AI" in its shared sentences; the note says how to read them.
+  byId("story-practice-note").hidden = ai.mode !== "mock";
   if (typeof ai.model_id === "string" && ai.model_id) {
     metaLine.append(h("span", { className: "story-model g-mono" }, bdi(ai.model_id, "ltr")));
   }
@@ -629,11 +631,29 @@ function barsTable(caption, rows) {
   );
 }
 
-function effectNote(effect) {
+// Name the direction liking actually moved, from the rules-only change and the change with AI.
+function likingEffectKey(effect, rule, applied) {
+  if (effect === "higher") {
+    if (rule >= 0) return "story.effect.liking.rose_more";
+    return applied <= 0 ? "story.effect.liking.fell_less" : "story.effect.liking.rose_not_fell";
+  }
+  if (rule <= 0) return "story.effect.liking.fell_more";
+  return applied >= 0 ? "story.effect.liking.rose_less" : "story.effect.liking.fell_not_rose";
+}
+
+function effectNote(moment) {
+  const effect = moment.effect;
   if (!effect || (effect.liking === "same" && effect.memory === "same")) {
     return null;
   }
-  const parts = [t(`story.effect.liking.${effect.liking}`)];
+  const parts = [];
+  if (effect.liking !== "same" && moment.rule_delta && moment.applied_delta) {
+    parts.push(
+      t(likingEffectKey(effect.liking, moment.rule_delta.liking, moment.applied_delta.liking)),
+    );
+  } else if (effect.liking === "same") {
+    parts.push(t("story.effect.liking.same"));
+  }
   if (effect.memory !== "same") {
     parts.push(t(`story.effect.memory.${effect.memory}`));
   }
@@ -669,7 +689,7 @@ function withLane(moment) {
       ]),
     );
   }
-  const note = effectNote(moment.effect);
+  const note = effectNote(moment);
   if (note) {
     lane.append(note);
   }
@@ -753,6 +773,35 @@ function mathDisclosure(moment) {
       ),
     );
   }
+  // How each change moves the values: liking adds it; ad memory moves that share of the
+  // remaining way to 1 (the simulator's update rule), so the numbers above add up.
+  for (const [key, track, change] of [
+    ["story.math.update.rules", "rules", moment.rule_delta],
+    ["story.math.update.with_ai", "with_ai", moment.applied_delta],
+  ]) {
+    if (!change || !moment.before || !moment.after) continue;
+    body.append(
+      h(
+        "p",
+        { className: "story-math-update" },
+        resolveNodes(
+          {
+            key,
+            params: {
+              liking_before: three(moment.before[track].liking),
+              liking_change: three(change.liking),
+              liking_after: three(moment.after[track].liking),
+              memory_before: three(moment.before[track].memory),
+              memory_change: three(change.memory),
+              memory_after: three(moment.after[track].memory),
+              one: { int: 1 },
+            },
+          },
+          state.ctx,
+        ),
+      ),
+    );
+  }
   details.append(body);
   return details;
 }
@@ -782,6 +831,27 @@ function renderCard(step) {
 
 // ---------------------------------------------------------------- People tab
 
+// The most common value of one label over this person's answered moments; a tie names every
+// tied value ("skeptical / annoyed"), so two different answers are never shown as one.
+function modeText(person, dimension) {
+  const counts = new Map();
+  for (const moment of person.moments) {
+    if (moment.labels && ["answered", "reused", "practice"].includes(moment.status)) {
+      const value = moment.labels[dimension];
+      counts.set(value, (counts.get(value) || 0) + 1);
+    }
+  }
+  if (counts.size === 0) {
+    return chipText(dimension, person.label_mode[dimension]);
+  }
+  const top = Math.max(...counts.values());
+  const tied = VALUES[dimension].filter((value) => counts.get(value) === top);
+  return t("label.chip", {
+    label: dimensionLabel(dimension),
+    value: tied.map((value) => t(`${dimension}.${value}`)).join(" / "),
+  });
+}
+
 function personLabels(person) {
   if (!person.label_mode) {
     return null;
@@ -799,7 +869,7 @@ function personLabels(person) {
       "ul",
       { className: "g-chips" },
       ...DIMENSIONS.map((dimension) =>
-        h("li", { className: `g-chip g-chip--${tone}` }, chipText(dimension, person.label_mode[dimension])),
+        h("li", { className: `g-chip g-chip--${tone}` }, modeText(person, dimension)),
       ),
     ),
   );
@@ -1101,6 +1171,16 @@ function coverageLines() {
       ),
     ),
   ];
+  if (statuses.over_limit > 0) {
+    // The drop from "chosen" to "sent" in the funnel above is the AI limit; say so.
+    lines.unshift(
+      h(
+        "p",
+        { className: "story-funnel-over" },
+        tn("story.summary.funnel.over", statuses.over_limit, { limit: ai.funded_limit }),
+      ),
+    );
+  }
   if (typeof ai.model_id === "string" && ai.model_id) {
     const usage = ai.usage_this_run;
     lines.push(
@@ -1318,7 +1398,10 @@ function arrived() {
 function updateControls() {
   const total = state.steps.length;
   const index = state.index;
-  const counter = t("story.counter", { index: Math.max(0, index + 1), total });
+  // The opening is not a moment, so it names how many follow instead of "moment 0".
+  const counter = index < 0
+    ? tn("story.counter.intro", total)
+    : t("story.counter", { index: index + 1, total });
   byId("story-counter").textContent = counter;
   const slider = byId("story-slider");
   slider.max = String(Math.max(0, total - 1));

@@ -488,6 +488,16 @@ main { padding-block: 0 24px; }
   font-size: .9375rem;
 }
 
+.note--practice {
+  margin-block: 12px 0;
+  padding-block: 8px;
+  padding-inline: 12px;
+  border-inline-start: 4px solid var(--practice);
+  border-radius: 6px;
+  background: var(--practice-tint);
+  color: var(--ink);
+}
+
 .notes {
   display: grid;
   gap: 4px;

@@ -19,8 +19,9 @@
 {%- macro city_name() -%}
 {%- if view.city_key %}{{ tr(view.city_key) }}{% else %}{{ bdi_text(view.city_name) }}{% endif -%}
 {%- endmacro -%}
+{%- macro chip_value(chip) -%}{{ tr(chip.key) }}{% for key in chip.also %} / {{ tr(key) }}{% endfor %}{%- endmacro -%}
 {%- macro chips(items, tone, set_aside) -%}
-<ul class="chips">{% for chip in items %}<li class="chip chip--{{ tone }}">{{ tr("label.chip", label=dim_label(chip.dimension), value=tr(chip.key)) }}</li>{% endfor %}{% if set_aside %}<li class="chip chip--note">{{ tr("story.labels.set_aside") }}</li>{% endif %}</ul>
+<ul class="chips">{% for chip in items %}<li class="chip chip--{{ tone }}">{{ tr("label.chip", label=dim_label(chip.dimension), value=chip_value(chip)) }}</li>{% endfor %}{% if set_aside %}<li class="chip chip--note">{{ tr("story.labels.set_aside") }}</li>{% endif %}</ul>
 {%- endmacro -%}
 {%- macro bar(tone, width, diverging) -%}
 <span class="bar bar--{{ tone }}{% if diverging %} bar--dv{% endif %}" aria-hidden="true"><span class="fill {{ width }}"></span></span>
@@ -32,6 +33,8 @@
 {%- set c = view.coverage -%}
 {{ tr("story.summary.coverage", noticed=c.noticed, chosen=c.chosen, sent=c.sent, answered=c.answered, reused=c.reused, failed=c.failed, set_aside=c.set_aside, over_limit=c.over_limit, not_chosen=c.not_chosen) }}
 {%- endmacro -%}
+{#- A middle dot beside Persian digits reads as a zero, so Persian separates with its comma. -#}
+{%- set dot = "، " if lang == "fa" else " · " -%}
 <!doctype html>
 <html lang="{{ lang }}" dir="{{ dir }}">
 <head>
@@ -52,12 +55,13 @@
 <div class="actions"><a class="action" href="{{ links.story }}"><span class="dir" aria-hidden="true">&#8592;</span> {{ tr("report.back") }}</a> <a class="action action--primary" href="{{ links.download }}" download>{{ tr("report.download") }}</a> <a class="action" href="{{ links.technical }}" target="_blank" rel="noopener noreferrer">{{ tr("common.technical_view") }}<span class="visually-hidden">{{ tr("common.list_separator") }}{{ tr("common.new_tab") }}</span></a></div>
 </div>
 {% endif -%}
-<p class="eyebrow">{{ tr("common.app") }} · {{ tr("common.guide") }}</p>
+<p class="eyebrow">{{ tr("common.app") }}{{ dot }}{{ tr("common.guide") }}</p>
 <h1>{{ tr("report.title") }}</h1>
 <p class="subtitle">{{ tr("report.subtitle", product=view.product, people=tr("common.people", count=story.run.people_count), days=tr("common.days", count=story.run.days), city=city_name()) }}</p>
-<p class="ad"><bdi dir="auto">{{ view.product }}</bdi> · {% if view.category_key %}{{ tr(view.category_key) }}{% else %}{{ bdi_text(view.category) }}{% endif %} · {% if view.message_key %}{{ tr(view.message_key) }}{% else %}{{ bdi_text(view.message) }}{% endif %}</p>
+<p class="ad"><bdi dir="auto">{{ view.product }}</bdi>{{ dot }}{% if view.category_key %}{{ tr(view.category_key) }}{% else %}{{ bdi_text(view.category) }}{% endif %}{{ dot }}{% if view.message_key %}{{ tr(view.message_key) }}{% else %}{{ bdi_text(view.message) }}{% endif %}</p>
 <p class="meta"><span class="tag tag--{{ view.tone }}">{% if view.provider %}{{ tr(view.ai_line_key, model=bdi_id(story.ai.model_id)) }}{% else %}{{ tr(view.ai_line_key) }}{% endif %}</span> <span class="run">{{ tr("report.run", run_id=bdi_id(story.run.run_id)) }}</span> <span class="tag tag--fictional">{{ tr("limits.fictional") }}</span></p>
-</header>
+{% if story.ai.mode == "mock" %}<p class="note note--practice">{{ tr("story.practice.note") }}</p>
+{% endif %}</header>
 <nav class="toc" id="contents" aria-labelledby="contents-title">
 <h2 id="contents-title">{{ tr("report.toc") }}</h2>
 <ol>
@@ -80,7 +84,8 @@
 <ol class="funnel" aria-labelledby="funnel-title">
 {% for cell in view.funnel %}<li class="funnel-cell funnel-cell--{{ cell.tone }}"><span class="funnel-value">{{ count(cell.value) }}</span><span class="funnel-label">{{ funnel_label(cell.name) }}</span>{{ bar(cell.tone, cell.width, false) }}</li>
 {% endfor %}</ol>
-</section>
+{% if view.provider and view.coverage.over_limit > 0 %}<p class="note">{{ tr("story.summary.funnel.over", count=view.coverage.over_limit, limit=story.ai.funded_limit) }}</p>
+{% endif %}</section>
 <section class="section" id="how" aria-labelledby="how-title">
 <h2 id="how-title">{{ tr("report.section.how") }}</h2>
 <ol class="how">

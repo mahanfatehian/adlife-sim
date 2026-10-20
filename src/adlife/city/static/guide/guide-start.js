@@ -63,7 +63,7 @@ function technicalLink(path) {
   );
 }
 
-function runCard(run, products) {
+function runCard(run, products, models) {
   const v10 = run.run_schema_version === 10;
   const match = PRODUCT_SCENARIO.exec(run.scenario_id ?? "");
   const product = match === null ? undefined : products.get(TEMPLATE_BY_KEY[match[1]]);
@@ -76,7 +76,9 @@ function runCard(run, products) {
     }),
   ];
   if (typeof run.provider_profile_id === "string" && run.provider_profile_id !== "") {
-    meta.push(bdi(run.provider_profile_id, "ltr"));
+    // The audience knows the model's name, not the profile the guide stored it under.
+    const model = models.get(`${run.provider_profile_id}@${run.provider_revision_sha256}`);
+    meta.push(bdi(model ?? run.provider_profile_id, "ltr"));
   }
   const counts = [tn("start.runs.noticed", run.noticed_count ?? 0)];
   if (v10 && PROVIDER_MODES.has(run.cognition_mode)) {
@@ -114,12 +116,14 @@ function runCard(run, products) {
   return card;
 }
 
-const shelf = { ordered: [], products: new Map() };
+const shelf = { ordered: [], products: new Map(), models: new Map() };
 
 function showRuns(count) {
   const list = byId("runs-list");
   clear(list);
-  list.append(...shelf.ordered.slice(0, count).map((run) => runCard(run, shelf.products)));
+  list.append(
+    ...shelf.ordered.slice(0, count).map((run) => runCard(run, shelf.products, shelf.models)),
+  );
   byId("runs-all").hidden = shelf.ordered.length <= count;
 }
 
@@ -128,13 +132,14 @@ function showAllRuns() {
   byId("runs-list").querySelectorAll(".setup-run")[SHOWN_RUNS]?.querySelector("a")?.focus();
 }
 
-function renderRuns(runs, products) {
+function renderRuns(runs, products, models) {
   const status = byId("runs-status");
   const usable = runs.filter((run) => RUN_ID.test(run?.run_id ?? ""));
   const guided = usable.filter(isGuided).sort((left, right) => byRunId(right, left));
   const others = usable.filter((run) => !isGuided(run)).sort(byRunId);
   shelf.ordered = [...guided, ...others];
   shelf.products = products;
+  shelf.models = models;
   status.classList.remove("g-loading");
   if (shelf.ordered.length === 0) {
     status.textContent = t("start.runs.empty");
@@ -151,9 +156,10 @@ function renderRuns(runs, products) {
 }
 
 async function loadRuns() {
-  const [runs, catalog] = await Promise.all([
+  const [runs, catalog, providers] = await Promise.all([
     fetchAllRuns(),
     getJson("/api/creative-templates").catch(() => null),
+    getJson("/api/providers").catch(() => null),
   ]);
   const products = new Map();
   for (const template of Array.isArray(catalog?.templates) ? catalog.templates : []) {
@@ -161,7 +167,13 @@ async function loadRuns() {
       products.set(template.template_id, template.product_name);
     }
   }
-  renderRuns(runs, products);
+  const models = new Map();
+  for (const profile of Array.isArray(providers?.profiles) ? providers.profiles : []) {
+    if (typeof profile?.model_id === "string" && typeof profile.revision_sha256 === "string") {
+      models.set(`${profile.profile_id}@${profile.revision_sha256}`, profile.model_id);
+    }
+  }
+  renderRuns(runs, products, models);
 }
 
 async function main() {

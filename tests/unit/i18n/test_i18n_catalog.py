@@ -182,8 +182,11 @@ def test_packaged_catalogs_load_and_are_cached(language: str) -> None:
 
 def test_english_catalog_is_the_normative_appendix_a_key_set() -> None:
     english = load_catalog("en")
-    # Appendix A's 501 keys plus the finished and stopped progress titles.
-    assert len(english.message_keys()) == 503
+    # Appendix A's 501 keys plus the finished and stopped progress titles, the three story map
+    # place labels (home, work, free time), and the rehearsal review's additions: six
+    # direction-specific liking effects in place of "higher" and "lower", two "new values"
+    # arithmetic lines, the opening counter, the practice-run note and the over-limit note.
+    assert len(english.message_keys()) == 515
     assert english.text("progress.title.done") == "Simulation finished"
     assert english.text("progress.answered", resolved=3, total=10) == "3 of 10 answered"
     assert english.text("common.app") == "AdLife Lab"
@@ -194,7 +197,7 @@ def test_english_catalog_is_the_normative_appendix_a_key_set() -> None:
     assert {"common.people", "common.days", "story.headline.shown", "report.person.more"} <= (
         plural_keys
     )
-    assert len(plural_keys) == 21
+    assert len(plural_keys) == 23
 
 
 @pytest.mark.parametrize("language", ["de", "fa"])
@@ -503,7 +506,18 @@ def test_job_failures_story_statuses_and_comparisons_have_messages() -> None:
     _require("compare.", compares)
     _require("story.headline.compare.liking.", compares)
     _require("story.headline.compare.memory.", compares)
-    _require("story.effect.liking.", ("higher", "lower", "same"))
+    _require(
+        "story.effect.liking.",
+        (
+            "rose_more",
+            "fell_less",
+            "rose_not_fell",
+            "rose_less",
+            "fell_more",
+            "fell_not_rose",
+            "same",
+        ),
+    )
     _require("story.effect.memory.", ("higher", "lower", "same"))
     _require("progress.step.", ("simulate", "ask", "ask.mock", "ask.rules", "save", "done"))
     _require("progress.state.", ("waiting", "active", "done", "stopped"))

@@ -29,6 +29,7 @@
 <div class="story-head-text">
 <h1 class="story-title" id="story-title">{{ tr("story.title") }}</h1>
 <p class="story-meta" id="story-meta"></p>
+<div class="g-callout g-callout--warn story-practice-note" id="story-practice-note" hidden><p>{{ tr("story.practice.note") }}</p></div>
 </div>
 <p class="story-head-actions">
 <a class="g-btn g-btn--secondary" id="story-report-link" href="/guide/runs/{{ run_id }}/report?lang={{ lang }}">{{ tr("story.open_report") }}</a>
@@ -60,6 +61,11 @@
 <h2 class="story-legend-title" id="story-legend-title">{{ tr("story.legend.title") }}</h2>
 <ul class="story-legend-list" id="story-legend-list"></ul>
 <p class="story-legend-item story-legend-item--ring"><span class="story-legend-ring" aria-hidden="true"></span>{{ tr("story.legend.highlight") }}</p>
+<ul class="g-legend story-legend-places" id="story-legend-places">
+<li data-place="home"><span class="story-place-mark" aria-hidden="true"><svg class="story-place-icon" viewBox="0 0 16 16" focusable="false"><path fill-rule="evenodd" d="M8 1.6 15.2 8.2h-2v6.4H2.8V8.2H.8zM6.7 14.6v-4h2.6v4z"/></svg></span>{{ tr("story.map.place.home") }}</li>
+<li data-place="work"><span class="story-place-mark" aria-hidden="true"><svg class="story-place-icon" viewBox="0 0 16 16" focusable="false"><path fill-rule="evenodd" d="M5.2 5V3.2C5.2 2.5 5.7 2 6.4 2h3.2c.7 0 1.2.5 1.2 1.2V5h2.8c.7 0 1.2.5 1.2 1.2v6.6c0 .7-.5 1.2-1.2 1.2H2.4c-.7 0-1.2-.5-1.2-1.2V6.2C1.2 5.5 1.7 5 2.4 5zM6.6 5h2.8V3.4H6.6z"/></svg></span>{{ tr("story.map.place.work") }}</li>
+<li data-place="leisure"><span class="story-place-mark" aria-hidden="true"><svg class="story-place-icon" viewBox="0 0 16 16" focusable="false"><path fill-rule="nonzero" d="M8 1 12.6 7h-2.3l3.4 4.6H8.9V15H7.1v-3.4H2.3L5.7 7H3.4z"/></svg></span>{{ tr("story.map.place.leisure") }}</li>
+</ul>
 </div>
 </section>
 <div class="story-narration" id="story-narration">

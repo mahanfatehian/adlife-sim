@@ -263,6 +263,34 @@ main:has(> .story) {
   background: var(--surface);
 }
 
+/* The place labels on the map: the same glyphs in the same small white tag. The list
+   wraps as one group, so the people and the places each keep a line of their own. */
+.story-legend-places {
+  gap: var(--s-1) var(--s-3);
+  min-inline-size: 0;
+}
+
+.story-legend-places > li { gap: var(--s-1); }
+
+.story-place-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+.story-place-icon {
+  inline-size: .875rem;
+  block-size: .875rem;
+  fill: currentColor;
+}
+
 /* Positioned, so visually hidden text inside scrolls and clips with the panel instead of
    stretching the page. */
 .story-narration {
@@ -1177,7 +1205,10 @@ html:lang(fa) .story-card-sentence { line-height: 1.8; }
   .story-map-frame,
   .story-controls,
   .story-intro,
-  .story-clock { border: 1px solid CanvasText; }
+  .story-clock,
+  .story-place-mark { border: 1px solid CanvasText; }
+
+  .story-place-icon { fill: CanvasText; }
 
   .story-tick,
   .story-spread-seg,

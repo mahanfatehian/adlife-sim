@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One-command guided demo start on Windows (2026-10-20)** —
+  `scripts/start-guided-demo.ps1` asks for the online AI key without showing it, keeps it in
+  its own process environment only while the server runs, starts `adlife city-workbench` with
+  the GapGPT address approved (or any OpenAI-compatible service via `-ProviderName`,
+  `-ProviderUrl`, and `-KeyVariable`), opens `/guide` in the default browser, and removes the
+  key from the environment when the server stops. `-PracticeOnly` starts without a key. The
+  progress page now titles a finished run "Simulation finished" (or "Simulation stopped"),
+  Persian pages separate items with «،» instead of a middle dot that reads as a Persian zero
+  beside digits, and the AI connection card shows only the source choices until the provider
+  listing has loaded.
+- **Story map places and presenter-rehearsal fixes (2026-10-20)** — the story map marks every
+  home, workplace, and free-time place with a glyph and a translated label (also in the "Who
+  is who" legend), fans out people who share a spot while the highlighted person keeps it, and
+  the speech bubble adds the activity ("Veyra #8 · 07:39 · at home"). After a rehearsal
+  review: a moment whose change matches the rules now still shows its with-AI values ("(the
+  same change as with rules only)") instead of a bare "the same as rules only" next to
+  different bars; **How was this computed?** adds the "new values" step for both tracks
+  (liking adds the change; ad memory moves that share of the remaining way to 1), so its
+  numbers add up; the liking effect names the real direction ("fell less", "rose instead of
+  falling"); the opening reads "Opening · 12 moments" instead of "Moment 0 of 12"; the summary
+  explains the over-limit drop from "Chosen for the AI" to "Sent to the AI"; practice runs
+  carry a note that their "AI" wording means practice answers; a person's most common labels
+  name every tied value ("skeptical / annoyed"); the setup card's limit sentence uses the
+  chosen limit; saved-run cards show the model name; the key hint points at the start script;
+  and Persian uses «میزان ارتباط» for relevance and its own digits for the seed. The report
+  follows the same changes.
 - **Guided presenter view (2026-10-20)** — `adlife city-workbench` now prints
   `city workbench: http://127.0.0.1:{port}/guide`, a plain-language view for presenting a
   study in English, German, or Persian (right to left), next to the unchanged technical
