@@ -108,7 +108,9 @@ recommended path because nothing outlives the PowerShell window.
 
 - Press Ctrl and + until the page fills the projector. Every guided page reflows without
   sideways scrolling. 125% suits the start, setup, and report pages on a 1280×720 projector;
-  keep the story page at 100–110% so a whole moment card, with its bars, fits beside the map.
+  keep the story page at 100%. On such a projector the moment card shows its sentence, the
+  rules line, the AI labels, the with-AI line, and the plain-words effect first; scroll the card
+  (mouse wheel over it) for the bars and **How was this computed?**.
 - A presentation clicker works on the story page: it sends Page Down and Page Up.
 - If the computer has animations turned off, the preflight says so and the story steps from
   moment to moment without motion. Nothing else changes.
@@ -301,7 +303,8 @@ powershell -ExecutionPolicy Bypass -File scripts\start-guided-demo.ps1 `
 2. One live 10-question run completes (the coffee backup above), and its story and report open
    in all three languages.
 3. The backups are listed on the start page under **Saved runs**.
-4. The zoom is set for the room, and the story page fits the projector without scrolling.
+4. The zoom is set for the room: the story page shows the map, the moment card, and the
+   controls at once (the card itself may scroll for its bars).
 5. Never touch `.\demo-workbench` or port 50050 from the development laptop while it is
    serving.
 6. After the last code change (a `git pull` or an edit), stop the server and start it again

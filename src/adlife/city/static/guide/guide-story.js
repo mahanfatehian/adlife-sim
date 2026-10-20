@@ -668,6 +668,11 @@ function withLane(moment) {
     { className: `g-lane g-lane--${tone} story-lane story-lane--with` },
     h("p", { className: "story-lane-text" }, refNodes(moment.with_ai_line)),
   );
+  // The plain-words effect comes before the bars, so it stays in view on a small projector.
+  const note = effectNote(moment);
+  if (note) {
+    lane.append(note);
+  }
   if (moment.after) {
     const aiRow = tone === "none" ? "neutral" : tone;
     lane.append(
@@ -688,10 +693,6 @@ function withLane(moment) {
         },
       ]),
     );
-  }
-  const note = effectNote(moment);
-  if (note) {
-    lane.append(note);
   }
   return lane;
 }
@@ -780,6 +781,12 @@ function mathDisclosure(moment) {
     ["story.math.update.with_ai", "with_ai", moment.applied_delta],
   ]) {
     if (!change || !moment.before || !moment.after) continue;
+    // Each equation is one left-to-right island (also in Persian), and "≈" because every
+    // number is rounded on its own to three decimals.
+    const dec = (value) => fmt.dec(value, 3);
+    const before = moment.before[track];
+    const after = moment.after[track];
+    const one = fmt.int(1);
     body.append(
       h(
         "p",
@@ -788,13 +795,11 @@ function mathDisclosure(moment) {
           {
             key,
             params: {
-              liking_before: three(moment.before[track].liking),
-              liking_change: three(change.liking),
-              liking_after: three(moment.after[track].liking),
-              memory_before: three(moment.before[track].memory),
-              memory_change: three(change.memory),
-              memory_after: three(moment.after[track].memory),
-              one: { int: 1 },
+              liking: { text: `${dec(before.liking)} + (${dec(change.liking)}) ≈ ${dec(after.liking)}` },
+              memory: {
+                text: `${dec(before.memory)} + ${dec(change.memory)} × (${one} − ${dec(before.memory)}) ≈ ${dec(after.memory)}`,
+              },
+              ...(track === "rules" ? { one: { int: 1 } } : {}),
             },
           },
           state.ctx,
@@ -846,9 +851,12 @@ function modeText(person, dimension) {
   }
   const top = Math.max(...counts.values());
   const tied = VALUES[dimension].filter((value) => counts.get(value) === top);
+  const values = tied.map((value) => t(`${dimension}.${value}`)).join(" / ");
+  // When every answer differed, no value is "most common": say each came once.
+  const once = top === 1 && tied.length > 1;
   return t("label.chip", {
     label: dimensionLabel(dimension),
-    value: tied.map((value) => t(`${dimension}.${value}`)).join(" / "),
+    value: once ? t("label.once_each", { values }) : values,
   });
 }
 

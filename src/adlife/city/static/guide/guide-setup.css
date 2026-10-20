@@ -879,3 +879,9 @@
   .setup-runbar { position: static; box-shadow: none; }
   .setup-counter__stop { display: none; }
 }
+
+/* Run and model names never break at a hyphen in the summary bar or on a saved-run card. */
+.setup-runbar bdi,
+.setup-run__meta bdi {
+  white-space: nowrap;
+}

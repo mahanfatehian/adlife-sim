@@ -185,8 +185,9 @@ def test_english_catalog_is_the_normative_appendix_a_key_set() -> None:
     # Appendix A's 501 keys plus the finished and stopped progress titles, the three story map
     # place labels (home, work, free time), and the rehearsal review's additions: six
     # direction-specific liking effects in place of "higher" and "lower", two "new values"
-    # arithmetic lines, the opening counter, the practice-run note and the over-limit note.
-    assert len(english.message_keys()) == 515
+    # arithmetic lines, the opening counter, the practice-run note, the over-limit note and the
+    # once-each label summary.
+    assert len(english.message_keys()) == 516
     assert english.text("progress.title.done") == "Simulation finished"
     assert english.text("progress.answered", resolved=3, total=10) == "3 of 10 answered"
     assert english.text("common.app") == "AdLife Lab"

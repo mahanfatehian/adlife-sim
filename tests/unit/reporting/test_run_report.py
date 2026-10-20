@@ -892,6 +892,8 @@ def test_person_label_summary_names_every_tied_value(remote_story):
             tied = [value for value in order if counts[value] == top]
             ties += len(tied) > 1
             value = " / ".join(english[f"{dimension}.{item}"] for item in tied)
+            if top == 1 and len(tied) > 1:
+                value = english["label.once_each"].replace("{values}", value)
             assert f"{english[f'label.{dimension}']}: {value}" in summary, person.agent_id
     # The fixture has people whose answers disagree, so a tie is really shown.
     assert ties > 0

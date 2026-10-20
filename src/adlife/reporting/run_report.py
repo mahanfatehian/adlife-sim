@@ -84,6 +84,7 @@ class _Chip:
     key: str
     # Further values tied with ``key`` for the most common label ("skeptical / annoyed").
     also: tuple[str, ...] = ()
+    once: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +360,8 @@ def _mode_chips(person: StoryPerson) -> tuple[_Chip, ...]:
                 dimension=name,
                 key=f"{name}.{tied[0]}",
                 also=tuple(f"{name}.{value}" for value in tied[1:]),
+                # When every answer differed, no value is "most common": each came once.
+                once=top == 1 and len(tied) > 1,
             )
         )
     return tuple(chips)

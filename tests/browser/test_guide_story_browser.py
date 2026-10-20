@@ -417,11 +417,12 @@ def test_the_map_marks_every_place_and_the_legend_explains_the_marks(
         expected = _expected_places(story)
         assert "home" in expected and "work" in expected and "leisure" in expected
         expect(canvas).to_have_attribute("data-places", expected)
-        # On a 1280 x 720 projector every English place label shows its words. In Persian
-        # the clock takes the left corner, so one crowded label may keep its glyphs only.
+        # On a 1280 x 720 projector the place labels show their words; one crowded label (a
+        # corner the clock or the practice note squeezes) may keep its glyphs only, which the
+        # legend under the map explains.
         worded = int(canvas.get_attribute("data-places-worded") or "0")
         places = len(expected.split())
-        assert worded == places if lang == "en" else places - 1 <= worded <= places
+        assert places - 1 <= worded <= places
         texts = page.evaluate(
             """async () => {
               const { placeLabel, PLACE_ROLES } = await import('/guide/assets/guide-map.js');
@@ -589,11 +590,14 @@ def test_follow_limits_the_steps_to_one_person_and_the_summary_funnel_matches(
                 counts = Counter(getattr(labels, dimension) for labels in answers)
                 top = max(counts.values())
                 tied = [value for value in order if counts[value] == top]
+                values = " / ".join(catalog.text(f"{dimension}.{value}") for value in tied)
+                if top == 1 and len(tied) > 1:
+                    values = catalog.text("label.once_each", values=values)
                 expected.append(
                     catalog.text(
                         "label.chip",
                         label=catalog.text(f"label.{dimension}"),
-                        value=" / ".join(catalog.text(f"{dimension}.{value}") for value in tied),
+                        value=values,
                     )
                 )
             card_of = page.locator(".story-person").filter(

@@ -19,7 +19,8 @@
 {%- macro city_name() -%}
 {%- if view.city_key %}{{ tr(view.city_key) }}{% else %}{{ bdi_text(view.city_name) }}{% endif -%}
 {%- endmacro -%}
-{%- macro chip_value(chip) -%}{{ tr(chip.key) }}{% for key in chip.also %} / {{ tr(key) }}{% endfor %}{%- endmacro -%}
+{%- macro chip_values(chip) -%}{{ tr(chip.key) }}{% for key in chip.also %} / {{ tr(key) }}{% endfor %}{%- endmacro -%}
+{%- macro chip_value(chip) -%}{% if chip.once %}{{ tr("label.once_each", values=chip_values(chip)) }}{% else %}{{ chip_values(chip) }}{% endif %}{%- endmacro -%}
 {%- macro chips(items, tone, set_aside) -%}
 <ul class="chips">{% for chip in items %}<li class="chip chip--{{ tone }}">{{ tr("label.chip", label=dim_label(chip.dimension), value=chip_value(chip)) }}</li>{% endfor %}{% if set_aside %}<li class="chip chip--note">{{ tr("story.labels.set_aside") }}</li>{% endif %}</ul>
 {%- endmacro -%}
@@ -200,7 +201,7 @@
 <h2 id="technical-title">{{ tr("report.section.technical") }}</h2>
 <dl class="facts technical">
 <dt>{{ tr("report.tech.run_id") }}</dt><dd>{{ bdi_id(story.run.run_id) }}</dd>
-<dt>{{ tr("report.tech.seed") }}</dt><dd>{{ bdi_id(story.run.seed) }}</dd>
+<dt>{{ tr("report.tech.seed") }}</dt><dd>{% if story.run.seed is string and story.run.seed.isdigit() and story.run.seed|length <= 4 %}{{ count(story.run.seed|int) }}{% else %}{{ bdi_id(story.run.seed) }}{% endif %}</dd>
 <dt>{{ tr("report.tech.city") }}</dt><dd>{{ bdi_id(story.run.city.city_id) }}</dd>
 <dt>{{ tr("report.tech.scenario") }}</dt><dd>{{ bdi_id(story.run.scenario.scenario_id) }} · {{ bdi_text(story.run.scenario.name) }}</dd>
 <dt>{{ tr("report.tech.campaign") }}</dt><dd>{{ bdi_id(story.run.campaign.campaign_id) }} · {{ bdi_text(story.run.campaign.name) }}</dd>

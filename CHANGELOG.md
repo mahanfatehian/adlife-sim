@@ -34,7 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name every tied value ("skeptical / annoyed"); the setup card's limit sentence uses the
   chosen limit; saved-run cards show the model name; the key hint points at the start script;
   and Persian uses «میزان ارتباط» for relevance and its own digits for the seed. The report
-  follows the same changes.
+  follows the same changes. A second, German- and Persian-focused rehearsal followed: the
+  arithmetic lines are now left-to-right equations with "≈" and the change in parentheses
+  ("−0.270 + (−0.085) ≈ −0.354", every number rounded on its own); the effect sentence sits
+  above the bars so it stays in view on a 1280×720 projector; the map's speech bubble avoids
+  the place labels and draws a leader line when it moves out; labels that each came once read
+  "(once each)"; value pairs and "Rules only" no longer break across lines; the report counts
+  requests "(retries included)" and shows the seed in Persian digits; setup lists interests
+  after a colon; run and model names never break at a hyphen; the key hint gives the full
+  `powershell -ExecutionPolicy Bypass -File scripts\start-guided-demo.ps1` command; and the
+  Persian map labels are «کار» and «تفریح», so they fit beside their places.
 - **Guided presenter view (2026-10-20)** — `adlife city-workbench` now prints
   `city workbench: http://127.0.0.1:{port}/guide`, a plain-language view for presenting a
   study in English, German, or Persian (right to left), next to the unchanged technical

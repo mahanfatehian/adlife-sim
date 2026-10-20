@@ -1174,7 +1174,7 @@ class Connection {
           : KEY_VARIABLE_FALLBACK;
       d.keyEnv.append(
       message("connection.key.env_hint", {
-        script: { id: "scripts\\start-guided-demo.ps1" },
+        script: { id: "powershell -ExecutionPolicy Bypass -File scripts\\start-guided-demo.ps1" },
         variable: { id: variable },
       }),
     );

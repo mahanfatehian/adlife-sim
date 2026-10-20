@@ -584,6 +584,8 @@ export class StoryMap {
       context.stroke();
     }
     const labels = this.arrangePlaceLabels(entries, metrics.height);
+    // The speech bubble steers clear of these, so it never hides a place's words.
+    this.placeBoxes = labels.map((label) => label.box);
     for (const { entry, box, hasWords } of labels) {
       this.drawPlaceLabel(context, box, entry, hasWords, metrics, rtl);
     }
@@ -1000,18 +1002,43 @@ export class StoryMap {
         top >= this.avoid.y1);
     const above = point.y - gap - height;
     const below = point.y + gap;
-    const options = [
-      [centred, above, false],
-      [centred, below, true],
-    ];
+    const shift = (left) => Math.min(Math.max(left, margin), maxLeft);
+    // Centred first, then slid so the pointer sits near either end of the bubble.
+    const lefts = [centred, shift(point.x - width + 24), shift(point.x - 24)];
+    // A second row one place label further out, for when a label sits right beside the spot.
+    const step = (this.placeBoxes && this.placeBoxes[0] ? this.placeBoxes[0].height : 24) + 6;
+    const options = [];
+    for (const [rowAbove, rowBelow] of [[above, below], [above - step, below + step]]) {
+      for (const left of lefts) {
+        options.push([left, rowAbove, false], [left, rowBelow, true]);
+      }
+    }
     if (this.avoid) {
-      const beside = Math.min(Math.max(this.avoid.x0 - width, margin), maxLeft);
+      const beside = shift(this.avoid.x0 - width);
       options.push([beside, above, false], [beside, below, true]);
     }
+    // Among the spots that stay on the canvas and off the clock, cover the least place text.
+    const covered = (left, top) =>
+      (this.placeBoxes || []).reduce((sum, box) => {
+        const x = Math.min(left + width, box.left + box.width) - Math.max(left, box.left);
+        const y = Math.min(top + height, box.top + box.height) - Math.max(top, box.top);
+        return sum + (x > 0 && y > 0 ? x * y : 0);
+      }, 0);
+    let best = null;
     for (const [left, top, pointerUp] of options) {
-      if (clear(left, top)) {
-        return { left, top, pointerUp };
+      if (!clear(left, top)) {
+        continue;
       }
+      const cost = covered(left, top);
+      if (best === null || cost < best.cost) {
+        best = { cost, left, top, pointerUp };
+      }
+      if (cost === 0) {
+        break;
+      }
+    }
+    if (best !== null) {
+      return { left: best.left, top: best.top, pointerUp: best.pointerUp };
     }
     const top = Math.min(Math.max(above, margin), Math.max(margin, this.height - height - margin));
     return { left: centred, top, pointerUp: top > point.y };
@@ -1088,6 +1115,17 @@ export class StoryMap {
     }
     context.fill();
     context.stroke();
+    // A bubble moved out past a place label keeps a thin leader line to its person.
+    const edge = pointerUp ? top - 6 : top + height + 6;
+    const reach = pointerUp ? point.y + RING_DIAMETER / 2 : point.y - RING_DIAMETER / 2;
+    if (pointerUp ? edge - reach > 4 : reach - edge > 4) {
+      context.beginPath();
+      context.moveTo(tipX, edge);
+      context.lineTo(point.x, reach);
+      context.lineWidth = 1.5;
+      context.strokeStyle = this.tokens["--line-strong"];
+      context.stroke();
+    }
     context.fillStyle = this.tokens["--ink"];
     context.fillText(text, left + width / 2, top + height / 2 + 0.5);
     context.restore();
