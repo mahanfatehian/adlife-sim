@@ -624,6 +624,9 @@ html:lang(fa) .story-card-sentence { line-height: 1.8; }
 
 .story-scrub {
   display: flex;
+  /* With a wide system font (DejaVu on Linux) "Opening · 14 moments" no longer fits beside
+     the slider at 1024px; it then moves under the slider instead of pushing the page wide. */
+  flex-wrap: wrap;
   flex: 1 1 12rem;
   align-items: center;
   gap: var(--s-3);
