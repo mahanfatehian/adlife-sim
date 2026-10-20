@@ -1,0 +1,217 @@
+{%- macro dim_label(name) -%}
+{%- if name == "affect" %}{{ tr("label.affect") }}{% elif name == "relevance" %}{{ tr("label.relevance") }}{% elif name == "credibility" %}{{ tr("label.credibility") }}{% else %}{{ tr("label.salience") }}{% endif -%}
+{%- endmacro -%}
+{%- macro funnel_label(name) -%}
+{%- if name == "opportunities" %}{{ tr("story.summary.funnel.opportunities") }}{% elif name == "noticed" %}{{ tr("story.summary.funnel.noticed") }}{% elif name == "chosen" %}{{ tr("story.summary.funnel.chosen") }}{% elif name == "sent" %}{{ tr("story.summary.funnel.sent") }}{% elif view.practice %}{{ tr("story.summary.funnel.practice") }}{% else %}{{ tr("story.summary.funnel.used") }}{% endif -%}
+{%- endmacro -%}
+{%- macro measure_label(name) -%}
+{%- if name == "liking" %}{{ tr("common.liking") }}{% elif name == "memory" %}{{ tr("common.memory") }}{% else %}{{ tr("common.purchase_interest") }}{% endif -%}
+{%- endmacro -%}
+{%- macro source_tag(tone) -%}
+{%- if tone == "rules" %}<span class="tag tag--rules">{{ tr("common.rules_only") }}</span>{% else %}<span class="tag tag--{{ tone }}">{{ tr("common.with_ai") }}</span>{% endif -%}
+{%- endmacro -%}
+{%- macro persona_name(persona) -%}
+{%- if persona.name_key %}{{ tr(persona.name_key) }}{% else %}{{ bdi_text(persona.display_name) }}{% endif -%}
+{%- endmacro -%}
+{%- macro interest_list(interests) -%}
+{%- for item in interests %}{% if not loop.first %}{{ tr("common.list_separator") }}{% endif %}{% if item.key %}{{ tr(item.key) }}{% else %}{{ bdi_text(item.text) }}{% endif %}{% endfor -%}
+{%- endmacro -%}
+{%- macro city_name() -%}
+{%- if view.city_key %}{{ tr(view.city_key) }}{% else %}{{ bdi_text(view.city_name) }}{% endif -%}
+{%- endmacro -%}
+{%- macro chips(items, tone, set_aside) -%}
+<ul class="chips">{% for chip in items %}<li class="chip chip--{{ tone }}">{{ tr("label.chip", label=dim_label(chip.dimension), value=tr(chip.key)) }}</li>{% endfor %}{% if set_aside %}<li class="chip chip--note">{{ tr("story.labels.set_aside") }}</li>{% endif %}</ul>
+{%- endmacro -%}
+{%- macro bar(tone, width, diverging) -%}
+<span class="bar bar--{{ tone }}{% if diverging %} bar--dv{% endif %}" aria-hidden="true"><span class="fill {{ width }}"></span></span>
+{%- endmacro -%}
+{%- macro number(value) -%}{{ bdi_id(fmt_dec(value, 2)) }}{%- endmacro -%}
+{%- macro count(value) -%}{{ bdi_id(fmt_int(value)) }}{%- endmacro -%}
+{%- macro replay_code() -%}<bdi dir="ltr"><code>{{ view.replay_command }}</code></bdi>{%- endmacro -%}
+{%- macro coverage_line() -%}
+{%- set c = view.coverage -%}
+{{ tr("story.summary.coverage", noticed=c.noticed, chosen=c.chosen, sent=c.sent, answered=c.answered, reused=c.reused, failed=c.failed, set_aside=c.set_aside, over_limit=c.over_limit, not_chosen=c.not_chosen) }}
+{%- endmacro -%}
+<!doctype html>
+<html lang="{{ lang }}" dir="{{ dir }}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{ csp }}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>{{ tr_text("report.title") }} · {{ view.product }} · {{ tr_text("common.app") }}</title>
+{% if links %}<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">
+{% endif %}<style>{{ css }}</style>
+</head>
+<body>
+<a class="skip" href="#main">{{ tr("common.skip") }}</a>
+<header class="masthead">
+{% if links -%}
+<div class="toolbar">
+<nav class="langs" aria-label="{{ tr_text('common.language') }}">{% for item in view.languages %}<a href="{{ item.href }}" lang="{{ item.code }}" hreflang="{{ item.code }}"{% if item.current %} aria-current="true"{% endif %}>{{ tr(item.key) }}</a>{% endfor %}</nav>
+<div class="actions"><a class="action" href="{{ links.story }}"><span class="dir" aria-hidden="true">&#8592;</span> {{ tr("report.back") }}</a> <a class="action action--primary" href="{{ links.download }}" download>{{ tr("report.download") }}</a> <a class="action" href="{{ links.technical }}" target="_blank" rel="noopener noreferrer">{{ tr("common.technical_view") }}<span class="visually-hidden">{{ tr("common.list_separator") }}{{ tr("common.new_tab") }}</span></a></div>
+</div>
+{% endif -%}
+<p class="eyebrow">{{ tr("common.app") }} · {{ tr("common.guide") }}</p>
+<h1>{{ tr("report.title") }}</h1>
+<p class="subtitle">{{ tr("report.subtitle", product=view.product, people=tr("common.people", count=story.run.people_count), days=tr("common.days", count=story.run.days), city=city_name()) }}</p>
+<p class="ad"><bdi dir="auto">{{ view.product }}</bdi> · {% if view.category_key %}{{ tr(view.category_key) }}{% else %}{{ bdi_text(view.category) }}{% endif %} · {% if view.message_key %}{{ tr(view.message_key) }}{% else %}{{ bdi_text(view.message) }}{% endif %}</p>
+<p class="meta"><span class="tag tag--{{ view.tone }}">{% if view.provider %}{{ tr(view.ai_line_key, model=bdi_id(story.ai.model_id)) }}{% else %}{{ tr(view.ai_line_key) }}{% endif %}</span> <span class="run">{{ tr("report.run", run_id=bdi_id(story.run.run_id)) }}</span> <span class="tag tag--fictional">{{ tr("limits.fictional") }}</span></p>
+</header>
+<nav class="toc" id="contents" aria-labelledby="contents-title">
+<h2 id="contents-title">{{ tr("report.toc") }}</h2>
+<ol>
+<li><a href="#minute">{{ tr("report.section.minute") }}</a></li>
+<li><a href="#how">{{ tr("report.section.how") }}</a></li>
+<li><a href="#run">{{ tr("report.section.run") }}</a></li>
+<li><a href="#people">{{ tr("report.section.people") }}</a></li>
+<li><a href="#ai">{{ tr("report.section.ai") }}</a></li>
+<li><a href="#limits">{{ tr("report.section.limits") }}</a></li>
+<li><a href="#technical">{{ tr("report.section.technical") }}</a></li>
+</ol>
+</nav>
+<main id="main" tabindex="-1">
+<section class="section minute" id="minute" aria-labelledby="minute-title">
+<h2 id="minute-title">{{ tr("report.section.minute") }}</h2>
+<ul class="headline">
+{% for line in view.headline %}<li class="headline-line headline-line--{{ line.tone }}">{{ ref(line.ref) }}</li>
+{% endfor %}</ul>
+<h3 class="minor-title" id="funnel-title">{{ tr("story.summary.funnel.title") }}</h3>
+<ol class="funnel" aria-labelledby="funnel-title">
+{% for cell in view.funnel %}<li class="funnel-cell funnel-cell--{{ cell.tone }}"><span class="funnel-value">{{ count(cell.value) }}</span><span class="funnel-label">{{ funnel_label(cell.name) }}</span>{{ bar(cell.tone, cell.width, false) }}</li>
+{% endfor %}</ol>
+</section>
+<section class="section" id="how" aria-labelledby="how-title">
+<h2 id="how-title">{{ tr("report.section.how") }}</h2>
+<ol class="how">
+<li class="how-box how-box--rules"><span class="tag tag--rules">{{ tr("common.rules_only") }}</span><p>{{ tr("start.how.rules") }}</p></li>
+<li class="how-arrow" aria-hidden="true"><span class="dir">&#8594;</span></li>
+<li class="how-box how-box--ai"><span class="tag tag--{{ view.label_tone }}">{% if view.practice %}{{ tr("story.labels.title.practice") }}{% else %}{{ tr("story.labels.title") }}{% endif %}</span><p>{{ tr("start.how.ai") }}</p></li>
+<li class="how-arrow" aria-hidden="true"><span class="dir">&#8594;</span></li>
+<li class="how-box how-box--formula"><span class="tag tag--{{ view.label_tone }}">{{ tr("common.with_ai") }}</span><p>{{ tr("start.how.formula") }}</p></li>
+</ol>
+<ul class="glossary">
+<li>{{ tr("report.how.affect") }}</li>
+<li>{{ tr("report.how.relevance") }}</li>
+<li>{{ tr("report.how.credibility") }}</li>
+<li>{{ tr("report.how.salience") }}</li>
+</ul>
+<p class="note">{{ tr("report.how.unsure") }}</p>
+<p class="note">{{ tr("report.how.feedback") }}</p>
+</section>
+<section class="section" id="run" aria-labelledby="run-title">
+<h2 id="run-title">{{ tr("report.section.run") }}</h2>
+<h3 id="averages-title">{{ tr("story.summary.averages.title") }}</h3>
+<table class="table stack averages" aria-labelledby="averages-title">
+<thead><tr><td></td><th scope="col">{{ tr("story.summary.start") }}</th><th scope="col">{{ tr("story.summary.end") }}</th></tr></thead>
+<tbody>
+{% for row in view.averages %}<tr><th scope="row">{{ measure_label(row.measure) }} {{ source_tag(row.source) }}</th><td data-label="{{ tr_text('story.summary.start') }}">{{ number(row.start) }}</td><td data-label="{{ tr_text('story.summary.end') }}"><span class="value">{{ number(row.end) }}</span>{{ bar(row.source, row.width, row.diverging) }}</td></tr>
+{% endfor %}</tbody>
+</table>
+<ul class="notes">
+{% if not view.rules %}<li>{{ tr("story.person.compare", measure=tr("common.liking"), compare=tr(view.compare_liking_key)) }}</li>
+<li>{{ tr("story.person.compare", measure=tr("common.memory"), compare=tr(view.compare_memory_key)) }}</li>
+{% else %}<li>{{ tr("story.headline.rules") }}</li>
+{% endif %}<li>{{ tr("story.person.compare", measure=tr("common.liking"), compare=tr("common.scale.liking", min=bdi_id(fmt_dec(-1, 0)), max=bdi_id(fmt_dec(1, 0, True)))) }}</li>
+<li>{{ tr("story.person.compare", measure=tr("common.memory"), compare=tr("common.scale.memory", min=bdi_id(fmt_dec(0, 0)), max=bdi_id(fmt_dec(1, 0)))) }}</li>
+<li>{{ tr("story.person.compare", measure=tr("common.purchase_interest"), compare=tr("common.purchase_interest_note")) }}</li>
+</ul>
+{% if story.labels %}<h3 id="labels-title">{% if view.practice %}{{ tr("story.summary.labels.title.practice") }}{% else %}{{ tr("story.summary.labels.title") }}{% endif %}</h3>
+<div class="spread">
+{% for dimension in view.spread %}<div class="spread-group"><h4>{{ dim_label(dimension.dimension) }}</h4><ul class="spread-list">{% for entry in dimension.entries %}<li><span class="spread-value">{{ tr(entry.key) }}</span>{{ bar(view.label_tone, entry.width, false) }}<span class="spread-count">{{ count(entry.count) }}</span></li>{% endfor %}</ul></div>
+{% endfor %}{% if view.flags %}<div class="spread-group"><h4>{{ tr("status.warning") }}</h4><ul class="spread-list">{% for entry in view.flags %}<li><span class="spread-value">{{ tr(entry.key) }}</span>{{ bar("none", entry.width, false) }}<span class="spread-count">{{ count(entry.count) }}</span></li>{% endfor %}</ul></div>
+{% endif %}</div>
+<p class="note">{{ tr("story.summary.labels.note", count=story.labels.answers) }}</p>
+{% else %}<h3 id="labels-title">{{ tr("story.summary.labels.title") }}</h3>
+<p class="note">{{ tr("story.summary.labels.none") }}</p>
+{% endif %}{% if view.provider %}<p class="coverage">{{ coverage_line() }}</p>
+{% endif %}</section>
+<section class="section" id="people" aria-labelledby="people-title">
+<h2 id="people-title">{{ tr("report.section.people") }}</h2>
+{% for persona in view.personas %}<section class="persona" id="{{ persona.persona_id }}" aria-labelledby="{{ persona.persona_id }}-title">
+<div class="persona-head">
+<h3 id="{{ persona.persona_id }}-title"><span class="mark {{ persona.mark }}" aria-hidden="true"></span><span>{{ persona_name(persona) }}</span> <span class="persona-count">{{ tr("report.persona.count", count=persona.count) }}</span></h3>
+{% if persona.tagline_key %}<p class="tagline">{{ tr(persona.tagline_key) }}</p>
+{% endif %}{% if persona.trait_keys %}<ul class="chips">{% for key in persona.trait_keys %}<li class="chip chip--trait">{{ tr(key) }}</li>{% endfor %}</ul>
+{% endif %}<p class="likes">{{ tr("report.person.likes", interests=interest_list(persona.interests)) }}</p>
+</div>
+{% for person in persona.people %}<section class="person" id="{{ person.agent_id }}" aria-labelledby="{{ person.agent_id }}-title">
+<div class="person-head"><h4 id="{{ person.agent_id }}-title"><span class="mark {{ persona.mark }}" aria-hidden="true"></span><span>{{ tr("common.person_ref", name=persona_name(persona), number=person.number) }}</span></h4><p class="summary">{{ ref(person.summary) }}</p></div>
+{% if person.label_mode %}<div class="person-labels"><p class="minor">{% if view.practice %}{{ tr("story.person.labels.practice", count=person.label_answers) }}{% else %}{{ tr("story.person.labels", count=person.label_answers) }}{% endif %}</p>{{ chips(person.label_mode, view.label_tone, false) }}</div>
+{% endif %}{% if person.moments %}<h5 class="minor">{{ tr("report.person.moments") }}</h5>
+<ol class="moments">
+{% for moment in person.moments %}<li class="moment" data-status="{{ moment.status }}">
+<div class="moment-line"><p class="sentence">{{ ref(moment.sentence) }}</p><span class="badge" data-status="{{ moment.status }}">{{ tr(moment.status_key) }}</span></div>
+{% if moment.ai_clause %}<p class="ai-clause">{{ ref(moment.ai_clause) }}</p>
+{% endif %}{% if moment.labels %}{{ chips(moment.labels, moment.label_tone, moment.set_aside) }}
+{% endif %}{% if moment.rules_line %}<p class="state state--rules">{{ ref(moment.rules_line) }}</p>
+{% endif %}{% if moment.with_ai_line %}<p class="state state--{{ moment.ai_tone }}">{{ ref(moment.with_ai_line) }}</p>
+{% endif %}</li>
+{% endfor %}</ol>
+{% if person.more %}<p class="more">{{ tr("report.person.more", count=person.more) }}</p>
+{% endif %}{% endif %}{% if person.end %}{% set end = person.end %}<table class="table stack endstate">
+<caption>{{ tr("report.person.end") }}</caption>
+<thead><tr><td></td><th scope="col">{{ tr("common.rules_only") }}</th><th scope="col">{{ tr("common.with_ai") }}</th></tr></thead>
+<tbody>
+<tr><th scope="row">{{ tr("common.liking") }}</th><td data-label="{{ tr_text('common.rules_only') }}"><span class="value">{{ number(end.liking.rules) }}</span>{{ bar("rules", end.liking.rules_bar, true) }}</td><td data-label="{{ tr_text('common.with_ai') }}"><span class="value">{{ number(end.liking.with_ai) }}</span>{{ bar(view.tone, end.liking.with_ai_bar, true) }}<span class="compare">{{ tr(end.liking.compare_key) }}</span></td></tr>
+<tr><th scope="row">{{ tr("common.memory") }}</th><td data-label="{{ tr_text('common.rules_only') }}"><span class="value">{{ number(end.memory.rules) }}</span>{{ bar("rules", end.memory.rules_bar, false) }}</td><td data-label="{{ tr_text('common.with_ai') }}"><span class="value">{{ number(end.memory.with_ai) }}</span>{{ bar(view.tone, end.memory.with_ai_bar, false) }}<span class="compare">{{ tr(end.memory.compare_key) }}</span></td></tr>
+<tr><th scope="row">{{ tr("common.purchase_interest") }}</th><td data-label="{{ tr_text('common.rules_only') }}"><span class="value">{{ number(end.purchase.rules) }}</span>{{ bar("rules", end.purchase.rules_bar, false) }}</td><td class="aside" data-label="{{ tr_text('common.with_ai') }}">{{ tr("common.purchase_interest_note") }}</td></tr>
+</tbody>
+</table>
+{% endif %}</section>
+{% endfor %}</section>
+{% endfor %}</section>
+<section class="section" id="ai" aria-labelledby="ai-title">
+<h2 id="ai-title">{{ tr("report.section.ai") }}</h2>
+<dl class="facts">
+<dt>{{ tr("report.ai.source") }}</dt><dd>{{ tr(view.mode_key) }}{% if view.practice %} <span class="tag tag--practice">{{ tr("common.not_an_ai") }}</span>{% endif %}</dd>
+{% if view.provider %}<dt>{{ tr("report.ai.model") }}</dt><dd>{{ bdi_id(story.ai.model_id) }}</dd>
+<dt>{{ tr("report.ai.thinking") }}</dt><dd>{% if story.ai.thinking_off %}{{ tr("report.ai.thinking.off") }}{% else %}{{ tr("report.ai.thinking.default") }}{% endif %}</dd>
+<dt>{{ tr("report.ai.profile") }}</dt><dd>{{ bdi_id(story.ai.provider_profile_id) }}</dd>
+<dt>{{ tr("report.ai.revision") }}</dt><dd>{{ bdi_id(view.revision_short) }}&#8230;</dd>
+<dt>{{ tr("report.ai.limit") }}</dt><dd>{{ tr("setup.ai.limit.option", count=story.ai.funded_limit) }}</dd>
+<dt>{{ tr("report.ai.coverage") }}</dt><dd>{{ coverage_line() }}</dd>
+<dt>{{ tr("report.ai.usage") }}</dt><dd>{{ tr("report.ai.usage.value", attempts=story.ai.usage_this_run.attempts, prompt=story.ai.usage_this_run.prompt_tokens, completion=story.ai.usage_this_run.completion_tokens) }}</dd>
+<dt>{{ tr("report.ai.reused") }}</dt><dd>{{ count(story.ai.reused_answers) }}</dd>
+{% endif %}{% if not view.rules %}<dt>{{ tr("report.ai.formula") }}</dt><dd>{{ bdi_id(story.ai.contract.influence_policy_id) }}</dd>
+<dt>{{ tr("report.ai.contract") }}</dt><dd>{{ bdi_id(story.ai.contract.prompt_contract_id) }} · {{ bdi_id(view.contract_short) }}&#8230;</dd>
+{% endif %}</dl>
+{% if view.rules %}<p class="note">{{ tr("story.headline.rules") }}</p>
+{% endif %}{% if view.provider %}<p class="note">{{ tr("limits.vendor") }}</p>
+{% endif %}{% if not view.rules %}<p class="note">{{ tr("limits.replay") }}</p>
+{% endif %}</section>
+<section class="section" id="limits" aria-labelledby="limits-title">
+<h2 id="limits-title">{{ tr("report.section.limits") }}</h2>
+<ul class="limits">
+<li>{{ tr("limits.fictional") }}</li>
+<li>{{ tr("limits.not_forecast") }}</li>
+<li>{{ tr("limits.ai_scope") }}</li>
+<li>{{ tr("limits.names") }}</li>
+<li>{{ tr("limits.not_feelings") }}</li>
+<li>{{ tr("limits.replay") }}</li>
+</ul>
+</section>
+<section class="section" id="technical" aria-labelledby="technical-title">
+<h2 id="technical-title">{{ tr("report.section.technical") }}</h2>
+<dl class="facts technical">
+<dt>{{ tr("report.tech.run_id") }}</dt><dd>{{ bdi_id(story.run.run_id) }}</dd>
+<dt>{{ tr("report.tech.seed") }}</dt><dd>{{ bdi_id(story.run.seed) }}</dd>
+<dt>{{ tr("report.tech.city") }}</dt><dd>{{ bdi_id(story.run.city.city_id) }}</dd>
+<dt>{{ tr("report.tech.scenario") }}</dt><dd>{{ bdi_id(story.run.scenario.scenario_id) }} · {{ bdi_text(story.run.scenario.name) }}</dd>
+<dt>{{ tr("report.tech.campaign") }}</dt><dd>{{ bdi_id(story.run.campaign.campaign_id) }} · {{ bdi_text(story.run.campaign.name) }}</dd>
+<dt>{{ tr("report.tech.creative") }}</dt><dd>{{ bdi_id(story.run.creative.template_id) }}</dd>
+<dt>{{ tr("report.tech.input_hash") }}</dt><dd class="hash">{{ bdi_id(story.run.hashes.workbench_input_sha256) }}</dd>
+<dt>{{ tr("report.tech.cognition_hash") }}</dt><dd class="hash">{{ bdi_id(story.run.hashes.cognition_input_sha256) }}</dd>
+<dt>{{ tr("report.tech.contract_hash") }}</dt><dd class="hash">{{ bdi_id(story.run.hashes.causal_contract_sha256) }}</dd>
+{% if story.ai.provider_revision_sha256 %}<dt>{{ tr("report.ai.revision") }}</dt><dd class="hash">{{ bdi_id(story.ai.provider_revision_sha256) }}</dd>
+{% endif %}<dt>{{ tr("report.tech.format") }}</dt><dd>{{ bdi_id(story.format) }}</dd>
+</dl>
+<p class="note">{{ tr("report.tech.replay", command=replay_code()) }}</p>
+</section>
+</main>
+<footer class="report-footer">
+<p>{{ tr("report.footer", run_id=bdi_id(story.run.run_id)) }}</p>
+{% if not links %}<p>{{ tr("report.standalone") }}</p>
+{% endif %}</footer>
+</body>
+</html>

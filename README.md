@@ -31,6 +31,8 @@ stay rule-owned.
 > available.
 >
 > Backup: `scripts/demo_workspace.py` seeds a running workbench with ready-to-open runs; see [Backup: seed a demo workspace](docs/investor-demo.md#backup-seed-a-demo-workspace).
+>
+> Guided view: [docs/guided-demo.md](docs/guided-demo.md) is the presenter guide for the plain-language pages at `/guide` in English, German, and Persian, with the online-AI start command, a 10-minute script, and a rehearsal checklist.
 
 ---
 

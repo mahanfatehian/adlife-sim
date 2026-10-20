@@ -1,0 +1,1195 @@
+/*
+  AdLife guided presenter view: the story page (prefix story-).
+
+  Desktop (at least 900 x 540 CSS px): a fixed player that fills the window.
+  The map takes about 60% (55% below 1280 px), the narration the rest; the
+  narration scrolls inside. People and Summary are full-width sheets.
+  Narrower or shorter screens: map on top, narration below, and the
+  transport controls stick to the bottom of the window.
+
+  Geography never mirrors: the map frame is dir="ltr". Numeric tracks are
+  left-to-right islands. Everything else uses logical properties only.
+*/
+
+main:has(> .story) {
+  padding-block: var(--s-3) var(--s-4);
+}
+
+.story {
+  --persona: var(--persona-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-inline-size: 0;
+}
+
+.story-tone-c0 { --persona: var(--persona-1); }
+.story-tone-c1 { --persona: var(--persona-2); }
+.story-tone-c2 { --persona: var(--persona-3); }
+.story-tone-c3 { --persona: var(--persona-4); }
+.story-tone-c4 { --persona: var(--persona-5); }
+.story-tone-c5 { --persona: var(--persona-6); }
+.story-tone-c6 { --persona: var(--persona-7); }
+.story-tone-c7 { --persona: var(--persona-8); }
+
+/* Boot: loading and problems */
+
+.story-boot {
+  display: grid;
+  place-items: center;
+  min-block-size: 40vh;
+  padding-block: var(--s-6);
+}
+
+.story[data-state="ready"] .story-boot { display: none; }
+
+.story-loading {
+  font-size: var(--fs-l);
+}
+
+.story-loading > p { margin: 0; }
+
+.story-problem {
+  inline-size: min(100%, 44rem);
+  padding-block: var(--s-4);
+}
+
+.story-problem-body {
+  display: grid;
+  flex: 1 1 18rem;
+  gap: var(--s-2);
+  min-inline-size: 0;
+}
+
+.story-problem-body > p { margin: 0; }
+
+.story-problem-text { font-size: var(--fs-l); }
+
+.story-problem-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+/* Header and tab bar */
+
+.story-app {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-inline-size: 0;
+}
+
+.story-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-5);
+}
+
+/* One line on wide screens: the run's name, then its AI mode chips. */
+.story-head-text {
+  display: flex;
+  flex: 1 1 24rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-3);
+  min-inline-size: 0;
+}
+
+.story-title {
+  margin: 0;
+  font-size: var(--fs-l);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.story-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+.story-model {
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+
+.story-not-ai {
+  border: 1px dashed var(--practice);
+  background: var(--surface);
+}
+
+.story-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+.story-tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+  border-block-end: 1px solid var(--line);
+}
+
+.story-tabs { border-block-end: 0; }
+
+.story-tabs > [role="tab"] { font-size: var(--fs-m); }
+
+.story-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+  min-inline-size: 0;
+  padding-block-end: var(--s-1);
+}
+
+.story-filter-label {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+
+.story-seg > [role="radio"] {
+  padding-inline: var(--s-3);
+  font-size: var(--fs-s);
+}
+
+/* Stage: map, narration, controls */
+
+.story-body {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.story-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-inline-size: 0;
+}
+
+.story-map-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+.story-map-frame {
+  position: relative;
+  block-size: 50vh;
+  min-block-size: 16rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--map-bg);
+  box-shadow: var(--shadow);
+}
+
+.story-map {
+  position: absolute;
+  inset: 0;
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.story-clock {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: var(--s-3);
+  inset-inline-end: var(--s-3);
+  margin: 0;
+  padding-block: var(--s-1);
+  padding-inline: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: #FFFFFFEB;
+  color: var(--ink);
+  font-size: var(--fs-2xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.15;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
+.story-clock:empty { display: none; }
+
+.story-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-4);
+  min-inline-size: 0;
+}
+
+.story-legend-title {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+
+.story-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+
+.story-legend-ring {
+  flex: none;
+  inline-size: 1.1rem;
+  block-size: 1.1rem;
+  border: 3px solid var(--ai);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+/* Positioned, so visually hidden text inside scrolls and clips with the panel instead of
+   stretching the page. */
+.story-narration {
+  position: relative;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+/* Intro state */
+
+.story-intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-block: var(--s-4);
+  padding-inline: var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFF 100%);
+  box-shadow: var(--shadow);
+}
+
+/* The lead sentence is the title card; the facts under it are quieter. */
+.story-headline {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  color: var(--ink-2);
+  line-height: 1.45;
+  list-style: none;
+}
+
+.story-headline > li { text-wrap: pretty; }
+
+.story-headline > .story-headline-lead {
+  margin-block-end: var(--s-1);
+  color: var(--ink);
+  font-size: var(--fs-l);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+html:lang(fa) .story-headline { line-height: 1.8; }
+html:lang(fa) .story-headline > .story-headline-lead { line-height: 1.65; }
+
+/* The funnel reads as one row of numbers, widest step first. Every step keeps the same
+   width (so the share bars compare), and a step is never narrower than the longest word
+   of its label: a narrow panel moves whole steps to a second row instead of breaking a
+   word. --cell is that longest word plus padding, per language. */
+.story-funnel {
+  --cell: 4.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--cell)), 1fr));
+  gap: var(--s-2);
+}
+
+html:lang(fa) .story-funnel { --cell: 5.5rem; }
+html:lang(de) .story-funnel { --cell: 8.5rem; }
+
+.story-funnel > li {
+  gap: var(--s-1);
+  padding-block: var(--s-2) var(--s-3);
+  padding-inline: var(--s-2);
+}
+
+.story-funnel > li .g-stat__value {
+  font-size: var(--fs-xl);
+  line-height: 1.1;
+}
+
+.story-funnel > li .g-stat__label {
+  font-size: var(--fs-s);
+  line-height: 1.25;
+  overflow-wrap: break-word;
+}
+
+.story-intro-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
+}
+
+.story-intro-play { gap: var(--s-3); }
+
+.story-intro-hint {
+  flex: 1 1 12rem;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-s);
+}
+
+/* Narration card */
+
+.story-card {
+  display: grid;
+  gap: var(--s-3);
+  padding-block: var(--s-3) var(--s-4);
+  padding-inline: var(--s-4);
+}
+
+.story-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+
+.story-card-person {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--fs-m);
+  line-height: 1.3;
+}
+
+.story-card-sentence {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-l);
+  line-height: 1.4;
+  text-wrap: pretty;
+}
+
+html:lang(fa) .story-card-sentence { line-height: 1.8; }
+
+/* The cause-to-effect chain: rules, then the AI, then the result with AI. */
+.story-lane {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-2);
+  padding-block: var(--s-2);
+  font-size: var(--fs-m);
+  line-height: 1.45;
+}
+
+.story-lane > p { margin: 0; }
+
+.story-lane-text { color: var(--ink); }
+
+.story-lane-lead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-weight: 600;
+}
+
+.story-tag {
+  flex: none;
+  inline-size: .75em;
+  block-size: .75em;
+  border-radius: 50%;
+  background: var(--ai);
+}
+
+.story-tag--practice {
+  border-radius: 1px;
+  background: var(--practice);
+  transform: rotate(45deg) scale(.85);
+}
+
+.story-tag--none {
+  border: 2px solid var(--neutral);
+  background: transparent;
+}
+
+.story-set-aside {
+  color: var(--ink-3);
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+
+.story-chips { gap: var(--s-1) var(--s-2); }
+
+/* "After this ad": rules only and with AI side by side, liking and ad memory as columns. */
+.story-bars {
+  inline-size: 100%;
+  border-collapse: collapse;
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+  line-height: 1.3;
+}
+
+.story-bars-corner {
+  color: var(--ink-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.story-bars :is(th, td) {
+  padding-block: 3px;
+  padding-inline: 0 var(--s-3);
+  vertical-align: middle;
+}
+
+.story-bars :is(th, td):last-child { padding-inline-end: 0; }
+
+.story-bars thead th {
+  color: var(--ink-3);
+  font-weight: 600;
+  text-align: start;
+}
+
+.story-bars tbody th {
+  inline-size: 1%;
+  font-weight: 400;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.story-bar { inline-size: 50%; }
+
+.story-bar--liking { --min: -1; }
+.story-bar--memory { --min: 0; }
+.story-bar--memory .g-pair__track::before { content: none; }
+
+/* Very narrow (a phone with larger text): the number drops under its bar instead of
+   pushing the table wider than the card. */
+.story-bar-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px var(--s-2);
+  min-inline-size: 0;
+}
+
+.story-bar-box > .g-pair__track { flex: 1 1 auto; min-inline-size: 2rem; }
+
+.story-bar-box > .g-pair__value { flex: none; min-inline-size: 3.2em; }
+
+.story-key {
+  display: inline-block;
+  flex: none;
+  inline-size: .7em;
+  block-size: .7em;
+  margin-inline-end: var(--s-1);
+  border-radius: 1px;
+  background: var(--rules);
+  vertical-align: 0;
+}
+
+.story-key--ai {
+  border-radius: 50%;
+  background: var(--ai);
+}
+
+.story-key--practice {
+  background: var(--practice);
+  transform: rotate(45deg) scale(.85);
+}
+
+.story-key--neutral {
+  border: 2px solid var(--neutral);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.story-effect {
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+
+.story-math > summary { font-size: var(--fs-s); }
+
+.story-math-body {
+  display: grid;
+  gap: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+
+.story-math-body > p { margin: 0; }
+
+.story-enter { animation: story-enter .32s var(--ease) both; }
+
+/* A new moment unfolds along its chain: who and what first, then rules, the AI and the
+   result, and the bars slide from where the person stood before the ad. */
+.story-card.story-enter { animation: none; }
+
+.story-card.story-enter > * { animation: story-enter .34s var(--ease) both; }
+.story-card.story-enter > :nth-child(2) { animation-delay: 60ms; }
+.story-card.story-enter > :nth-child(3) { animation-delay: 220ms; }
+.story-card.story-enter > :nth-child(4) { animation-delay: 380ms; }
+.story-card.story-enter > :nth-child(5) { animation-delay: 540ms; }
+.story-card.story-enter > :nth-child(n + 6) { animation-delay: 620ms; }
+
+.story-card .g-pair__fill {
+  transition-delay: .6s;
+  transition-duration: .7s;
+}
+
+@keyframes story-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Controls: transport, step slider with status ticks, counter, keys */
+
+.story-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
+  min-inline-size: 0;
+  padding-block: var(--s-2);
+  padding-inline: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.story-transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.story-ctl {
+  gap: var(--s-2);
+  padding-inline: var(--s-4);
+}
+
+.story-ctl--play { min-inline-size: 9rem; }
+
+.story-icon {
+  flex: none;
+  inline-size: 1em;
+  block-size: 1em;
+  fill: currentColor;
+}
+
+.story-scrub {
+  display: flex;
+  flex: 1 1 12rem;
+  align-items: center;
+  gap: var(--s-3);
+  min-inline-size: 0;
+}
+
+.story-slider-wrap {
+  display: grid;
+  flex: 1 1 auto;
+  min-inline-size: 6rem;
+}
+
+.story-slider {
+  --thumb: 22px;
+  inline-size: 100%;
+  min-block-size: var(--tap);
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.story-slider:disabled { cursor: not-allowed; }
+
+.story-slider::-webkit-slider-runnable-track {
+  block-size: 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.story-slider::-webkit-slider-thumb {
+  inline-size: var(--thumb);
+  block-size: var(--thumb);
+  margin-block-start: -7px;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary), 0 1px 3px #11182733;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.story-slider::-moz-range-track {
+  block-size: 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.story-slider::-moz-range-thumb {
+  inline-size: 16px;
+  block-size: 16px;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.story[data-intro="true"] .story-slider::-webkit-slider-thumb {
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--line-strong);
+}
+
+.story-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-block: -12px 0;
+  padding-block: 0;
+  padding-inline: calc(var(--thumb, 22px) / 2 - 1.5px);
+  list-style: none;
+  pointer-events: none;
+}
+
+.story-tick {
+  flex: none;
+  inline-size: 3px;
+  block-size: 10px;
+  border-radius: 2px;
+  background: var(--neutral);
+}
+
+.story-tick[data-status="answered"],
+.story-tick[data-status="reused"] { background: var(--ai); }
+.story-tick[data-status="practice"] { background: var(--practice); }
+.story-tick[data-status="rules"] { background: var(--rules); }
+.story-tick[data-status="failed"] { background: var(--bad); }
+.story-tick[data-status="not_noticed"] { background: var(--line-strong); }
+
+.story-tick[data-current="true"] {
+  block-size: 14px;
+  box-shadow: 0 0 0 1px var(--surface);
+}
+
+.story-counter {
+  margin: 0;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.story-keys {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+
+/* People sheet */
+
+.story-sheet {
+  position: relative;
+  min-inline-size: 0;
+  padding-block: var(--s-2) var(--s-4);
+}
+
+.story-people {
+  display: grid;
+  gap: var(--s-6);
+}
+
+.story-group {
+  display: grid;
+  gap: var(--s-3);
+  min-inline-size: 0;
+}
+
+.story-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-4);
+}
+
+.story-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+
+.story-group-count { margin: 0; }
+
+.story-group-about {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
+  min-inline-size: 0;
+}
+
+.story-group-about > * { margin: 0; }
+
+.story-group-tagline {
+  flex: 1 1 100%;
+  max-inline-size: 70ch;
+  color: var(--ink-2);
+}
+
+.story-people-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-4);
+}
+
+@media (min-width: 700px) {
+  .story-people-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1200px) {
+  .story-people-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.story-person {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border-block-start: 6px solid var(--persona);
+}
+
+.story-person > * { margin: 0; }
+
+.story-person-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-l);
+}
+
+.story-person-summary { color: var(--ink-2); }
+
+.story-person-labels {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.story-person-labels-title {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+
+.story-person-end {
+  display: grid;
+  gap: var(--s-2);
+  padding-block-start: var(--s-3);
+  border-block-start: 1px solid var(--line);
+}
+
+.story-person-end > p { margin: 0; }
+
+.story-person-end-title {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+
+.story-compare {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+
+.story-interest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+
+.story-person > .story-person-actions {
+  display: flex;
+  margin-block-start: auto;
+}
+
+.story-follow { inline-size: 100%; }
+
+/* Summary sheet */
+
+.story-summary {
+  display: grid;
+  gap: var(--s-6);
+  margin-block-end: var(--s-6);
+}
+
+.story-block {
+  display: grid;
+  gap: var(--s-3);
+  min-inline-size: 0;
+  margin-block-end: var(--s-6);
+}
+
+.story-summary > .story-block { margin-block-end: 0; }
+
+.story-block > p { margin: 0; }
+
+.story-block-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+
+.story-summary-funnel > li .g-stat__label { font-size: var(--fs-s); }
+
+.story-spreads {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-4) var(--s-6);
+}
+
+@media (min-width: 800px) {
+  .story-spreads { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.story-spreads > p,
+.story-spreads > .story-flags { grid-column: 1 / -1; margin: 0; }
+
+/* Top-aligned: a neighbour with more legend rows must not stretch this one's bar and
+   chips. */
+.story-spread {
+  display: grid;
+  align-content: start;
+  gap: var(--s-2);
+  min-inline-size: 0;
+}
+
+.story-spread-chips { align-items: center; }
+
+.story-spread > * { margin: 0; }
+
+.story-spread-name { font-weight: 600; }
+
+.story-spread-bar {
+  display: flex;
+  gap: 2px;
+  block-size: 14px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+}
+
+.story-spread-seg {
+  flex: var(--share, 0) 1 0;
+  min-inline-size: 4px;
+  background: var(--seg, var(--neutral));
+}
+
+.story-swatch {
+  display: inline-block;
+  flex: none;
+  inline-size: .8em;
+  block-size: .8em;
+  border-radius: 2px;
+  background: var(--seg, var(--neutral));
+  box-shadow: inset 0 0 0 1px #11182726;
+}
+
+.story-spread-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+[data-dimension="affect"][data-value="annoyed"] { --seg: #B91C1C; }
+[data-dimension="affect"][data-value="skeptical"] { --seg: #EA580C; }
+[data-dimension="affect"][data-value="neutral"] { --seg: #9CA3AF; }
+[data-dimension="affect"][data-value="curious"] { --seg: #2563EB; }
+[data-dimension="affect"][data-value="positive"] { --seg: #15803D; }
+
+[data-value="uncertain"] {
+  --seg: repeating-linear-gradient(45deg, #6B7280 0 3px, #E5E7EB 3px 6px);
+}
+
+.story-spread[data-tone="ai"] [data-value="none"] { --seg: #DDD6FE; }
+.story-spread[data-tone="ai"] [data-value="low"] { --seg: #A78BFA; }
+.story-spread[data-tone="ai"] [data-value="medium"] { --seg: #7C3AED; }
+.story-spread[data-tone="ai"] [data-value="high"] { --seg: #4C1D95; }
+
+.story-spread[data-tone="practice"] [data-value="none"] { --seg: #FDE68A; }
+.story-spread[data-tone="practice"] [data-value="low"] { --seg: #F59E0B; }
+.story-spread[data-tone="practice"] [data-value="medium"] { --seg: #B45309; }
+.story-spread[data-tone="practice"] [data-value="high"] { --seg: #78350F; }
+
+.story-averages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: var(--s-5) var(--s-6);
+}
+
+.story-averages .g-pair__row { grid-template-columns: minmax(5.5rem, max-content) minmax(4rem, 1fr) max-content; }
+
+.story-range {
+  display: inline-flex;
+  align-items: center;
+  gap: .35em;
+  white-space: nowrap;
+}
+
+.story-arrow { color: var(--ink-3); }
+
+.story-range-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: .5em;
+}
+
+.story-start-mark {
+  position: absolute;
+  z-index: 2;
+  inset-block: 0;
+  inset-inline-start: calc((var(--start, 0) - var(--min)) / (1 - var(--min)) * 100% - 1.5px);
+  inline-size: 3px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.story-coverage,
+.story-provenance { max-inline-size: 90ch; }
+
+.story-how { margin-block: 0; }
+
+.story-limits-list {
+  display: grid;
+  gap: var(--s-2);
+  max-inline-size: 80ch;
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.story-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  margin: 0;
+}
+
+/* Desktop player: fill the window, scroll the narration and sheets inside */
+
+@media (min-width: 900px) and (min-height: 540px) {
+  .story-app {
+    block-size: calc(100dvh - var(--story-top, 9rem) - var(--s-4));
+    min-block-size: 26rem;
+  }
+
+  .story-body {
+    flex: 1 1 auto;
+    min-block-size: 0;
+  }
+
+  .story-stage {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-areas: "map narration" "controls controls";
+    grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-block-size: 0;
+    gap: var(--s-3) var(--s-4);
+  }
+
+  .story-map-area {
+    grid-area: map;
+    overflow: hidden;
+  }
+
+  .story-map-frame {
+    flex: 1 1 0;
+    block-size: auto;
+    min-block-size: 6rem;
+  }
+
+  .story-narration {
+    grid-area: narration;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 3px;
+    margin: -3px;
+  }
+
+  .story-controls { grid-area: controls; }
+
+  .story-sheet {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-inline: 3px;
+    margin-inline: -3px;
+  }
+}
+
+/* A 16:9 projector: the town is about square, so the map keeps its scale at 55% and the
+   narration gets the room it needs; very wide screens give the map 60%. */
+@media (min-width: 1600px) and (min-height: 540px) {
+  .story-stage { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+
+  .story-keys { flex: 0 1 auto; }
+}
+
+/* Below a wide projector, "Start again" is its icon alone, so the step slider keeps the
+   room it needs on the same row in every language. */
+@media (max-width: 1599px) {
+  .story-ctl--restart .story-ctl-text {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* Short desktop windows (a 1280 x 720 projector): the intro already names the key, so the
+   hint line yields its room, and the facts under the lead sentence get a size smaller. */
+@media (max-height: 800px) and (min-width: 900px) {
+  .story-keys { display: none; }
+
+  .story-headline { font-size: var(--fs-s); }
+
+  .story-card { gap: var(--s-2); }
+
+  .story-lane {
+    gap: var(--s-1);
+    padding-block: var(--s-2);
+  }
+
+  .story-chips > .g-chip { min-block-size: 1.5rem; }
+}
+
+/* Very short windows (1024 x 576): the clock is sized to the smaller map. */
+@media (max-height: 640px) and (min-width: 900px) {
+  .story-clock {
+    inset-block-start: var(--s-2);
+    inset-inline-end: var(--s-2);
+    font-size: var(--fs-xl);
+  }
+}
+
+/* Phones and narrow windows: sticky bottom transport */
+
+@media (max-width: 899px), (max-height: 539px) {
+  .story-controls {
+    position: sticky;
+    z-index: 3;
+    inset-block-end: 0;
+  }
+}
+
+@media (max-width: 599px) {
+  .story-map-frame {
+    block-size: 42vh;
+    min-block-size: 14rem;
+  }
+
+  .story-clock { font-size: var(--fs-xl); }
+
+  .story-controls {
+    justify-content: center;
+    min-block-size: 56px;
+    padding-block: var(--s-1);
+    border-radius: var(--r-2);
+  }
+
+  .story-ctl--restart,
+  .story-slider-wrap,
+  .story-keys { display: none; }
+
+  .story-ctl-text {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .story-ctl--play { min-inline-size: var(--tap); }
+
+  .story-scrub { flex: 0 1 auto; }
+
+  .story-tabbar { align-items: stretch; }
+
+  .story-filter { inline-size: 100%; }
+
+  /* On a phone the bars table keeps fixed column shares and wraps its words, rather
+     than letting a long heading push it past the screen's edge. */
+  .story-bars { table-layout: fixed; }
+
+  .story-bars-corner { inline-size: 30%; }
+
+  .story-bars thead th { inline-size: 35%; }
+
+  .story-bars :is(th, td) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    hyphens: auto;
+  }
+}
+
+/* Preferences */
+
+@media (prefers-reduced-motion: reduce) {
+  .story-enter,
+  .story-card.story-enter > * { animation: none; }
+
+  .story-card .g-pair__fill { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .story-map-frame,
+  .story-controls,
+  .story-intro,
+  .story-clock { border: 1px solid CanvasText; }
+
+  .story-tick,
+  .story-spread-seg,
+  .story-swatch,
+  .story-key,
+  .story-tag,
+  .story-start-mark {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .story-tick[data-current="true"] { background: Highlight; }
+
+  .story-slider { forced-color-adjust: auto; }
+}

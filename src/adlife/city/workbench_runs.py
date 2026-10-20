@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import stat
 from collections import OrderedDict
@@ -1254,6 +1255,23 @@ class WorkbenchRunRepository:
             # Any refusal, an unsafe workspace included, only disables the shortcut: the
             # full verification that follows reports it exactly as it always has.
             return None
+
+    def content_fingerprint(self, run_id: str) -> str | None:
+        """sha256 over the canonical observation (entries and file identities), or None.
+
+        None is never a verdict: it only tells a caller to verify the run in full.
+        """
+        try:
+            validate_run_id(run_id)
+        except (StorageError, ValueError):
+            return None
+        observation = self._observe(run_id)
+        if observation is None:
+            return None
+        canonical = json.dumps(
+            [observation.fingerprint, observation.stamps], ensure_ascii=True, separators=(",", ":")
+        )
+        return sha256(canonical.encode("ascii")).hexdigest()
 
     def _verify_and_remember(
         self,

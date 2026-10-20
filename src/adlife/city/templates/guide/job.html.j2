@@ -1,0 +1,56 @@
+{% extends "base.html.j2" %}
+{% block main %}
+<div class="setup-page setup-page--job">
+  <header class="setup-intro">
+    <h1 id="job-title" class="g-title">{{ tr("progress.title") }}</h1>
+    <p id="job-run" class="g-lead setup-intro__run"></p>
+    <p id="job-legacy" class="g-meta" hidden>{{ tr("progress.legacy") }}</p>
+  </header>
+
+  <ol id="job-steps" class="g-steps setup-steps" aria-labelledby="job-title">
+    <li class="setup-step" data-step="simulate" data-state="waiting">
+      <span class="g-steps__label">{{ tr("progress.step.simulate") }}</span>
+      <span class="g-steps__state">{{ tr("progress.state.waiting") }}</span>
+    </li>
+    <li class="setup-step" data-step="ask" data-state="waiting">
+      <span class="g-steps__label">{{ tr("progress.step.ask") }}</span>
+      <span class="g-steps__state">{{ tr("progress.state.waiting") }}</span>
+    </li>
+    <li class="setup-step" data-step="save" data-state="waiting">
+      <span class="g-steps__label">{{ tr("progress.step.save") }}</span>
+      <span class="g-steps__state">{{ tr("progress.state.waiting") }}</span>
+    </li>
+    <li class="setup-step" data-step="done" data-state="waiting">
+      <span class="g-steps__label">{{ tr("progress.step.done") }}</span>
+      <span class="g-steps__state">{{ tr("progress.state.waiting") }}</span>
+    </li>
+  </ol>
+
+  <section id="job-counter" class="g-card setup-counter" aria-labelledby="job-counter-text">
+    <p id="job-counter-text" class="setup-counter__big" data-kind="text">{{ tr("common.loading") }}</p>
+    <progress id="job-bar" class="g-progress setup-counter__bar" max="1" value="0" aria-labelledby="job-counter-text" hidden></progress>
+    <p id="job-counter-note" class="setup-counter__note" hidden></p>
+    <p id="job-times" class="setup-counter__times">
+      <span id="job-elapsed" class="setup-counter__time"></span>
+      <span id="job-remaining" class="setup-counter__time" hidden></span>
+    </p>
+    <p id="job-status" class="setup-counter__status" hidden></p>
+    <div class="setup-counter__stop">
+      <button type="button" id="job-stop" class="g-btn g-btn--secondary" hidden>{{ tr("progress.stop") }}</button>
+    </div>
+  </section>
+
+  <section id="job-outcome" class="g-card setup-outcome" aria-labelledby="job-outcome-title" hidden>
+    <h2 id="job-outcome-title" class="g-section-title setup-outcome__title"></h2>
+    <p id="job-outcome-counts" class="setup-outcome__counts" hidden></p>
+    <p id="job-outcome-note" class="g-callout g-callout--warn setup-outcome__note" hidden></p>
+    <div class="g-cluster setup-actions">
+      <a id="job-watch" class="g-btn g-btn--primary g-btn--big" hidden>{{ tr("progress.watch") }}</a>
+      <a id="job-report" class="g-btn g-btn--secondary" hidden>{{ tr("progress.report") }}</a>
+      <a id="job-technical" class="g-btn g-btn--quiet" target="_blank" rel="noopener noreferrer" hidden>{{ tr("common.technical_view") }}<span class="g-visually-hidden"> {{ tr("common.new_tab") }}</span></a>
+      <a id="job-saved" class="g-btn g-btn--secondary" href="/guide?lang={{ lang }}" hidden>{{ tr("start.runs.title") }}</a>
+      <a id="job-again" class="g-btn g-btn--secondary" href="/guide/new?lang={{ lang }}">{{ tr("progress.again") }}</a>
+    </div>
+  </section>
+</div>
+{% endblock %}

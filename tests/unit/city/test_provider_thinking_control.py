@@ -65,7 +65,7 @@ GOLDEN_PROFILE_REVISION = "44af20b431db215f598bc6560d8ddcce06cd6fdeb6d50bdf46dd2
 GOLDEN_PROFILE_SNAPSHOT = "d1e8412d1eeb9e03b73895c1d79bada17cf0825fd4a3b8b6ad909ec0c82adc97"
 GOLDEN_EFFECTIVE_SETTINGS_V2 = "031dabcc9df66a7b83ed750f994c3705108a38ebd5b16b21bcbccf91608c6a00"
 DRAFT_REVISION = "c1f628a955f1f1727f9824bcf426818c82fcbe0c268d4ff7ac08e30a62117622"
-DRAFT_CREDENTIAL_SLOT = "65dcb348e53d13c216b8301ff5e06e5f26bb1b0e48eed716ab57fe3aafd7c52a"
+DRAFT_SLOT_HASH = "65dcb348e53d13c216b8301ff5e06e5f26bb1b0e48eed716ab57fe3aafd7c52a"
 
 
 def _recorded_facts(**updates: object) -> dict[str, object]:
@@ -131,7 +131,7 @@ def test_profiles_without_the_control_keep_their_exact_revision_bytes(tmp_path) 
     revision = registry.create(explicit_default)
     assert (revision.revision_sha256, revision.credential_slot_id) == (
         DRAFT_REVISION,
-        DRAFT_CREDENTIAL_SLOT,
+        DRAFT_SLOT_HASH,
     )
     stored = _record_path(registry, revision).read_bytes()
     assert stored == (canonical_json(revision) + "\n").encode("utf-8")

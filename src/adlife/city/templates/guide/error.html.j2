@@ -1,0 +1,14 @@
+{% extends "base.html.j2" %}
+{% block main %}
+<section class="g-error" aria-labelledby="g-error-title">
+<div class="g-card g-error-card">
+<h1 class="g-error-title" id="g-error-title">{{ tr("error.title") }}</h1>
+<p class="g-error-text">{{ tr(error.key) }}</p>
+<p class="g-error-code">{{ tr("common.error.code", code=bdi_id(error.status|string)) }}</p>
+<p class="g-error-actions">
+<a class="g-btn g-btn--primary" href="{{ error.back_href }}">{{ tr("error.back") }}</a>
+{% if error.technical_href %}<a class="g-btn g-btn--secondary" href="{{ error.technical_href }}" target="_blank" rel="noopener noreferrer">{{ tr("common.technical_view") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
+{% endif %}</p>
+</div>
+</section>
+{% endblock %}

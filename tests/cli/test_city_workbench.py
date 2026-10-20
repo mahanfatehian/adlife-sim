@@ -112,6 +112,8 @@ def test_city_workbench_prepares_app_and_binds_one_hidden_safe_server(
         "server_header": False,
     }
     assert result.output.count("http://127.0.0.1:8877") == 1
+    # The professor lands on the guided presenter view; the technical view stays one click away.
+    assert "http://127.0.0.1:8877/guide" in result.output
     assert "open" not in result.output.lower()
 
 

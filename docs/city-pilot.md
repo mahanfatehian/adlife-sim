@@ -228,6 +228,8 @@ This local profile still lacks authentication or multi-user authorization, repor
 comparison/paired-study operation, a rights-reviewed real-city/worldwide catalog, calibrated
 traffic/population behavior, and sales prediction. Operator-supplied packs remain unreviewed
 for rights even when they pass every technical check.
+The guided view at `/guide` adds only a browser report of one saved schema-v10 run, with a
+self-contained download; it is not a comparison or study report.
 
 ## Local street packs: import or author
 

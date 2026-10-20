@@ -70,6 +70,8 @@ What this model cannot support. Read alongside the
   rights-reviewed real city/worldwide catalog. It remains loopback-only and makes no
   observed or calibrated population, traffic, attention, sales, or external-validity
   claim.
+  The guided view at `/guide` adds only a browser report of one saved schema-v10 run, with a
+  self-contained download; it is not a comparison or study report.
 - **Workspace upload is not data qualification.** A local V2 pack can be stored as
   `operator-supplied-unreviewed`, but technical validity does not establish rights,
   ownership, license compliance, legal routing, coverage quality, or fitness for a customer

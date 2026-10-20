@@ -243,8 +243,31 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "adlife/city/static/workbench-personas.css",
         "adlife/city/static/workbench-providers.js",
         "adlife/city/static/workbench-providers.css",
+        # The guided presenter view: catalogs, page templates, assets and the run report.
+        "adlife/i18n/catalogs/en.json",
+        "adlife/i18n/catalogs/de.json",
+        "adlife/i18n/catalogs/fa.json",
+        "adlife/city/templates/guide/base.html.j2",
+        "adlife/city/templates/guide/error.html.j2",
+        "adlife/city/templates/guide/start.html.j2",
+        "adlife/city/templates/guide/new.html.j2",
+        "adlife/city/templates/guide/job.html.j2",
+        "adlife/city/templates/guide/story.html.j2",
+        "adlife/city/static/guide/guide.css",
+        "adlife/city/static/guide/guide-setup.css",
+        "adlife/city/static/guide/guide-story.css",
+        "adlife/city/static/guide/guide-core.js",
+        "adlife/city/static/guide/guide-i18n.js",
+        "adlife/city/static/guide/guide-connection.js",
+        "adlife/city/static/guide/guide-start.js",
+        "adlife/city/static/guide/guide-setup.js",
+        "adlife/city/static/guide/guide-progress.js",
+        "adlife/city/static/guide/guide-story.js",
+        "adlife/city/static/guide/guide-map.js",
+        "adlife/reporting/templates/run-report.html.j2",
+        "adlife/reporting/static/run-report.css",
     ):
-        assert resource in names
+        assert resource in names, resource
     catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
     assert [item.template_id for item in catalog.templates] == [
         "fictional-coffee-pass-v1",
@@ -321,6 +344,14 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
             "        assert asset.headers['cache-control'] == 'no-store'\n"
             "        assert asset.headers['x-content-type-options'] == 'nosniff'\n"
             "        assert \"script-src 'self'\" in asset.headers['content-security-policy']\n"
+            "    page=client.get('/guide?lang=fa')\n"
+            "    assert page.status_code == 200\n"
+            '    assert \'<html lang="fa" dir="rtl">\' in page.text\n'
+            "    assert page.headers['content-type'] == 'text/html; charset=utf-8'\n"
+            "    catalog_asset=client.get('/guide/assets/i18n-fa.json')\n"
+            "    assert catalog_asset.status_code == 200\n"
+            "    assert catalog_asset.headers['content-type'] == 'application/json'\n"
+            "    assert json.loads(catalog_asset.content)['direction'] == 'rtl'\n"
             "print(json.dumps(paths))",
             str(scratch / "workspace"),
         ],
@@ -343,6 +374,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/runs",
         "/api/runs/{run_id}/cognition-records",
         "/api/runs/{run_id}/cognition-summary",
+        "/api/runs/{run_id}/story",
         "/api/runs/{run_id}/workbench-input",
         "/api/scenarios/validate",
         "/api/workbench",
@@ -354,6 +386,13 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/assets/workbench-personas.css",
         "/assets/workbench-providers.js",
         "/assets/workbench-providers.css",
+        "/guide",
+        "/guide/new",
+        "/guide/jobs/{job_id}",
+        "/guide/runs/{run_id}",
+        "/guide/runs/{run_id}/report",
+        "/guide/runs/{run_id}/report/download",
+        "/guide/assets/{asset_name}",
         "/runs/{run_id}",
         "/runs/{run_id}/reuse",
         "/static/{asset_name}",

@@ -2472,8 +2472,9 @@ def test_response_viewer_renders_safe_causal_rail_and_final_state_without_networ
             page.locator("#response-metrics-panel").evaluate("element => element.tagName")
             == "DETAILS"
         )
-        assert page.locator("#metrics-panel").get_attribute("open") is None
-        assert page.locator("#response-metrics-panel").get_attribute("open") is None
+        # The compact-width media listener closes both receipts after the resize, not during it.
+        expect(page.locator("#metrics-panel")).not_to_have_attribute("open", "")
+        expect(page.locator("#response-metrics-panel")).not_to_have_attribute("open", "")
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         response_box = page.locator("#response-panel").bounding_box()
         assert response_box is not None and response_box["width"] <= 390
@@ -3644,7 +3645,10 @@ def test_replay_restart_is_single_flight_while_the_first_frame_is_loading() -> N
         page = browser.new_page()
         page.goto(base_url, wait_until="networkidle")
         page.locator("#time-slider").fill("1439")
-        page.wait_for_function("() => state.timelineLoading === false")
+        # A loaded Windows CI runner once evaluated this before the deferred script had run.
+        page.wait_for_function(
+            "() => typeof state !== 'undefined' && state.timelineLoading === false"
+        )
         page.evaluate(
             """() => {
               const originalFetch = window.fetch.bind(window);

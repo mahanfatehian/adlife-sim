@@ -1,0 +1,130 @@
+{% extends "base.html.j2" %}
+{% block main %}
+<div class="story" id="story-root" data-state="loading" data-tab="story">
+<section class="story-boot" id="story-boot" aria-labelledby="story-boot-text">
+<div class="story-loading g-loading" id="story-loading">
+<span class="g-spinner" aria-hidden="true"></span>
+<p class="story-loading-text" id="story-boot-text">{{ tr("story.loading") }}</p>
+</div>
+<div class="story-problem g-callout g-callout--bad" id="story-problem" hidden>
+<div class="story-problem-body">
+<p class="story-problem-text" data-problem="not_found" hidden>{{ tr("story.not_found") }}</p>
+<p class="story-problem-text" data-problem="unavailable" hidden>{{ tr("story.unavailable") }}</p>
+<p class="story-problem-text" data-problem="unverifiable" hidden>{{ tr("story.unverifiable") }}</p>
+<p class="story-problem-text" data-problem="too_large" hidden>{{ tr("story.too_large") }}</p>
+<p class="story-problem-text" data-problem="server" hidden>{{ tr("common.error.server") }}</p>
+<p class="story-problem-text" data-problem="unexpected" hidden>{{ tr("common.error.unexpected") }}</p>
+<p class="story-problem-text" data-problem="generic" hidden>{{ tr("common.error.generic") }}</p>
+<p class="story-problem-code g-meta" id="story-problem-code" hidden></p>
+</div>
+<p class="story-problem-actions">
+<button type="button" class="g-btn g-btn--primary" id="story-retry" hidden>{{ tr("common.retry") }}</button>
+<a class="g-btn g-btn--secondary" id="story-problem-technical" href="{{ technical_href }}" target="_blank" rel="noopener noreferrer" hidden>{{ tr("common.technical_view") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
+<a class="g-btn g-btn--quiet" href="/guide?lang={{ lang }}">{{ tr("error.back") }}</a>
+</p>
+</div>
+</section>
+<div class="story-app" id="story-app" hidden>
+<header class="story-head">
+<div class="story-head-text">
+<h1 class="story-title" id="story-title">{{ tr("story.title") }}</h1>
+<p class="story-meta" id="story-meta"></p>
+</div>
+<p class="story-head-actions">
+<a class="g-btn g-btn--secondary" id="story-report-link" href="/guide/runs/{{ run_id }}/report?lang={{ lang }}">{{ tr("story.open_report") }}</a>
+</p>
+</header>
+<div class="story-tabbar">
+<div class="g-tabs story-tabs" role="tablist" aria-labelledby="story-title">
+<button type="button" class="story-tab" role="tab" id="story-tab-story" aria-controls="story-pane-story" aria-selected="true" data-tab="story">{{ tr("story.tab.story") }}</button>
+<button type="button" class="story-tab" role="tab" id="story-tab-people" aria-controls="story-pane-people" aria-selected="false" tabindex="-1" data-tab="people">{{ tr("story.tab.people") }}</button>
+<button type="button" class="story-tab" role="tab" id="story-tab-summary" aria-controls="story-pane-summary" aria-selected="false" tabindex="-1" data-tab="summary">{{ tr("story.tab.summary") }}</button>
+</div>
+<div class="story-filter" id="story-filter-wrap">
+<p class="story-filter-label" id="story-filter-label">{{ tr("story.filter.label") }}</p>
+<div class="g-seg story-seg" id="story-filter" role="radiogroup" aria-labelledby="story-filter-label">
+<button type="button" class="story-seg-option" role="radio" aria-checked="true" data-filter="key">{{ tr("story.filter.key") }}</button>
+<button type="button" class="story-seg-option" role="radio" aria-checked="false" tabindex="-1" data-filter="all">{{ tr("story.filter.all") }}</button>
+<button type="button" class="story-seg-option" role="radio" aria-checked="false" tabindex="-1" data-filter="person" id="story-filter-person" hidden></button>
+</div>
+</div>
+</div>
+<div class="story-body">
+<div class="story-stage" role="tabpanel" id="story-pane-story" aria-labelledby="story-tab-story" tabindex="-1">
+<section class="story-map-area" aria-labelledby="story-legend-title">
+<div class="story-map-frame" id="story-map-frame" dir="ltr">
+<canvas class="story-map" id="story-map" role="img"></canvas>
+<p class="story-clock" id="story-clock" dir="{{ dir }}" aria-hidden="true"></p>
+</div>
+<div class="story-legend">
+<h2 class="story-legend-title" id="story-legend-title">{{ tr("story.legend.title") }}</h2>
+<ul class="story-legend-list" id="story-legend-list"></ul>
+<p class="story-legend-item story-legend-item--ring"><span class="story-legend-ring" aria-hidden="true"></span>{{ tr("story.legend.highlight") }}</p>
+</div>
+</section>
+<div class="story-narration" id="story-narration">
+<div class="story-intro" id="story-intro">
+<ul class="story-headline" id="story-headline"></ul>
+<ol class="g-funnel story-funnel" id="story-intro-funnel"></ol>
+<div class="story-intro-actions">
+<button type="button" class="g-btn g-btn--primary g-btn--big story-intro-play" id="story-intro-play"><svg class="story-icon g-dir" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 2.5v11l9-5.5z"/></svg><span>{{ tr("story.play") }}</span></button>
+<p class="story-intro-hint">{{ tr("story.intro.hint") }}</p>
+</div>
+</div>
+<article class="story-card g-card" id="story-card" hidden></article>
+</div>
+<section class="story-controls" id="story-controls" aria-labelledby="story-counter">
+<div class="story-transport">
+<button type="button" class="g-btn g-btn--quiet story-ctl story-ctl--restart" id="story-restart" title="{{ tr_text('story.restart') }}"><svg class="story-icon g-dir" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 2.5h2v11H3zM14 2.5v11L6 8z"/></svg><span class="story-ctl-text">{{ tr("story.restart") }}</span></button>
+<button type="button" class="g-btn g-btn--secondary story-ctl" id="story-prev"><svg class="story-icon g-dir" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M10 1.5l2.2 2.2L7.9 8l4.3 4.3-2.2 2.2L3.5 8z"/></svg><span class="story-ctl-text">{{ tr("story.previous") }}</span></button>
+<button type="button" class="g-btn g-btn--primary story-ctl story-ctl--play" id="story-play"><svg class="story-icon g-dir" id="story-play-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 2.5v11l9-5.5z"/></svg><svg class="story-icon" id="story-pause-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false" hidden><path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z"/></svg><span class="story-ctl-text" id="story-play-text">{{ tr("story.play") }}</span></button>
+<button type="button" class="g-btn g-btn--secondary story-ctl story-ctl--next" id="story-next"><span class="story-ctl-text">{{ tr("story.next") }}</span><svg class="story-icon g-dir" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 1.5 3.8 3.7 8.1 8l-4.3 4.3L6 14.5 12.5 8z"/></svg></button>
+</div>
+<div class="story-scrub">
+<div class="story-slider-wrap">
+<input class="story-slider" id="story-slider" type="range" min="0" max="0" step="1" value="0" aria-labelledby="story-title">
+<ol class="story-ticks" id="story-ticks" aria-hidden="true"></ol>
+</div>
+<p class="story-counter" id="story-counter"></p>
+</div>
+<p class="story-keys">{{ tr("story.keys") }}</p>
+</section>
+</div>
+<div class="story-sheet" role="tabpanel" id="story-pane-people" aria-labelledby="story-tab-people" tabindex="-1" hidden>
+<div class="story-people" id="story-people"></div>
+</div>
+<div class="story-sheet" role="tabpanel" id="story-pane-summary" aria-labelledby="story-tab-summary" tabindex="-1" hidden>
+<div class="story-summary" id="story-summary"></div>
+<section class="story-block" aria-labelledby="story-how-title">
+<h2 class="story-block-title" id="story-how-title">{{ tr("start.how.title") }}</h2>
+<ol class="g-how story-how">
+<li class="g-how__box g-how__box--rules"><p>{{ tr("start.how.rules") }}</p></li>
+<li class="g-how__arrow" aria-hidden="true"><span class="g-dir">&#8594;</span></li>
+<li class="g-how__box g-how__box--ai"><p>{{ tr("start.how.ai") }}</p></li>
+<li class="g-how__arrow" aria-hidden="true"><span class="g-dir">&#8594;</span></li>
+<li class="g-how__box g-how__box--formula"><p>{{ tr("start.how.formula") }}</p></li>
+</ol>
+</section>
+<section class="story-block story-limits" aria-labelledby="story-limits-title">
+<h2 class="story-block-title" id="story-limits-title">{{ tr("limits.title") }}</h2>
+<ul class="story-limits-list">
+<li>{{ tr("limits.fictional") }}</li>
+<li>{{ tr("limits.not_forecast") }}</li>
+<li>{{ tr("limits.ai_scope") }}</li>
+<li>{{ tr("limits.names") }}</li>
+<li>{{ tr("limits.not_feelings") }}</li>
+<li>{{ tr("limits.replay") }}</li>
+<li id="story-limits-vendor" hidden>{{ tr("limits.vendor") }}</li>
+</ul>
+</section>
+<p class="story-actions">
+<a class="g-btn g-btn--primary" href="/guide/runs/{{ run_id }}/report?lang={{ lang }}">{{ tr("story.open_report") }}</a>
+<a class="g-btn g-btn--secondary" href="{{ technical_href }}" target="_blank" rel="noopener noreferrer">{{ tr("common.technical_view") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
+<a class="g-btn g-btn--secondary" href="/runs/{{ run_id }}/reuse" target="_blank" rel="noopener noreferrer">{{ tr("story.reuse") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
+<a class="g-btn g-btn--quiet" href="/guide/new?lang={{ lang }}">{{ tr("story.new") }}</a>
+</p>
+</div>
+</div>
+</div>
+</div>
+{% endblock %}

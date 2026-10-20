@@ -307,6 +307,9 @@ mechanisms, OAuth, browser report download/comparison operation,
 authentication, rights-reviewed real-city data, calibration, and external validity remain
 open. It is still a single-operator loopback application rather than an authenticated or
 process-recoverable service.
+The guided view at `/guide` adds only a browser report of one saved schema-v10 run, rendered
+on request with a self-contained download and never written to the workspace; it is not a
+comparison or study report.
 
 ## The city explanation seam
 

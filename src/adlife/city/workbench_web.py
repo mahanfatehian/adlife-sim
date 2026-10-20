@@ -38,6 +38,12 @@ from adlife.city.catalog import (
     CityCatalogError,
     UnknownCatalogCity,
 )
+from adlife.city.guide_web import (
+    GuideRouteContext,
+    GuideRunMissing,
+    GuideRunUnverifiable,
+    install_guide_routes,
+)
 from adlife.city.provider_compatibility import (
     ProviderEffectScope,
     WorkbenchProviderCompatibilityRegistry,
@@ -1600,6 +1606,25 @@ def create_city_workbench_app(
             raise WorkbenchRunUnavailable from None
         return JSONResponse(content=view.model_dump(mode="json"), headers=_SHELL_HEADERS)
 
+    def guide_load_verified_run(run_id: str) -> StoredCityRun:
+        """Freshly verify one run for the guide, refusing with the guide's own errors."""
+        try:
+            return verified_stored_run(run_id)
+        except WorkbenchRunNotFound:
+            raise GuideRunMissing from None
+        except WorkbenchRunUnavailable:
+            raise GuideRunUnverifiable from None
+
+    # The guided presenter pages and their story API; they only read verified runs.
+    install_guide_routes(
+        app,
+        GuideRouteContext(
+            csrf_token=token,
+            shell_headers=_SHELL_HEADERS,
+            load_verified_run=guide_load_verified_run,
+            content_fingerprint=repository.content_fingerprint,
+        ),
+    )
     install_city_view_routes(
         app,
         prefix="/api/runs/{run_id}",

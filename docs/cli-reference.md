@@ -120,7 +120,14 @@ ID=URL` may be repeated to approve exact provider base URLs for this process; th
 ID=ENVIRONMENT_VARIABLE` may be repeated to bind a remote provider ID to an
 environment-variable name. Credential values are never command-line arguments.
 
-Open the URL yourself and use `CITY -> CAMPAIGN -> RUN -> INSPECT`. The browser selects a
+The command prints one line, `city workbench: http://127.0.0.1:8765/guide`, the address of
+the guided view: plain-language pages for presenting a study in English, German, or Persian
+(`?lang=en`, `?lang=de`, or `?lang=fa`; Persian pages read right to left). Each guided page
+has a Technical view link: the start, setup, and progress pages link to the workbench at `/`,
+and the story and report pages link to that run's inspector at `/runs/{run_id}`. The guided
+view's presenter script is [guided-demo.md](guided-demo.md).
+
+The technical workbench at `/` uses `CITY -> CAMPAIGN -> RUN -> INSPECT`. The browser selects a
 verified packaged fictional city or uploads one local CityPack V2 into the immutable
 workspace registry, composes a bounded phone/billboard scenario from a packaged fictional
 creative, validates it without side effects, runs it through the one local worker, and
@@ -193,7 +200,20 @@ The process-local control API exposes these bounded catalog, job, and discovery 
 - `GET /runs/{run_id}/reuse` serves the workbench seeded to start a new draft from that saved
   run's verified inputs (schema-v8 and later), read through
   `/api/runs/{run_id}/workbench-input`; the browser suggests the next free sibling run ID and
-  never changes the saved run.
+  never changes the saved run;
+- `GET /guide`, `GET /guide/new`, `GET /guide/jobs/{job_id}`, and `GET /guide/runs/{run_id}`
+  serve the guided view's start, setup, live progress, and story pages, and
+  `GET /guide/runs/{run_id}/report` renders that saved run as a script-free HTML report. They
+  accept only `lang=en`, `lang=de`, or `lang=fa` (English when absent) and refuse any other
+  query with `422` `invalid-query`; the guide writes only through the `/api/*` routes above;
+- `GET /guide/runs/{run_id}/report/download` takes the same `lang` query and returns the same
+  report as a self-contained attachment named `adlife-report-{run_id}-{lang}.html`; neither
+  report route writes to the workspace;
+- `GET /api/runs/{run_id}/story` returns a verified schema-v10 run as `adlife-run-story-v1`
+  story data with the map geometry and movement tracks; it accepts no query and refuses an
+  older run with `404` `story-unavailable`;
+- `GET /guide/assets/{asset_name}` serves the guide's allowlisted scripts, stylesheets, and
+  translation catalogs.
 
 Opening an inspector performs one complete artifact verification and places an opaque,
 run-bound token in that page. Its same-origin API requests send the token in a header and
@@ -732,3 +752,5 @@ input DTOs expose normalized personas/assignments; the saved inspector collapses
 context. V8 works with city-view, city-replay, city-metrics, city-compare and homogeneous
 all-v8 city-study sources. Paired studies accept descriptive-only changes and refuse causal
 profile/state changes. Browser comparison/study/report download remains unshipped.
+The guided view's report download (`/guide/runs/{run_id}/report/download`) covers one saved
+schema-v10 run only; it is not a comparison or study report.

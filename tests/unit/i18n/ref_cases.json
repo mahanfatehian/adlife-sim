@@ -1,0 +1,1430 @@
+{
+  "schema_version": 1,
+  "description": "Shared message-reference cases. Python (Catalog.plain/markup) and JavaScript (resolveText/resolveNodes) must both produce the expected plain text and the expected node tree, where a string is a text node and {\"bdi\": dir, \"children\": [...]} is a <bdi dir> element. Error cases must raise in Python and render as the bracketed key in JavaScript.",
+  "messages": {
+    "en": {
+      "common.day_clock": "Day {day} · {time}",
+      "common.list_separator": ", ",
+      "common.percent": "{value}%",
+      "common.person_ref": "{name} #{number}",
+      "flag.stereotype-risk": "stereotype risk",
+      "flag.unsafe-content": "unsafe content",
+      "persona.veyra.name": "Veyra",
+      "test.city": "Fictional Grid City",
+      "test.days": {
+        "one": "{count} simulated day",
+        "other": "{count} simulated days"
+      },
+      "test.headline": "{people} spent {days} in {city}.",
+      "test.judged": {
+        "one": "The AI ({model}) judged {count} moment.",
+        "other": "The AI ({model}) judged {count} moments."
+      },
+      "test.map": "Map with {count} people.",
+      "test.missing": "Needs {absent}.",
+      "test.noticed": "{time} · {name} noticed the {product} ad {where}.",
+      "test.people": {
+        "one": "{count} person",
+        "other": "{count} people"
+      },
+      "test.rules_line": "Rules only: liking {before} → {after}",
+      "test.share": "{share} of the answers",
+      "test.shown": {
+        "one": "The {product} ad was shown once.",
+        "other": "The {product} ad was shown {count} times."
+      },
+      "test.total": "{total} requests",
+      "test.warning": "The answer raised a warning ({flags}).",
+      "test.where": "on the phone at home"
+    },
+    "fa": {
+      "common.day_clock": "روز {day} · {time}",
+      "common.list_separator": "، ",
+      "common.percent": "{value}٪",
+      "common.person_ref": "{name} ({number})",
+      "flag.stereotype-risk": "خطر کلیشه",
+      "flag.unsafe-content": "محتوای ناامن",
+      "persona.veyra.name": "ویرا",
+      "test.city": "شهر شطرنجی خیالی",
+      "test.days": {
+        "one": "{count} روز شبیه‌سازی‌شده",
+        "other": "{count} روز شبیه‌سازی‌شده"
+      },
+      "test.headline": "{people} {days} را در {city} گذراندند.",
+      "test.judged": {
+        "one": "هوش مصنوعی ({model}) {count} لحظه را داوری کرد.",
+        "other": "هوش مصنوعی ({model}) {count} لحظه را داوری کرد."
+      },
+      "test.map": "نقشه با {count} نفر.",
+      "test.missing": "نیاز به {absent}.",
+      "test.noticed": "{time} · {name} آگهی {product} را {where} دید.",
+      "test.people": {
+        "one": "{count} نفر",
+        "other": "{count} نفر"
+      },
+      "test.rules_line": "فقط قواعد: علاقه {before} ← {after}",
+      "test.share": "{share} از پاسخ‌ها",
+      "test.shown": {
+        "one": "آگهی {product} {count} بار نمایش داده شد.",
+        "other": "آگهی {product} {count} بار نمایش داده شد."
+      },
+      "test.total": "{total} درخواست",
+      "test.warning": "پاسخ هشدار داد ({flags}).",
+      "test.where": "روی گوشی در خانه"
+    }
+  },
+  "contexts": {
+    "one_day": {
+      "days": 1,
+      "people": [
+        {
+          "agent_id": "person-006",
+          "template_key": "veyra",
+          "display_name": "Veyra",
+          "number": 6
+        },
+        {
+          "agent_id": "person-009",
+          "template_key": null,
+          "display_name": "Sam </bdi><script>window.pwned=1</script>",
+          "number": 9
+        }
+      ]
+    },
+    "three_days": {
+      "days": 3,
+      "people": [
+        {
+          "agent_id": "person-006",
+          "template_key": "veyra",
+          "display_name": "Veyra",
+          "number": 6
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "sentence-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 437
+          },
+          "name": {
+            "person": "person-006"
+          },
+          "product": {
+            "text": "Lumen Pocket"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      },
+      "plain": "07:17 · Veyra #6 noticed the Lumen Pocket ad on the phone at home.",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "07:17"
+          ]
+        },
+        " · ",
+        {
+          "bdi": "ltr",
+          "children": [
+            {
+              "bdi": "ltr",
+              "children": [
+                "Veyra"
+              ]
+            },
+            " #",
+            {
+              "bdi": "ltr",
+              "children": [
+                "6"
+              ]
+            }
+          ]
+        },
+        " noticed the ",
+        {
+          "bdi": "auto",
+          "children": [
+            "Lumen Pocket"
+          ]
+        },
+        " ad ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "on the phone at home"
+          ]
+        },
+        "."
+      ]
+    },
+    {
+      "id": "sentence-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 437
+          },
+          "name": {
+            "person": "person-006"
+          },
+          "product": {
+            "text": "Lumen Pocket"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      },
+      "plain": "۰۷:۱۷ · ویرا (۶) آگهی Lumen Pocket را روی گوشی در خانه دید.",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "۰۷:۱۷"
+          ]
+        },
+        " · ",
+        {
+          "bdi": "rtl",
+          "children": [
+            {
+              "bdi": "rtl",
+              "children": [
+                "ویرا"
+              ]
+            },
+            " (",
+            {
+              "bdi": "ltr",
+              "children": [
+                "۶"
+              ]
+            },
+            ")"
+          ]
+        },
+        " آگهی ",
+        {
+          "bdi": "auto",
+          "children": [
+            "Lumen Pocket"
+          ]
+        },
+        " را ",
+        {
+          "bdi": "rtl",
+          "children": [
+            "روی گوشی در خانه"
+          ]
+        },
+        " دید."
+      ]
+    },
+    {
+      "id": "hostile-text-stays-text-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 1259
+          },
+          "name": {
+            "person": "person-009"
+          },
+          "product": {
+            "text": "</bdi><img src=x onerror=alert(1)>"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      },
+      "plain": "20:59 · Sam </bdi><script>window.pwned=1</script> #9 noticed the </bdi><img src=x onerror=alert(1)> ad on the phone at home.",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "20:59"
+          ]
+        },
+        " · ",
+        {
+          "bdi": "ltr",
+          "children": [
+            {
+              "bdi": "auto",
+              "children": [
+                "Sam </bdi><script>window.pwned=1</script>"
+              ]
+            },
+            " #",
+            {
+              "bdi": "ltr",
+              "children": [
+                "9"
+              ]
+            }
+          ]
+        },
+        " noticed the ",
+        {
+          "bdi": "auto",
+          "children": [
+            "</bdi><img src=x onerror=alert(1)>"
+          ]
+        },
+        " ad ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "on the phone at home"
+          ]
+        },
+        "."
+      ]
+    },
+    {
+      "id": "hostile-text-stays-text-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 1259
+          },
+          "name": {
+            "person": "person-009"
+          },
+          "product": {
+            "text": "\"quoted\" & 'single'"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      },
+      "plain": "۲۰:۵۹ · Sam </bdi><script>window.pwned=1</script> (۹) آگهی \"quoted\" & 'single' را روی گوشی در خانه دید.",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "۲۰:۵۹"
+          ]
+        },
+        " · ",
+        {
+          "bdi": "rtl",
+          "children": [
+            {
+              "bdi": "auto",
+              "children": [
+                "Sam </bdi><script>window.pwned=1</script>"
+              ]
+            },
+            " (",
+            {
+              "bdi": "ltr",
+              "children": [
+                "۹"
+              ]
+            },
+            ")"
+          ]
+        },
+        " آگهی ",
+        {
+          "bdi": "auto",
+          "children": [
+            "\"quoted\" & 'single'"
+          ]
+        },
+        " را ",
+        {
+          "bdi": "rtl",
+          "children": [
+            "روی گوشی در خانه"
+          ]
+        },
+        " دید."
+      ]
+    },
+    {
+      "id": "day-clock-en",
+      "language": "en",
+      "context": "three_days",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 3317
+          },
+          "name": {
+            "person": "person-006"
+          },
+          "product": {
+            "text": "Lumen Pocket"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      },
+      "plain": "Day 3 · 07:17 · Veyra #6 noticed the Lumen Pocket ad on the phone at home.",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "Day ",
+            {
+              "bdi": "ltr",
+              "children": [
+                "3"
+              ]
+            },
+            " · ",
+            {
+              "bdi": "ltr",
+              "children": [
+                "07:17"
+              ]
+            }
+          ]
+        },
+        " · ",
+        {
+          "bdi": "ltr",
+          "children": [
+            {
+              "bdi": "ltr",
+              "children": [
+                "Veyra"
+              ]
+            },
+            " #",
+            {
+              "bdi": "ltr",
+              "children": [
+                "6"
+              ]
+            }
+          ]
+        },
+        " noticed the ",
+        {
+          "bdi": "auto",
+          "children": [
+            "Lumen Pocket"
+          ]
+        },
+        " ad ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "on the phone at home"
+          ]
+        },
+        "."
+      ]
+    },
+    {
+      "id": "day-clock-fa",
+      "language": "fa",
+      "context": "three_days",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 3317
+          },
+          "name": {
+            "person": "person-006"
+          },
+          "product": {
+            "text": "Lumen Pocket"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      },
+      "plain": "روز ۳ · ۰۷:۱۷ · ویرا (۶) آگهی Lumen Pocket را روی گوشی در خانه دید.",
+      "nodes": [
+        {
+          "bdi": "rtl",
+          "children": [
+            "روز ",
+            {
+              "bdi": "ltr",
+              "children": [
+                "۳"
+              ]
+            },
+            " · ",
+            {
+              "bdi": "ltr",
+              "children": [
+                "۰۷:۱۷"
+              ]
+            }
+          ]
+        },
+        " · ",
+        {
+          "bdi": "rtl",
+          "children": [
+            {
+              "bdi": "rtl",
+              "children": [
+                "ویرا"
+              ]
+            },
+            " (",
+            {
+              "bdi": "ltr",
+              "children": [
+                "۶"
+              ]
+            },
+            ")"
+          ]
+        },
+        " آگهی ",
+        {
+          "bdi": "auto",
+          "children": [
+            "Lumen Pocket"
+          ]
+        },
+        " را ",
+        {
+          "bdi": "rtl",
+          "children": [
+            "روی گوشی در خانه"
+          ]
+        },
+        " دید."
+      ]
+    },
+    {
+      "id": "nested-plurals-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.headline",
+        "params": {
+          "people": {
+            "key": "test.people",
+            "count": 8
+          },
+          "days": {
+            "key": "test.days",
+            "count": 1
+          },
+          "city": {
+            "key": "test.city"
+          }
+        }
+      },
+      "plain": "8 people spent 1 simulated day in Fictional Grid City.",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            {
+              "bdi": "ltr",
+              "children": [
+                "8"
+              ]
+            },
+            " people"
+          ]
+        },
+        " spent ",
+        {
+          "bdi": "ltr",
+          "children": [
+            {
+              "bdi": "ltr",
+              "children": [
+                "1"
+              ]
+            },
+            " simulated day"
+          ]
+        },
+        " in ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "Fictional Grid City"
+          ]
+        },
+        "."
+      ]
+    },
+    {
+      "id": "nested-plurals-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.headline",
+        "params": {
+          "people": {
+            "key": "test.people",
+            "count": 8
+          },
+          "days": {
+            "key": "test.days",
+            "count": 1
+          },
+          "city": {
+            "key": "test.city"
+          }
+        }
+      },
+      "plain": "۸ نفر ۱ روز شبیه‌سازی‌شده را در شهر شطرنجی خیالی گذراندند.",
+      "nodes": [
+        {
+          "bdi": "rtl",
+          "children": [
+            {
+              "bdi": "ltr",
+              "children": [
+                "۸"
+              ]
+            },
+            " نفر"
+          ]
+        },
+        " ",
+        {
+          "bdi": "rtl",
+          "children": [
+            {
+              "bdi": "ltr",
+              "children": [
+                "۱"
+              ]
+            },
+            " روز شبیه‌سازی‌شده"
+          ]
+        },
+        " را در ",
+        {
+          "bdi": "rtl",
+          "children": [
+            "شهر شطرنجی خیالی"
+          ]
+        },
+        " گذراندند."
+      ]
+    },
+    {
+      "id": "plural-one-form-without-count-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.shown",
+        "count": 1,
+        "params": {
+          "product": {
+            "text": "Lumen Pocket"
+          }
+        }
+      },
+      "plain": "The Lumen Pocket ad was shown once.",
+      "nodes": [
+        "The ",
+        {
+          "bdi": "auto",
+          "children": [
+            "Lumen Pocket"
+          ]
+        },
+        " ad was shown once."
+      ]
+    },
+    {
+      "id": "plural-other-form-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.shown",
+        "count": 27,
+        "params": {
+          "product": {
+            "text": "Lumen Pocket"
+          }
+        }
+      },
+      "plain": "The Lumen Pocket ad was shown 27 times.",
+      "nodes": [
+        "The ",
+        {
+          "bdi": "auto",
+          "children": [
+            "Lumen Pocket"
+          ]
+        },
+        " ad was shown ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "27"
+          ]
+        },
+        " times."
+      ]
+    },
+    {
+      "id": "persian-one-form-covers-zero",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.shown",
+        "count": 0,
+        "params": {
+          "product": {
+            "text": "Lumen Pocket"
+          }
+        }
+      },
+      "plain": "آگهی Lumen Pocket ۰ بار نمایش داده شد.",
+      "nodes": [
+        "آگهی ",
+        {
+          "bdi": "auto",
+          "children": [
+            "Lumen Pocket"
+          ]
+        },
+        " ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "۰"
+          ]
+        },
+        " بار نمایش داده شد."
+      ]
+    },
+    {
+      "id": "count-and-id-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.judged",
+        "count": 10,
+        "params": {
+          "model": {
+            "id": "gapgpt-qwen-3.6"
+          }
+        }
+      },
+      "plain": "The AI (gapgpt-qwen-3.6) judged 10 moments.",
+      "nodes": [
+        "The AI (",
+        {
+          "bdi": "ltr",
+          "children": [
+            "gapgpt-qwen-3.6"
+          ]
+        },
+        ") judged ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "10"
+          ]
+        },
+        " moments."
+      ]
+    },
+    {
+      "id": "id-keeps-ascii-digits-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.judged",
+        "count": 10,
+        "params": {
+          "model": {
+            "id": "gapgpt-qwen-3.6"
+          }
+        }
+      },
+      "plain": "هوش مصنوعی (gapgpt-qwen-3.6) ۱۰ لحظه را داوری کرد.",
+      "nodes": [
+        "هوش مصنوعی (",
+        {
+          "bdi": "ltr",
+          "children": [
+            "gapgpt-qwen-3.6"
+          ]
+        },
+        ") ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "۱۰"
+          ]
+        },
+        " لحظه را داوری کرد."
+      ]
+    },
+    {
+      "id": "count-in-a-string-message",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.map",
+        "count": 1200
+      },
+      "plain": "نقشه با ۱٬۲۰۰ نفر.",
+      "nodes": [
+        "نقشه با ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "۱٬۲۰۰"
+          ]
+        },
+        " نفر."
+      ]
+    },
+    {
+      "id": "list-of-keys-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.warning",
+        "params": {
+          "flags": {
+            "list": [
+              {
+                "key": "flag.stereotype-risk"
+              },
+              {
+                "key": "flag.unsafe-content"
+              }
+            ]
+          }
+        }
+      },
+      "plain": "The answer raised a warning (stereotype risk, unsafe content).",
+      "nodes": [
+        "The answer raised a warning (",
+        {
+          "bdi": "ltr",
+          "children": [
+            {
+              "bdi": "ltr",
+              "children": [
+                "stereotype risk"
+              ]
+            },
+            ", ",
+            {
+              "bdi": "ltr",
+              "children": [
+                "unsafe content"
+              ]
+            }
+          ]
+        },
+        ")."
+      ]
+    },
+    {
+      "id": "list-of-keys-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.warning",
+        "params": {
+          "flags": {
+            "list": [
+              {
+                "key": "flag.stereotype-risk"
+              },
+              {
+                "key": "flag.unsafe-content"
+              }
+            ]
+          }
+        }
+      },
+      "plain": "پاسخ هشدار داد (خطر کلیشه، محتوای ناامن).",
+      "nodes": [
+        "پاسخ هشدار داد (",
+        {
+          "bdi": "rtl",
+          "children": [
+            {
+              "bdi": "rtl",
+              "children": [
+                "خطر کلیشه"
+              ]
+            },
+            "، ",
+            {
+              "bdi": "rtl",
+              "children": [
+                "محتوای ناامن"
+              ]
+            }
+          ]
+        },
+        ")."
+      ]
+    },
+    {
+      "id": "empty-list",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.warning",
+        "params": {
+          "flags": {
+            "list": []
+          }
+        }
+      },
+      "plain": "The answer raised a warning ().",
+      "nodes": [
+        "The answer raised a warning (",
+        {
+          "bdi": "ltr",
+          "children": []
+        },
+        ")."
+      ]
+    },
+    {
+      "id": "decimals-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.rules_line",
+        "params": {
+          "before": {
+            "num": -0.2,
+            "decimals": 2
+          },
+          "after": {
+            "num": -0.2213,
+            "decimals": 2
+          }
+        }
+      },
+      "plain": "Rules only: liking −0.20 → −0.22",
+      "nodes": [
+        "Rules only: liking ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "−0.20"
+          ]
+        },
+        " → ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "−0.22"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "decimals-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.rules_line",
+        "params": {
+          "before": {
+            "num": -0.2,
+            "decimals": 2
+          },
+          "after": {
+            "num": 0.0319,
+            "decimals": 3,
+            "signed": true
+          }
+        }
+      },
+      "plain": "فقط قواعد: علاقه −۰٫۲۰ ← +۰٫۰۳۲",
+      "nodes": [
+        "فقط قواعد: علاقه ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "−۰٫۲۰"
+          ]
+        },
+        " ← ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "+۰٫۰۳۲"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "signed-zero-has-no-sign",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.rules_line",
+        "params": {
+          "before": {
+            "num": -0.0001,
+            "decimals": 2,
+            "signed": true
+          },
+          "after": {
+            "num": 0.125,
+            "decimals": 2,
+            "signed": false
+          }
+        }
+      },
+      "plain": "Rules only: liking 0.00 → 0.13",
+      "nodes": [
+        "Rules only: liking ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "0.00"
+          ]
+        },
+        " → ",
+        {
+          "bdi": "ltr",
+          "children": [
+            "0.13"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "percent-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.share",
+        "params": {
+          "share": {
+            "pct": 0.5,
+            "decimals": 0
+          }
+        }
+      },
+      "plain": "50% of the answers",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "50%"
+          ]
+        },
+        " of the answers"
+      ]
+    },
+    {
+      "id": "percent-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.share",
+        "params": {
+          "share": {
+            "pct": 0.1234,
+            "decimals": 1
+          }
+        }
+      },
+      "plain": "۱۲٫۳٪ از پاسخ‌ها",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "۱۲٫۳٪"
+          ]
+        },
+        " از پاسخ‌ها"
+      ]
+    },
+    {
+      "id": "integer-en",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.total",
+        "params": {
+          "total": {
+            "int": 14800
+          }
+        }
+      },
+      "plain": "14,800 requests",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "14,800"
+          ]
+        },
+        " requests"
+      ]
+    },
+    {
+      "id": "integer-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.total",
+        "params": {
+          "total": {
+            "int": -14800
+          }
+        }
+      },
+      "plain": "−۱۴٬۸۰۰ درخواست",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "−۱۴٬۸۰۰"
+          ]
+        },
+        " درخواست"
+      ]
+    },
+    {
+      "id": "non-template-person-fa",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 0
+          },
+          "name": {
+            "person": "person-009"
+          },
+          "product": {
+            "text": "کافه"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      },
+      "plain": "۰۰:۰۰ · Sam </bdi><script>window.pwned=1</script> (۹) آگهی کافه را روی گوشی در خانه دید.",
+      "nodes": [
+        {
+          "bdi": "ltr",
+          "children": [
+            "۰۰:۰۰"
+          ]
+        },
+        " · ",
+        {
+          "bdi": "rtl",
+          "children": [
+            {
+              "bdi": "auto",
+              "children": [
+                "Sam </bdi><script>window.pwned=1</script>"
+              ]
+            },
+            " (",
+            {
+              "bdi": "ltr",
+              "children": [
+                "۹"
+              ]
+            },
+            ")"
+          ]
+        },
+        " آگهی ",
+        {
+          "bdi": "auto",
+          "children": [
+            "کافه"
+          ]
+        },
+        " را ",
+        {
+          "bdi": "rtl",
+          "children": [
+            "روی گوشی در خانه"
+          ]
+        },
+        " دید."
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "id": "unknown-key",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.absent"
+      }
+    },
+    {
+      "id": "missing-parameter",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.missing"
+      }
+    },
+    {
+      "id": "plural-without-count",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.people"
+      }
+    },
+    {
+      "id": "person-outside-the-context",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 1
+          },
+          "name": {
+            "person": "person-030"
+          },
+          "product": {
+            "text": "x"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      }
+    },
+    {
+      "id": "nested-key-is-unknown",
+      "language": "fa",
+      "context": "one_day",
+      "ref": {
+        "key": "test.headline",
+        "params": {
+          "people": {
+            "key": "test.absent"
+          },
+          "days": {
+            "key": "test.days",
+            "count": 1
+          },
+          "city": {
+            "key": "test.city"
+          }
+        }
+      }
+    },
+    {
+      "id": "count-is-reserved",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.map",
+        "params": {
+          "count": {
+            "int": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "too-deep",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.warning",
+        "params": {
+          "flags": {
+            "list": [
+              {
+                "list": [
+                  {
+                    "key": "flag.unsafe-content"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "ambiguous-parameter",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.total",
+        "params": {
+          "total": {
+            "int": 3,
+            "text": "3"
+          }
+        }
+      }
+    },
+    {
+      "id": "unknown-parameter-kind",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.total",
+        "params": {
+          "total": {
+            "float": 3.5
+          }
+        }
+      }
+    },
+    {
+      "id": "extra-member",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.total",
+        "params": {
+          "total": {
+            "int": 3,
+            "decimals": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "too-many-decimals",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.rules_line",
+        "params": {
+          "before": {
+            "num": 1,
+            "decimals": 4
+          },
+          "after": {
+            "num": 1,
+            "decimals": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "boolean-is-not-an-integer",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.total",
+        "params": {
+          "total": {
+            "int": true
+          }
+        }
+      }
+    },
+    {
+      "id": "clock-beyond-seven-days",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 10081
+          },
+          "name": {
+            "person": "person-006"
+          },
+          "product": {
+            "text": "x"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-agent-id",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.noticed",
+        "params": {
+          "time": {
+            "clock": 1
+          },
+          "name": {
+            "person": "agent-6"
+          },
+          "product": {
+            "text": "x"
+          },
+          "where": {
+            "key": "test.where"
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-key-pattern",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "Test.Missing"
+      }
+    },
+    {
+      "id": "non-ascii-id",
+      "language": "en",
+      "context": "one_day",
+      "ref": {
+        "key": "test.judged",
+        "count": 2,
+        "params": {
+          "model": {
+            "id": "مدل"
+          }
+        }
+      }
+    }
+  ]
+}

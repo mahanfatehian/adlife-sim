@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guided presenter view (2026-10-20)** — `adlife city-workbench` now prints
+  `city workbench: http://127.0.0.1:{port}/guide`, a plain-language view for presenting a
+  study in English, German, or Persian (right to left), next to the unchanged technical
+  workbench at `/` and the saved-run inspector. `/guide` explains the run in three steps,
+  checks the AI connection, and lists the saved runs; `/guide/new` sets up a study with three
+  cards and one button; `/guide/jobs/{job_id}` shows live progress such as "3 of 10
+  answered"; `/guide/runs/{run_id}` replays a saved schema-v10 run as a story on an animated
+  map; and `/guide/runs/{run_id}/report` renders a script-free HTML report of that run, with
+  a self-contained download, without writing to the workspace. Story and report sentences
+  come from one builder (`GET /api/runs/{run_id}/story`, `adlife-run-story-v1`) and one
+  catalog per language, so every language says the same thing. The guide writes only through
+  the existing `/api/*` routes, runs no inline script, and loads nothing from the internet.
+  The presenter script, with the PowerShell start command for an online AI, is
+  [docs/guided-demo.md](docs/guided-demo.md).
 - **Bounded AI cognition in the city workbench (2026-10-19)** — the workbench RUN step now
   separates **Operation** (`Explanation only` or `Bounded AI cognition`) from **Source**
   (rules, mock, local or remote compatible model). `Bounded AI cognition` submits workbench

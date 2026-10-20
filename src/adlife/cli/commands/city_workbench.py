@@ -74,7 +74,7 @@ def command(
     except UnsafeWorkbenchWorkspace:
         raise CommandError("workbench workspace is unsafe or unavailable") from None
 
-    info(f"city workbench: http://127.0.0.1:{port}")
+    info(f"city workbench: http://127.0.0.1:{port}/guide")
     uvicorn.run(
         application,
         host="127.0.0.1",

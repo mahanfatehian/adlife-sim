@@ -1,0 +1,188 @@
+{% extends "base.html.j2" %}
+{% block main %}
+<div class="setup-page setup-page--new">
+  <header class="setup-intro">
+    <h1 id="setup-title" class="g-title">{{ tr("setup.title") }}</h1>
+    <p class="g-lead">{{ tr("setup.lead") }}</p>
+  </header>
+
+  <div id="active-job" class="g-callout g-callout--info setup-banner" hidden></div>
+
+  <div class="setup-cards">
+    <section id="setup-card-ad" class="g-card setup-card setup-card--ad" aria-labelledby="ad-title">
+      <h2 id="ad-title" class="setup-card__title">{{ tr("setup.ad.title") }}</h2>
+      <div class="g-field">
+        <p id="ad-product-label" class="g-label">{{ tr("setup.ad.product") }}</p>
+        <div id="ad-products" class="g-choices setup-products" role="radiogroup" aria-labelledby="ad-product-label"></div>
+      </div>
+      <div class="g-field">
+        <p id="ad-where-label" class="g-label">{{ tr("setup.ad.where") }}</p>
+        <div id="ad-where" class="g-seg" role="radiogroup" aria-labelledby="ad-where-label">
+          <button type="button" role="radio" aria-checked="true" data-value="phone">{{ tr("setup.ad.where.phone") }}</button>
+          <button type="button" role="radio" aria-checked="false" data-value="billboard">{{ tr("setup.ad.where.billboard") }}</button>
+          <button type="button" role="radio" aria-checked="false" data-value="both">{{ tr("setup.ad.where.both") }}</button>
+        </div>
+      </div>
+      <p id="ad-aimed" class="setup-aimed"></p>
+      <p id="ad-error" class="g-error" hidden></p>
+    </section>
+
+    <section id="setup-card-people" class="g-card setup-card setup-card--people" aria-labelledby="people-title">
+      <h2 id="people-title" class="setup-card__title">{{ tr("setup.people.title") }}</h2>
+      <div class="g-field">
+        <p id="people-preset-label" class="g-label">{{ tr("setup.people.preset") }}</p>
+        <div id="people-preset" class="g-seg" role="radiogroup" aria-labelledby="people-preset-label">
+          <button type="button" role="radio" aria-checked="true" data-value="contrast">{{ tr("setup.people.preset.contrast") }}</button>
+          <button type="button" role="radio" aria-checked="false" data-value="classic">{{ tr("setup.people.preset.classic") }}</button>
+          <button type="button" role="radio" aria-checked="false" data-value="all">{{ tr("setup.people.preset.all") }}</button>
+          <button type="button" role="radio" aria-checked="false" data-value="custom" hidden>{{ tr("setup.people.preset.custom") }}</button>
+        </div>
+      </div>
+      <ul id="people-list" class="setup-people" aria-labelledby="people-title"></ul>
+      <p id="people-total" class="setup-total"></p>
+      <p id="people-max" class="g-help" hidden></p>
+      <p id="people-error" class="g-error" hidden></p>
+      <p class="g-help setup-note">{{ tr("setup.people.note") }}</p>
+    </section>
+
+    <section id="setup-card-ai" class="g-card setup-card setup-card--ai" aria-labelledby="ai-title">
+      <h2 id="ai-title" class="setup-card__title">{{ tr("setup.ai.title") }}</h2>
+      <div id="setup-connection" class="setup-card__connection"></div>
+      <div id="ai-limit-block" class="g-field">
+        <p id="ai-limit-label" class="g-label">{{ tr("setup.ai.limit") }}</p>
+        <div id="ai-limit" class="g-seg" role="radiogroup" aria-labelledby="ai-limit-label"></div>
+        <p id="ai-estimate" class="g-help"></p>
+        <p id="ai-explain" class="g-help"></p>
+      </div>
+      <p id="ai-offline" class="g-help" hidden>{{ tr("setup.ai.limit.offline") }}</p>
+      <div id="ai-cache" class="g-callout g-callout--warn" hidden><p>{{ tr("setup.ai.cache") }}</p></div>
+      <div id="ai-error" class="g-callout g-callout--bad" tabindex="-1" hidden></div>
+    </section>
+  </div>
+
+  <details id="setup-more" class="g-details setup-more">
+    <summary id="setup-more-summary">{{ tr("setup.more.title") }}</summary>
+    <div class="setup-more__grid">
+      <fieldset class="g-fieldset g-field" id="more-days-field">
+        <legend id="more-days-legend">{{ tr("setup.more.days") }}</legend>
+        <div class="g-stepper">
+          <button type="button" id="more-days-down" aria-labelledby="more-days-legend more-days-down">&#8722;</button>
+          <output id="more-days" aria-labelledby="more-days-legend"></output>
+          <button type="button" id="more-days-up" aria-labelledby="more-days-legend more-days-up">+</button>
+        </div>
+        <p id="more-days-error" class="g-error" hidden></p>
+      </fieldset>
+
+      <div class="g-field" id="more-seed-field">
+        <label for="more-seed" class="g-label">{{ tr("setup.more.seed") }}</label>
+        <div class="g-cluster setup-inline">
+          <input id="more-seed" class="g-input setup-input--short" type="text" inputmode="numeric" dir="ltr" spellcheck="false" autocomplete="off" maxlength="40" aria-describedby="more-seed-help more-seed-error">
+          <button type="button" id="more-seed-new" class="g-btn g-btn--secondary">{{ tr("setup.more.seed.new") }}</button>
+        </div>
+        <p id="more-seed-help" class="g-help">{{ tr("setup.more.seed.help") }}</p>
+        <p id="more-seed-error" class="g-error" hidden></p>
+      </div>
+
+      <fieldset class="g-fieldset g-field" id="more-hours-field">
+        <legend>{{ tr("setup.more.hours") }}</legend>
+        <div class="g-cluster setup-hours">
+          <div class="setup-hours__item">
+            <span id="more-from-label" class="setup-hours__label">{{ tr("setup.more.from") }}</span>
+            <div class="g-stepper">
+              <button type="button" id="more-from-down" aria-labelledby="more-from-label more-from-down">&#8722;</button>
+              <output id="more-from" aria-labelledby="more-from-label"></output>
+              <button type="button" id="more-from-up" aria-labelledby="more-from-label more-from-up">+</button>
+            </div>
+          </div>
+          <div class="setup-hours__item">
+            <span id="more-until-label" class="setup-hours__label">{{ tr("setup.more.until") }}</span>
+            <div class="g-stepper">
+              <button type="button" id="more-until-down" aria-labelledby="more-until-label more-until-down">&#8722;</button>
+              <output id="more-until" aria-labelledby="more-until-label"></output>
+              <button type="button" id="more-until-up" aria-labelledby="more-until-label more-until-up">+</button>
+            </div>
+          </div>
+        </div>
+        <p id="more-hours-error" class="g-error" hidden></p>
+      </fieldset>
+
+      <fieldset class="g-fieldset g-field" id="more-cap-field">
+        <legend id="more-cap-legend">{{ tr("setup.more.cap") }}</legend>
+        <div class="g-stepper">
+          <button type="button" id="more-cap-down" aria-labelledby="more-cap-legend more-cap-down">&#8722;</button>
+          <output id="more-cap" aria-labelledby="more-cap-legend"></output>
+          <button type="button" id="more-cap-up" aria-labelledby="more-cap-legend more-cap-up">+</button>
+        </div>
+        <p id="more-cap-error" class="g-error" hidden></p>
+      </fieldset>
+
+      <div class="g-field" id="more-frequency-field">
+        <p id="more-frequency-label" class="g-label">{{ tr("setup.more.frequency") }}</p>
+        <div id="more-frequency" class="g-seg" role="radiogroup" aria-labelledby="more-frequency-label">
+          <button type="button" role="radio" aria-checked="true" data-value="0.01">{{ tr("setup.more.frequency.low") }}</button>
+          <button type="button" role="radio" aria-checked="false" data-value="0.02">{{ tr("setup.more.frequency.medium") }}</button>
+          <button type="button" role="radio" aria-checked="false" data-value="0.05">{{ tr("setup.more.frequency.high") }}</button>
+        </div>
+        <p id="more-frequency-error" class="g-error" hidden></p>
+      </div>
+
+      <fieldset class="g-fieldset g-field" id="more-activities-field" aria-describedby="more-activities-error">
+        <legend>{{ tr("setup.more.activities") }}</legend>
+        <div class="g-checks" id="more-activities">
+          <label class="g-check"><input type="checkbox" name="activity" value="home" checked><span>{{ tr("activity.home") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="activity" value="commute" checked><span>{{ tr("activity.commute") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="activity" value="work"><span>{{ tr("activity.work") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="activity" value="leisure" checked><span>{{ tr("activity.leisure") }}</span></label>
+        </div>
+        <p id="more-activities-error" class="g-error" hidden></p>
+      </fieldset>
+
+      <div class="g-field" id="more-price-field">
+        <p id="more-price-label" class="g-label">{{ tr("setup.more.price") }}</p>
+        <div id="more-price" class="g-seg" role="radiogroup" aria-labelledby="more-price-label" aria-describedby="more-price-help">
+          <button type="button" role="radio" aria-checked="false" data-value="0.8"><bdi dir="ltr">{{ fmt_dec(0.8, 1) }}</bdi></button>
+          <button type="button" role="radio" aria-checked="false" data-value="1"><bdi dir="ltr">{{ fmt_dec(1.0, 1) }}</bdi></button>
+          <button type="button" role="radio" aria-checked="true" data-value="1.25"><bdi dir="ltr">{{ fmt_dec(1.25, 2) }}</bdi></button>
+          <button type="button" role="radio" aria-checked="false" data-value="1.5"><bdi dir="ltr">{{ fmt_dec(1.5, 1) }}</bdi></button>
+          <button type="button" role="radio" aria-checked="false" data-value="2"><bdi dir="ltr">{{ fmt_dec(2.0, 1) }}</bdi></button>
+        </div>
+        <p id="more-price-help" class="g-help"></p>
+        <p id="more-price-error" class="g-error" hidden></p>
+      </div>
+
+      <fieldset class="g-fieldset g-field" id="more-interests-field" aria-describedby="more-interests-error">
+        <legend>{{ tr("setup.more.interests") }}</legend>
+        <div class="g-checks" id="more-interests">
+          <label class="g-check"><input type="checkbox" name="interest" value="commuting"><span>{{ tr("interest.commuting") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="technology"><span>{{ tr("interest.technology") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="food"><span>{{ tr("interest.food") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="leisure"><span>{{ tr("interest.leisure") }}</span></label>
+        </div>
+        <p id="more-interests-error" class="g-error" hidden></p>
+      </fieldset>
+
+      <div class="g-field" id="more-run-field">
+        <label for="more-run-id" class="g-label">{{ tr("setup.more.run_id") }}</label>
+        <input id="more-run-id" class="g-input" type="text" dir="ltr" spellcheck="false" autocomplete="off" autocapitalize="off" maxlength="60" aria-describedby="more-run-help more-run-error">
+        <p id="more-run-help" class="g-help">{{ tr("setup.more.run_id.help") }}</p>
+        <p id="more-run-error" class="g-error" hidden></p>
+      </div>
+    </div>
+  </details>
+
+  <div id="setup-runbar" class="setup-runbar">
+    <div class="setup-runbar__info">
+      <p id="setup-summary" class="setup-runbar__summary"></p>
+      <p id="setup-run-note" class="setup-runbar__note" hidden></p>
+    </div>
+    <div class="setup-runbar__actions">
+      <button type="button" id="setup-more-open" class="g-btn g-btn--quiet" aria-controls="setup-more">{{ tr("setup.more.title") }}</button>
+      <button type="button" id="setup-run" class="g-btn g-btn--primary g-btn--big" aria-describedby="setup-run-note">{{ tr("setup.run") }}</button>
+    </div>
+    <div id="setup-blockers" class="g-callout g-callout--warn setup-blockers" role="group" aria-labelledby="setup-blockers-title" tabindex="-1" hidden>
+      <h2 id="setup-blockers-title" class="setup-blockers__title">{{ tr("setup.blocked.title") }}</h2>
+      <ul id="setup-blockers-list" class="setup-blockers__list"></ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

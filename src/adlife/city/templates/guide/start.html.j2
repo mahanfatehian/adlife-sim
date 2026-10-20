@@ -1,0 +1,61 @@
+{% extends "base.html.j2" %}
+{% block main %}
+<div class="setup-page setup-page--start">
+  <div id="active-job" class="g-callout g-callout--info setup-banner" hidden></div>
+
+  <section class="g-hero setup-hero" aria-labelledby="start-title">
+    <div class="setup-hero__text">
+      <p class="g-eyebrow">{{ tr("common.guide") }}</p>
+      <h1 id="start-title" class="g-title">{{ tr("start.title") }}</h1>
+      <p class="g-lead">{{ tr("start.lead") }}</p>
+    </div>
+    <p class="setup-hero__action">
+      <a id="start-new" class="g-btn g-btn--primary g-btn--big" href="/guide/new?lang={{ lang }}">{{ tr("start.new") }}<span class="g-dir" aria-hidden="true">&#8594;</span></a>
+    </p>
+    <div class="setup-hero__how">
+      <h2 id="start-how-title" class="setup-hero__how-title">{{ tr("start.how.title") }}</h2>
+      <ol class="g-how" aria-labelledby="start-how-title">
+        <li class="g-how__box g-how__box--rules"><p>{{ tr("start.how.rules") }}</p></li>
+        <li class="g-how__arrow" aria-hidden="true"><span class="g-dir">&#8594;</span></li>
+        <li class="g-how__box g-how__box--ai"><p>{{ tr("start.how.ai") }}</p></li>
+        <li class="g-how__arrow" aria-hidden="true"><span class="g-dir">&#8594;</span></li>
+        <li class="g-how__box g-how__box--formula"><p>{{ tr("start.how.formula") }}</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <div class="g-split setup-start-columns">
+    <section class="g-card setup-panel setup-preflight" aria-labelledby="preflight-title">
+      <h2 id="preflight-title" class="g-section-title">{{ tr("start.preflight.title") }}</h2>
+      <ul class="setup-checklist" id="preflight-list">
+        <li class="setup-check" id="preflight-ai" data-state="pending">
+          <span class="setup-check__icon" aria-hidden="true"></span>
+          <span class="setup-check__text">{{ tr("common.loading") }}</span>
+        </li>
+        <li class="setup-check" id="preflight-backups" data-state="pending">
+          <span class="setup-check__icon" aria-hidden="true"></span>
+          <span class="setup-check__text">{{ tr("start.runs.loading") }}</span>
+        </li>
+        <li class="setup-check" id="preflight-motion" data-state="warn" hidden>
+          <span class="setup-check__icon" aria-hidden="true"></span>
+          <span class="setup-check__text">{{ tr("start.preflight.motion_off") }}</span>
+        </li>
+        <li class="setup-check" id="preflight-zoom" data-state="info">
+          <span class="setup-check__icon" aria-hidden="true"></span>
+          <span class="setup-check__text">{{ tr("start.preflight.zoom") }}</span>
+        </li>
+      </ul>
+      <div id="start-connection" class="setup-preflight__connection"></div>
+    </section>
+
+    <section class="g-card setup-panel setup-runs" aria-labelledby="runs-title">
+      <h2 id="runs-title" class="g-section-title">{{ tr("start.runs.title") }}</h2>
+      <p id="runs-status" class="g-loading setup-runs__status"><span class="g-spinner" aria-hidden="true"></span><span>{{ tr("start.runs.loading") }}</span></p>
+      <ul id="runs-list" class="setup-runs__list"></ul>
+      <p class="setup-runs__more">
+        <button id="runs-all" type="button" class="g-btn g-btn--secondary" hidden>{{ tr("common.show_all") }}</button>
+      </p>
+    </section>
+  </div>
+</div>
+{% endblock %}

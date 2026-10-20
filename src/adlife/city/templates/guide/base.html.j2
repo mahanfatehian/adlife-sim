@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="{{ lang }}" dir="{{ dir }}">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+{% if csrf_token is defined and csrf_token %}<meta name="adlife-csrf-token" content="{{ csrf_token }}">
+{% endif %}{% if run_id is defined and run_id %}<meta name="adlife-run-id" content="{{ run_id }}">
+{% endif %}{% if job_id is defined and job_id %}<meta name="adlife-job-id" content="{{ job_id }}">
+{% endif %}<title>{{ tr_text(title_key) }} · {{ tr_text("common.app") }}</title>
+<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/guide/assets/guide.css">
+{% if page_css is defined and page_css %}<link rel="stylesheet" href="/guide/assets/{{ page_css }}">
+{% endif %}{% if page_script is defined and page_script %}<script type="module" src="/guide/assets/{{ page_script }}"></script>
+{% endif %}</head>
+<body>
+<a class="g-skip" href="#main">{{ tr("common.skip") }}</a>
+<header class="g-header">
+<div class="g-header-inner">
+<a class="g-brand" href="/guide?lang={{ lang }}"><img class="g-brand-icon" src="/assets/workbench-icon.svg" alt="" width="32" height="32"><span class="g-brand-text"><span class="g-brand-name">{{ tr("common.app") }}</span><span class="g-brand-tag">{{ tr("common.guide") }}</span></span></a>
+<div class="g-header-tools">
+{% if lang_links is defined and lang_links %}<nav class="g-lang" aria-label="{{ tr_text('common.language') }}">
+<ul class="g-lang-list">
+{% for link in lang_links %}<li class="g-lang-item"><a class="g-lang-link" href="{{ link.href }}" lang="{{ link.code }}" hreflang="{{ link.code }}" dir="{{ 'rtl' if link.code == 'fa' else 'ltr' }}"{% if link.current %} aria-current="true"{% endif %}>{{ link.label }}</a></li>
+{% endfor %}</ul>
+</nav>
+{% endif %}{% if technical_href is defined and technical_href %}<a class="g-tech-link" href="{{ technical_href }}" target="_blank" rel="noopener noreferrer" title="{{ tr_text('common.technical_view.hint') }}">{{ tr("common.technical_view") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
+{% endif %}</div>
+</div>
+</header>
+<main id="main" class="g-main" tabindex="-1">
+{% block main %}{% endblock %}
+</main>
+<footer class="g-footer">
+<p class="g-footer-text">{{ tr("common.footer") }}</p>
+</footer>
+<div id="g-live" class="g-visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

@@ -144,3 +144,20 @@ def test_spatial_resources_are_lf_pinned_for_identical_cross_platform_csp():
     )
     assert all(line.endswith(": eol: lf") for line in result.stdout.splitlines())
     assert len(result.stdout.splitlines()) == 2
+
+
+def test_run_report_resources_are_lf_pinned_for_identical_cross_platform_csp():
+    """The run report's inline stylesheet is authorised by the hash of its LF bytes."""
+    import subprocess
+
+    paths = (
+        "src/adlife/reporting/templates/run-report.html.j2",
+        "src/adlife/reporting/static/run-report.css",
+    )
+    result = subprocess.run(
+        ["git", "check-attr", "eol", "--", *paths],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.splitlines() == [f"{path}: eol: lf" for path in paths]

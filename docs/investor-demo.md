@@ -75,10 +75,14 @@ environment variable to `30m`.
 uv run adlife city-workbench --workspace .\demo-workbench --port 50050
 ```
 
-Expected: `city workbench: http://127.0.0.1:50050`. Leave this window open (Ctrl+C stops
+Expected: `city workbench: http://127.0.0.1:50050/guide`. Leave this window open (Ctrl+C stops
 the server) and open <http://127.0.0.1:50050> in a browser; the command never opens one
 itself. The workspace folder is created if needed and keeps provider profiles, the
 cognition cache, and saved runs under `.\demo-workbench\city-runs\<run-id>\`.
+
+The printed `/guide` address opens the guided view, plain-language pages for presenting to a
+non-technical audience, with its own script in [guided-demo.md](guided-demo.md); this script
+uses the technical workbench at the address without `/guide`.
 
 The server talks only to endpoints approved at startup. The built-in `local-ollama` origin
 (`http://127.0.0.1:11434/v1`) is always approved, so the local demo needs no other flag and
@@ -454,8 +458,9 @@ and starts the local run. Its line follows about 30 seconds later with a warm mo
 - Live model answers are not guaranteed to be reproducible; saved runs are. `city-replay`
   reapplies the frozen signals offline and must match every saved byte of evidence.
 - The cognition evidence is exploratory: it is not validated psychology, not a prediction about
-  any person, and not a sales forecast or campaign effect. Comparisons, studies, and reports
-  of V10 runs are not supported yet.
+  any person, and not a sales forecast or campaign effect. Comparisons and studies of V10 runs
+  are not supported yet, and `city-report` refuses them; each saved V10 run has its own
+  browser run report in the guided view.
 - Integrity hashes detect damage and isolated edits; they are unsigned, so they cannot prove
   who produced a file against someone who rewrites every artifact.
 
