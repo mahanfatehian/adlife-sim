@@ -60,6 +60,9 @@ def _serve(application: object) -> Iterator[str]:
             port=port,
             log_level="critical",
             access_log=False,
+            # A module-scoped browser can still hold a connection open when the server
+            # stops; a loaded Windows runner then waited out the join below. Drop it instead.
+            timeout_graceful_shutdown=3,
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)
