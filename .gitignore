@@ -22,7 +22,9 @@ reports/
 
 # Local study folders are personal sandboxes, not part of the package
 demo-study/
-# The live-demo workbench workspace from docs/investor-demo.md
+# The default workspace of `adlife app`
+adlife-workspace/
+# The live-demo workbench workspace of the removed technical demo script; keep it ignored
 demo-workbench/
 # The guided-demo workspace from docs/guided-demo.md, and renamed rehearsal copies of it
 demo-guided*/

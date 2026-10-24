@@ -35,6 +35,7 @@ from adlife.cli.commands.city_workbench import command as city_workbench_command
 from adlife.cli.commands.compare import command as compare_command
 from adlife.cli.commands.demo import command as demo_command
 from adlife.cli.commands.doctor import command as doctor_command
+from adlife.cli.commands.guided_app import command as guided_app_command
 from adlife.cli.commands.init import command as init_command
 from adlife.cli.commands.population import app as population_app
 from adlife.cli.commands.replay import command as replay_command
@@ -115,6 +116,7 @@ app.command("city-run")(city_run_command)
 app.command("city-replay")(city_replay_command)
 app.command("city-view")(city_view_command)
 app.command("city-workbench")(city_workbench_command)
+app.command("app")(guided_app_command)
 
 
 def version_callback(value: bool) -> None:
