@@ -26,9 +26,11 @@ uv sync
 uv run adlife app
 ```
 
-The app opens at `http://127.0.0.1:8765/guide` in your browser (the root address redirects to `/guide`). Click
-**New simulation**, choose **Practice answers** in the third card to try it without any AI,
-and click **Run simulation**: a few seconds later you can watch the story and open the report.
+The app opens at `http://127.0.0.1:8765/guide` in your browser (the root address redirects
+to `/guide`). Click **New simulation**, then **Run simulation**. The third card,
+**3 · The AI**, starts on **Practice answers** (fixed offline answers, not an AI), so this
+first run needs no AI and no network; if it shows another choice, click **Change** and pick
+**Practice answers**. A few seconds later you can watch the story and open the report.
 Press Ctrl+C in the terminal to stop the app. Runs are saved in `./adlife-workspace`.
 
 **The step-by-step [docs/user-guide.md](docs/user-guide.md) covers installing, every AI choice,

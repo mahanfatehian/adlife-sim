@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from click.utils import strip_ansi
 from fastapi import FastAPI
 from typer.testing import CliRunner
 
@@ -14,7 +15,8 @@ from adlife.cli.commands import guided_app
 
 def test_app_is_registered_with_defaults_and_plain_help() -> None:
     result = CliRunner().invoke(app, ["app", "--help"], env={"COLUMNS": "200"})
-    output = " ".join(result.output.split())
+    # CI forces colour (GITHUB_ACTIONS), so compare the help as plain text.
+    output = " ".join(strip_ansi(result.output).replace("│", " ").split())
 
     assert result.exit_code == 0
     assert "--workspace" in output and "adlife-workspace" in output
