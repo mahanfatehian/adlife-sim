@@ -62,7 +62,6 @@ class RunReportLinks:
     """Same-origin links of the view variant; ``None`` renders the standalone file."""
 
     story: str
-    technical: str
     download: str
     languages: tuple[tuple[Language, str], ...]
 
@@ -298,7 +297,7 @@ def _checked_links(links: object) -> RunReportLinks | None:
     codes = [code for code, _ in links.languages]
     if any(code not in LANGUAGES for code in codes) or len(set(codes)) != len(codes):
         raise ValueError("report language links are invalid")
-    for href in (links.story, links.technical, links.download, *(h for _, h in links.languages)):
+    for href in (links.story, links.download, *(h for _, h in links.languages)):
         if type(href) is not str or _LINK.fullmatch(href) is None:
             raise ValueError("report links must be same-origin paths")
     return links
@@ -438,9 +437,9 @@ def _person(person: StoryPerson, *, practice: bool) -> _Person:
 
 
 def _mark(color_index: int) -> str:
-    """Colour slot 0-7 (templates 0-3, other personas 4-7 repeating) and shape 0-3."""
-    slot = color_index if color_index < 8 else 4 + (color_index - 4) % 4
-    return f"c{slot} s{color_index % 4}"
+    """Colour slot 0-9 and shape 0-3: the ten templates differ in colour, and another
+    persona (10 onward) reuses a template colour only with a different shape."""
+    return f"c{color_index % 10} s{color_index % 4}"
 
 
 def _persona(

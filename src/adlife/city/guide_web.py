@@ -298,7 +298,6 @@ def _report_links(run_id: str, language: Language) -> RunReportLinks:
 
     return RunReportLinks(
         story=f"/guide/runs/{run_id}?lang={language}",
-        technical=f"/runs/{run_id}",
         download=f"/guide/runs/{run_id}/report/download?lang={language}",
         languages=tuple((code, f"/guide/runs/{run_id}/report?lang={code}") for code in LANGUAGES),
     )
@@ -325,7 +324,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
         page_css: str | None,
         page_script: str | None,
         path: str,
-        technical_href: str,
         csrf: bool = False,
         run_id: str | None = None,
         job_id: str | None = None,
@@ -355,7 +353,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
                     }
                     for code in LANGUAGES
                 ],
-                technical_href=technical_href,
                 error=error,
                 **template_functions(catalog),
             )
@@ -368,7 +365,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
         status_code: int,
         key: str,
         path: str = "/guide",
-        technical_href: str | None = None,
     ) -> HTMLResponse:
         return page(
             "error.html.j2",
@@ -377,12 +373,10 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
             page_css=None,
             page_script=None,
             path=path,
-            technical_href=technical_href or "/",
             error={
                 "status": status_code,
                 "key": key,
                 "back_href": f"/guide?lang={language}",
-                "technical_href": technical_href,
             },
             status_code=status_code,
         )
@@ -406,7 +400,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
             page_css="guide-setup.css",
             page_script="guide-start.js",
             path="/guide",
-            technical_href="/",
             csrf=True,
         )
 
@@ -423,7 +416,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
             page_css="guide-setup.css",
             page_script="guide-setup.js",
             path="/guide/new",
-            technical_href="/",
             csrf=True,
         )
 
@@ -442,7 +434,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
             page_css="guide-setup.css",
             page_script="guide-progress.js",
             path=f"/guide/jobs/{job_id}",
-            technical_href="/",
             csrf=True,
             job_id=job_id,
         )
@@ -463,7 +454,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
             page_css="guide-story.css",
             page_script="guide-story.js",
             path=f"/guide/runs/{portable_run_id}",
-            technical_href=f"/runs/{portable_run_id}",
             run_id=portable_run_id,
         )
 
@@ -488,7 +478,6 @@ def install_guide_routes(app: FastAPI, context: GuideRouteContext) -> None:
                 status_code=status_code,
                 key=key,
                 path=path,
-                technical_href=(f"/runs/{portable_run_id}" if failure.kind == "older" else None),
             )
         try:
             rendered = render_run_report_html(

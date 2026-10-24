@@ -22,7 +22,6 @@
 {% for link in lang_links %}<li class="g-lang-item"><a class="g-lang-link" href="{{ link.href }}" lang="{{ link.code }}" hreflang="{{ link.code }}" dir="{{ 'rtl' if link.code == 'fa' else 'ltr' }}"{% if link.current %} aria-current="true"{% endif %}>{{ link.label }}</a></li>
 {% endfor %}</ul>
 </nav>
-{% endif %}{% if technical_href is defined and technical_href %}<a class="g-tech-link" href="{{ technical_href }}" target="_blank" rel="noopener noreferrer" title="{{ tr_text('common.technical_view.hint') }}">{{ tr("common.technical_view") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
 {% endif %}</div>
 </div>
 </header>

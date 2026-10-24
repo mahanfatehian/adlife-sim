@@ -9,7 +9,6 @@ virtual environment outside the checkout and drives the whole workflow offline.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 import zipfile
@@ -148,6 +147,8 @@ def test_wheel_carries_verified_fictional_city_catalog(built_wheel: Path) -> Non
     assert [entry.city_id for entry in catalog.entries] == [
         "fictional-grid-v2",
         "fictional-harbor-loop-v2",
+        "fictional-new-district-v2",
+        "fictional-old-town-v2",
         "fictional-river-junction-v2",
     ]
     with zipfile.ZipFile(built_wheel) as wheel:
@@ -176,6 +177,12 @@ def test_exact_installed_wheel_loads_fictional_personas_offline_outside_checkout
         "persona-002",
         "persona-003",
         "persona-004",
+        "persona-005",
+        "persona-006",
+        "persona-007",
+        "persona-008",
+        "persona-009",
+        "persona-010",
     ]
     scratch = tmp_path / "persona-clean-room"
     scratch.mkdir()
@@ -207,6 +214,12 @@ def test_exact_installed_wheel_loads_fictional_personas_offline_outside_checkout
         "persona-002",
         "persona-003",
         "persona-004",
+        "persona-005",
+        "persona-006",
+        "persona-007",
+        "persona-008",
+        "persona-009",
+        "persona-010",
     ]
     assert guard.with_name(smoke_release._NETWORK_GUARD_LOG).is_file()
 
@@ -221,28 +234,34 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
     with zipfile.ZipFile(built_wheel) as wheel:
         names = set(wheel.namelist())
         creative_bytes = wheel.read("adlife/city/creative_templates.json")
-        shell = wheel.read("adlife/city/static/workbench.html").decode("utf-8")
-        style = wheel.read("adlife/city/static/workbench.css").decode("utf-8")
         icon = wheel.read("adlife/city/static/workbench-icon.svg").decode("utf-8")
-        javascript = wheel.read("adlife/city/static/workbench.js").decode("utf-8")
-        city_pack_javascript = wheel.read("adlife/city/static/workbench-city-packs.js").decode(
-            "utf-8"
-        )
-        provider_javascript = wheel.read("adlife/city/static/workbench-providers.js").decode(
-            "utf-8"
-        )
-        provider_style = wheel.read("adlife/city/static/workbench-providers.css").decode("utf-8")
-    for resource in (
-        "adlife/city/creative_templates.json",
+        guide_sources = {
+            name: wheel.read(name).decode("utf-8")
+            for name in names
+            if name.startswith("adlife/city/static/guide/") and name.endswith((".js", ".css"))
+        }
+    # The workbench server serves only the guided pages; the old technical UI is not packaged.
+    for removed in (
         "adlife/city/static/workbench.html",
         "adlife/city/static/workbench.css",
-        "adlife/city/static/workbench-icon.svg",
         "adlife/city/static/workbench.js",
         "adlife/city/static/workbench-city-packs.js",
         "adlife/city/static/workbench-personas.js",
         "adlife/city/static/workbench-personas.css",
         "adlife/city/static/workbench-providers.js",
         "adlife/city/static/workbench-providers.css",
+    ):
+        assert removed not in names, removed
+    for resource in (
+        "adlife/city/creative_templates.json",
+        # The guide and the report use the icon.
+        "adlife/city/static/workbench-icon.svg",
+        # The separate `adlife city` and `adlife city-view` viewers keep their dashboard.
+        "adlife/city/static/index.html",
+        "adlife/city/static/app.js",
+        "adlife/city/static/app.css",
+        "adlife/city/static/app-cognition-v2.js",
+        "adlife/city/static/app-cognition-v2.css",
         # The guided presenter view: catalogs, page templates, assets and the run report.
         "adlife/i18n/catalogs/en.json",
         "adlife/i18n/catalogs/de.json",
@@ -270,39 +289,37 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         assert resource in names, resource
     catalog = CreativeTemplateCatalog.model_validate_json(creative_bytes)
     assert [item.template_id for item in catalog.templates] == [
+        "fictional-bike-share-v1",
+        "fictional-book-box-v1",
         "fictional-coffee-pass-v1",
         "fictional-crispy-meal-v1",
         "fictional-device-launch-v1",
+        "fictional-fitness-app-v1",
         "fictional-home-delivery-v1",
+        "fictional-music-stream-v1",
     ]
-    assert "__ADLIFE_CSRF_TOKEN__" in shell
-    assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell
-    assert '<link rel="stylesheet" href="/assets/workbench-providers.css">' in shell
-    assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell
-    assert '<script defer src="/assets/workbench-city-packs.js"></script>' in shell
-    assert '<script defer src="/assets/workbench-providers.js"></script>' in shell
-    assert '<script defer src="/assets/workbench.js"></script>' in shell
-    assert shell.lower().count("<script") == 4
-    assert re.search(r"\son[a-z]+\s*=", shell, flags=re.IGNORECASE) is None
-    assert "http://" not in shell and "https://" not in shell
-    assert "@import" not in style.lower() and "url(" not in style.lower()
     assert icon.startswith("<svg") and "<script" not in icon.lower()
-    assert "http://" not in javascript and "https://" not in javascript
-    assert "http://" not in city_pack_javascript and "https://" not in city_pack_javascript
-    assert "http://" not in provider_javascript and "https://" not in provider_javascript
-    assert "@import" not in provider_style.lower() and "url(" not in provider_style.lower()
-    for forbidden in (
-        "innerHTML",
-        "outerHTML",
-        "insertAdjacentHTML",
-        "localStorage",
-        "sessionStorage",
-        "indexedDB",
-        "serviceWorker",
-        "eval(",
-        "new Function",
-    ):
-        assert forbidden not in javascript + city_pack_javascript + provider_javascript
+    assert {name.rsplit("/", 1)[1] for name in guide_sources} >= {
+        "guide.css",
+        "guide-core.js",
+        "guide-start.js",
+        "guide-story.js",
+    }
+    for name, source in guide_sources.items():
+        assert "http://" not in source and "https://" not in source, name
+        assert "@import" not in source.lower(), name
+        for forbidden in (
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "localStorage",
+            "sessionStorage",
+            "indexedDB",
+            "serviceWorker",
+            "eval(",
+            "new Function",
+        ):
+            assert forbidden not in source, (name, forbidden)
 
     scratch = tmp_path / "workbench-clean-room"
     scratch.mkdir()
@@ -331,14 +348,17 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
             "    assert response.status_code == 200\n"
             "    catalog=PersonaTemplateCatalog.model_validate_json(response.content)\n"
             "    assert [p.persona_id for p in catalog.templates] == "
-            "['persona-001', 'persona-002', 'persona-003', 'persona-004']\n"
+            "[f'persona-{index:03d}' for index in range(1, 11)]\n"
             "    assert all(p.fictional is True for p in catalog.templates)\n"
-            "    for name, media in [('workbench-city-packs.js', 'text/javascript'), "
-            "('workbench-personas.js', 'text/javascript'), "
-            "('workbench-personas.css', 'text/css'), "
-            "('workbench-providers.js', 'text/javascript'), "
-            "('workbench-providers.css', 'text/css')]:\n"
-            "        asset=client.get('/assets/'+name)\n"
+            "    root=client.get('/', follow_redirects=False)\n"
+            "    assert root.status_code == 307 and root.headers['location'] == '/guide'\n"
+            "    assert \"script-src 'self'\" in root.headers['content-security-policy']\n"
+            "    for removed in ['/assets/workbench.js', '/assets/workbench.css', "
+            "'/static/app.js', '/runs/any-run', '/runs/any-run/reuse']:\n"
+            "        assert client.get(removed).status_code == 404\n"
+            "    for name, media in [('guide-core.js', 'text/javascript'), "
+            "('guide-start.js', 'text/javascript'), ('guide.css', 'text/css')]:\n"
+            "        asset=client.get('/guide/assets/'+name)\n"
             "        assert asset.status_code == 200 and len(asset.content) > 100\n"
             "        assert asset.headers['content-type'].startswith(media)\n"
             "        assert asset.headers['cache-control'] == 'no-store'\n"
@@ -368,6 +388,7 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/jobs/{job_id}/cancel",
         "/api/persona-templates",
         "/api/providers",
+        "/api/providers/origins",
         "/api/providers/{profile_id}/revisions/{revision_id}/bounded-check",
         "/api/providers/{profile_id}/revisions/{revision_id}/check",
         "/api/providers/{profile_id}/revisions/{revision_id}/credential",
@@ -379,13 +400,6 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/api/scenarios/validate",
         "/api/workbench",
         "/assets/workbench-icon.svg",
-        "/assets/workbench-city-packs.js",
-        "/assets/workbench.css",
-        "/assets/workbench.js",
-        "/assets/workbench-personas.js",
-        "/assets/workbench-personas.css",
-        "/assets/workbench-providers.js",
-        "/assets/workbench-providers.css",
         "/guide",
         "/guide/new",
         "/guide/jobs/{job_id}",
@@ -393,9 +407,6 @@ def test_wheel_carries_and_instantiates_local_workbench_outside_checkout(
         "/guide/runs/{run_id}/report",
         "/guide/runs/{run_id}/report/download",
         "/guide/assets/{asset_name}",
-        "/runs/{run_id}",
-        "/runs/{run_id}/reuse",
-        "/static/{asset_name}",
     }
     assert guard.with_name(smoke_release._NETWORK_GUARD_LOG).is_file()
 

@@ -1,11 +1,10 @@
 """Browser contract for the saved-run manifest-V10 bounded cognition inspector.
 
-Every test drives a real server: the workbench inspector at ``/runs/{run_id}`` and, where
-both surfaces matter, the standalone ``adlife city-view`` application at ``/``. Each run
-is written by the production pipeline into a real workbench workspace and loaded back
-through ``CityRunStore``. ``V10Projections`` is an independent oracle of the exact
-documents the inspector consumes; tampering is injected only in the browser, after the
-real server has answered.
+Every test drives a real server: the standalone ``adlife city-view`` application at ``/``,
+the only surface that still serves the inspector. Each run is written by the production
+pipeline into a real workbench workspace and loaded back through ``CityRunStore``.
+``V10Projections`` is an independent oracle of the exact documents the inspector
+consumes; tampering is injected only in the browser, after the real server has answered.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from importlib import resources
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import parse_qsl
 
 import httpx
@@ -39,7 +38,6 @@ from adlife.city.workbench_cognition_views import (
     build_workbench_run_input_view_v4,
 )
 from adlife.city.workbench_transport import WorkbenchRunInputViewV4, WorkbenchRunSettingsView
-from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.experiments.spatial_metrics import derive_spatial_metrics
@@ -54,7 +52,7 @@ from adlife.core.simulation.spatial_response_v2 import (
     spatial_response_state_document_v2,
     summarize_spatial_response_artifact_v2,
 )
-from tests.browser.test_city_places_browser import _artifact_hashes, _installed_browser, _serve
+from tests.browser.browser_support import _artifact_hashes, _installed_browser, _serve
 from tests.integration.test_city_cognition_v2_artifacts import _save_prepared, _saved_v10
 from tests.unit.city.test_city_run_preparation import (
     _provider_revision,
@@ -64,14 +62,12 @@ from tests.unit.city.test_city_run_preparation import (
 
 STATIC = Path(str(resources.files("adlife.city").joinpath("static")))
 HELPER = STATIC / "app-cognition-v2.js"
-CSRF_TOKEN = "inspector-browser-csrf-token"
 ASSET_TYPES = {
     "app.js": "text/javascript; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
     "app-cognition-v2.js": "text/javascript; charset=utf-8",
     "app-cognition-v2.css": "text/css; charset=utf-8",
 }
-Server = Literal["workbench", "standalone"]
 HOSTILE_SCENARIO = "پویش شناختی </script><img src=x onerror=window.inspectorPwned=1>"
 HOSTILE_CAMPAIGN = "کمپین \u200fساختگی <svg onload=window.inspectorPwned=2>"  # noqa: RUF001
 HOSTILE_MODEL = "مدل محلی <img src=x onerror=window.inspectorPwned=3>"
@@ -623,11 +619,6 @@ class V10Projections:
 Override = Callable[[dict[str, Any], Mapping[str, str]], dict[str, Any]]
 
 
-def workbench_app(run: SavedRun) -> FastAPI:
-    """The real workbench, which serves the inspector at /runs/{run_id}."""
-    return create_city_workbench_app(prepare_workbench_workspace(run.root), csrf_token=CSRF_TOKEN)
-
-
 def standalone_app(stored: StoredCityRun) -> FastAPI:
     """The real standalone viewer, built exactly as ``adlife city-view`` builds it."""
     return create_city_app(
@@ -649,18 +640,14 @@ def standalone_app(stored: StoredCityRun) -> FastAPI:
     )
 
 
-def entry_path(server: Server, run: SavedRun) -> tuple[str, str]:
-    """The inspector page and the API base the real server declares for it."""
-    run_id = run.stored.manifest.run_id
-    if server == "workbench":
-        return f"/runs/{run_id}", f"/api/runs/{run_id}"
-    return "/", "/api"
+# The inspector page and the API base the standalone viewer declares for it.
+PAGE_PATH = "/"
+API_BASE = "/api"
 
 
 @contextmanager
-def served(server: Server, run: SavedRun) -> Iterator[str]:
-    app = workbench_app(run) if server == "workbench" else standalone_app(run.stored)
-    with _serve(app) as base_url:
+def served(run: SavedRun) -> Iterator[str]:
+    with _serve(standalone_app(run.stored)) as base_url:
         yield base_url
 
 
@@ -698,7 +685,6 @@ def inspector(
     browser: Browser,
     run: SavedRun,
     *,
-    server: Server = "workbench",
     overrides: Mapping[str, Override] | None = None,
     helper: bool = True,
     viewport: dict[str, int] | None = None,
@@ -706,10 +692,10 @@ def inspector(
     wait: str = "networkidle",
     **context_options: Any,
 ) -> Iterator[Session]:
-    """Open a real server's inspector; overrides tamper only with the browser's copy."""
+    """Open the real viewer's inspector; overrides tamper only with the browser's copy."""
     hooks = dict(overrides or {})
-    page_path, api_base = entry_path(server, run)
-    with served(server, run) as base_url:
+    page_path, api_base = PAGE_PATH, API_BASE
+    with served(run) as base_url:
         context = browser.new_context(
             viewport=viewport or {"width": 1440, "height": 900}, **context_options
         )
@@ -1414,12 +1400,11 @@ def run_usage_text(cognition_input: Any, records: tuple[Any, ...]) -> str:
 
 
 @pytest.mark.parametrize(
-    ("name", "statuses", "server"),
+    ("name", "statuses"),
     [
-        ("mixed", MIXED_STATUSES, "workbench"),
-        ("mixed", MIXED_STATUSES, "standalone"),
-        ("rules", {"rules"}, "workbench"),
-        ("mock", {"none"}, "standalone"),
+        ("mixed", MIXED_STATUSES),
+        ("rules", {"rules"}),
+        ("mock", {"none"}),
     ],
 )
 def test_v10_inspector_traces_every_eligible_response_in_order(
@@ -1427,12 +1412,11 @@ def test_v10_inspector_traces_every_eligible_response_in_order(
     saved_runs: Callable[[str], SavedRun],
     name: str,
     statuses: set[str],
-    server: Server,
 ) -> None:
     run = saved_runs(name)
     expected = {item.event_id: item for item in applied_records(run)}
     assert {item.neutralization_status for item in expected.values()} == statuses
-    with inspector(browser, run, server=server) as session:
+    with inspector(browser, run) as session:
         page = session.page
         expect(page.locator("#error-banner")).to_be_hidden()
         expect(page.locator("#bounded-cognition-panel")).to_be_visible()
@@ -1609,21 +1593,19 @@ def test_v10_purchase_intention_stays_on_rule_cards(
         ("mixed", "Bounded AI cognition signals", "bounded AI cognition signals"),
     ],
 )
-@pytest.mark.parametrize("server", ["workbench", "standalone"])
 def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
     browser: Browser,
     saved_runs: Callable[[str], SavedRun],
     name: str,
     title: str,
     boundary: str,
-    server: Server,
 ) -> None:
     run = saved_runs(name)
     summary = run.stored.cognition_evaluation.summary
     cognition_input = run.stored.cognition_input
     profile = cognition_input.provider_profile
     contract = cognition_input.causal_contract
-    with inspector(browser, run, server=server) as session:
+    with inspector(browser, run) as session:
         page = session.page
         panel = page.locator("#bounded-cognition-panel")
         expect(panel).to_be_visible()
@@ -1764,27 +1746,9 @@ def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
         assert "frozen and offline" in ownership
         expect(page.locator("#saved-run-label")).to_contain_text(" · V10")
         expect(page.locator("#assumptions-status")).to_have_text("Verified")
-        # Only the workbench inspector has a workbench to return to.
-        back = page.locator("#workbench-back-link")
-        reuse = page.locator("#workbench-reuse-link")
-        if server == "workbench":
-            expect(back).to_be_visible()
-            expect(reuse).to_be_visible()
-            expect(reuse).to_have_attribute("href", f"/runs/{run.stored.manifest.run_id}/reuse")
-            # The header keeps a visible gap between the run label and each link.
-            label_box = page.locator("#saved-run-label").bounding_box()
-            back_box = back.bounding_box()
-            reuse_box = reuse.bounding_box()
-            assert label_box is not None and back_box is not None and reuse_box is not None
-            assert back_box["x"] >= label_box["x"] + label_box["width"] + 8 or (
-                back_box["y"] >= label_box["y"] + label_box["height"] - 1
-            )
-            assert reuse_box["x"] >= back_box["x"] + back_box["width"] + 8 or (
-                reuse_box["y"] >= back_box["y"] + back_box["height"] - 1
-            )
-        else:
-            expect(back).to_be_hidden()
-            expect(reuse).to_be_hidden()
+        # The standalone viewer has no workbench to return to or to reuse a draft in.
+        expect(page.locator("#workbench-back-link")).to_be_hidden()
+        expect(page.locator("#workbench-reuse-link")).to_be_hidden()
         shortcut = page.locator("#bounded-cognition-shortcut")
         expect(shortcut).to_contain_text(
             f"{coverage.selected_request_count} saved "
@@ -2022,13 +1986,12 @@ def test_v10_hostile_text_stays_inert_and_controls_stay_accessible(
         assert session.page_errors == [] and session.console_errors == []
 
 
-@pytest.mark.parametrize("server", ["workbench", "standalone"])
 def test_v10_inspector_is_read_only_and_same_origin(
-    browser: Browser, saved_runs: Callable[[str], SavedRun], server: Server
+    browser: Browser, saved_runs: Callable[[str], SavedRun]
 ) -> None:
     run = saved_runs("provider")
     before = _artifact_hashes(run.directory)
-    with inspector(browser, run, server=server) as session:
+    with inspector(browser, run) as session:
         for minute in response_minutes(run)[:3]:
             session.minute(minute)
         token = session.view_token()
@@ -2041,7 +2004,7 @@ def test_v10_inspector_is_read_only_and_same_origin(
             for _method, url, headers in session.requests
             if f"{session.base_url}/api/" in url
         }
-        page_path, api_base = entry_path(server, run)
+        page_path, api_base = PAGE_PATH, API_BASE
     assert methods == {"GET"}
     assert {
         page_path,
@@ -2075,13 +2038,9 @@ def test_v10_inspector_is_read_only_and_same_origin(
         ),
     }
     assert f"{api_base}/cognition-records" in paths
-    # The workbench pins one verified snapshot per page; the standalone viewer has one run.
-    if server == "workbench":
-        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", token)
-        assert tokens == {token}
-    else:
-        assert token == ""
-        assert tokens == {None}
+    # The standalone viewer serves one run, so it issues and sends no snapshot token.
+    assert token == ""
+    assert tokens == {None}
     assert session.external == []
     assert _artifact_hashes(run.directory) == before
 
@@ -2240,14 +2199,12 @@ def test_v10_without_its_helper_asset_fails_closed(
         assert not any("/cognition-" in url for _method, url, _h in session.requests)
 
 
-@pytest.mark.parametrize(
-    ("name", "server"), [("provider", "workbench"), ("rules", "standalone"), ("mixed", "workbench")]
-)
+@pytest.mark.parametrize("name", ["provider", "rules", "mixed"])
 def test_v10_response_metrics_keep_the_rule_baseline_separate_from_cognition(
-    browser: Browser, saved_runs: Callable[[str], SavedRun], name: str, server: Server
+    browser: Browser, saved_runs: Callable[[str], SavedRun], name: str
 ) -> None:
     run = saved_runs(name)
-    with inspector(browser, run, server=server) as session:
+    with inspector(browser, run) as session:
         page = session.page
         expect(page.locator("#error-banner")).to_be_hidden()
         panel = page.locator("#response-metrics-panel")
@@ -2344,14 +2301,13 @@ def test_v10_page_boundaries_may_split_but_never_reorder_a_canonical_group(
     assert outcomes == {name: case[3] for name, case in cases.items()}
 
 
-@pytest.mark.parametrize("server", ["workbench", "standalone"])
 def test_v10_run_without_eligible_responses_renders_an_honest_empty_state(
-    browser: Browser, saved_runs: Callable[[str], SavedRun], server: Server
+    browser: Browser, saved_runs: Callable[[str], SavedRun]
 ) -> None:
     run = saved_runs("empty")
     coverage = run.stored.cognition_evaluation.summary.coverage
     assert coverage.eligible_response_count == coverage.selected_request_count == 0
-    with inspector(browser, run, server=server) as session:
+    with inspector(browser, run) as session:
         page = session.page
         expect(page.locator("#bounded-cognition-panel")).to_be_visible()
         expect(page.locator("#error-banner")).to_be_hidden()
@@ -2372,14 +2328,13 @@ def test_v10_run_without_eligible_responses_renders_an_honest_empty_state(
         assert session.page_errors == [] and session.console_errors == []
 
 
-@pytest.mark.parametrize("server", ["workbench", "standalone"])
 def test_v10_run_with_one_response_reads_every_count_in_the_singular(
-    browser: Browser, saved_runs: Callable[[str], SavedRun], server: Server
+    browser: Browser, saved_runs: Callable[[str], SavedRun]
 ) -> None:
     run = saved_runs("single")
     coverage = run.stored.cognition_evaluation.summary.coverage
     assert coverage.eligible_response_count == coverage.selected_request_count == 1
-    with inspector(browser, run, server=server) as session:
+    with inspector(browser, run) as session:
         page = session.page
         expect(page.locator("#bounded-cognition-panel")).to_be_visible()
         expect(page.locator("#error-banner")).to_be_hidden()
@@ -2402,14 +2357,13 @@ def test_v10_run_with_one_response_reads_every_count_in_the_singular(
         assert session.page_errors == [] and session.console_errors == []
 
 
-@pytest.mark.parametrize("server", ["workbench", "standalone"])
-def test_real_servers_serve_the_exact_inspector_assets_before_app_js(
-    saved_runs: Callable[[str], SavedRun], server: Server
+def test_real_viewer_serves_the_exact_inspector_assets_before_app_js(
+    saved_runs: Callable[[str], SavedRun],
 ) -> None:
     run = saved_runs("rules")
-    page_path, api_base = entry_path(server, run)
+    page_path, api_base = PAGE_PATH, API_BASE
     with (
-        served(server, run) as base_url,
+        served(run) as base_url,
         httpx.Client(base_url=base_url, trust_env=False) as client,
     ):
         page = client.get(page_path)
@@ -2436,10 +2390,8 @@ def test_real_servers_serve_the_exact_inspector_assets_before_app_js(
     assert '<script src="/static/app-cognition-v2.js" defer></script>' in page.text
 
 
-def _fetch_documents(
-    server: Server, run: SavedRun, minute: int, agent: str
-) -> dict[str, dict[str, Any]]:
-    page_path, api_base = entry_path(server, run)
+def _fetch_documents(run: SavedRun, minute: int, agent: str) -> dict[str, dict[str, Any]]:
+    page_path, api_base = PAGE_PATH, API_BASE
     timeline = (
         f"timeline?minute={minute}&agent_id={agent}&opportunity_offset=0&attention_offset=0"
         f"&response_offset=0&response_state_offset=0&limit=100"
@@ -2457,40 +2409,29 @@ def _fetch_documents(
     }
     # Loopback only: never route through a system or environment proxy.
     with (
-        served(server, run) as base_url,
+        served(run) as base_url,
         httpx.Client(base_url=base_url, timeout=30, trust_env=False) as client,
     ):
         page = client.get(page_path)
         assert page.status_code == 200
-        match = re.search(r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]*)">', page.text)
-        assert match is not None
-        headers = {"X-AdLife-View-Token": match.group(1)} if match.group(1) else {}
+        assert '<meta name="adlife-view-token" content="">' in page.text
         documents: dict[str, dict[str, Any]] = {}
         for key, suffix in endpoints.items():
-            response = client.get(f"{api_base}/{suffix}", headers=headers)
+            response = client.get(f"{api_base}/{suffix}")
             assert response.status_code == 200, (key, response.status_code)
             documents[key] = response.json()
     return documents
 
 
-@pytest.mark.parametrize(
-    ("name", "server"),
-    [
-        ("rules", "workbench"),
-        ("mock", "standalone"),
-        ("provider", "workbench"),
-        ("provider", "standalone"),
-        ("mixed", "workbench"),
-    ],
-)
+@pytest.mark.parametrize("name", ["rules", "mock", "provider", "mixed"])
 def test_real_v10_projections_match_the_inspector_oracle(
-    saved_runs: Callable[[str], SavedRun], name: str, server: Server
+    saved_runs: Callable[[str], SavedRun], name: str
 ) -> None:
     """The documents the inspector consumes are exactly the C3 contract it validates."""
     run = saved_runs(name)
     target = applied_records(run)[0].baseline
     minute, agent = target.model_minute, target.agent_id
-    actual = _fetch_documents(server, run, minute, agent)
+    actual = _fetch_documents(run, minute, agent)
     oracle = V10Projections(run.stored, metrics=True)
     for key in (
         "workbench-input",

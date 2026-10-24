@@ -53,7 +53,7 @@
 {% if links -%}
 <div class="toolbar">
 <nav class="langs" aria-label="{{ tr_text('common.language') }}">{% for item in view.languages %}<a href="{{ item.href }}" lang="{{ item.code }}" hreflang="{{ item.code }}"{% if item.current %} aria-current="true"{% endif %}>{{ tr(item.key) }}</a>{% endfor %}</nav>
-<div class="actions"><a class="action" href="{{ links.story }}"><span class="dir" aria-hidden="true">&#8592;</span> {{ tr("report.back") }}</a> <a class="action action--primary" href="{{ links.download }}" download>{{ tr("report.download") }}</a> <a class="action" href="{{ links.technical }}" target="_blank" rel="noopener noreferrer">{{ tr("common.technical_view") }}<span class="visually-hidden">{{ tr("common.list_separator") }}{{ tr("common.new_tab") }}</span></a></div>
+<div class="actions"><a class="action" href="{{ links.story }}"><span class="dir" aria-hidden="true">&#8592;</span> {{ tr("report.back") }}</a> <a class="action action--primary" href="{{ links.download }}" download>{{ tr("report.download") }}</a></div>
 </div>
 {% endif -%}
 <p class="eyebrow">{{ tr("common.app") }}{{ dot }}{{ tr("common.guide") }}</p>

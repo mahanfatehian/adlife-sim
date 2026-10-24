@@ -24,7 +24,7 @@ import adlife
 from adlife.city.workbench_web import _SHELL_HEADERS, create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.i18n import LANGUAGES, Catalog, MessageRef, catalog_bytes, load_catalog
-from tests.browser.test_city_workbench_browser import _installed_browser, _serve
+from tests.browser.browser_support import _installed_browser, _serve
 from tests.unit.i18n.test_i18n_formatting import FORMAT_FIXTURE, fixture_catalogs, run_case
 from tests.unit.i18n.test_i18n_refs import (
     REF_FIXTURE,

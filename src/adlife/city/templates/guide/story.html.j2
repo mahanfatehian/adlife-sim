@@ -19,7 +19,6 @@
 </div>
 <p class="story-problem-actions">
 <button type="button" class="g-btn g-btn--primary" id="story-retry" hidden>{{ tr("common.retry") }}</button>
-<a class="g-btn g-btn--secondary" id="story-problem-technical" href="{{ technical_href }}" target="_blank" rel="noopener noreferrer" hidden>{{ tr("common.technical_view") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
 <a class="g-btn g-btn--quiet" href="/guide?lang={{ lang }}">{{ tr("error.back") }}</a>
 </p>
 </div>
@@ -125,8 +124,6 @@
 </section>
 <p class="story-actions">
 <a class="g-btn g-btn--primary" href="/guide/runs/{{ run_id }}/report?lang={{ lang }}">{{ tr("story.open_report") }}</a>
-<a class="g-btn g-btn--secondary" href="{{ technical_href }}" target="_blank" rel="noopener noreferrer">{{ tr("common.technical_view") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
-<a class="g-btn g-btn--secondary" href="/runs/{{ run_id }}/reuse" target="_blank" rel="noopener noreferrer">{{ tr("story.reuse") }}<span class="g-visually-hidden"> ({{ tr("common.new_tab") }})</span></a>
 <a class="g-btn g-btn--quiet" href="/guide/new?lang={{ lang }}">{{ tr("story.new") }}</a>
 </p>
 </div>

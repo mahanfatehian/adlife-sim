@@ -133,7 +133,6 @@ def _snapshot(root: Path) -> tuple[tuple[str, str, str], ...]:
 def _report_links(run_id: str, language: Language) -> RunReportLinks:
     return RunReportLinks(
         story=f"/guide/runs/{run_id}?lang={language}",
-        technical=f"/runs/{run_id}",
         download=f"/guide/runs/{run_id}/report/download?lang={language}",
         languages=tuple((code, f"/guide/runs/{run_id}/report?lang={code}") for code in LANGUAGES),
     )
@@ -322,23 +321,13 @@ def test_language_links_switch_the_same_page_and_name_each_language_in_itself(
 
 
 @pytest.mark.parametrize("language", LANGUAGES)
-@pytest.mark.parametrize(
-    ("path", "technical"),
-    [
-        ("/guide", "/"),
-        ("/guide/new", "/"),
-        (f"/guide/jobs/{JOB_ID}", "/"),
-        (f"/guide/runs/{STORY_RUN}", f"/runs/{STORY_RUN}"),
-    ],
-)
-def test_guide_links_keep_the_language_and_technical_links_open_a_new_tab(
-    client: TestClient, path: str, technical: str, language: Language
+@pytest.mark.parametrize("path", PAGES)
+def test_guide_links_keep_the_language_and_stay_in_the_guide(
+    client: TestClient, path: str, language: Language
 ) -> None:
     anchors = _anchors(client.get(f"{path}?lang={language}").text)
-    new_tab = [attrs for attrs, _text in anchors if attrs.get("target") == "_blank"]
-    assert technical in [attrs.get("href") for attrs in new_tab]
-    for attrs in new_tab:
-        assert attrs["rel"] == "noopener noreferrer"
+    # The removed technical UI was the only new-tab destination; every link stays here.
+    assert [attrs for attrs, _text in anchors if attrs.get("target") is not None] == []
     # Anchors without an href are filled in by the page script from the same catalog.
     for href in [attrs["href"] for attrs, _text in anchors if attrs.get("href") is not None]:
         assert href is not None and href.startswith(("/", "#")), href
@@ -428,13 +417,62 @@ def test_report_refusals_are_translated_pages(client: TestClient, suffix: str) -
     older = client.get(f"/guide/runs/{OLDER_RUN}{suffix}?lang=fa")
     assert older.status_code == 404
     assert 'dir="rtl"' in older.text and _tr("fa", "error.older") in older.text
-    technical = [attrs["href"] for attrs, _text in _anchors(older.text)]
-    assert f"/runs/{OLDER_RUN}" in technical
+    hrefs = [attrs.get("href") or "" for attrs, _text in _anchors(older.text)]
+    assert "/guide?lang=fa" in hrefs
+    assert all(href.startswith(("/guide", "#")) for href in hrefs), hrefs
     for response in (missing, older):
         assert response.headers["content-type"] == "text/html; charset=utf-8"
         assert "content-disposition" not in response.headers
         assert "<script" not in response.text
         _assert_shell_headers(response)
+
+
+_TECHNICAL_MARKERS = ('href="/runs/', "job-technical", "story-problem-technical", "g-tech-link")
+
+
+def _assert_no_technical_view(document: str, language: Language) -> None:
+    """No link to the removed technical UI, its pages, or its translated control label."""
+    for marker in _TECHNICAL_MARKERS:
+        assert marker not in document, marker
+    catalog = load_catalog(language)
+    # Prose may still mention the old view; a control is a link or button labelled with it.
+    # The retired key may already be gone from the catalogs; then the English label stands in.
+    labels = {"Technical view"}
+    if catalog.has("common.technical_view"):
+        labels.add(catalog.text("common.technical_view"))
+    for attrs, text in _anchors(document):
+        href = attrs.get("href") or ""
+        assert not href.startswith("/runs/") and href not in {"/", "/?lang=" + language}, href
+        assert not any(label in text for label in labels), text
+    for label in labels:
+        assert not re.search(rf">\s*{re.escape(html.escape(label))}\s*<", document), label
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_no_guide_page_or_error_page_links_to_the_removed_technical_ui(
+    client: TestClient, language: Language, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = (
+        *PAGES,
+        *REPORTS,
+        "/guide/jobs/job-123",
+        "/guide/runs/Not-Portable-Run",
+        f"/guide/runs/{MISSING_RUN}/report",
+        f"/guide/runs/{OLDER_RUN}/report",
+        f"/guide/runs/{OLDER_RUN}/report/download",
+    )
+    for path in paths:
+        response = client.get(f"{path}?lang={language}")
+        assert response.status_code in {200, 404}, path
+        _assert_no_technical_view(response.text, language)
+    with TestClient(_bare_app(_refuse(GuideRunUnverifiable())), base_url=HOST) as bare:
+        unverifiable = bare.get(f"/guide/runs/{STORY_RUN}/report?lang={language}")
+    assert unverifiable.status_code == 409
+    _assert_no_technical_view(unverifiable.text, language)
+    with TestClient(_bare_app(_refuse(RunStoryTooLarge("huge"))), base_url=HOST) as bare:
+        too_large = bare.get(f"/guide/runs/{STORY_RUN}/report?lang={language}")
+    assert too_large.status_code == 409
+    _assert_no_technical_view(too_large.text, language)
 
 
 # --- assets ------------------------------------------------------------------------------
@@ -689,6 +727,7 @@ def test_the_report_view_is_the_rendered_report_with_its_own_policy(
     hrefs = {attrs.get("href") for attrs, _text in _anchors(response.text)}
     assert f"/guide/runs/{STORY_RUN}?lang={language}" in hrefs
     assert f"/guide/runs/{STORY_RUN}/report/download?lang={language}" in hrefs
+    assert not any((href or "").startswith("/runs/") for href in hrefs)
 
 
 @pytest.mark.parametrize("language", LANGUAGES)

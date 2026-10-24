@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from markupsafe import escape
 
+from adlife.i18n import load_catalog
 from tests.unit.reporting.test_run_report import Page, links_for, make_story, report_module
 
 PAYLOADS = [
@@ -96,9 +99,7 @@ def test_hostile_saved_text_remains_inert_escaped_bdi_text(payload, view, langua
     tags = {tag for tag, _ in parsed.elements}
     assert tags <= ALLOWED_TAGS, tags - ALLOWED_TAGS
     allowed_links = (
-        set()
-        if links is None
-        else {links.story, links.technical, links.download, *(h for _, h in links.languages)}
+        set() if links is None else {links.story, links.download, *(h for _, h in links.languages)}
     )
     for tag, attrs in parsed.elements:
         assert not any(name.startswith("on") for name in attrs), (tag, attrs)
@@ -132,6 +133,35 @@ def test_hostile_text_is_escaped_wherever_it_is_rendered(payload):
     assert decoded.count(escaped) >= 4
     if escaped != payload:
         assert payload not in decoded
+
+
+@pytest.mark.parametrize("language", ["en", "de", "fa"])
+@pytest.mark.parametrize("view", [False, True])
+def test_report_offers_no_technical_view_or_saved_run_inspector_link(view, language):
+    story = make_story()
+    links = links_for(story.run.run_id, language) if view else None
+    content = (
+        report_module()
+        .render_run_report_html(story, language=language, links=links)
+        .content.decode("utf-8")
+    )
+    hrefs = [
+        attrs["href"] for _tag, attrs in Page(content.encode("utf-8")).elements if "href" in attrs
+    ]
+    assert not [href for href in hrefs if href.startswith(("/runs/", "/static/")) or href == "/"]
+    assert 'target="_blank"' not in content
+    catalog = load_catalog(language)
+    labels = {"Technical view"}
+    if catalog.has("common.technical_view"):  # the key itself is due to be deleted
+        labels.add(catalog.text("common.technical_view"))
+    # Prose may still mention the old view until its wording changes; no link names it.
+    anchors = [
+        re.sub(r"<[^>]+>", "", text) for text in re.findall(r"<a\b[^>]*>(.*?)</a>", content, re.S)
+    ]
+    assert anchors
+    assert not [text for text in anchors if any(label in text for label in labels)], anchors
+    # The technical details section is report content, not a link away from the report.
+    assert 'id="technical"' in content
 
 
 def test_report_never_names_addresses_paths_or_secrets():

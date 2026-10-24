@@ -120,7 +120,7 @@ def test_ci_runs_long_browser_workloads_outside_coverage() -> None:
         step for step in steps if step.get("name") == "Test suite with branch coverage (85% floor)"
     )
     browser_workload = next(
-        step for step in steps if step.get("name") == "Long workbench browser workloads"
+        step for step in steps if step.get("name") == "Long guided browser workloads"
     )
     command = shlex.split(browser_workload["run"])
 
@@ -128,26 +128,13 @@ def test_ci_runs_long_browser_workloads_outside_coverage() -> None:
     assert browser_workload["env"]["ADLIFE_REQUIRE_BROWSER"] == "1"
     assert command[:4] == ["uv", "run", "pytest", "-q"]
     assert "--cov=adlife" not in command
-    assert (
-        "tests/browser/test_city_workbench_browser.py::"
-        "test_browser_drives_combined_study_and_inspection_never_changes_artifacts"
-    ) in command
-    assert (
-        "tests/browser/test_city_workbench_browser.py::"
-        "test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive"
-    ) in command
+    test_name = "test_online_ai_stops_at_the_key_prompt_then_counts_answers_live"
+    assert f"tests/browser/test_guide_setup_browser.py::{test_name}" in command
 
-    browser_source = (ROOT / "tests/browser/test_city_workbench_browser.py").read_text(
+    browser_source = (ROOT / "tests/browser/test_guide_setup_browser.py").read_text(
         encoding="utf-8"
     )
-    for test_name in (
-        "test_browser_drives_combined_study_and_inspection_never_changes_artifacts",
-        "test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive",
-    ):
-        assert re.search(
-            rf"@_LONG_BROWSER_TEST\s+def {test_name}\(",
-            browser_source,
-        )
+    assert re.search(rf"@_LONG_BROWSER_TEST\s+def {test_name}\(", browser_source)
 
 
 def test_ci_requires_browser_qa_and_lints_the_complete_repository() -> None:

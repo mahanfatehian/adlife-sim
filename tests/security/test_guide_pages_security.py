@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from adlife.city.guide_web import GUIDE_STATIC_ASSETS
 from adlife.city.workbench_web import _SHELL_HEADERS, create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.i18n import load_catalog
 from tests.unit.city.run_story_fixtures import (
     HOSTILE_CAMPAIGN,
     HOSTILE_PERSONA_NAME,
@@ -33,6 +34,7 @@ HOST = "http://127.0.0.1:8765"
 TOKEN = "guide-pages-security-token"
 STORY_RUN = "guide-secure"
 MIXED_RUN = "guide-hostile-mixed"
+OLDER_RUN = "guide-older-v9"
 JOB_ID = "job-" + "fedcba9876543210" * 2
 SETUP_CSS = ("/guide/assets/guide.css", "/guide/assets/guide-setup.css")
 STORY_CSS = ("/guide/assets/guide.css", "/guide/assets/guide-story.css")
@@ -96,6 +98,34 @@ class _Auditor(HTMLParser):
             self._script = None
 
 
+class _Controls(HTMLParser):
+    """The text of every link and button, the only things a visitor can activate."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.texts: list[str] = []
+        self._open: list[list[str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"a", "button"}:
+            self._open.append([])
+
+    def handle_data(self, data: str) -> None:
+        for text in self._open:
+            text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"a", "button"} and self._open:
+            self.texts.append(" ".join("".join(self._open.pop()).split()))
+
+
+def _control_texts(document: str) -> list[str]:
+    parser = _Controls()
+    parser.feed(document)
+    parser.close()
+    return parser.texts
+
+
 def _audit(document: str) -> _Audit:
     auditor = _Auditor()
     auditor.feed(document)
@@ -131,6 +161,7 @@ def workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
     root = tmp_path_factory.mktemp("guide-pages") / "workspace"
     saved_story_run(root, "rules", run_id=STORY_RUN)
     saved_story_run(root, "mixed", run_id=MIXED_RUN)
+    saved_story_run(root, "v9", run_id=OLDER_RUN)
     return root
 
 
@@ -211,9 +242,50 @@ def test_the_report_policy_replaces_the_shell_policy_and_forbids_script(
             assert not name.startswith("on") and name != "style", (tag, name)
 
 
+@pytest.mark.parametrize("language", ["en", "fa"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        *sorted(INTERACTIVE_PAGES),
+        *sorted(ERROR_PAGES),
+        f"/guide/runs/{STORY_RUN}/report",
+        f"/guide/runs/{STORY_RUN}/report/download",
+        # An older run once offered the removed inspector from its report refusal.
+        f"/guide/runs/{OLDER_RUN}",
+        f"/guide/runs/{OLDER_RUN}/report",
+    ],
+)
+def test_no_guide_page_or_report_links_to_the_removed_technical_view(
+    client: TestClient, path: str, language: str
+) -> None:
+    response = client.get(f"{path}?lang={language}")
+    assert response.status_code in {200, 404}, response.status_code
+    catalog = load_catalog(language)
+    labels = {"Technical view"}
+    if catalog.has("common.technical_view"):  # the key itself is due to be deleted
+        labels.add(catalog.text("common.technical_view"))
+    # Prose may still mention the old view until its wording changes; no control names it.
+    controls = _control_texts(response.text)
+    assert not [text for text in controls if any(label in text for label in labels)], controls
+    audit = _audit(response.text)
+    # The report's own "technical details" section stays; no technical control remains.
+    assert not [
+        value
+        for _tag, name, value in audit.attributes
+        if name == "id" and (value or "").endswith("-technical")
+    ]
+    hrefs = [value or "" for _tag, name, value in audit.attributes if name == "href"]
+    assert hrefs, "every page links somewhere"
+    for href in hrefs:
+        # Only the guide's own pages, its assets, the shared icon and in-page anchors.
+        assert href.startswith(("/guide", "#", "?", "/assets/workbench-icon.svg")), href
+        assert not href.startswith(("/runs/", "/static/")) and href != "/", href
+    assert 'target="_blank"' not in response.text
+
+
 @pytest.mark.parametrize("mode", ["mock", "local"])
 def test_a_hostile_v10_workspace_reaches_the_guide_only_as_data(tmp_path: Path, mode: str) -> None:
-    from tests.security.test_workbench_browser_security import (
+    from tests.security.test_workbench_api_security import (
         _HOSTILE_NAME,
         _hostile_v10_workspace,
     )

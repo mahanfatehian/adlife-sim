@@ -252,7 +252,7 @@ function renderOutcome(job) {
   const note = byId("job-outcome-note");
   counts.hidden = true;
   note.hidden = true;
-  for (const id of ["job-watch", "job-report", "job-technical", "job-saved"]) showLink(id, null);
+  for (const id of ["job-watch", "job-report", "job-saved"]) showLink(id, null);
   if (job.phase === "completed") {
     const result = job.result ?? {};
     const mode = modeOf(job);
@@ -282,10 +282,8 @@ function renderOutcome(job) {
     const story = runId !== null && result.run_schema_version === 10;
     showLink("job-watch", story ? href(`/guide/runs/${runId}`) : null);
     showLink("job-report", story ? href(`/guide/runs/${runId}/report`) : null);
-    const inspector = typeof result.inspector_url === "string" && result.inspector_url.startsWith("/runs/")
-      ? result.inspector_url
-      : null;
-    showLink("job-technical", inspector);
+    // A run without a story view is still saved: point to the saved-runs list instead.
+    showLink("job-saved", story ? null : href("/guide"));
   } else if (job.phase === "failed") {
     const code = FAILURES.has(job.error?.code) ? job.error.code : "evaluation-failed";
     title.textContent = t("progress.failed", { reason: t(`failure.${code}`) });
@@ -321,8 +319,8 @@ function finish(job) {
   clearTimeout(view.pollTimer);
   if (job.phase === "completed" && !view.focused) {
     view.focused = true;
-    const primary = byId("job-watch").hidden ? byId("job-technical") : byId("job-watch");
-    (primary.hidden ? byId("job-again") : primary).focus();
+    const watch = byId("job-watch");
+    (watch.hidden ? byId("job-again") : watch).focus();
   }
 }
 
@@ -357,7 +355,7 @@ function showLost() {
   title.textContent = t("progress.lost");
   byId("job-outcome-counts").hidden = true;
   byId("job-outcome-note").hidden = true;
-  for (const id of ["job-watch", "job-report", "job-technical"]) showLink(id, null);
+  for (const id of ["job-watch", "job-report"]) showLink(id, null);
   showLink("job-saved", href("/guide"));
   byId("job-outcome").hidden = false;
   announce(t("progress.lost"), { force: true });

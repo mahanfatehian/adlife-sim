@@ -498,7 +498,7 @@ def story_document(
                 "count": 1,
                 "interests": ["books", "stargazing"],
                 "trait_chips": [],
-                "color_index": 4,
+                "color_index": 10,
                 "agent_ids": ["person-009"],
             }
         )
@@ -640,7 +640,6 @@ def links_for(run_id: str, language: str):
     module = report_module()
     return module.RunReportLinks(
         story=f"/guide/runs/{run_id}?lang={language}",
-        technical=f"/runs/{run_id}",
         download=f"/guide/runs/{run_id}/report/download?lang={language}",
         languages=tuple(
             (code, f"/guide/runs/{run_id}/report?lang={code}") for code in ("en", "de", "fa")
@@ -762,14 +761,13 @@ def test_csp_hash_authorises_exactly_the_packaged_stylesheet(remote_story, view)
         assert directive in csp
 
 
-def test_view_variant_links_languages_story_download_and_technical_view(remote_story):
+def test_view_variant_links_languages_story_and_download(remote_story):
     rendered = render(remote_story, "fa", view=True)
     page = Page(rendered.content)
     hrefs = [attrs.get("href") for tag, attrs in page.elements if tag == "a"]
     run_id = remote_story.run.run_id
     for expected in (
         f"/guide/runs/{run_id}?lang=fa",
-        f"/runs/{run_id}",
         f"/guide/runs/{run_id}/report/download?lang=fa",
         f"/guide/runs/{run_id}/report?lang=en",
         f"/guide/runs/{run_id}/report?lang=de",
@@ -786,15 +784,30 @@ def test_view_variant_links_languages_story_download_and_technical_view(remote_s
     assert set(languages) == {"en", "de", "fa"}
     assert languages["fa"].get("aria-current") == "true"
     assert all(languages[code].get("lang") == code for code in languages)
-    technical = [
-        attrs
-        for tag, attrs in page.elements
-        if tag == "a" and attrs.get("href") == f"/runs/{run_id}"
+
+
+@pytest.mark.parametrize("language", ["en", "de", "fa"])
+def test_view_variant_has_no_technical_view_control_but_keeps_technical_details(
+    remote_story, language
+):
+    rendered = render(remote_story, language, view=True)
+    page = Page(rendered.content)
+    run_id = remote_story.run.run_id
+    anchors = [attrs for tag, attrs in page.elements if tag == "a"]
+    # The removed technical UI was the only same-origin link outside the guide.
+    assert not [attrs for attrs in anchors if (attrs.get("href") or "").startswith("/runs/")]
+    assert not [attrs for attrs in anchors if attrs.get("target") is not None]
+    document = rendered.content.decode("utf-8")
+    actions = re.search(r'<div class="actions">(.*?)</div>', document, flags=re.S)
+    assert actions is not None
+    assert re.findall(r'href="([^"]+)"', actions.group(1)) == [
+        f"/guide/runs/{run_id}?lang={language}",
+        f"/guide/runs/{run_id}/report/download?lang={language}",
     ]
-    assert technical and all(
-        attrs.get("target") == "_blank" and attrs.get("rel") == "noopener noreferrer"
-        for attrs in technical
-    )
+    assert "Technical view" not in actions.group(1)
+    # The "Technical details" section is report content, not a link away, and stays.
+    assert "technical" in page.ids()
+    assert "#technical" in [attrs.get("href") for attrs in anchors]
 
 
 def test_standalone_variant_has_only_in_page_anchors_and_no_images(remote_story):
@@ -1032,7 +1045,6 @@ def test_renderer_revalidates_the_story_and_checks_its_arguments(remote_story):
         module.render_run_report_html(remote_story, language="xx", links=None)
     hostile_links = module.RunReportLinks(
         story="https://invalid.test/",
-        technical="/runs/x",
         download="/guide/runs/x/report/download?lang=en",
         languages=(("en", "/guide/runs/x/report?lang=en"),),
     )
@@ -1044,8 +1056,7 @@ def test_renderer_revalidates_the_story_and_checks_its_arguments(remote_story):
                 remote_story,
                 language="en",
                 links=module.RunReportLinks(
-                    story="/guide/runs/x?lang=en",
-                    technical=bad,
+                    story=bad,
                     download="/guide/runs/x/report/download?lang=en",
                     languages=(("en", "/guide/runs/x/report?lang=en"),),
                 ),

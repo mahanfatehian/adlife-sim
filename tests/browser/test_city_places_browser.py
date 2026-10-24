@@ -16,18 +16,16 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
 from playwright.sync_api import Request as PlaywrightRequest
 from playwright.sync_api import Route, expect, sync_playwright
 
-from adlife.city.run_store import CityRunStore
+from adlife.city.analysis import metrics_for_stored_city_run, response_metrics_for_stored_city_run
+from adlife.city.run_store import StoredCityRun
 from adlife.city.runs import create_city_run
 from adlife.city.web import create_city_app
-from adlife.city.workbench_input import WorkbenchRunDraft, WorkbenchRunDraftV2
+from adlife.city.workbench_input import WorkbenchRunDraft
 from adlife.city.workbench_validation import construct_workbench_run
-from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
-from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import SpatialCampaignScenario
 from adlife.core.experiments.spatial_metrics import SpatialMetrics, derive_spatial_metrics
 from adlife.core.experiments.spatial_response_metrics import (
@@ -54,7 +52,7 @@ from tests.unit.city.test_spatial_opportunity import (
     _scenario,
 )
 from tests.unit.city.test_spatial_response import _response_input
-from tests.unit.city.test_workbench_input import draft_data, draft_v3_data, persona_data
+from tests.unit.city.test_workbench_input import draft_data
 
 _BROWSER_PATHS = (
     Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
@@ -337,15 +335,32 @@ def _response_viewer(
         )
 
 
+def _city_view_app(stored: StoredCityRun) -> object:
+    """The viewer exactly as ``adlife city-view`` builds it for one V1-V9 saved run."""
+    version = stored.manifest.schema_version
+    return create_city_app(
+        stored.mobility,
+        run_id=stored.manifest.run_id,
+        run_schema_version=version,
+        spatial_scenario=stored.spatial_scenario,
+        opportunity_evaluation=stored.opportunity_evaluation,
+        attention_evaluation=stored.attention_evaluation,
+        spatial_metrics=(
+            metrics_for_stored_city_run(stored) if version in {5, 6, 7, 8, 9, 10} else None
+        ),
+        response_input=stored.response_input,
+        response_evaluation=stored.response_evaluation,
+        spatial_response_metrics=(
+            response_metrics_for_stored_city_run(stored) if version in {6, 7, 8, 9, 10} else None
+        ),
+    )
+
+
 @contextmanager
-def _workbench_assumptions_viewer(
-    tmp_path: Path,
-    *,
-    schema_version: int = 7,
-    distinct_names: bool = False,
-) -> Iterator[tuple[str, Path, dict[str, object]]]:
+def _saved_run_viewer(tmp_path: Path) -> Iterator[tuple[str, Path, dict[str, object]]]:
+    """One saved schema-7 run with hostile names, served as ``adlife city-view`` serves it."""
     root = tmp_path / "workbench"
-    workspace = prepare_workbench_workspace(root)
+    prepare_workbench_workspace(root)
     hostile_prefix = "پویش آزمایشی <img src=x onerror=alert(1)> "
     hostile_name = hostile_prefix + (chr(0x1F600) * (120 - len(hostile_prefix)))
     campaign_name = "پویش <img src=x onerror=alert(1)> / campaign"
@@ -376,23 +391,7 @@ def _workbench_assumptions_viewer(
             "seed": 2**63 - 1,
         }
     )
-    if schema_version == 8:
-        document.pop("cohort")
-        document["schema_version"] = 2
-        document["settings"]["agent_count"] = 3
-        first = persona_data(persona_id="persona-002", count=1)
-        second = persona_data(persona_id="persona-001", count=2)
-        for persona in (first, second):
-            persona["display_name"] = "مینا <img src=x onerror=alert(1)>"
-            persona["background"] = "زندگی خیالی <script>alert(1)</script>"
-        first["occupation"] = "Fictional artist"
-        second["occupation"] = "Fictional designer"
-        if distinct_names:
-            first["display_name"] = "کیان خیالی"
-        document["population"] = {"personas": [first, second]}
-        draft = WorkbenchRunDraftV2.model_validate_json(json.dumps(document, ensure_ascii=False))
-    else:
-        draft = WorkbenchRunDraft.model_validate_json(json.dumps(document, ensure_ascii=False))
+    draft = WorkbenchRunDraft.model_validate_json(json.dumps(document, ensure_ascii=False))
     validated = construct_workbench_run(draft)
     settings = validated.workbench_input.draft.settings
     stored = create_city_run(
@@ -406,7 +405,7 @@ def _workbench_assumptions_viewer(
         spatial_response=validated.response_input,
         workbench_input=validated.workbench_input,
     )
-    application = create_city_workbench_app(workspace, csrf_token="browser-assumptions-token")
+    application = _city_view_app(stored)
     expected = {
         "run_id": settings.run_id,
         "manifest_sha256": sha256((stored.directory / "run.json").read_bytes()).hexdigest(),
@@ -418,63 +417,6 @@ def _workbench_assumptions_viewer(
         "campaign_name": campaign_name,
     }
     with _serve(application) as base_url:
-        yield base_url, root, expected
-
-
-@contextmanager
-def _cognition_viewer(
-    tmp_path: Path,
-    *,
-    mode: str = "rules",
-) -> Iterator[tuple[str, Path, dict[str, object]]]:
-    root = tmp_path / "cognition-workbench"
-    workspace = prepare_workbench_workspace(root)
-    csrf_token = "browser-cognition-token"
-    run_id = f"browser-cognition-{mode}"
-    application = create_city_workbench_app(workspace, csrf_token=csrf_token)
-    draft = draft_v3_data(agent_count=3, mode=mode)
-    draft["settings"].update({"run_id": run_id, "days": 2, "seed": "42"})
-    with TestClient(application, base_url="http://127.0.0.1") as client:
-        accepted = client.post(
-            "/api/jobs",
-            headers={
-                "Content-Type": "application/json",
-                "Origin": "http://127.0.0.1",
-                "X-AdLife-CSRF": csrf_token,
-            },
-            content=json.dumps(draft, ensure_ascii=False, separators=(",", ":")).encode(),
-        )
-        assert accepted.status_code == 202, accepted.text
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            job = client.get(accepted.json()["status_url"])
-            assert job.status_code == 200
-            terminal = job.json()
-            if terminal["phase"] in {"completed", "failed", "cancelled"}:
-                break
-            threading.Event().wait(0.005)
-        else:
-            raise AssertionError("schema-v9 browser fixture did not finish")
-        assert terminal["phase"] == "completed", terminal
-    stored = CityRunStore(root).load(run_id)
-    assert stored.cognition_evaluation is not None
-    assert stored.cognition_input is not None
-    assert stored.cognition_evaluation.records
-    record = stored.cognition_evaluation.records[0]
-    expected: dict[str, object] = {
-        "run_id": run_id,
-        "response_event_id": record.response_event_id,
-        "model_minute": record.model_minute,
-        "interpretation": record.result.interpretation,
-        "decision_factors": record.result.decision_factors,
-        "safety_flags": record.result.safety_flags,
-        "cognition_input_sha256": stored.cognition_input.fingerprint,
-        "cognition_records": tuple(
-            item.model_dump(mode="json") for item in stored.cognition_evaluation.records
-        ),
-    }
-    viewer = create_city_workbench_app(workspace, csrf_token=csrf_token)
-    with _serve(viewer) as base_url:
         yield base_url, root, expected
 
 
@@ -509,10 +451,7 @@ def _frozen_city_source_viewer(
         agent_count=2,
         days=1,
     )
-    registry = workspace.root / "city-packs"
-    registry.mkdir()
-    (registry / "broken.json").write_text("not-json", encoding="utf-8")
-    application = create_city_workbench_app(workspace, csrf_token="frozen-source-token")
+    application = _city_view_app(stored)
     expected: dict[str, object] = {
         "run_id": stored.manifest.run_id,
         "city_sha256": pack.fingerprint,
@@ -737,108 +676,6 @@ def test_viewer_refuses_hostile_api_base_metadata_before_any_api_request() -> No
         browser.close()
 
 
-def test_schema_v7_inspector_renders_verified_frozen_assumptions_as_inert_text(
-    tmp_path: Path,
-) -> None:
-    browser_path = _installed_browser()
-    input_requests: list[str] = []
-    external_requests: list[str] = []
-    console_errors: list[str] = []
-    page_errors: list[str] = []
-    with (
-        _workbench_assumptions_viewer(tmp_path) as (
-            base_url,
-            _root,
-            expected,
-        ),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(browser_path),
-            headless=True,
-            args=["--no-first-run", "--disable-background-networking"],
-        )
-        page = browser.new_page(viewport={"width": 1440, "height": 1100})
-        input_url = f"{base_url}/api/runs/{expected['run_id']}/workbench-input"
-
-        def route_request(route: Route) -> None:
-            url = route.request.url
-            if url == input_url:
-                input_requests.append(url)
-                route.continue_()
-            elif url.startswith(base_url):
-                route.continue_()
-            else:
-                external_requests.append(url)
-                route.abort()
-
-        page.route("**/*", route_request)
-        page.on(
-            "console",
-            lambda message: (
-                console_errors.append(message.text) if message.type == "error" else None
-            ),
-        )
-        page.on("pageerror", lambda error: page_errors.append(str(error)))
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-
-        expect(page.locator("#assumptions-panel")).to_be_visible()
-        expect(page.locator("#assumptions-drawer")).not_to_have_attribute("open", "")
-        expect(page.locator("#assumptions-status")).to_have_text("Verified")
-        expect(page.locator("#workbench-back-link")).to_be_visible()
-        assert page.locator("#workbench-back-link").get_attribute("href") == "/"
-        # A homogeneous-cohort V7 input cannot seed the persona audience form.
-        expect(page.locator("#workbench-reuse-link")).to_be_hidden()
-        page.locator("#assumptions-drawer summary").click()
-        expect(page.locator("#assumptions-drawer")).to_have_attribute("open", "")
-        assert page.locator("#assumptions-run").inner_text() == _MAXIMUM_RUN_ID
-        assert page.locator("#assumptions-seed").inner_text() == "9223372036854775807"
-        assert page.locator("#assumptions-scenario").inner_text() == expected["hostile_name"]
-        assert page.locator("#assumptions-scenario-id").inner_text() == _MAXIMUM_SCENARIO_ID
-        assert page.locator("#assumptions-campaign").inner_text() == expected["campaign_name"]
-        assert page.locator("#assumptions-campaign-id").inner_text() == _MAXIMUM_CAMPAIGN_ID
-        assert page.locator("#assumptions-creative-template-id").inner_text() == (
-            "fictional-device-launch-v1"
-        )
-        assert page.locator("#assumptions-creative-product").inner_text() == "Lumen Pocket"
-        assert (
-            "fictional compact device" in page.locator("#assumptions-creative-message").inner_text()
-        )
-        assert page.locator("#assumptions-target-interests").inner_text() == (
-            "commuting · technology"
-        )
-        assert page.locator("#assumptions-cohort-interests").inner_text() == (
-            "commuting · technology"
-        )
-        assert "PRICE SENSITIVITY 0.5" in page.locator("#assumptions-traits").inner_text()
-        assert "PURCHASE INTENTION 0.2" in page.locator("#assumptions-initial-state").inner_text()
-        placements = page.locator("#assumptions-placements").inner_text()
-        assert "PHONE" in placements and "DAY 01 · 08:00\u201309:00" in placements
-        assert all(token in placements for token in ("ROADSIDE", "MIDDLE-WEST", "BACKWARD"))
-        for field in (
-            "manifest_sha256",
-            "workbench_input_sha256",
-            "city_sha256",
-            "scenario_sha256",
-            "creative_sha256",
-        ):
-            assert page.locator(f"#assumptions-{field.replace('_', '-')}").inner_text() == str(
-                expected[field]
-            )
-        assert (
-            "homogeneous synthetic cohort"
-            in page.locator("#assumptions-disclosure").inner_text().lower()
-        )
-        assert page.locator("#assumptions-panel bdi").count() >= 15
-        assert page.locator("#assumptions-panel img").count() == 0
-        assert page.locator("#assumptions-panel script").count() == 0
-        assert input_requests == [input_url]
-        assert external_requests == []
-        assert console_errors == []
-        assert page_errors == []
-        browser.close()
-
-
 def test_schema_v1_through_v6_inspector_never_requests_workbench_input() -> None:
     browser_path = _installed_browser()
     input_requests: list[str] = []
@@ -876,897 +713,6 @@ def test_schema_v1_through_v6_inspector_never_requests_workbench_input() -> None
             assert not page.locator("#error-banner").is_visible(), version
             page.close()
         assert input_requests == []
-        browser.close()
-
-
-def test_schema_v7_inspector_refuses_a_malformed_assumptions_projection(
-    tmp_path: Path,
-) -> None:
-    browser_path = _installed_browser()
-    with (
-        _workbench_assumptions_viewer(tmp_path) as (
-            base_url,
-            _root,
-            _expected,
-        ),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(browser_path),
-            headless=True,
-            args=["--no-first-run", "--disable-background-networking"],
-        )
-        page = browser.new_page()
-        input_url = f"{base_url}/api/runs/{_expected['run_id']}/workbench-input"
-
-        def corrupt_input(route: Route) -> None:
-            response = route.fetch()
-            document = response.json()
-            document["settings"]["seed"] = "9223372036854775808"
-            document["creative_template"]["message"] = "<img src=https://attacker.invalid/x>"
-            route.fulfill(json=document)
-
-        page.route(input_url, corrupt_input)
-        page.goto(f"{base_url}/runs/{_expected['run_id']}", wait_until="networkidle")
-
-        expect(page.locator("#assumptions-status")).to_have_text("VERIFICATION FAILED")
-        expect(page.locator("#assumptions-content")).to_be_hidden()
-        expect(page.locator("#error-banner")).to_contain_text("Frozen workbench input is invalid")
-        assert page.locator("#assumptions-panel img").count() == 0
-        assert "attacker.invalid" not in page.locator("body").inner_text()
-        browser.close()
-
-
-def test_schema_v7_inspector_cross_checks_assumption_identity_with_run_summary(
-    tmp_path: Path,
-) -> None:
-    browser_path = _installed_browser()
-    with (
-        _workbench_assumptions_viewer(tmp_path) as (
-            base_url,
-            _root,
-            expected,
-        ),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(browser_path),
-            headless=True,
-            args=["--no-first-run", "--disable-background-networking"],
-        )
-        for field in ("scenario_id", "campaign_id"):
-            page = browser.new_page()
-
-            def corrupt_summary(route: Route, *, changed_field: str = field) -> None:
-                response = route.fetch()
-                document = response.json()
-                if changed_field == "scenario_id":
-                    document["scenario_id"] = "different-scenario"
-                else:
-                    document["campaigns"][0]["campaign_id"] = "different-campaign"
-                route.fulfill(json=document)
-
-            page.route(
-                f"{base_url}/api/runs/{expected['run_id']}/opportunity-summary",
-                corrupt_summary,
-            )
-            page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-
-            expect(page.locator("#assumptions-status"), message=field).to_have_text(
-                "VERIFICATION FAILED"
-            )
-            expect(page.locator("#assumptions-content"), message=field).to_be_hidden()
-            expect(page.locator("#error-banner"), message=field).to_contain_text(
-                "Frozen workbench input is invalid"
-            )
-            page.close()
-        browser.close()
-
-
-def test_schema_v8_inspector_maps_verified_saved_identities_and_collapsed_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from adlife.city import workbench_personas
-    from adlife.city import workbench_web as inspector_web
-
-    with (
-        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (base_url, root, expected),
-        sync_playwright() as playwright,
-    ):
-        # A saved identity must never be reconstructed from a changed/absent catalog.
-        def unavailable_catalog(**_kwargs: object) -> object:
-            raise AssertionError("Saved inspection must not load persona templates")
-
-        monkeypatch.setattr(
-            workbench_personas, "load_persona_template_catalog", unavailable_catalog
-        )
-        monkeypatch.setattr(inspector_web, "load_persona_template_catalog", unavailable_catalog)
-        before = _artifact_hashes(root)
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        page = browser.new_page()
-        requests: list[tuple[str, str]] = []
-        page.on("request", lambda request: requests.append((request.method, request.url)))
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-        expect(page.locator("#assumptions-status")).to_have_text("Verified")
-        name = "مینا <img src=x onerror=alert(1)>"
-        expect(page.locator("#selected-name")).to_have_text(name)
-        expect(page.locator("#identity-context")).not_to_have_attribute("open", "")
-        expect(page.locator("#identity-context summary")).to_have_text(
-            "Fictional context — does not affect simulation"
-        )
-        assert page.locator("#selected-name").get_attribute("dir") == "auto"
-        assert page.locator("#selected-name").evaluate("el => el.closest('[aria-live]')") is None
-        rows = page.locator("#people-list .person")
-        assert rows.count() == 3
-        for index, occupation in enumerate(
-            ["Fictional designer", "Fictional designer", "Fictional artist"]
-        ):
-            agent_id = f"PERSON-{index + 1:03d}"
-            expect(rows.nth(index).locator("strong")).to_have_text(agent_id)
-            expect(rows.nth(index).locator("bdi")).to_have_text(name)
-            rows.nth(index).click()
-            expect(page.locator("#selected-id")).to_have_text(agent_id)
-            expect(page.locator("#map-text-summary")).to_contain_text(agent_id)
-            page.locator("#identity-context summary").focus()
-            page.keyboard.press("Enter")
-            expect(page.locator("#identity-context")).to_have_attribute("open", "")
-            expect(page.locator("#identity-occupation")).to_have_text(occupation)
-            expect(page.locator("#identity-background")).to_have_text(
-                "زندگی خیالی <script>alert(1)</script>"
-            )
-            expect(page.locator("#identity-age")).to_have_text("28")
-            expect(page.locator("#identity-mbti")).to_have_text("INTJ")
-            assert (
-                page.locator("#identity-context summary").evaluate(
-                    "el => getComputedStyle(el).outlineStyle"
-                )
-                != "none"
-            )
-            page.keyboard.press("Space")
-        page.locator("#assumptions-drawer summary").click()
-        assert "homogeneous" not in page.locator("#assumptions-disclosure").inner_text()
-        expect(page.locator("#assumptions-cohort-title").locator("..")).to_be_hidden()
-        assert (
-            page.locator(
-                "#identity-context img, #identity-context script, #people-list img"
-            ).count()
-            == 0
-        )
-        assert all(method == "GET" and url.startswith(base_url) for method, url in requests)
-        assert not any("persona-templates" in url or "workbench.json" in url for _, url in requests)
-        assert _artifact_hashes(root) == before
-        browser.close()
-
-
-def test_schema_v9_inspector_binds_saved_explanation_to_its_rule_response(
-    tmp_path: Path,
-) -> None:
-    browser_path = _installed_browser()
-    with (
-        _cognition_viewer(tmp_path) as (base_url, root, expected),
-        sync_playwright() as playwright,
-    ):
-        before = _artifact_hashes(root)
-        cognition_requests: list[PlaywrightRequest] = []
-        browser = playwright.chromium.launch(
-            executable_path=str(browser_path),
-            headless=True,
-            args=["--no-first-run", "--disable-background-networking"],
-        )
-        page = browser.new_page(viewport={"width": 390, "height": 844})
-        page.emulate_media(reduced_motion="reduce")
-        page.on(
-            "request",
-            lambda request: (
-                cognition_requests.append(request)
-                if request.url.endswith(("/cognition-summary", "/cognition-records"))
-                else None
-            ),
-        )
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-
-        expect(page.locator("#error-banner")).to_be_hidden()
-        expect(page.locator("#cognition-summary")).to_be_visible()
-        expect(page.locator("#cognition-summary-label")).to_have_text("Deterministic explanations")
-        expect(page.locator("#cognition-summary-status")).to_contain_text("saved")
-        assert len(cognition_requests) == 2
-        token = page.locator('meta[name="adlife-view-token"]').get_attribute("content")
-        assert token is not None and len(token) == 43
-        assert {request.url.rsplit("/", 1)[-1] for request in cognition_requests} == {
-            "cognition-summary",
-            "cognition-records",
-        }
-        for request in cognition_requests:
-            assert request.method == "GET"
-            assert request.headers["x-adlife-view-token"] == token
-            assert request.post_data is None
-
-        minute = int(expected["model_minute"])
-        assert page.evaluate("minute => setMinute(minute)", minute) is True
-        page.wait_for_function("minute => state.minute === minute", arg=minute)
-        response_event_id = str(expected["response_event_id"])
-        item = page.locator(
-            f'.response-evidence-item[data-response-event-id="{response_event_id}"]'
-        )
-        expect(item).to_have_count(1)
-        assert item.locator(".response-card").get_attribute("data-evidence-id") == response_event_id
-        drawer = item.locator(".response-explanation")
-        expect(drawer).to_be_visible()
-        expect(drawer).not_to_have_attribute("open", "")
-        expect(drawer.locator("summary")).to_contain_text("Deterministic explanation")
-        before_minute = page.evaluate("state.minute")
-        drawer.locator("summary").click()
-        expect(drawer).to_have_attribute("open", "")
-        expect(drawer.locator(".explanation-copy")).to_have_text(str(expected["interpretation"]))
-        expect(drawer.locator(".explanation-source")).to_have_text("rules")
-        expect(drawer.locator(".explanation-provider")).to_contain_text("Offline rules")
-        expect(drawer.locator(".explanation-model")).to_contain_text("Not used")
-        expect(drawer.locator(".explanation-disclosure")).to_contain_text(
-            "Synthetic narrative, not observed behavior"
-        )
-        expect(drawer.locator(".explanation-factor")).to_have_count(
-            len(expected["decision_factors"])
-        )
-        expect(drawer.locator(".explanation-safety")).to_contain_text("None recorded")
-        assert page.evaluate("state.minute") == before_minute
-        overflow = page.evaluate(
-            """() => ({
-              documentWidth: document.documentElement.scrollWidth,
-              viewportWidth: window.innerWidth,
-              explanationOutside: Array.from(document.querySelectorAll('.response-explanation'))
-                .some((element) => {
-                  const rect = element.getBoundingClientRect();
-                  return rect.left < -0.5 || rect.right > window.innerWidth + 0.5;
-                }),
-            })"""
-        )
-        assert overflow == {
-            "documentWidth": overflow["viewportWidth"],
-            "viewportWidth": overflow["viewportWidth"],
-            "explanationOutside": False,
-        }
-        browser.close()
-        assert _artifact_hashes(root) == before
-
-
-def test_schema_v9_inspector_renders_provider_sources_and_hostile_text_inertly(
-    tmp_path: Path,
-) -> None:
-    with (
-        _cognition_viewer(tmp_path) as (base_url, root, expected),
-        sync_playwright() as playwright,
-    ):
-        before = _artifact_hashes(root)
-        source_records = expected["cognition_records"]
-        assert isinstance(source_records, tuple) and len(source_records) >= 4
-        hostile = "این توضیح ساختگی است <img src=x onerror=window.explanationPwned=1>"
-        provider_id = "provider-browser"
-        revision = "a" * 64
-
-        def provider_projection(
-            sources: tuple[str, ...], *, include_hostile_text: bool
-        ) -> tuple[list[dict[str, object]], str, dict[str, int]]:
-            projected = json.loads(json.dumps(source_records, ensure_ascii=False))
-            assert isinstance(projected, list) and len(projected) == len(sources)
-            for index, (record, source) in enumerate(zip(projected, sources, strict=True)):
-                record.update(
-                    {
-                        "source": source,
-                        "attempt_count": 1 if source in {"provider", "fallback"} else 0,
-                        "reason": (
-                            "timeout-exhausted"
-                            if source == "fallback"
-                            else "budget-skipped"
-                            if source == "budget-skipped"
-                            else None
-                        ),
-                        "provider_profile_id": provider_id,
-                        "provider_revision_sha256": revision,
-                        "provider_profile_snapshot_sha256": "b" * 64,
-                        "provider_protocol": "openai-chat-completions-json-schema-v1",
-                        "provider_effective_settings_sha256": "c" * 64,
-                        "prompt_tokens": None,
-                        "completion_tokens": None,
-                    }
-                )
-                if index == 0 and include_hostile_text:
-                    record["result"].update(
-                        {
-                            "interpretation": hostile,
-                            "decision_factors": [
-                                "زمینهٔ کاملاً خیالی",
-                                "<script>window.explanationPwned=2</script>",
-                            ],
-                            "safety_flags": ["unsupported-inference"],
-                        }
-                    )
-                record["record_hash"] = sha256(
-                    canonical_json(
-                        {key: value for key, value in record.items() if key != "record_hash"}
-                    ).encode("utf-8")
-                ).hexdigest()
-            stream_value = "".join(f"{canonical_json(record)}\n" for record in projected)
-            counts = {
-                source: sum(record["source"] == source for record in projected)
-                for source in (
-                    "rules",
-                    "mock",
-                    "provider",
-                    "cache",
-                    "fallback",
-                    "budget-skipped",
-                )
-            }
-            return projected, stream_value, counts
-
-        mixed_sources = ("provider", "cache", "fallback") + ("budget-skipped",) * (
-            len(source_records) - 3
-        )
-        records, stream, source_counts = provider_projection(
-            mixed_sources, include_hostile_text=True
-        )
-
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()),
-            headless=True,
-            args=["--no-first-run", "--disable-background-networking"],
-        )
-        page = browser.new_page(viewport={"width": 390, "height": 844})
-
-        def remote_workbench_input(route: Route) -> None:
-            document = route.fetch().json()
-            document["cognition"].update(
-                {
-                    "mode": "remote",
-                    "provider_profile_id": provider_id,
-                    "provider_revision_sha256": revision,
-                    "aggregate_output_token_ceiling": 3 * 1536,
-                }
-            )
-            route.fulfill(json=document)
-
-        def remote_summary(route: Route) -> None:
-            document = route.fetch().json()
-            document.update(
-                {
-                    "mode": "remote",
-                    "explainer_id": "city-provider-explainer-v1",
-                    "provider_profile_id": provider_id,
-                    "provider_revision_sha256": revision,
-                    "model_id": "مدل آزمایشی <img src=x onerror=window.explanationPwned=3>",
-                    "aggregate_output_token_ceiling": 3 * 1536,
-                }
-            )
-            summary = document["summary"]
-            summary["outcome_counts"].update(
-                {
-                    "rules": source_counts["rules"],
-                    "mock": source_counts["mock"],
-                    "provider": source_counts["provider"],
-                    "cache": source_counts["cache"],
-                    "fallback": source_counts["fallback"],
-                    "budget_skipped": source_counts["budget-skipped"],
-                }
-            )
-            summary["reason_counts"].update(
-                {
-                    "endpoint_resolution_refused": 0,
-                    "authentication_refused": 0,
-                    "timeout_exhausted": source_counts["fallback"],
-                    "rate_limit_exhausted": 0,
-                    "server_error_exhausted": 0,
-                    "response_too_large": 0,
-                    "protocol_incompatible": 0,
-                    "invalid_result": 0,
-                    "budget_skipped": source_counts["budget-skipped"],
-                }
-            )
-            summary.update(
-                {
-                    "attempt_count": source_counts["provider"] + source_counts["fallback"],
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "terminal_stream_sha256": sha256(stream.encode("utf-8")).hexdigest(),
-                    "terminal_stream_bytes": len(stream.encode("utf-8")),
-                }
-            )
-            route.fulfill(json=document)
-
-        def remote_records(route: Route) -> None:
-            document = route.fetch().json()
-            document["records"] = records
-            route.fulfill(json=document)
-
-        page.route("**/workbench-input", remote_workbench_input)
-        page.route("**/cognition-summary", remote_summary)
-        page.route("**/cognition-records", remote_records)
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-
-        expect(page.locator("#error-banner")).to_be_hidden()
-        expect(page.locator("#cognition-summary-label")).to_have_text("Mixed explanation evidence")
-        expect(page.locator("#model-boundary-label")).to_have_text(
-            "Deterministic simulation · saved mixed explanation evidence"
-        )
-        expect(page.locator("#cognition-summary-fallback-label")).to_have_text("Fallback / skipped")
-        expect(page.locator("#cognition-summary-fallbacks")).to_have_text(
-            f"{source_counts['fallback']} / {source_counts['budget-skipped']}"
-        )
-        rendered_labels: list[str] = []
-        for record in records[:4]:
-            assert page.evaluate("minute => setMinute(minute)", record["model_minute"]) is True
-            item = page.locator(
-                f'.response-evidence-item[data-response-event-id="{record["response_event_id"]}"]'
-            )
-            expect(item).to_have_count(1)
-            rendered_labels.append(
-                item.locator(".response-explanation summary strong").inner_text()
-            )
-        assert rendered_labels == [
-            "AI-generated explanation",
-            "AI-generated explanation",
-            "Deterministic fallback",
-            "Explanation skipped",
-        ]
-        # Return to the first explanation after the source-label walk.
-        assert page.evaluate("minute => setMinute(minute)", records[0]["model_minute"]) is True
-        first = page.locator(
-            f'.response-evidence-item[data-response-event-id="{records[0]["response_event_id"]}"]'
-        ).locator(".response-explanation")
-        first.locator("summary").click()
-        expect(first.locator(".explanation-copy")).to_have_text(hostile)
-        expect(first.locator(".explanation-model")).to_contain_text("مدل آزمایشی")
-        expect(first.locator(".explanation-source")).to_have_text("provider")
-        expect(first.locator(".explanation-safety")).to_contain_text("Unsupported Inference")
-        # A model-reported flag is labelled as the model's own self-assessment, in plain words,
-        # with the statement that it changes nothing in the saved results.
-        expect(first.locator(".explanation-safety")).to_have_text(
-            "Model's own caution flags: Unsupported Inference "
-            "(it may say more than the supplied facts)"
-        )
-        expect(first.locator(".explanation-safety-note")).to_contain_text(
-            "change nothing in the saved results"
-        )
-        # Model fragments of one sentence read as that sentence; distinct factors stay apart.
-        assert page.evaluate(
-            """() => [
-              displayedDecisionFactors([
-                'Their curiosity suggests they are likely to be open',
-                'to exploring new ideas about the device.',
-                'Price matters to them.',
-              ]),
-              displayedDecisionFactors(['price sensitivity is high', 'interest match is low']),
-              displayedDecisionFactors(['A complete first factor.', 'to be continued later']),
-              displayedDecisionFactors([
-                'Declared fictional interests and campaign assumptions',
-                'Rule-owned attention and response evidence',
-              ]),
-            ]"""
-        ) == [
-            [
-                "Their curiosity suggests they are likely to be open to exploring new ideas "
-                "about the device.",
-                "Price matters to them.",
-            ],
-            ["price sensitivity is high", "interest match is low"],
-            ["A complete first factor.", "to be continued later"],
-            [
-                "Declared fictional interests and campaign assumptions",
-                "Rule-owned attention and response evidence",
-            ],
-        ]
-        assert first.locator("bdi").first.get_attribute("dir") == "auto"
-        assert (
-            page.locator(
-                "#cognition-summary img, .response-explanation img, .response-explanation script"
-            ).count()
-            == 0
-        )
-        assert page.evaluate("window.explanationPwned") is None
-
-        fallback_sources = tuple(
-            "fallback" if index % 2 == 0 else "budget-skipped"
-            for index in range(len(source_records))
-        )
-        records, stream, source_counts = provider_projection(
-            fallback_sources, include_hostile_text=False
-        )
-        page.reload(wait_until="networkidle")
-
-        expect(page.locator("#error-banner")).to_be_hidden()
-        expect(page.locator("#cognition-summary-label")).to_have_text("Saved explanation evidence")
-        expect(page.locator("#model-boundary-label")).to_have_text(
-            "Deterministic simulation · saved explanation evidence"
-        )
-        assert "AI-generated" not in page.locator("#cognition-summary").inner_text()
-        fallback_labels: list[str] = []
-        for record in records[:2]:
-            assert page.evaluate("minute => setMinute(minute)", record["model_minute"]) is True
-            item = page.locator(
-                f'.response-evidence-item[data-response-event-id="{record["response_event_id"]}"]'
-            )
-            fallback_labels.append(
-                item.locator(".response-explanation summary strong").inner_text()
-            )
-        assert fallback_labels == ["Deterministic fallback", "Explanation skipped"]
-        browser.close()
-        assert _artifact_hashes(root) == before
-
-
-def test_schema_v9_inspector_labels_mock_explanations_without_ai_claim(tmp_path: Path) -> None:
-    with (
-        _cognition_viewer(tmp_path, mode="mock") as (base_url, _root, expected),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        page = browser.new_page()
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-        assert page.evaluate("minute => setMinute(minute)", expected["model_minute"]) is True
-        item = page.locator(
-            f'.response-evidence-item[data-response-event-id="{expected["response_event_id"]}"]'
-        )
-        expect(item.locator(".response-explanation summary strong")).to_have_text(
-            "Mock explanation"
-        )
-        assert "AI-generated" not in page.locator("#cognition-summary").inner_text()
-        browser.close()
-
-
-def test_schema_v9_delayed_explanation_fetch_cannot_replace_newer_timeline_selection(
-    tmp_path: Path,
-) -> None:
-    with (
-        _cognition_viewer(tmp_path) as (base_url, _root, expected),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        page = browser.new_page()
-        page.add_init_script(
-            """(() => {
-              const originalFetch = window.fetch.bind(window);
-              window.cognitionFetchPending = false;
-              window.fetch = async (...args) => {
-                if (String(args[0]).endsWith('/cognition-records')) {
-                  window.cognitionFetchPending = true;
-                  await new Promise((resolve) => { window.releaseCognitionFetch = resolve; });
-                }
-                return originalFetch(...args);
-              };
-            })();"""
-        )
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="domcontentloaded")
-        page.wait_for_function("() => window.cognitionFetchPending === true")
-        minute = int(expected["model_minute"])
-        assert page.evaluate("minute => setMinute(minute)", minute) is True
-        assert page.evaluate("state.minute") == minute
-
-        page.evaluate("window.releaseCognitionFetch()")
-        expect(page.locator("#cognition-summary")).to_be_visible()
-        page.wait_for_function("() => state.cognitionRecords !== null")
-
-        assert page.evaluate("state.minute") == minute
-        item = page.locator(
-            f'.response-evidence-item[data-response-event-id="{expected["response_event_id"]}"]'
-        )
-        expect(item.locator(".response-explanation")).to_be_visible()
-        browser.close()
-
-
-def test_schema_v8_inspector_never_requests_cognition_projections(tmp_path: Path) -> None:
-    with (
-        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (
-            base_url,
-            _root,
-            expected,
-        ),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        page = browser.new_page()
-        cognition_requests: list[str] = []
-        static_requests: list[str] = []
-
-        def record(request: PlaywrightRequest) -> None:
-            path = urlparse(request.url).path
-            if path.startswith("/api/") and "cognition-" in path:
-                cognition_requests.append(request.url)
-            elif path.startswith("/static/"):
-                static_requests.append(path)
-
-        page.on("request", record)
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-
-        expect(page.locator("#error-banner")).to_be_hidden()
-        expect(page.locator("#cognition-summary")).to_be_hidden()
-        assert cognition_requests == []
-        # The shared page still loads the inert V10 helper assets, never a projection.
-        assert "/static/app-cognition-v2.js" in static_requests
-        browser.close()
-
-
-def test_bounded_cognition_assets_are_inert_for_schema_v9_and_earlier_runs(
-    tmp_path: Path,
-) -> None:
-    """Every saved-run page loads the V10 helper first; it stays inert for V9 and earlier."""
-    with (
-        _cognition_viewer(tmp_path) as (base_url, root, expected),
-        sync_playwright() as playwright,
-    ):
-        before = _artifact_hashes(root)
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
-        page_errors: list[str] = []
-        console_errors: list[str] = []
-        page.on("pageerror", lambda error: page_errors.append(str(error)))
-        page.on(
-            "console",
-            lambda message: (
-                console_errors.append(message.text) if message.type == "error" else None
-            ),
-        )
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-
-        expect(page.locator("#error-banner")).to_be_hidden()
-        assert page.evaluate(
-            "() => Array.from(document.scripts).map((script) => script.getAttribute('src'))"
-        ) == ["/static/app-cognition-v2.js", "/static/app.js"]
-        assert page.evaluate(
-            "() => Array.from(document.styleSheets).map((sheet) => new URL(sheet.href).pathname)"
-        ) == ["/static/app.css", "/static/app-cognition-v2.css"]
-        assert page.evaluate("() => Object.isFrozen(window.AdLifeBoundedCognition)") is True
-        expect(page.locator("#cognition-summary-label")).to_have_text("Deterministic explanations")
-        assert page.evaluate("minute => setMinute(minute)", expected["model_minute"]) is True
-        item = page.locator(
-            f'.response-evidence-item[data-response-event-id="{expected["response_event_id"]}"]'
-        )
-        expect(item.locator(".response-explanation summary strong")).to_have_text(
-            "Deterministic explanation"
-        )
-        assert page.locator("#bounded-cognition-panel, .bounded-trace").count() == 0
-        assert "bounded-cognition-run" not in (page.locator("body").get_attribute("class") or "")
-        assert page.locator("#response-causal span").all_inner_texts() == [
-            "NOTICE",
-            "RULE RESPONSE",
-            "STATE UPDATE",
-        ]
-        assert page.evaluate("() => state.boundedCognition") is None
-        assert page_errors == [] and console_errors == []
-        browser.close()
-        assert _artifact_hashes(root) == before
-
-
-def test_schema_v8_inspector_refuses_incomplete_or_misbound_identity_before_rendering(
-    tmp_path: Path,
-) -> None:
-    with (
-        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (base_url, _root, expected),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        mutations = [
-            "missing-population",
-            "missing-assignment",
-            "duplicate-assignment",
-            "extra-assignment",
-            "swapped-assignment",
-            "unknown-persona",
-            "duplicate-persona",
-            "wrong-count",
-            "wrong-total",
-            "crossed-input",
-            "crossed-run",
-            "wrong-agent-set",
-            "duplicate-agent",
-            "unknown-member",
-            "false-fictional",
-            "invalid-mbti",
-            "wrong-age",
-            "unsafe-control",
-            "wrong-trait",
-            "wrong-state",
-            "missing-name",
-            "oversize-background",
-        ]
-        for mutation in mutations:
-            page = browser.new_page()
-
-            def corrupt(route: Route, *, case: str = mutation) -> None:
-                document = route.fetch().json()
-                population = document["population"]
-                personas = population["personas"]
-                assignments = population["assignments"]
-                if case == "missing-population":
-                    document.pop("population")
-                elif case == "missing-assignment":
-                    assignments.pop()
-                elif case == "duplicate-assignment":
-                    assignments[1] = assignments[0]
-                elif case == "extra-assignment":
-                    assignments.append({"agent_id": "person-004", "persona_id": "persona-001"})
-                elif case == "swapped-assignment":
-                    assignments[0]["persona_id"], assignments[2]["persona_id"] = (
-                        assignments[2]["persona_id"],
-                        assignments[0]["persona_id"],
-                    )
-                elif case == "unknown-persona":
-                    assignments[0]["persona_id"] = "persona-999"
-                elif case == "duplicate-persona":
-                    personas[1]["persona_id"] = personas[0]["persona_id"]
-                elif case == "wrong-count":
-                    personas[0]["count"] = 1
-                elif case == "wrong-total":
-                    document["settings"]["agent_count"] = 2
-                elif case == "crossed-input":
-                    document["workbench_input_schema_version"] = 1
-                elif case == "crossed-run":
-                    document["run_schema_version"] = 7
-                elif case == "unknown-member":
-                    personas[0]["secret_sentinel"] = "must-not-reflect"
-                elif case == "false-fictional":
-                    personas[0]["fictional"] = 1
-                elif case == "invalid-mbti":
-                    personas[0]["mbti"] = "INVALID"
-                elif case == "wrong-age":
-                    personas[0]["age"] = True
-                elif case == "unsafe-control":
-                    personas[0]["display_name"] = "must-not-reflect\u202e"
-                elif case == "wrong-trait":
-                    personas[0]["traits"]["impulsivity"] = 2
-                elif case == "wrong-state":
-                    personas[0]["initial_state"]["brand_sentiment"] = -2
-                elif case == "missing-name":
-                    personas[0].pop("display_name")
-                elif case == "oversize-background":
-                    # Canonical byte bounds are authoritative on the server; this
-                    # mocked DTO instead exercises the browser's codepoint bound.
-                    personas[0]["background"] = "😀" * 801
-                route.fulfill(json=document)
-
-            if mutation in ("wrong-agent-set", "duplicate-agent"):
-
-                def corrupt_agents(route: Route, *, case: str = mutation) -> None:
-                    document = route.fetch().json()
-                    document[2]["agent_id"] = (
-                        "person-004" if case == "wrong-agent-set" else "person-001"
-                    )
-                    route.fulfill(json=document)
-
-                page.route("**/agents", corrupt_agents)
-            else:
-                page.route("**/workbench-input", corrupt)
-            page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-            expect(page.locator("#assumptions-status"), message=mutation).to_have_text(
-                "VERIFICATION FAILED"
-            )
-            expect(page.locator("#error-banner"), message=mutation).to_contain_text(
-                "Frozen workbench input is invalid"
-            )
-            expect(page.locator("#selected-name"), message=mutation).to_be_hidden()
-            assert page.locator("#people-list").inner_text() == "", mutation
-            assert "must-not-reflect" not in page.locator("body").inner_text(), mutation
-            page.close()
-        browser.close()
-
-
-def test_schema_v8_identity_changes_only_with_the_committed_timeline_selection(
-    tmp_path: Path,
-) -> None:
-    with (
-        _workbench_assumptions_viewer(tmp_path, schema_version=8, distinct_names=True) as (
-            base_url,
-            _root,
-            expected,
-        ),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        page = browser.new_page()
-        page.add_init_script("""(() => {
-          const original = window.fetch;
-          window.identityPending = false;
-          window.fetch = async (...args) => {
-            if (String(args[0]).includes('/timeline?') && String(args[0]).includes('person-003')) {
-              window.identityPending = true;
-              const fail = await new Promise(resolve => { window.releaseIdentity = resolve; });
-              if (fail) return new Response('{}', {status: 500});
-            }
-            return original(...args);
-          };
-        })();""")
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-        expect(page.locator("#selected-id")).to_have_text("PERSON-001")
-        page.locator("#identity-context summary").click()
-
-        def snapshot() -> object:
-            return page.evaluate("""() => ({
-              id: document.querySelector('#selected-id').textContent,
-              name: document.querySelector('#selected-name').textContent,
-              context: document.querySelector('#identity-context').textContent,
-              activity: document.querySelector('#selected-activity').textContent,
-              response: document.querySelector('#response-state-panel').textContent,
-              map: document.querySelector('#city-map').toDataURL(),
-              alternative: document.querySelector('#map-text-summary').textContent,
-              selected: document.querySelector('.person.selected').textContent,
-            })""")
-
-        before = snapshot()
-        page.locator(".person").nth(2).click()
-        page.wait_for_function("window.identityPending")
-        assert snapshot() == before
-        page.evaluate("window.releaseIdentity(true)")
-        expect(page.locator("#error-banner")).to_be_visible()
-        assert snapshot() == before
-        page.evaluate("window.identityPending = false")
-        page.locator(".person").nth(2).click()
-        page.wait_for_function("window.identityPending")
-        assert snapshot() == before
-        page.evaluate("window.releaseIdentity(false)")
-        expect(page.locator("#selected-id")).to_have_text("PERSON-003")
-        expect(page.locator("#selected-name")).to_have_text("کیان خیالی")
-        expect(page.locator("#identity-occupation")).to_have_text("Fictional artist")
-        expect(page.locator("#map-text-summary")).to_contain_text("PERSON-003")
-        page.evaluate("window.identityPending = false")
-        page.locator(".person").nth(2).click()
-        page.wait_for_function("window.identityPending")
-        page.locator(".person").nth(1).click()
-        expect(page.locator("#selected-id")).to_have_text("PERSON-002")
-        newest = snapshot()
-        page.evaluate("window.releaseIdentity(false)")
-        page.wait_for_timeout(100)
-        assert snapshot() == newest
-        browser.close()
-
-
-def test_schema_v8_context_is_keyboard_accessible_and_contained_at_390px_200_percent(
-    tmp_path: Path,
-) -> None:
-    with (
-        _workbench_assumptions_viewer(tmp_path, schema_version=8) as (base_url, _root, expected),
-        sync_playwright() as playwright,
-    ):
-        browser = playwright.chromium.launch(
-            executable_path=str(_installed_browser()), headless=True
-        )
-        page = browser.new_page(viewport={"width": 390, "height": 844}, reduced_motion="reduce")
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
-        expect(page.locator("#selected-name")).to_be_visible()
-        original_font = page.locator("#selected-name").evaluate(
-            "el => parseFloat(getComputedStyle(el).fontSize)"
-        )
-        page.evaluate("document.documentElement.style.fontSize = '200%'")
-        assert (
-            page.locator("#selected-name").evaluate(
-                "el => parseFloat(getComputedStyle(el).fontSize)"
-            )
-            >= original_font * 2
-        )
-        summary = page.locator("#identity-context summary")
-        summary.focus()
-        page.keyboard.press("Enter")
-        expect(page.locator("#identity-background")).to_be_visible()
-        expect(page.locator("#play-button")).to_be_disabled()
-        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-        for selector in ("#identity-context", "#selected-name", "#people-list"):
-            assert page.locator(selector).evaluate("el => el.scrollWidth <= el.clientWidth"), (
-                selector
-            )
-        assert (
-            page.locator("#identity-context").evaluate("el => getComputedStyle(el).animationName")
-            == "none"
-        )
         browser.close()
 
 
@@ -1870,9 +816,7 @@ def test_saved_inspector_renders_only_frozen_city_source_as_inert_bidi_safe_text
         )
         page.on("pageerror", lambda error: page_errors.append(str(error)))
 
-        catalog = page.request.get(f"{base_url}/api/catalog/cities")
-        assert catalog.status == 409
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+        page.goto(base_url, wait_until="networkidle")
 
         expect(page.locator("#city-source-panel")).to_be_visible()
         expect(page.locator("#city-source-status")).to_have_text("Operator-declared")
@@ -4170,7 +3114,7 @@ def test_inspector_controls_respect_accessibility_preferences_and_leave_artifact
 ) -> None:
     browser_path = _installed_browser()
     with (
-        _workbench_assumptions_viewer(tmp_path) as (base_url, root, expected),
+        _saved_run_viewer(tmp_path) as (base_url, root, expected),
         sync_playwright() as playwright,
     ):
         run_directory = root / "city-runs" / str(expected["run_id"])
@@ -4187,7 +3131,7 @@ def test_inspector_controls_respect_accessibility_preferences_and_leave_artifact
             "request",
             lambda request: methods.append(request.method) if "/api/" in request.url else None,
         )
-        page.goto(f"{base_url}/runs/{expected['run_id']}", wait_until="networkidle")
+        page.goto(base_url, wait_until="networkidle")
         page.evaluate("() => { document.documentElement.style.fontSize = '200%'; }")
 
         expect(page.locator("#play-button")).to_be_disabled()

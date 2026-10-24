@@ -568,16 +568,13 @@ def test_uploaded_run_replay_ignores_removed_replaced_and_corrupt_registry(
     )
     with TestClient(app, base_url="http://127.0.0.1:8765") as client:
         catalog = client.get("/api/catalog/cities")
-        inspector = client.get(f"/runs/{run_id}")
         metadata = client.get(f"/api/runs/{run_id}/meta")
         frozen_city = client.get(f"/api/runs/{run_id}/city")
         frame = client.get(f"/api/runs/{run_id}/frame?minute=0")
 
     assert catalog.status_code == 409
     assert catalog.json()["error"]["code"] == "city-registry-unavailable"
-    assert all(
-        response.status_code == 200 for response in (inspector, metadata, frozen_city, frame)
-    )
+    assert all(response.status_code == 200 for response in (metadata, frozen_city, frame))
     assert metadata.json()["run_schema_version"] == run_schema_version
     assert metadata.json()["city_sha256"] == resolved.pack.fingerprint
     assert frozen_city.json()["city_id"] == resolved.pack.city_id

@@ -23,7 +23,7 @@ from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.i18n import load_catalog
 from adlife.reporting.run_story_model import RunStoryV1, StoryMoment, story_ref_context
-from tests.browser.test_city_workbench_browser import _artifact_hashes, _installed_browser, _serve
+from tests.browser.browser_support import _artifact_hashes, _installed_browser, _serve
 from tests.unit.city.run_story_fixtures import HOSTILE_PERSONA_NAME, saved_story_run
 
 RUNS = {
@@ -707,14 +707,18 @@ def test_older_and_missing_runs_explain_themselves_and_the_page_only_reads(
         unavailable = page.locator("[data-problem='unavailable']")
         expect(unavailable).to_be_visible()
         expect(unavailable).to_have_text(catalog.text("story.unavailable"))
-        technical = page.locator("#story-problem-technical")
-        expect(technical).to_be_visible()
-        expect(technical).to_have_attribute("href", f"/runs/{v9}")
+        # An older run offers no removed technical view: only the way back to the guide.
+        assert page.locator("#story-problem-technical").count() == 0
+        expect(page.locator("#story-retry")).to_be_hidden()
+        actions = page.locator("#story-problem .story-problem-actions a:visible")
+        expect(actions).to_have_count(1)
+        expect(actions).to_have_attribute("href", "/guide?lang=en")
+        assert page.locator("a[href^='/runs/'], a[target='_blank']").count() == 0
         expect(page.locator("#story-app")).to_be_hidden()
 
         page.goto(f"{site.base_url}/guide/runs/story-never-saved?lang=en")
         expect(page.locator("[data-problem='not_found']")).to_be_visible(timeout=READY)
-        expect(page.locator("#story-problem-technical")).to_be_hidden()
+        expect(page.locator("#story-problem .story-problem-actions a:visible")).to_have_count(1)
 
         _open(page, site, site.run_ids["mock"])
         for key in ("PageDown", "PageDown", "2", "3", "1", "Home"):

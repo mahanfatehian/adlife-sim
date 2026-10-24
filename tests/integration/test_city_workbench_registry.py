@@ -357,7 +357,6 @@ def test_uploaded_city_completes_the_workbench_flow_after_restart(
     with TestClient(restarted, base_url=_ORIGIN) as client:
         catalog_detail = client.get(f"/api/catalog/cities/{city_id}")
         runs = client.get("/api/runs")
-        inspector = client.get(f"/runs/{run_id}")
         metadata = client.get(f"/api/runs/{run_id}/meta")
         frozen_city = client.get(f"/api/runs/{run_id}/city")
         frozen_input = client.get(f"/api/runs/{run_id}/workbench-input")
@@ -368,7 +367,6 @@ def test_uploaded_city_completes_the_workbench_flow_after_restart(
         for response in (
             catalog_detail,
             runs,
-            inspector,
             metadata,
             frozen_city,
             frozen_input,

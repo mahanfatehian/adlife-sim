@@ -23,6 +23,9 @@ def test_built_wheel_contains_fictional_name_resource(tmp_path: Path) -> None:
 
     with ZipFile(wheels[0]) as archive:
         assert _NAME_RESOURCE_MEMBER in archive.namelist()
+        # The city viewer's dashboard stays packaged; the removed workbench UI does not.
+        assert "adlife/city/static/workbench.js" not in archive.namelist()
+        assert "adlife/city/static/workbench.html" not in archive.namelist()
         script = archive.read(_CITY_SCRIPT_MEMBER).decode("utf-8")
         assert "road.shape" in script
         assert "state.frame.route.geometry" in script

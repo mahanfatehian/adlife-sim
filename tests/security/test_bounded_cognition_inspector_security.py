@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import Browser, Page, expect, sync_playwright
 
+from tests.browser.browser_support import _installed_browser
 from tests.browser.test_bounded_cognition_inspector_browser import (
     HELPER,
     STATIC,
@@ -19,7 +20,6 @@ from tests.browser.test_bounded_cognition_inspector_browser import (
     response_minutes,
     saved_workspace_run,
 )
-from tests.browser.test_city_places_browser import _installed_browser
 
 FORBIDDEN_SCRIPT_TOKENS = (
     "innerHTML",

@@ -211,6 +211,12 @@ def test_persona_templates_endpoint_is_exact_stable_validated_and_query_free(
         "persona-002",
         "persona-003",
         "persona-004",
+        "persona-005",
+        "persona-006",
+        "persona-007",
+        "persona-008",
+        "persona-009",
+        "persona-010",
     ]
     assert response.content == repeated.content
     assert refused.status_code == 422
@@ -269,14 +275,7 @@ def test_schema2_validation_receipts_and_jobs_project_one_verified_v8_snapshot(
         listing = client.get("/api/runs")
         detail = client.get("/api/runs/persona-browser-run/meta")
         frozen = client.get("/api/runs/persona-browser-run/workbench-input")
-        shell = client.get("/runs/persona-browser-run")
-        assert (
-            listing.status_code
-            == detail.status_code
-            == frozen.status_code
-            == shell.status_code
-            == 200
-        )
+        assert listing.status_code == detail.status_code == frozen.status_code == 200
         assert listing.json()["runs"][0] == terminal["result"]
         assert detail.json()["workbench_input_available"] is True
         assert detail.json()["workbench_input_sha256"] == first.json()["hashes"]["input_sha256"]
@@ -287,19 +286,9 @@ def test_schema2_validation_receipts_and_jobs_project_one_verified_v8_snapshot(
             {"agent_id": "person-001", "persona_id": "persona-001"},
             {"agent_id": "person-002", "persona_id": "persona-002"},
         ]
-        view_token = re.search(
-            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">', shell.text
-        )
-        assert view_token is not None
         sidecar = root / "city-runs" / "persona-browser-run" / "inputs" / "workbench.json"
         sidecar.write_bytes(sidecar.read_bytes() + b" ")
-        pinned = client.get(
-            "/api/runs/persona-browser-run/workbench-input",
-            headers={"X-AdLife-View-Token": view_token.group(1)},
-        )
-        assert pinned.status_code == 200
-        assert pinned.content == frozen.content
-        assert client.get("/runs/persona-browser-run").status_code == 409
+        # Every read verifies the saved run afresh, so the tampered sidecar is refused.
         assert client.get("/api/runs/persona-browser-run/workbench-input").status_code == 409
 
 
@@ -635,50 +624,126 @@ def test_compatibility_route_dispatches_exact_effect_scope(tmp_path, payload, sc
         assert listed["last_check"] is None
 
 
-def test_reuse_page_serves_the_shell_with_only_a_portable_run_id(tmp_path: Path) -> None:
+REMOVED_UI_PATHS = (
+    "/runs/some-run/reuse",
+    "/assets/workbench.css",
+    "/assets/workbench.js",
+    "/assets/workbench-city-packs.js",
+    "/assets/workbench-personas.js",
+    "/assets/workbench-personas.css",
+    "/assets/workbench-providers.js",
+    "/assets/workbench-providers.css",
+    "/static/app.js",
+    "/static/app.css",
+    "/static/index.html",
+    "/runs/some-run",
+)
+NOT_FOUND = {
+    "schema_version": 1,
+    "error": {
+        "code": "not-found",
+        "message": "The requested resource was not found.",
+        "fields": {},
+    },
+}
+
+
+@pytest.mark.parametrize("query", ["", "?lang=fa", "?next=https://attacker.invalid/x"])
+def test_root_redirects_to_the_guide_with_the_shell_security_headers(
+    tmp_path: Path, query: str
+) -> None:
     client, root = _client(tmp_path)
     before = _artifact_snapshot(root)
     with client:
-        plain = client.get("/")
-        reuse = client.get("/runs/demo-v10-001/reuse")
-        queried = client.get("/runs/demo-v10-001/reuse?again=1")
-        malformed = [client.get(f"/runs/{value}/reuse") for value in ("Demo_V10", "a" * 41, "-x")]
+        response = client.get(f"/{query}", follow_redirects=False)
+        followed = client.get(f"/{query}")
 
-    marker = '<meta name="adlife-reuse-run" content="{}">'
-    assert plain.status_code == reuse.status_code == 200
-    assert marker.format("") in plain.text
-    assert marker.format("demo-v10-001") in reuse.text
-    # Apart from the requested run ID, the reuse page is the ordinary workbench shell.
-    assert reuse.text.replace(marker.format("demo-v10-001"), marker.format("")) == plain.text
-    assert reuse.headers["content-security-policy"] == plain.headers["content-security-policy"]
-    assert "__ADLIFE_" not in plain.text + reuse.text
-    assert queried.status_code == 422
-    assert [response.status_code for response in malformed] == [404, 404, 404]
-    assert all("Demo_V10" not in response.text for response in malformed)
-    # Opening the page reads nothing and writes nothing; the browser verifies the run later.
+    assert response.status_code == 307
+    # The query is never reflected: the root always opens the plain guide start page.
+    assert response.headers["location"] == "/guide"
+    assert response.content == b""
+    for name, value in _module()._SHELL_HEADERS.items():
+        assert response.headers[name] == value, name
+    assert response.headers["cache-control"] == "no-store"
+    assert "attacker" not in response.text + "".join(response.headers.values())
+    assert followed.status_code == 200
+    assert followed.url.path == "/guide"
+    assert '<meta name="adlife-csrf-token"' in followed.text
     assert _artifact_snapshot(root) == before
 
 
-def test_run_settings_name_the_rule_engine_as_owner_of_every_baseline_response(
-    tmp_path: Path,
-) -> None:
-    """The fixed rule-engine field must not read as a rival to the model source below it."""
+def test_root_redirect_refuses_a_foreign_host(tmp_path: Path) -> None:
     client, _root = _client(tmp_path)
     with client:
-        page = client.get("/")
+        response = client.get("/", headers={"Host": "example.test"}, follow_redirects=False)
+    assert response.status_code == 400
+    assert "location" not in response.headers
 
-    assert page.status_code == 200
-    html = page.text
-    assert '<label for="response-mode">Baseline responses</label>' in html
-    assert 'id="response-mode" type="text" value="Rules engine (offline)" readonly' in html
-    assert ">Response mode<" not in html
-    help_text = re.search(r'<small id="response-mode-help"[^>]*>([^<]*)</small>', html)
-    assert help_text is not None
-    assert help_text.group(1) == (
-        "The rule engine computes movement, ad exposure, attention, and every baseline response "
-        "offline. Model assistance below never replaces them: it can only explain saved results "
-        "or supply bounded signals for a separate cognition track."
-    )
+
+@pytest.mark.parametrize("path", REMOVED_UI_PATHS)
+def test_the_removed_technical_ui_routes_are_not_found(tmp_path: Path, path: str) -> None:
+    client, root = _client(tmp_path)
+    before = _artifact_snapshot(root)
+    with client:
+        response = client.get(path)
+    assert response.status_code == 404
+    assert response.json() == NOT_FOUND
+    assert response.headers["content-type"].startswith("application/json")
+    assert _artifact_snapshot(root) == before
+
+
+def test_a_saved_run_has_no_workbench_page_but_its_listing_is_unchanged(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    prepare_workbench_workspace(root)
+    _saved_workbench_run(root, run_id="inspectable-run", schema_version=7)
+    app = _module().create_city_workbench_app(prepare_workbench_workspace(root), csrf_token=TOKEN)
+
+    with TestClient(app, base_url=ORIGIN) as client:
+        responses = [
+            client.get(path)
+            for path in ("/runs/inspectable-run", "/runs/inspectable-run/reuse", "/static/app.js")
+        ]
+        listing = client.get("/api/runs")
+        meta = client.get("/api/runs/inspectable-run/meta")
+
+    assert [response.status_code for response in responses] == [404, 404, 404]
+    assert all(response.json() == NOT_FOUND for response in responses)
+    # The /api contract is unchanged: a run summary still carries its inspector_url field.
+    assert listing.json()["runs"][0]["inspector_url"] == "/runs/inspectable-run"
+    assert meta.status_code == 200
+
+
+def test_the_icon_is_the_only_remaining_workbench_asset(tmp_path: Path) -> None:
+    client, _root = _client(tmp_path)
+    with client:
+        icon = client.get("/assets/workbench-icon.svg")
+
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+    assert icon.text.startswith("<svg")
+    assert "<script" not in icon.text.lower()
+    assert "<foreignobject" not in icon.text.lower()
+    assert "href=" not in icon.text.lower()
+    assert icon.headers["cache-control"] == "no-store"
+    assert icon.headers["x-content-type-options"] == "nosniff"
+    assert "access-control-allow-origin" not in icon.headers
+    assert "server" not in icon.headers
+
+
+def test_the_only_browser_pages_are_the_guide_the_root_redirect_and_the_icon(
+    tmp_path: Path,
+) -> None:
+    from adlife.city.guide_web import GUIDE_ROUTE_PATHS
+
+    client, _root = _client(tmp_path)
+    paths: set[str] = set()
+    for route in client.app.routes:  # type: ignore[attr-defined]
+        path = getattr(route, "path", "")
+        methods = getattr(route, "methods", None) or set()
+        if "GET" in methods and path != "/api" and not path.startswith("/api/"):
+            paths.add(path)
+    guide_pages = {path for path in GUIDE_ROUTE_PATHS if not path.startswith("/api/")}
+    assert paths == {"/", "/assets/workbench-icon.svg", *guide_pages}
 
 
 def test_recorded_bounded_check_is_read_only_exact_and_scope_bound(tmp_path: Path) -> None:
@@ -1029,198 +1094,45 @@ def test_scoped_timeline_projection_verifies_the_run_exactly_once(
     }
 
 
-def test_inspector_snapshot_reuses_one_verified_run_across_browser_reads(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "workspace"
-    prepare_workbench_workspace(root)
-    run_id = "snapshot-view"
-    _saved_workbench_run(root, run_id=run_id, schema_version=7)
-    module = _module()
-    original = module.WorkbenchRunRepository.load
-    loaded: list[str] = []
-
-    def counted_load(repository: object, candidate: str):
-        loaded.append(candidate)
-        return original(repository, candidate)
-
-    monkeypatch.setattr(module.WorkbenchRunRepository, "load", counted_load)
-    app = module.create_city_workbench_app(
-        prepare_workbench_workspace(root),
-        csrf_token=TOKEN,
-    )
-
-    with TestClient(app, base_url=ORIGIN) as client:
-        page = client.get(f"/runs/{run_id}")
-        token_match = re.search(
-            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
-            page.text,
-        )
-        assert token_match is not None
-        headers = {"X-AdLife-View-Token": token_match.group(1)}
-        responses = (
-            client.get(f"/api/runs/{run_id}/meta", headers=headers),
-            client.get(f"/api/runs/{run_id}/city", headers=headers),
-            client.get(f"/api/runs/{run_id}/agents", headers=headers),
-            client.get(f"/api/runs/{run_id}/workbench-input", headers=headers),
-            client.get(
-                f"/api/runs/{run_id}/timeline",
-                headers=headers,
-                params={"minute": 480, "agent_id": "person-001", "limit": 1},
-            ),
-        )
-
-    assert page.status_code == 200
-    assert all(response.status_code == 200 for response in responses)
-    assert loaded == [run_id]
-
-
-def test_inspector_snapshot_token_is_bound_to_one_run_and_invalid_tokens_are_refused(
+def test_run_scoped_reads_refuse_the_retired_inspector_view_token_header(
     tmp_path: Path,
 ) -> None:
+    """Only the removed inspector page issued view tokens; any token is refused, not ignored."""
     root = tmp_path / "workspace"
     prepare_workbench_workspace(root)
     _saved_workbench_run(root, run_id="snapshot-a", schema_version=7)
-    _saved_workbench_run(root, run_id="snapshot-b", schema_version=7)
     app = _module().create_city_workbench_app(
         prepare_workbench_workspace(root),
         csrf_token=TOKEN,
     )
 
     with TestClient(app, base_url=ORIGIN) as client:
-        page = client.get("/runs/snapshot-a")
-        token_match = re.search(
-            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
-            page.text,
+        plain = client.get("/api/runs/snapshot-a/meta")
+        refused = [
+            client.get("/api/runs/snapshot-a/meta", headers={"X-AdLife-View-Token": value})
+            for value in ("not-a-valid-token", "A" * 43, "")
+        ]
+        duplicated = client.get(
+            "/api/runs/snapshot-a/workbench-input",
+            headers=[("X-AdLife-View-Token", "A" * 43), ("X-AdLife-View-Token", "B" * 43)],
         )
-        assert token_match is not None
-        token = token_match.group(1)
-        wrong_run = client.get(
-            "/api/runs/snapshot-b/meta",
-            headers={"X-AdLife-View-Token": token},
-        )
-        malformed = client.get(
-            "/api/runs/snapshot-a/meta",
-            headers={"X-AdLife-View-Token": "not-a-valid-token"},
-        )
-        unknown = client.get(
-            "/api/runs/snapshot-a/meta",
-            headers={"X-AdLife-View-Token": "A" * 43},
-        )
+        unsafe = client.get("/api/runs/Bad_Run/meta", headers={"X-AdLife-View-Token": "A" * 43})
 
     expected = {
         "code": "run-unavailable",
         "message": "The saved run could not be verified.",
         "fields": {},
     }
-    assert wrong_run.status_code == malformed.status_code == unknown.status_code == 409
-    assert wrong_run.json()["error"] == malformed.json()["error"] == unknown.json()["error"]
-    assert unknown.json()["error"] == expected
-    assert token not in wrong_run.text + malformed.text + unknown.text
+    assert plain.status_code == 200
+    assert all(response.status_code == 409 for response in (*refused, duplicated))
+    assert all(response.json()["error"] == expected for response in (*refused, duplicated))
+    # An unsafe run ID is screened before the header, exactly as before.
+    assert unsafe.status_code == 404
+    assert "A" * 43 not in "".join(response.text for response in (*refused, duplicated, unsafe))
 
 
-def test_repeated_inspector_pages_share_one_verified_snapshot_payload(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "workspace"
-    prepare_workbench_workspace(root)
-    run_id = "shared-snapshot"
-    _saved_workbench_run(root, run_id=run_id, schema_version=7)
-    module = _module()
-    original_load = module.WorkbenchRunRepository.load
-    loaded: list[str] = []
-    resolved_snapshot_ids: list[int] = []
-
-    def counted_load(repository: object, candidate: str):
-        loaded.append(candidate)
-        return original_load(repository, candidate)
-
-    original_resolve = module._InspectorSnapshots.resolve
-
-    def observed_resolve(cache: object, token: str, *, run_id: str):
-        snapshot = original_resolve(cache, token, run_id=run_id)
-        if snapshot is not None:
-            resolved_snapshot_ids.append(id(snapshot))
-        return snapshot
-
-    monkeypatch.setattr(module.WorkbenchRunRepository, "load", counted_load)
-    monkeypatch.setattr(module._InspectorSnapshots, "resolve", observed_resolve)
-    app = module.create_city_workbench_app(
-        prepare_workbench_workspace(root),
-        csrf_token=TOKEN,
-    )
-
-    with TestClient(app, base_url=ORIGIN) as client:
-        pages = (client.get(f"/runs/{run_id}"), client.get(f"/runs/{run_id}"))
-        tokens = []
-        for page in pages:
-            token_match = re.search(
-                r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
-                page.text,
-            )
-            assert token_match is not None
-            tokens.append(token_match.group(1))
-        responses = tuple(
-            client.get(
-                f"/api/runs/{run_id}/meta",
-                headers={"X-AdLife-View-Token": token},
-            )
-            for token in tokens
-        )
-
-    assert all(page.status_code == 200 for page in pages)
-    assert all(response.status_code == 200 for response in responses)
-    assert loaded == [run_id, run_id]
-    assert len(tokens) == len(set(tokens)) == 2
-    assert len(set(resolved_snapshot_ids)) == 1
-
-
-def test_open_inspector_snapshot_stays_atomic_and_reload_reverifies_artifacts(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "workspace"
-    prepare_workbench_workspace(root)
-    run_id = "atomic-snapshot"
-    _saved_workbench_run(root, run_id=run_id, schema_version=7)
-    app = _module().create_city_workbench_app(
-        prepare_workbench_workspace(root),
-        csrf_token=TOKEN,
-    )
-
-    with TestClient(app, base_url=ORIGIN) as client:
-        page = client.get(f"/runs/{run_id}")
-        token_match = re.search(
-            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">',
-            page.text,
-        )
-        assert token_match is not None
-        headers = {"X-AdLife-View-Token": token_match.group(1)}
-        before = client.get(f"/api/runs/{run_id}/meta", headers=headers)
-        manifest = root / "city-runs" / run_id / "run.json"
-        manifest.write_bytes(manifest.read_bytes() + b"\n")
-        same_page = client.get(f"/api/runs/{run_id}/meta", headers=headers)
-        direct = client.get(f"/api/runs/{run_id}/meta")
-        reload = client.get(f"/runs/{run_id}")
-
-    assert page.status_code == before.status_code == same_page.status_code == 200
-    assert same_page.json() == before.json()
-    assert direct.status_code == reload.status_code == 409
-    assert (
-        direct.json()["error"]
-        == reload.json()["error"]
-        == {
-            "code": "run-unavailable",
-            "message": "The saved run could not be verified.",
-            "fields": {},
-        }
-    )
-
-
-@pytest.mark.parametrize("route", ["inspector", "library"])
 def test_verified_runs_stay_available_while_the_city_registry_anchors_the_root(
-    tmp_path: Path, route: str
+    tmp_path: Path,
 ) -> None:
     """A run read overlapping a city-registry operation waits instead of failing.
 
@@ -1255,7 +1167,7 @@ def test_verified_runs_stay_available_while_the_city_registry_anchors_the_root(
         timer = threading.Timer(0.3, release.set)
         timer.start()
         try:
-            response = client.get(f"/runs/{run_id}" if route == "inspector" else "/api/runs")
+            response = client.get("/api/runs")
         finally:
             release.set()
             timer.cancel()
@@ -1263,48 +1175,9 @@ def test_verified_runs_stay_available_while_the_city_registry_anchors_the_root(
 
     assert failures == []
     assert response.status_code == 200
-    if route == "inspector":
-        assert re.search(
-            r'<meta name="adlife-view-token" content="[A-Za-z0-9_-]{43}">', response.text
-        )
-    else:
-        page = response.json()
-        assert (page["verified_total"], page["corrupt_count"]) == (1, 0)
-        assert [run["run_id"] for run in page["runs"]] == [run_id]
-
-
-def test_completed_inspector_url_serves_the_existing_dashboard_with_a_scoped_api_base(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "workspace"
-    prepare_workbench_workspace(root)
-    stored = _saved_workbench_run(root, run_id="inspectable-run", schema_version=7)
-    app = _module().create_city_workbench_app(
-        prepare_workbench_workspace(root),
-        csrf_token=TOKEN,
-    )
-
-    with TestClient(app, base_url=ORIGIN) as client:
-        page = client.get("/runs/inspectable-run")
-        script = client.get("/static/app.js")
-        style = client.get("/static/app.css")
-        listing = client.get("/api/runs")
-
-    assert page.status_code == script.status_code == style.status_code == 200
-    assert page.text.count('name="adlife-api-base"') == 1
-    assert 'name="adlife-api-base" content="/api/runs/inspectable-run"' in page.text
-    assert page.text.count('name="adlife-view-token"') == 1
-    assert re.search(
-        r'<meta name="adlife-view-token" content="[A-Za-z0-9_-]{43}">',
-        page.text,
-    )
-    assert 'src="/static/app.js"' in page.text
-    assert page.headers["content-security-policy"].startswith("default-src 'none'")
-    assert page.headers["cache-control"] == "no-store"
-    assert script.headers["content-type"].startswith("text/javascript")
-    assert style.headers["content-type"].startswith("text/css")
-    assert listing.json()["runs"][0]["inspector_url"] == "/runs/inspectable-run"
-    assert stored.manifest.run_id in page.text or "saved-run-label" in page.text
+    page = response.json()
+    assert (page["verified_total"], page["corrupt_count"]) == (1, 0)
+    assert [run["run_id"] for run in page["runs"]] == [run_id]
 
 
 def test_v7_workbench_input_endpoint_returns_only_the_verified_frozen_projection(
@@ -1540,21 +1413,19 @@ def test_run_scoped_reads_reverify_after_a_prior_success_and_refuse_tampering(
         manifest.write_bytes(manifest.read_bytes() + b"\n")
         second = client.get("/api/runs/tamper-run/meta")
         second_timeline = client.get("/api/runs/tamper-run/timeline?minute=480&agent_id=person-001")
-        page = client.get("/runs/tamper-run")
 
     assert first.status_code == first_timeline.status_code == 200
-    assert second.status_code == second_timeline.status_code == page.status_code == 409
+    assert second.status_code == second_timeline.status_code == 409
     assert (
         second.json()["error"]
         == second_timeline.json()["error"]
-        == page.json()["error"]
         == {
             "code": "run-unavailable",
             "message": "The saved run could not be verified.",
             "fields": {},
         }
     )
-    assert str(manifest) not in second.text + page.text
+    assert str(manifest) not in second.text + second_timeline.text
 
 
 def test_run_scoped_reads_refuse_a_workspace_replaced_between_requests(
@@ -1580,14 +1451,12 @@ def test_run_scoped_reads_refuse_a_workspace_replaced_between_requests(
         monkeypatch.setattr(runs_module, "verify_workbench_workspace", replaced)
         second = client.get("/api/runs/workspace-swap/meta")
         workbench_input = client.get("/api/runs/workspace-swap/workbench-input")
-        page = client.get("/runs/workspace-swap")
 
     assert first.status_code == 200
-    assert second.status_code == workbench_input.status_code == page.status_code == 409
+    assert second.status_code == workbench_input.status_code == 409
     assert (
         second.json()["error"]
         == workbench_input.json()["error"]
-        == page.json()["error"]
         == {
             "code": "workspace-unavailable",
             "message": "The workbench workspace is unavailable.",
@@ -1618,20 +1487,20 @@ def test_run_scoped_reads_report_a_valid_run_with_an_unsafe_location_as_unavaila
 
         monkeypatch.setattr(module.WorkbenchRunRepository, "load", unsafe_load)
         second = client.get("/api/runs/unsafe-location/meta")
-        page = client.get("/runs/unsafe-location")
+        workbench_input = client.get("/api/runs/unsafe-location/workbench-input")
 
     assert first.status_code == 200
-    assert second.status_code == page.status_code == 409
+    assert second.status_code == workbench_input.status_code == 409
     assert (
         second.json()["error"]
-        == page.json()["error"]
+        == workbench_input.json()["error"]
         == {
             "code": "run-unavailable",
             "message": "The saved run could not be verified.",
             "fields": {},
         }
     )
-    assert unsafe_detail not in second.text + page.text
+    assert unsafe_detail not in second.text + workbench_input.text
 
 
 def test_run_scoped_validation_errors_never_echo_query_values(tmp_path: Path) -> None:
@@ -2570,7 +2439,7 @@ def test_endpoint_binding_submission_error_is_constant_and_value_free(
 
 
 @pytest.mark.parametrize("mode", ["rules", "mock"])
-def test_v9_cognition_routes_project_one_pinned_verified_snapshot(
+def test_v9_cognition_routes_project_the_freshly_verified_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mode: str,
@@ -2597,15 +2466,9 @@ def test_v9_cognition_routes_project_one_pinned_verified_snapshot(
 
         monkeypatch.setattr(_module().WorkbenchRunRepository, "load", counted_load)
         before = _artifact_snapshot(root)
-        page = client.get(f"/runs/{run_id}")
-        token = re.search(
-            r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">', page.text
-        )
-        assert token is not None
-        headers = {"X-AdLife-View-Token": token.group(1)}
-        summary = client.get(f"/api/runs/{run_id}/cognition-summary", headers=headers)
-        records = client.get(f"/api/runs/{run_id}/cognition-records", headers=headers)
-        frozen = client.get(f"/api/runs/{run_id}/workbench-input", headers=headers)
+        summary = client.get(f"/api/runs/{run_id}/cognition-summary")
+        records = client.get(f"/api/runs/{run_id}/cognition-records")
+        frozen = client.get(f"/api/runs/{run_id}/workbench-input")
         assert summary.status_code == records.status_code == frozen.status_code == 200
         summary_data = summary.json()
         assert set(summary_data) == {
@@ -2643,17 +2506,14 @@ def test_v9_cognition_routes_project_one_pinned_verified_snapshot(
         assert frozen.json()["run_schema_version"] == 9
         assert frozen.json()["workbench_input_schema_version"] == 3
         assert frozen.json()["cognition"]["mode"] == mode
-        assert loaded == [run_id]
+        # Each read verifies the saved run afresh.
+        assert loaded == [run_id, run_id, run_id]
         assert str(root) not in summary.text + records.text + frozen.text
         assert _artifact_snapshot(root) == before
 
         artifact = stored.directory / "outputs" / "cognition.jsonl"
         artifact.write_bytes(artifact.read_bytes() + b" ")
-        for suffix, expected in (("cognition-summary", summary), ("cognition-records", records)):
-            assert (
-                client.get(f"/api/runs/{run_id}/{suffix}", headers=headers).content
-                == expected.content
-            )
+        for suffix in ("cognition-summary", "cognition-records"):
             fresh = client.get(f"/api/runs/{run_id}/{suffix}")
             assert fresh.status_code == 409
             assert fresh.json()["error"]["code"] == "run-unavailable"
@@ -3171,6 +3031,8 @@ def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(
     assert [item["city_id"] for item in cities["cities"]] == [
         "fictional-grid-v2",
         "fictional-harbor-loop-v2",
+        "fictional-new-district-v2",
+        "fictional-old-town-v2",
         "fictional-river-junction-v2",
     ]
     city = next(item for item in cities["cities"] if item["city_id"] == "fictional-grid-v2")
@@ -3202,10 +3064,14 @@ def test_catalog_and_creative_endpoints_are_complete_and_stably_ordered(
     creatives = creatives_response.json()
     assert creatives["schema_version"] == 1
     assert [item["template_id"] for item in creatives["templates"]] == [
+        "fictional-bike-share-v1",
+        "fictional-book-box-v1",
         "fictional-coffee-pass-v1",
         "fictional-crispy-meal-v1",
         "fictional-device-launch-v1",
+        "fictional-fitness-app-v1",
         "fictional-home-delivery-v1",
+        "fictional-music-stream-v1",
     ]
     assert all(len(item["creative_sha256"]) == 64 for item in creatives["templates"])
     assert all(
@@ -3403,7 +3269,6 @@ def test_corrupt_registry_blocks_new_city_operations_but_not_frozen_runs(
     )
     with TestClient(app, base_url=ORIGIN, raise_server_exceptions=False) as client:
         listing = client.get("/api/runs")
-        inspector = client.get("/runs/frozen-run")
         metadata = client.get("/api/runs/frozen-run/meta")
         replay_frame = client.get("/api/runs/frozen-run/frame?minute=0")
         blocked = [
@@ -3416,7 +3281,6 @@ def test_corrupt_registry_blocks_new_city_operations_but_not_frozen_runs(
 
     assert listing.status_code == 200
     assert listing.json()["runs"][0]["run_id"] == "frozen-run"
-    assert inspector.status_code == 200
     assert metadata.status_code == 200
     assert metadata.json()["run_id"] == "frozen-run"
     assert replay_frame.status_code == 200
@@ -3934,88 +3798,6 @@ def test_validation_reaches_no_network_store_worker_or_artifact(
     assert not (root / "city-runs").exists()
 
 
-def test_shell_assets_are_local_escaped_honest_and_csp_restricted(tmp_path: Path) -> None:
-    hostile_token = 'token"><script>alert("x")</script>'
-    client, _ = _client(tmp_path, token=hostile_token)
-    with client:
-        shell = client.get("/")
-        css = client.get("/assets/workbench.css")
-        javascript = client.get("/assets/workbench.js")
-        icon = client.get("/assets/workbench-icon.svg")
-        hostile_host = client.get("/", headers={"Host": "example.test"})
-
-    assert shell.status_code == 200
-    assert shell.headers["content-type"].startswith("text/html")
-    assert shell.headers["content-security-policy"] == (
-        "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; "
-        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-    )
-    assert hostile_token not in shell.text
-    assert "&quot;&gt;&lt;script&gt;" in shell.text
-    assert '<link rel="stylesheet" href="/assets/workbench.css">' in shell.text
-    assert '<link rel="icon" href="/assets/workbench-icon.svg" type="image/svg+xml">' in shell.text
-    assert shell.text.count('<script defer src="/assets/workbench.js"></script>') == 1
-    assert "<script>" not in shell.text.lower()
-    assert "onclick=" not in shell.text.lower()
-    assert 'class="skip-link"' in shell.text
-    assert 'id="synthetic-disclosure"' in shell.text
-    assert '<h1 id="city-title">Choose a city</h1>' in shell.text
-    assert ">Synthetic model</strong>" in shell.text
-    assert "Fictional people and modeled responses" in shell.text
-    assert 'aria-label="City study stages"' in shell.text
-    assert [
-        shell.text.count(f'class="stage-name">{stage}</b>')
-        for stage in (
-            "CITY",
-            "CAMPAIGN",
-            "RUN",
-            "INSPECT",
-        )
-    ] == [1, 1, 1, 1]
-    assert 'id="city-map"' in shell.text
-    assert 'id="city-map-alternative"' in shell.text
-    assert ">Map details</summary>" in shell.text
-    assert "<summary>Data &amp; integrity</summary>" in shell.text
-    assert 'id="completed-runs"' in shell.text
-    assert "not observed behavior, real sales" in shell.text
-    assert "CAUSAL THREAD" not in shell.text
-    assert "Compose bounded campaign assumptions" not in shell.text
-    for control in ("<input", "<select", "<button"):
-        assert control in shell.text.lower()
-    assert "http://" not in shell.text
-    assert "https://" not in shell.text
-
-    assert css.status_code == 200
-    assert css.headers["content-type"].startswith("text/css")
-    assert "@import" not in css.text.lower()
-    assert "@font-face" not in css.text.lower()
-    assert "http://" not in css.text
-    assert "https://" not in css.text
-    assert "url(" not in css.text.lower()
-
-    assert javascript.status_code == 200
-    assert javascript.headers["content-type"].startswith("text/javascript")
-    assert "innerHTML" not in javascript.text
-    assert "insertAdjacentHTML" not in javascript.text
-    assert "localStorage" not in javascript.text
-    assert "sessionStorage" not in javascript.text
-    assert "http://" not in javascript.text
-    assert "https://" not in javascript.text
-
-    assert icon.status_code == 200
-    assert icon.headers["content-type"].startswith("image/svg+xml")
-    assert icon.text.startswith("<svg")
-    assert "<script" not in icon.text.lower()
-    assert "<foreignobject" not in icon.text.lower()
-    assert "href=" not in icon.text.lower()
-    assert hostile_host.status_code == 400
-    for response in (shell, css, javascript, icon, hostile_host):
-        assert response.headers["cache-control"] == "no-store"
-        assert response.headers["x-content-type-options"] == "nosniff"
-        assert "access-control-allow-origin" not in response.headers
-        assert "server" not in response.headers
-
-
 def _saved_v10_workspace(root: Path, *runs: tuple[str, str]) -> Path:
     """Publish verified V10 runs through the real pure pipeline into one workspace."""
     from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
@@ -4043,12 +3825,6 @@ def v10_workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
 
 
-def _view_token(page: Any) -> dict[str, str]:
-    match = re.search(r'<meta name="adlife-view-token" content="([A-Za-z0-9_-]{43})">', page.text)
-    assert match is not None
-    return {"X-AdLife-View-Token": match.group(1)}
-
-
 V10_SUFFIXES = (
     "meta",
     "city",
@@ -4066,7 +3842,7 @@ V10_SUFFIXES = (
 
 
 @pytest.mark.parametrize("run_id", ["inspect-mock", "inspect-local"])
-def test_v10_inspector_reads_match_the_standalone_viewer_exactly(
+def test_v10_run_scoped_reads_match_the_standalone_viewer_exactly(
     v10_workspace: Path,
     run_id: str,
 ) -> None:
@@ -4091,20 +3867,13 @@ def test_v10_inspector_reads_match_the_standalone_viewer_exactly(
         TestClient(workbench, base_url=ORIGIN) as scoped,
         TestClient(standalone, base_url=ORIGIN) as single,
     ):
-        page = scoped.get(f"/runs/{run_id}")
-        assert page.status_code == 200
-        assert f'content="/api/runs/{run_id}"' in page.text
-        headers = _view_token(page)
         for suffix in suffixes:
             expected = single.get(f"/api/{suffix}")
             assert expected.status_code == 200, suffix
-            # Pinned reads cover every route; fresh verification covers each family.
-            fresh = suffix in {"meta", "cognition-summary", "workbench-input", timeline}
-            for request_headers in (headers, {}) if fresh else (headers,):
-                actual = scoped.get(f"/api/runs/{run_id}/{suffix}", headers=request_headers)
-                assert actual.status_code == 200, suffix
-                assert actual.json() == expected.json(), suffix
-        meta = scoped.get(f"/api/runs/{run_id}/meta", headers=headers).json()
+            actual = scoped.get(f"/api/runs/{run_id}/{suffix}")
+            assert actual.status_code == 200, suffix
+            assert actual.json() == expected.json(), suffix
+        meta = scoped.get(f"/api/runs/{run_id}/meta").json()
 
     assert meta["run_schema_version"] == 10
     assert meta["bounded_cognition"] is True
@@ -4114,11 +3883,11 @@ def test_v10_inspector_reads_match_the_standalone_viewer_exactly(
     assert _artifact_snapshot(v10_workspace) == before
 
 
-def test_v10_snapshot_pins_one_verified_load_and_reload_reverifies(
+def test_v10_reads_verify_the_run_once_each_and_refuse_tampering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root = _saved_v10_workspace(tmp_path, ("pinned-v10", "mock"))
+    root = _saved_v10_workspace(tmp_path, ("fresh-v10", "mock"))
     module = _module()
     original = module.WorkbenchRunRepository.load
     loaded: list[str] = []
@@ -4129,41 +3898,28 @@ def test_v10_snapshot_pins_one_verified_load_and_reload_reverifies(
 
     app = module.create_city_workbench_app(prepare_workbench_workspace(root), csrf_token=TOKEN)
     with TestClient(app, base_url=ORIGIN) as client:
-        page = client.get("/runs/pinned-v10")
-        headers = _view_token(page)
         monkeypatch.setattr(module.WorkbenchRunRepository, "load", counted_load)
-        first = {
-            suffix: client.get(f"/api/runs/pinned-v10/{suffix}", headers=headers)
-            for suffix in V10_SUFFIXES
-        }
-        assert loaded == []
-        # The preferred timeline projection verifies a tokenless run exactly once.
+        first = {suffix: client.get(f"/api/runs/fresh-v10/{suffix}") for suffix in V10_SUFFIXES}
+        assert loaded == ["fresh-v10"] * len(V10_SUFFIXES)
+        # The preferred timeline projection verifies the run exactly once.
         timeline = client.get(
-            "/api/runs/pinned-v10/timeline",
+            "/api/runs/fresh-v10/timeline",
             params={"minute": 480, "agent_id": "person-001", "limit": 1},
         )
-        assert timeline.status_code == 200 and loaded == ["pinned-v10"]
+        assert timeline.status_code == 200
+        assert loaded == ["fresh-v10"] * (len(V10_SUFFIXES) + 1)
         assert timeline.json()["response_page"]["schema_version"] == 2
-        artifact = root / "city-runs" / "pinned-v10" / "outputs" / "cognition.jsonl"
+        artifact = root / "city-runs" / "fresh-v10" / "outputs" / "cognition.jsonl"
         artifact.write_bytes(artifact.read_bytes() + b" ")
-        pinned = {
-            suffix: client.get(f"/api/runs/pinned-v10/{suffix}", headers=headers)
-            for suffix in V10_SUFFIXES
-        }
-        fresh = client.get("/api/runs/pinned-v10/cognition-summary")
-        reload = client.get("/runs/pinned-v10")
+        fresh = client.get("/api/runs/fresh-v10/cognition-summary")
 
     assert all(response.status_code == 200 for response in first.values())
-    assert {suffix: response.content for suffix, response in pinned.items()} == {
-        suffix: response.content for suffix, response in first.items()
-    }
-    assert fresh.status_code == reload.status_code == 409
+    assert fresh.status_code == 409
     assert fresh.json()["error"]["code"] == "run-unavailable"
-    assert loaded == ["pinned-v10", "pinned-v10", "pinned-v10"]
     assert str(root) not in "".join(response.text for response in first.values())
 
 
-def test_v10_tokens_stay_bound_to_their_run_under_interleaved_requests(
+def test_v10_reads_stay_bound_to_their_run_under_interleaved_requests(
     v10_workspace: Path,
 ) -> None:
     from concurrent.futures import ThreadPoolExecutor
@@ -4175,8 +3931,9 @@ def test_v10_tokens_stay_bound_to_their_run_under_interleaved_requests(
         csrf_token=TOKEN,
     )
     with TestClient(app, base_url=ORIGIN) as client:
-        tokens = {run_id: _view_token(client.get(f"/runs/{run_id}")) for run_id in runs}
-        stale = client.get("/api/runs/inspect-local/meta", headers=tokens["inspect-mock"])
+        stale = client.get(
+            "/api/runs/inspect-local/meta", headers={"X-AdLife-View-Token": "A" * 43}
+        )
         requests = [
             (run_id, minute)
             for minute in (0, 480, 600, 1500, 2000)
@@ -4189,9 +3946,8 @@ def test_v10_tokens_stay_bound_to_their_run_under_interleaved_requests(
             timeline = client.get(
                 f"/api/runs/{run_id}/timeline",
                 params={"minute": minute, "agent_id": "person-001", "limit": 100},
-                headers=tokens[run_id],
             )
-            records = client.get(f"/api/runs/{run_id}/cognition-records", headers=tokens[run_id])
+            records = client.get(f"/api/runs/{run_id}/cognition-records")
             assert timeline.status_code == records.status_code == 200
             return run_id, minute, timeline.json(), records.json()
 
@@ -4242,14 +3998,9 @@ def test_v10_reads_never_touch_providers_cache_keyring_or_writers(
     monkeypatch.setattr(os, "replace", forbidden)
     with TestClient(app, base_url=ORIGIN) as client:
         for run_id in ("inspect-mock", "inspect-local"):
-            page = client.get(f"/runs/{run_id}")
-            assert page.status_code == 200
-            headers = _view_token(page)
             for suffix in (*V10_SUFFIXES, "timeline?minute=480&agent_id=person-001"):
-                response = client.get(f"/api/runs/{run_id}/{suffix}", headers=headers)
+                response = client.get(f"/api/runs/{run_id}/{suffix}")
                 assert response.status_code == 200, suffix
-            for suffix in ("meta", "cognition-records", "workbench-input"):
-                assert client.get(f"/api/runs/{run_id}/{suffix}").status_code == 200, suffix
     assert _artifact_snapshot(v10_workspace) == before
 
 
@@ -4271,8 +4022,7 @@ def test_v10_workbench_input_and_cognition_routes_refuse_tampering_without_leaks
             client.get(f"/api/runs/tampered-v10/{suffix}")
             for suffix in ("workbench-input", "cognition-summary", "cognition-records", "meta")
         ]
-        page = client.get("/runs/tampered-v10")
 
-    assert all(response.status_code == 409 for response in (*refused, page))
+    assert all(response.status_code == 409 for response in refused)
     assert all(response.json()["error"]["code"] == "run-unavailable" for response in refused)
-    assert all(str(root) not in response.text for response in (*refused, page))
+    assert all(str(root) not in response.text for response in refused)

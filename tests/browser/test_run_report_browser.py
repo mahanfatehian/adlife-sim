@@ -23,7 +23,7 @@ from adlife.adapters.cognition.city_endpoint_policy import SystemCityAddressReso
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.i18n import load_catalog
-from tests.browser.test_city_workbench_browser import _installed_browser, _serve
+from tests.browser.browser_support import _installed_browser, _serve
 from tests.browser.test_spatial_report_browser import contrast
 from tests.unit.city.run_story_fixtures import (
     HOSTILE_PERSONA_NAME,
@@ -346,6 +346,9 @@ def test_served_report_links_every_language_and_logs_no_console_errors(
         expect(page.locator(".actions a").first).to_have_attribute(
             "href", f"/guide/runs/{PROVIDER_RUN}?lang=en"
         )
+        # Back to the story and download only: the removed technical view has no link.
+        expect(page.locator(".actions a")).to_have_count(2)
+        assert page.locator("a[href^='/runs/'], a[target='_blank']").count() == 0
         for language in ("de", "fa", "en"):
             page.locator(f".langs a[lang={language}]").click()
             page.wait_for_load_state("networkidle")

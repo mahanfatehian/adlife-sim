@@ -35,6 +35,8 @@ _FICTIONAL_CREATIVE_SHA256 = sha256(b"fictional clean-room creative").hexdigest(
 _PACKAGED_FICTIONAL_CITY_IDS = (
     "fictional-grid-v2",
     "fictional-harbor-loop-v2",
+    "fictional-new-district-v2",
+    "fictional-old-town-v2",
     "fictional-river-junction-v2",
 )
 _FICTIONAL_GRID_V2_PROVENANCE: dict[str, object] = {
@@ -909,13 +911,14 @@ async def _main() -> None:
             transport=httpx.ASGITransport(app=workbench),
             base_url="http://127.0.0.1",
         ) as workbench_client:
-            workbench_shell = await workbench_client.get("/")
-            workbench_script = await workbench_client.get("/assets/workbench.js")
+            workbench_root = await workbench_client.get("/")
+            guide_page = await workbench_client.get("/guide")
+            guide_script = await workbench_client.get("/guide/assets/guide-start.js")
             template_response = await workbench_client.get("/api/persona-templates")
             assert template_response.status_code == 200
             templates = PersonaTemplateCatalog.model_validate_json(template_response.content)
             assert [p.persona_id for p in templates.templates] == [
-                "persona-001", "persona-002", "persona-003", "persona-004"
+                f"persona-{index:03d}" for index in range(1, 11)
             ]
             personas = [p.model_dump(mode="json") for p in templates.templates[:2]]
             for persona in personas:
@@ -927,30 +930,26 @@ async def _main() -> None:
             workbench_draft["schema_version"] = 2
             workbench_draft["population"] = {"personas": list(reversed(personas))}
             encoded_draft = json.dumps(workbench_draft, ensure_ascii=False).encode("utf-8")
-            for name, content_type in (
-                ("workbench-city-packs.js", "text/javascript"),
-                ("workbench-personas.js", "text/javascript"),
-                ("workbench-personas.css", "text/css"),
-                ("workbench-providers.js", "text/javascript"),
-                ("workbench-providers.css", "text/css"),
+            # The server serves only the guided pages: the old workbench UI is gone.
+            for removed in (
+                "/assets/workbench.js",
+                "/assets/workbench.css",
+                "/runs/wheel-workbench/reuse",
+                "/static/app.js",
             ):
-                asset = await workbench_client.get("/assets/" + name)
+                assert (await workbench_client.get(removed)).status_code == 404
+            for name, content_type in (
+                ("guide-core.js", "text/javascript"),
+                ("guide-start.js", "text/javascript"),
+                ("guide.css", "text/css"),
+            ):
+                asset = await workbench_client.get("/guide/assets/" + name)
                 assert asset.status_code == 200
                 assert asset.headers["content-type"].startswith(content_type)
                 assert asset.headers["x-content-type-options"] == "nosniff"
                 assert "script-src 'self'" in asset.headers["content-security-policy"]
                 assert "innerHTML" not in asset.text
                 assert "https://" not in asset.text and "http://" not in asset.text
-                assert "/assets/" + name in workbench_shell.text
-            assert workbench_shell.text.index("workbench-city-packs.js") < (
-                workbench_shell.text.index("workbench-personas.js")
-            )
-            assert workbench_shell.text.index("workbench-personas.js") < workbench_shell.text.index(
-                'src="/assets/workbench-providers.js"'
-            )
-            assert workbench_shell.text.index("workbench-providers.js") < (
-                workbench_shell.text.index('src="/assets/workbench.js"')
-            )
 
             uploaded = await workbench_client.post(
                 "/api/catalog/cities/upload",
@@ -974,19 +973,21 @@ async def _main() -> None:
             city_detail = await workbench_client.get(
                 f"/api/catalog/cities/{uploaded_city_id}"
             )
+            assert workbench_root.status_code == 307
+            assert workbench_root.headers["location"] == "/guide"
             assert (
-                workbench_shell.status_code
-                == workbench_script.status_code
+                guide_page.status_code
+                == guide_script.status_code
                 == city_listing.status_code
                 == city_detail.status_code
                 == 200
             )
-            assert '<script defer src="/assets/workbench.js"></script>' in workbench_shell.text
-            assert "CITY" in workbench_shell.text
-            assert "CAMPAIGN" in workbench_shell.text
-            assert "RUN" in workbench_shell.text
-            assert "INSPECT" in workbench_shell.text
-            assert "localStorage" not in workbench_script.text
+            assert '<script type="module" src="/guide/assets/guide-start.js">' in guide_page.text
+            assert (
+                '<meta name="adlife-csrf-token" content="installed-wheel-workbench-token">'
+                in guide_page.text
+            )
+            assert "localStorage" not in guide_script.text
             assert uploaded_city_id in {
                 row["city_id"] for row in city_listing.json()["cities"]
             }
@@ -1045,7 +1046,7 @@ async def _main() -> None:
             assert run_page.status_code == 200, run_page.text
             summaries = run_page.json()["runs"]
             assert any(item == completed_job["result"] for item in summaries)
-            inspector = await workbench_client.get("/runs/wheel-workbench")
+            removed_inspector = await workbench_client.get("/runs/wheel-workbench")
             scoped_meta = await workbench_client.get("/api/runs/wheel-workbench/meta")
             workbench_input = await workbench_client.get(
                 "/api/runs/wheel-workbench/workbench-input"
@@ -1056,17 +1057,14 @@ async def _main() -> None:
             scoped_timeline = await workbench_client.get(
                 "/api/runs/wheel-workbench/timeline?minute=0&agent_id=person-001"
             )
-            inspector_script = await workbench_client.get("/static/app.js")
+            assert removed_inspector.status_code == 404
             assert (
-                inspector.status_code
-                == scoped_meta.status_code
+                scoped_meta.status_code
                 == workbench_input.status_code
                 == scoped_frame.status_code
                 == scoped_timeline.status_code
-                == inspector_script.status_code
                 == 200
             )
-            assert 'name="adlife-api-base" content="/api/runs/wheel-workbench"' in inspector.text
             assert scoped_meta.json()["run_schema_version"] == 8
             verified_input_view = WorkbenchRunInputViewV2.model_validate_json(
                 workbench_input.content
@@ -1082,9 +1080,6 @@ async def _main() -> None:
             assert workbench_input.json()["city_sha256"] == uploaded_row["pack_sha256"]
             assert scoped_frame.json()["minute"] == 0
             assert scoped_timeline.json()["agent_id"] == "person-001"
-            assert "function validatedApiBase()" in inspector_script.text
-            assert 'id="identity-context"' in inspector.text
-            assert "does not affect simulation" in inspector.text.lower()
             assert before_inspection == {
                 p.relative_to(workbench_directory).as_posix(): sha256(p.read_bytes()).hexdigest()
                 for p in workbench_directory.rglob("*") if p.is_file()
@@ -1208,7 +1203,7 @@ async def _main() -> None:
     async def assert_saved_run_available(client):
         paths = (
             "/api/runs?offset=0&limit=100",
-            "/runs/wheel-workbench",
+            "/guide",
             "/api/runs/wheel-workbench/meta",
             "/api/runs/wheel-workbench/city",
             "/api/runs/wheel-workbench/workbench-input",
@@ -1333,7 +1328,7 @@ async def _main() -> None:
                 "loopback_compatible_provider_verified": True,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
-                "workbench_inspector_verified": True,
+                "workbench_guide_verified": True,
                 "workbench_input_view_verified": True,
                 "workbench_scoped_frame_verified": True,
                 "workbench_browser_asset_verified": True,
@@ -4810,7 +4805,7 @@ def _verify_installed_viewer(
         ("loopback_compatible_provider_verified", True),
         ("workbench_sidecar_verified", True),
         ("workbench_discovery_verified", True),
-        ("workbench_inspector_verified", True),
+        ("workbench_guide_verified", True),
         ("workbench_input_view_verified", True),
         ("workbench_scoped_frame_verified", True),
         ("workbench_browser_asset_verified", True),

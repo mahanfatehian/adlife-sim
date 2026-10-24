@@ -59,12 +59,12 @@ jobs:
           # Browser regressions are a required CI gate, never an environment-dependent skip.
           ADLIFE_REQUIRE_BROWSER: "1"
         run: uv run pytest -q --cov=adlife --cov-branch
-      - name: Long workbench browser workloads
+      - name: Long guided browser workloads
         env:
-          # The two full artifact-driven browser flows are timing-sensitive under
-          # coverage tracing but remain a required, real-browser CI gate.
+          # The full live-answer guided flow is timing-sensitive under coverage
+          # tracing but remains a required, real-browser CI gate.
           ADLIFE_REQUIRE_BROWSER: "1"
-        run: uv run pytest -q -s tests/browser/test_city_workbench_browser.py::test_browser_drives_combined_study_and_inspection_never_changes_artifacts tests/browser/test_city_workbench_browser.py::test_maximum_browser_run_keeps_rendered_lists_bounded_and_responsive
+        run: uv run pytest -q -s tests/browser/test_guide_setup_browser.py::test_online_ai_stops_at_the_key_prompt_then_counts_answers_live
       - name: Offline deterministic integration runs
         run: |
           uv run pytest -q tests/integration/test_rule_run.py tests/integration/test_demo.py

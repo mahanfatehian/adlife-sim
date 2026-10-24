@@ -22,7 +22,7 @@ from playwright.sync_api import Browser, Page, expect, sync_playwright
 from adlife.adapters.cognition.city_endpoint_policy import SystemCityAddressResolver
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
-from tests.browser.test_city_workbench_browser import _installed_browser, _serve
+from tests.browser.browser_support import _installed_browser, _serve
 
 LANGUAGES = ("en", "fa")
 VIEWPORTS = ((1024, 576), (1280, 720), (1920, 1080), (390, 844))

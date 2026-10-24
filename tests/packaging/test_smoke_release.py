@@ -48,6 +48,8 @@ def test_smoke_requires_the_exact_packaged_fictional_city_set() -> None:
             for city_id in (
                 "fictional-grid-v2",
                 "fictional-harbor-loop-v2",
+                "fictional-new-district-v2",
+                "fictional-old-town-v2",
                 "fictional-river-junction-v2",
             )
         ]
@@ -1774,14 +1776,20 @@ def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> Non
         '"/api/jobs",',
         "await workbench_client.get(status_url)",
         'await workbench_client.get("/api/runs?offset=0&limit=100")',
-        'await workbench_client.get("/assets/workbench.js")',
+        'workbench_root = await workbench_client.get("/")',
+        'await workbench_client.get("/guide")',
+        'await workbench_client.get("/guide/assets/guide-start.js")',
+        'assert workbench_root.headers["location"] == "/guide"',
+        '"/assets/workbench.js",',
+        '"/runs/wheel-workbench/reuse",',
+        '"/static/app.js",',
         'f"/api/catalog/cities/{uploaded_city_id}"',
-        'await workbench_client.get("/runs/wheel-workbench")',
+        'removed_inspector = await workbench_client.get("/runs/wheel-workbench")',
+        "assert removed_inspector.status_code == 404",
         'await workbench_client.get("/api/runs/wheel-workbench/meta")',
         '"/api/runs/wheel-workbench/workbench-input"',
         '"/api/runs/wheel-workbench/frame?minute=0"',
         '"/api/runs/wheel-workbench/timeline?minute=0&agent_id=person-001"',
-        'await workbench_client.get("/static/app.js")',
         'assert workbench_input.json()["settings"]["seed"] == "17"',
         'root / "city-runs" / "wheel-workbench" / "inputs" / "workbench.json"',
         '"seed": "17",',
@@ -1799,8 +1807,17 @@ def test_smoke_viewer_probe_exercises_the_installed_workbench_lifecycle() -> Non
         '"workbench_input_view_verified": True',
         '"workbench_scoped_frame_verified": True',
         '"workbench_browser_asset_verified": True',
+        '"workbench_guide_verified": True',
     ):
         assert required in source
+    # The server serves only the guided pages: no shell, inspector or workbench asset reads.
+    for removed in (
+        'await workbench_client.get("/assets/workbench.js")',
+        'await workbench_client.get("/static/app.js")',
+        "workbench-providers.js",
+        "INSPECT",
+    ):
+        assert removed not in source
 
 
 def test_smoke_viewer_probe_certifies_exact_provider_wire_job_and_replay() -> None:
@@ -2053,7 +2070,7 @@ def test_parent_refuses_incomplete_persona_wheel_certification(tmp_path, monkeyp
         "workbench_run_schema_version": 8,
         "workbench_sidecar_verified": True,
         "workbench_discovery_verified": True,
-        "workbench_inspector_verified": True,
+        "workbench_guide_verified": True,
         "workbench_input_view_verified": True,
         "workbench_scoped_frame_verified": True,
         "workbench_browser_asset_verified": True,
@@ -2556,7 +2573,7 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "loopback_compatible_provider_verified": True,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
-                "workbench_inspector_verified": True,
+                "workbench_guide_verified": True,
                 "workbench_input_view_verified": True,
                 "workbench_scoped_frame_verified": True,
                 "workbench_browser_asset_verified": True,
@@ -2595,6 +2612,8 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                     for city_id in (
                         "fictional-grid-v2",
                         "fictional-harbor-loop-v2",
+                        "fictional-new-district-v2",
+                        "fictional-old-town-v2",
                         "fictional-river-junction-v2",
                     )
                 ]

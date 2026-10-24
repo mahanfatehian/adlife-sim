@@ -1,4 +1,4 @@
-"""Server contracts the bounded-cognition workbench controls depend on."""
+"""Server contracts the guided pages' bounded-cognition controls depend on."""
 
 from __future__ import annotations
 
@@ -9,26 +9,24 @@ from typing import Any, get_args
 import pytest
 from fastapi.testclient import TestClient
 
-from adlife.city.workbench_input import NormalizedWorkbenchCognitionV4, WorkbenchCognitionDraftV4
+from adlife.city.workbench_input import (
+    NormalizedWorkbenchCognitionV4,
+    WorkbenchCognitionDraftV4,
+    WorkbenchRunDraftV4,
+)
 from adlife.city.workbench_providers import WorkbenchProviderCheckResultV2
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
-from tests.browser.test_bounded_cognition_workbench_browser import (
-    BOUNDARY,
-    BOUNDED,
-    C1,
-    EXPLANATION,
-    LIMITS,
-    _SignalProvider,
-    _v2_check,
-    runtime_bounded_capability,
-)
+from adlife.core.domain.city_cognition_v2 import CityCognitionResultV2, CityProviderAttemptV2
+from adlife.core.domain.city_run import CityRunManifestV10
 from tests.unit.city.test_workbench_input import draft_v3_data
 
 TOKEN = "bounded-controls-token"
 ORIGIN = "http://127.0.0.1:8765"
 REVISION = "a" * 64
-OFFLINE = LIMITS["offline_funded_response_limit"]
+BOUNDED = "bounded-signals-v1"
+EXPLANATION = "explanation-only"
+PROVIDER_MODES = ("local", "remote")
 CAPABILITY_KEYS = {
     "effect_scope",
     "workbench_schema_version",
@@ -45,6 +43,115 @@ CAPABILITY_KEYS = {
 }
 
 
+def _single(model: Any, field: str) -> Any:
+    (value,) = get_args(model.model_fields[field].annotation)
+    return value
+
+
+def runtime_bounded_capability() -> dict[str, Any]:
+    """The bounded-cognition options exactly as today's runtime models define them.
+
+    Token limits are read from the frozen model literals, never restated here, so these
+    tests follow a deliberate runtime limit change without edits.
+    """
+
+    def materialized(mode: str) -> int:
+        provider = mode in PROVIDER_MODES
+        return WorkbenchCognitionDraftV4.model_validate(
+            {
+                "effect_scope": BOUNDED,
+                "mode": mode,
+                "provider_profile_id": "provider-main" if provider else None,
+                "provider_revision_sha256": REVISION if provider else None,
+            }
+        ).funded_response_limit
+
+    frozen = NormalizedWorkbenchCognitionV4
+    modes = list(get_args(WorkbenchCognitionDraftV4.model_fields["mode"].annotation))
+    return {
+        "effect_scope": _single(WorkbenchCognitionDraftV4, "effect_scope"),
+        "workbench_schema_version": _single(WorkbenchRunDraftV4, "schema_version"),
+        "run_schema_version": _single(CityRunManifestV10, "schema_version"),
+        "modes": modes,
+        "funded_response_limits": list(
+            get_args(WorkbenchCognitionDraftV4.model_fields["funded_response_limit"].annotation)
+        ),
+        "default_provider_funded_response_limit": materialized("local"),
+        "offline_funded_response_limit": materialized("rules"),
+        "selected_requests_per_run": _single(frozen, "selected_requests_per_run"),
+        "reserved_output_tokens_per_request": _single(frozen, "reservation_tokens_per_request"),
+        "max_output_tokens_per_attempt": _single(frozen, "max_output_tokens_per_attempt"),
+        "max_http_attempts_per_request": sum(
+            _single(frozen, name)
+            for name in ("initial_attempts", "transient_retries", "repair_attempts")
+        ),
+        "compatibility_check_required_modes": [mode for mode in modes if mode in PROVIDER_MODES],
+    }
+
+
+C1: dict[str, Any] = {
+    "cognition_effect_scopes": [EXPLANATION, BOUNDED],
+    "bounded_cognition": runtime_bounded_capability(),
+}
+LIMITS: dict[str, Any] = C1["bounded_cognition"]
+OFFLINE = LIMITS["offline_funded_response_limit"]
+
+
+def _v2_check(profile_id: str, revision: str, status: str = "compatible") -> dict[str, object]:
+    reason = None if status == "compatible" else "invalid-result"
+    return {
+        "status": status,
+        "reason_code": reason,
+        "effect_scope": BOUNDED,
+        "profile_id": profile_id,
+        "revision_sha256": revision,
+        **{
+            name: digit * 64
+            for name, digit in (
+                ("compatibility_key_sha256", "1"),
+                ("causal_contract_sha256", "2"),
+                ("prompt_contract_sha256", "3"),
+                ("result_schema_contract_sha256", "4"),
+                ("selection_policy_sha256", "5"),
+                ("fallback_policy_sha256", "6"),
+                ("mock_policy_sha256", "7"),
+                ("influence_policy_sha256", "8"),
+            )
+        },
+    }
+
+
+class _SignalProvider:
+    """A loopback-free fake provider returning one closed category vector."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.calls = 0
+        self.closed = False
+
+    async def call(self, request: Any) -> CityProviderAttemptV2:
+        self.calls += 1
+        result = CityCognitionResultV2(
+            schema_version=2,
+            request_id=request.request_id,
+            affect="curious",
+            relevance="high",
+            credibility="medium",
+            salience="high",
+            safety_flags=(),
+            disclosure="synthetic-bounded-cognition-not-observed-behavior",
+        )
+        return CityProviderAttemptV2(
+            schema_version=2, status="valid", result=result, repair_context=None, usage=None
+        )
+
+    async def repair_call(self, *_args: object, **_kwargs: object) -> CityProviderAttemptV2:
+        raise AssertionError("a valid signal never needs repair")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 def _client(tmp_path: Path, **options: Any) -> tuple[TestClient, Path]:
     root = tmp_path / "workspace"
     app = create_city_workbench_app(prepare_workbench_workspace(root), csrf_token=TOKEN, **options)
@@ -57,11 +164,6 @@ def _post(client: TestClient, path: str, payload: dict[str, Any]) -> Any:
         headers={"Content-Type": "application/json", "Origin": ORIGIN, "X-AdLife-CSRF": TOKEN},
         content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
     )
-
-
-def _single(model: Any, field: str) -> Any:
-    (value,) = get_args(model.model_fields[field].annotation)
-    return value
 
 
 def _browser_draft(scope: str, mode: str, *, limit: int | None = None) -> dict[str, Any]:
@@ -120,26 +222,6 @@ def test_bounded_capability_is_the_runtime_contract_the_browser_accepts(tmp_path
         frozen, "transient_retries"
     ) + _single(frozen, "repair_attempts")
     assert _single(WorkbenchCognitionDraftV4, "effect_scope") == bounded["effect_scope"] == BOUNDED
-
-
-def test_served_workbench_copy_is_clean_utf8(tmp_path: Path) -> None:
-    client, _root = _client(tmp_path)
-    paths = (
-        "/",
-        "/assets/workbench.js",
-        "/assets/workbench-providers.js",
-        "/assets/workbench.css",
-        "/assets/workbench-providers.css",
-    )
-    with client:
-        responses = [client.get(path) for path in paths]
-    for path, response in zip(paths, responses, strict=True):
-        assert response.status_code == 200, path
-        assert "charset=utf-8" in response.headers["content-type"].lower(), path
-        text = response.content.decode("utf-8")
-        # UTF-8 decoded as Windows-1252 and saved again leaves these sequences behind.
-        for marker in ("Â", "Ã", "â€", "�"):
-            assert marker not in text, (path, marker)
 
 
 @pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
@@ -236,22 +318,3 @@ def test_bounded_check_receipt_has_the_exact_shape_the_browser_accepts(tmp_path:
     # The scoped V2 success never masquerades as the profile's V1 explanation check.
     assert listed["profiles"][0]["last_check"] is None
     assert len(providers) == 1 and providers[0].closed
-
-
-def test_served_workbench_carries_the_exact_boundary_statement(tmp_path: Path) -> None:
-    client, _root = _client(tmp_path)
-    with client:
-        shell = client.get("/").text
-        provider_script = client.get("/assets/workbench-providers.js").text
-
-    for control in (
-        'id="cognition-effect-scope"',
-        'id="cognition-funded-responses"',
-        'id="cognition-boundary"',
-        'id="bounded-cost-disclosure"',
-        'id="review-ownership"',
-        'id="job-phase-track"',
-        'id="start-run-requirement"',
-    ):
-        assert shell.count(control) == 1, control
-    assert provider_script.count(BOUNDARY) == 1

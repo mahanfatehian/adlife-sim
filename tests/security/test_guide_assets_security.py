@@ -217,8 +217,27 @@ def test_base_template_is_the_csp_safe_page_shell() -> None:
         '<div id="g-live" class="g-visually-hidden" role="status" aria-live="polite"'
         ' aria-atomic="true"></div>'
     ) in base
-    assert 'target="_blank" rel="noopener noreferrer"' in base
+    # The guide is the only browser interface: no link leaves it for a removed page.
+    assert "technical" not in base
+    assert 'target="_blank"' not in base
+    assert 'href="/runs/' not in base and 'href="/"' not in base
     assert "{% block main %}{% endblock %}" in base
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted([*GUIDE_TEMPLATES.glob("*.j2"), *GUIDE_STATIC.glob("*.js")]),
+    ids=lambda path: path.name,
+)
+def test_guide_sources_offer_no_technical_view_or_inspector_link(path: Path) -> None:
+    # The removed workbench page (/) and saved-run inspector (/runs/...) are gone; the
+    # run list still names an inspector_url, which the guide never turns into a link.
+    source = _text(path)
+    assert "technical" not in source.lower()
+    assert "inspector" not in source.lower()
+    assert "common.new_tab" not in source and "_blank" not in source
+    assert re.search(r'href="/(?:runs/|static/|assets/workbench\.|")', source) is None
+    assert "`/runs/" not in source and '"/runs/' not in source
 
 
 @pytest.mark.parametrize("name", sorted(JS_SIGNATURES))
