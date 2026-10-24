@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **AI coverage of the whole run: selection policy V3 and retries (2026-10-24)** — new
+  bounded-cognition runs use `city-cognition-selection-v3` (`spread-evenly`): the AI limit of
+  60, 120 (local default), 250, 500, or 1000 (remote default) requests is spread evenly over the
+  run's noticed responses in time order, with no per-person cap, and 1000 means every noticed
+  ad, up to 1,000; rules and mock use the offline limit 1000. Every selected request is funded,
+  so V3 records no budget-skipped signals. Each funded request reserves 1,536 output tokens: at
+  most 6 HTTP attempts of up to 256 output tokens each (a first attempt, 3 transient retries and
+  2 schema repairs), so 1000 funded requests reserve 1,536,000 output tokens; input tokens and
+  vendor charges are outside that reservation. Remote sources run 8 requests at a time and local
+  ones 4, within an 1800-second aggregate deadline; the cognition input may reach 512 KiB and
+  the terminal stream 8 MiB. A failed attempt is retried after an exponential backoff (1, 2,
+  then 4 seconds, capped at 8, with a deterministic ±20% jitter) or a server's `Retry-After` of
+  up to 30 seconds, never past the deadline; questions start in an interleaved order across the
+  run, so a deadline cut thins every day evenly, and fallback records report the tokens their
+  invalid attempts spent. `cognition_progress` also carries the run's frozen
+  `concurrency_limit`. Runs saved earlier keep selection policy V2 byte for byte (earliest
+  first; at most 4 noticed responses per agent and 60 per run; 10, 20, 40 or 60 funded with
+  1,024 output tokens each; 4 at a time within 180 seconds), so they still verify, replay and
+  open unchanged.
+- **The story and the report cover the whole simulated period (2026-10-24)** — key moments
+  are budgeted per day (`max(3, ceil(60 / days))`, rules only `max(3, ceil(20 / days))`): each
+  day gets its AI moments, evenly spaced, topped up with rules-only noticed moments to six, so a
+  run whose AI questions ran out early still replays to its last day. A person's 40 kept
+  moments and the report's `max(8, 2 × days)` listed moments take turns over the days. The
+  story page ends with a closing step at the end of the last simulated day and its day-by-day
+  totals (also in the Summary tab and, for runs of several days, in the report), and its counter
+  names the day. Saved runs keep their own selection caps and wording: the story reads them from
+  the run's frozen cognition input. The setup page takes its AI limit options (including
+  **Every noticed ad**), per-source defaults and wording from the server; the progress page
+  shows the run's own concurrency.
+
 ### Removed
 
 - **Windows demo start script and presenter guide (2026-10-21)** — `scripts/start-guided-demo.ps1`

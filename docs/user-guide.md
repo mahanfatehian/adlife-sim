@@ -181,8 +181,17 @@ and traits do.
 | Halvi | open to ads, not price-conscious, keen on new things |
 
 **3 · The AI**. Your AI choice from the start page, which you can change here, and the AI
-limit: how many noticed ads at most are sent to the AI, earliest first. Noticed ads over the
-limit get no AI effect.
+limit: how many noticed ads at most are sent to the AI. Choose 60, 120, 250 or 500 questions,
+or **Every noticed ad** (up to 1,000). Online AI starts with every noticed ad; AI on this
+computer starts with 120, because a local server answers one question at a time. The
+questions are spread evenly over the whole run, so every simulated day gets some; noticed ads
+that are not chosen get no AI effect. A question that fails is tried again a few times
+(waiting a little longer each time) before it counts as "no AI effect". Runs saved by an
+earlier version keep their own limit, at most 60 questions sent earliest first, and still
+open unchanged.
+
+The story replays the whole simulated period: its key moments are spread over every day, and
+its last step shows the end of the last day with the totals of each day.
 
 **More options** holds the simulated days, the ad hours, how often ad slots come up, the
 price, the interests the ad targets, the run name, and the random seed. The same settings and

@@ -287,7 +287,7 @@ schema. The guided setup page always submits `bounded-signals-v1`:
 | `explanation-only` | `rules` or `mock` | schema 3 / V9 | none | not applicable |
 | `explanation-only` | `local` or `remote` | schema 3 / V9 | 1,536 to 92,160 output-token ceiling | optional explanation check |
 | `bounded-signals-v1` | `rules` or `mock` | schema 4 / V10 | none; every selected request resolves offline | not applicable |
-| `bounded-signals-v1` | `local` or `remote` | schema 4 / V10 | 10, 20, 40, or 60 funded requests | exact bounded-signal check required |
+| `bounded-signals-v1` | `local` or `remote` | schema 4 / V10 | 60, 120, 250, 500, or 1000 funded requests (runs saved earlier: 10, 20, 40, or 60) | exact bounded-signal check required |
 
 **Explanation only.** `rules` is the offline default with a zero output-token ceiling.
 `mock` is deterministic and offline. `local` and `remote` require an exact immutable
@@ -300,21 +300,33 @@ purchase probability, metrics, events, or identities.
 
 **Bounded AI cognition.** A schema-4 request's `cognition` member carries `effect_scope`
 `bounded-signals-v1`, `mode`, `provider_profile_id`, `provider_revision_sha256`, and
-`funded_response_limit`; the server derives the output-token ceiling. Rules and mock send
-null profile fields and the offline limit 60: every selected request resolves locally and
-reserves no tokens. Local and remote fund 10, 20 (the default), 40, or 60 requests,
-and the remaining selected requests become budget-skipped neutral records. Each funded request
-reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output tokens each, so 60
-funded requests reserve 61,440 output tokens. Input tokens and vendor charges are outside that
-reservation, and it is not a spending limit. Provider work is bounded to 4 concurrent requests,
-at most 30 seconds per attempt, and 180 seconds in aggregate. `POST /api/jobs` returns 409
-`provider-compatibility-required` until a bounded-signal check for that exact profile revision
-has passed in the current process; an explanation check never satisfies it. A local check
-waits up to 120 seconds for a model that is still loading and a remote check up to 60 seconds
-for a slow gateway; each check's single attempt may use its whole deadline, while run attempts
-keep the profile's frozen timeout. At most 5 checks start per 60 seconds, results are
-process-local, and a job cannot start while a check runs. `GET /api/workbench` publishes
-these limits as
+`funded_response_limit`; the server derives the output-token ceiling, and an omitted limit
+takes the source's default. New runs use selection policy `city-cognition-selection-v3`
+(`spread-evenly`): the limit is spread evenly over the run's noticed responses in time order,
+with no per-person cap, and every selected request is funded. Rules and mock send null profile
+fields and the offline limit 1000: every selected request resolves locally and reserves no
+tokens. Local and remote fund 60, 120 (local default), 250, 500, or 1000 (remote default)
+requests; 1000 means every noticed ad, up to 1,000. Each funded request reserves 1,536 output
+tokens: at most 6 HTTP attempts of up to 256 output tokens each (a first attempt, 3 transient
+retries, and 2 schema repairs), so 1000 funded requests reserve 1,536,000 output tokens. Input
+tokens and vendor charges are outside that reservation, and it is not a spending limit.
+Provider work is bounded to 8 concurrent requests for a remote source and 4 for a local one,
+at most 30 seconds per attempt, and 1800 seconds in aggregate. A failed attempt is retried
+after an exponential backoff (1, 2, then 4 seconds, capped at 8, with a deterministic ±20%
+jitter) or a server's `Retry-After` of up to 30 seconds, and no wait passes the aggregate
+deadline; requests start in an interleaved order across the run, so a deadline cut thins every
+day evenly, while results are still written in request order. Runs saved earlier keep
+selection policy V2 and still verify and replay unchanged: earliest first, at most 4 noticed
+responses per agent and 60 per run; the offline limit 60; 10, 20 (the default), 40, or 60
+funded requests, with the remaining selected requests budget-skipped and neutral; 1,024
+output tokens per funded request; 4 concurrent requests; and 180 seconds in aggregate.
+`POST /api/jobs` returns 409 `provider-compatibility-required` until a bounded-signal check for
+that exact profile revision has passed in the current process; an explanation check never
+satisfies it. A local check waits up to 120 seconds for a model that is still loading and a
+remote check up to 60 seconds for a slow gateway; each check's single attempt may use its whole
+deadline, while run attempts keep the profile's frozen timeout. At most 5 checks start per 60
+seconds, results are process-local, and a job cannot start while a check runs.
+`GET /api/workbench` publishes these limits as
 `capabilities.bounded_cognition`, which the guided setup page reads instead of pinning them. Movement,
 attention, baseline responses, and the purchase-intention proxy stay rule-owned: the source
 may only choose closed `affect`, `relevance`, `credibility`, `salience`, and `safety_flags`

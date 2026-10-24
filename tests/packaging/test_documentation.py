@@ -21,10 +21,9 @@ from adlife import __version__
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
     CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2,
-    CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
-    CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+    CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
     CityCognitionInputV2,
     CityCognitionResultV2,
 )
@@ -1777,7 +1776,10 @@ def test_spatial_response_docs_remove_obsolete_pre_c3c_claims() -> None:
 # ---------------------------------------------------------------------------
 
 # Every limit below is read from the runtime contract, so changing a frozen budget cannot
-# leave a stale figure in the public documents without failing this suite.
+# leave a stale figure in the public documents without failing this suite. New runs use the
+# current selection-policy row; a figure about runs saved earlier must match its own row.
+_CURRENT_LIMITS = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+# The wire union of every selection-policy version's funded choices.
 _FUNDED_RESPONSE_LIMITS: tuple[int, ...] = typing.get_args(
     CityCognitionInputV2.model_fields["funded_response_limit"].annotation
 )
@@ -1808,6 +1810,8 @@ def _public_documents() -> dict[str, str]:
 
 
 def _literal(field: str) -> int:
+    # Only for a field that has one value in every version; version-dependent limits come
+    # from the selection-limit table.
     (value,) = typing.get_args(CityCognitionInputV2.model_fields[field].annotation)
     return typing.cast(int, value)
 
@@ -1843,18 +1847,20 @@ def test_bounded_cognition_public_contract_is_documented() -> None:
         )
         return int(draft.funded_response_limit)
 
+    # The browser offers the current version's choices; the draft's union also admits the
+    # choices of runs saved earlier.
     capability = {
-        "funded_response_limits": list(
-            typing.get_args(
-                WorkbenchCognitionDraftV4.model_fields["funded_response_limit"].annotation
-            )
-        ),
-        "default_provider_funded_response_limit": materialized_limit("local"),
+        "funded_response_limits": list(_CURRENT_LIMITS.funded_response_limits),
+        "default_provider_funded_response_limit": materialized_limit("remote"),
+        "default_local_funded_response_limit": materialized_limit("local"),
         "offline_funded_response_limit": materialized_limit("mock"),
-        "reserved_output_tokens_per_request": CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
-        "max_http_attempts_per_request": CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+        "reserved_output_tokens_per_request": _CURRENT_LIMITS.reservation_tokens_per_request,
+        "max_http_attempts_per_request": _CURRENT_LIMITS.max_attempts_per_request,
         "max_output_tokens_per_attempt": CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     }
+    assert set(_CURRENT_LIMITS.funded_response_limits) <= set(
+        typing.get_args(WorkbenchCognitionDraftV4.model_fields["funded_response_limit"].annotation)
+    )
     public = _squash("\n".join(_public_documents().values()))
 
     for field in ("affect", "relevance", "credibility", "salience"):
@@ -1867,11 +1873,19 @@ def test_bounded_cognition_public_contract_is_documented() -> None:
         assert f"`{flag}`" in public, flag
 
     limits = typing.cast(list[int], capability["funded_response_limits"])
-    default = capability["default_provider_funded_response_limit"]
-    funding = ", ".join(
-        f"{limit} (default)" if limit == default else str(limit) for limit in limits[:-1]
+    defaults = {
+        "local default": capability["default_local_funded_response_limit"],
+        "remote default": capability["default_provider_funded_response_limit"],
+    }
+
+    def choice(limit: int) -> str:
+        labels = " and ".join(label for label, value in defaults.items() if value == limit)
+        return f"{limit} ({labels})" if labels else str(limit)
+
+    funding = ", ".join(choice(limit) for limit in limits[:-1])
+    assert f"{funding}, or {choice(limits[-1])}" in public, (
+        "funded response choices are undocumented"
     )
-    assert f"{funding}, or {limits[-1]}" in public, "funded response choices are undocumented"
     assert f"offline limit {capability['offline_funded_response_limit']}" in public
     assert (
         f"each funded request reserves {capability['reserved_output_tokens_per_request']:,} "
@@ -1899,24 +1913,36 @@ def test_bounded_cognition_public_contract_is_documented() -> None:
 
 
 def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
-    """Every published V10 reservation figure is the runtime's own, never a stale copy."""
+    """Every published V10 reservation figure is a frozen version's own, never a stale copy.
+
+    Each required document states the current version's reservation; a figure about runs
+    saved earlier must match that earlier version's row exactly.
+    """
+    rows = tuple(CITY_COGNITION_SELECTION_LIMITS.values())
+    known = {(row.reservation_tokens_per_request, row.max_attempts_per_request) for row in rows}
+    current = (
+        _CURRENT_LIMITS.reservation_tokens_per_request,
+        _CURRENT_LIMITS.max_attempts_per_request,
+    )
     reservation_documents: set[str] = set()
     aggregate_maximum_documented = False
     for name, text in _public_documents().items():
         squashed = _squash(text)
         for reserved, attempts, per_attempt in _RESERVATION_SENTENCE.findall(squashed):
-            reservation_documents.add(name)
-            assert _integer(reserved) == CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST, name
-            assert int(attempts) == CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST, name
+            figures = (_integer(reserved), int(attempts))
+            assert figures in known, (name, figures)
             assert _integer(per_attempt) == CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT, name
+            if figures == current:
+                reservation_documents.add(name)
         for count, reserved in _AGGREGATE_SENTENCE.findall(squashed):
-            assert int(count) in _FUNDED_RESPONSE_LIMITS, (name, count)
-            assert _integer(reserved) == (
-                int(count) * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
-            ), (name, count)
+            assert any(
+                int(count) in row.funded_response_limits
+                and _integer(reserved) == int(count) * row.reservation_tokens_per_request
+                for row in rows
+            ), (name, count, reserved)
             aggregate_maximum_documented |= (
-                int(count) == max(_FUNDED_RESPONSE_LIMITS)
-                and _integer(reserved) == CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+                int(count) == max(_CURRENT_LIMITS.funded_response_limits)
+                and _integer(reserved) == _CURRENT_LIMITS.max_aggregate_output_tokens
             )
     for required in (
         "CHANGELOG.md",
@@ -1928,7 +1954,9 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
         "docs/methodology/limitations.md",
         "docs/quickstart.md",
     ):
-        assert required in reservation_documents, f"{required} omits the V10 output reservation"
+        assert required in reservation_documents, (
+            f"{required} omits the current V10 output reservation"
+        )
     assert aggregate_maximum_documented, "the maximum aggregate V10 reservation is undocumented"
 
 
@@ -1951,15 +1979,16 @@ def test_cli_reference_documents_the_v10_operation_matrix_and_commands() -> None
 
     squashed = _squash(cli)
     transport = re.search(
-        r"bounded to (\d+) concurrent requests, at most (\d+) seconds per attempt, and (\d+) "
-        r"seconds in aggregate",
+        r"bounded to (\d+) concurrent requests for a remote source and (\d+) for a local one, "
+        r"at most (\d+) seconds per attempt, and (\d+) seconds in aggregate",
         squashed,
     )
     assert transport is not None, "bounded provider transport limits are undocumented"
     assert tuple(int(value) for value in transport.groups()) == (
-        _literal("concurrency_limit"),
+        _CURRENT_LIMITS.concurrency_limit("remote"),
+        _CURRENT_LIMITS.concurrency_limit("local"),
         _literal("attempt_timeout_seconds_ceiling"),
-        _literal("aggregate_deadline_seconds"),
+        _CURRENT_LIMITS.aggregate_deadline_seconds,
     )
     checks = re.search(
         r"a local check waits up to (\d+) seconds .* and a remote check up to (\d+) seconds",
@@ -2248,7 +2277,7 @@ def test_model_card_states_the_v10_llm_role_and_its_limits() -> None:
 
 def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
     limitations = _read("docs", "methodology", "limitations.md")
-    deadline = _literal("aggregate_deadline_seconds")
+    deadline = _CURRENT_LIMITS.aggregate_deadline_seconds
     _assert_terms_share_paragraph(
         limitations,
         "schema-v10 bounded cognition is provider-dependent, exploratory evidence",

@@ -177,13 +177,15 @@ Live provider signals are nondeterministic. Even at temperature 0 with a fixed s
 occasionally mis-echoes the request ID, which costs one schema-repair attempt (for example 11
 HTTP attempts for 10 funded requests). Fresh calls are therefore never a reproducibility
 check. Frozen schema-v10 replay is: `city-replay` regenerates mobility, opportunities,
-attention, the deterministic baselines, the selected request identities, and the reservation
-order; validates every frozen result against its exact request and the frozen policies;
-reapplies `city-cognition-influence-v1` in canonical order; regenerates the dual-state stream,
-states, summaries, and manifest receipt; and requires exact equality. It makes no provider
-call and reads no cache, profile registry, keyring, environment variable, current prompt
-constant, or network, and it never regenerates a missing result, repairs a mismatch, or
-silently neutralizes corruption. Source artifacts are byte-identical before and after replay.
+attention, the deterministic baselines, the selected request identities (under the run's
+stored selection-policy version: V3 spreads the AI limit evenly over the run, and a run saved
+earlier keeps its V2 earliest-first caps), and the reservation order; validates every frozen
+result against its exact request and the frozen policies; reapplies
+`city-cognition-influence-v1` in canonical order; regenerates the dual-state stream, states,
+summaries, and manifest receipt; and requires exact equality. It makes no provider call and
+reads no cache, profile registry, keyring, environment variable, current prompt constant, or
+network, and it never regenerates a missing result, repairs a mismatch, or silently
+neutralizes corruption. Source artifacts are byte-identical before and after replay.
 
 The core builds every request and reservation before provider work starts, and all responses
 of one agent and campaign in the same minute read one immutable pre-minute state and commit

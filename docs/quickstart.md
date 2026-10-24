@@ -158,10 +158,11 @@ page, whose third card picks the AI source. Every guided run is bounded AI cogni
 In bounded AI cognition the model only chooses closed appraisal categories for ads an agent
 noticed; AdLife maps them through a fixed policy into a separate synthetic cognition state,
 and movement, attention, baseline responses, and the purchase-intention proxy stay
-rule-owned. A Mock run saves in a few seconds; a funded local run of the default study
-takes about 30 seconds. Each funded request reserves 1,024 output tokens: at
-most 4 HTTP attempts of up to 256 output tokens each; input tokens and vendor charges are
-not included. **Online AI** connects any OpenAI-compatible service: type its address,
+rule-owned. A Mock run saves in a few seconds; a local model answers one question at a
+time, about 2.5-3 seconds each on the development laptop, up to the AI limit (120 by default
+for **AI on this computer**). Each funded request reserves 1,536 output tokens: at most 6 HTTP
+attempts of up to 256 output tokens each; input tokens and vendor charges are not included.
+**Online AI** connects any OpenAI-compatible service: type its address,
 model, and API key on the start page (or approve it at startup with `--provider-origin`). A
 ChatGPT or Codex subscription or OAuth token is not accepted. Watch the saved run
 as a story and open its report in the browser, then:

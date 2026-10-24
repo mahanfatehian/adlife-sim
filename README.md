@@ -45,6 +45,9 @@ the story, the report, and troubleshooting.**
 | **Practice answers**: fixed offline answers, not an AI | Nothing |
 | **No AI**: rules only | Nothing |
 
+The AI limit goes up to **every noticed ad** (at most 1,000 questions), spread evenly over all
+simulated days, and failed answers are retried.
+
 The AI only picks four labels from fixed lists for each noticed ad; it never moves anyone or
 decides who notices an ad. A typed API key is kept in the app's memory and forgotten when the
 app stops, unless you choose to remember it in your operating system's credential store; it is
@@ -382,24 +385,32 @@ budget-skipped records separately and bind each explanation to its matching comp
 response.
 
 **Bounded AI cognition (schema 4 / V10).** Rules first compute movement, opportunities,
-attention, and every deterministic baseline response. AdLife then selects, in stable order,
-at most 4 noticed responses per agent and 60 per run, and asks the source for one closed result
-per selected response: `affect`, `relevance`, `credibility`, and `salience` categories plus
-optional `safety_flags`. There is no provider prose and no provider-authored number. AdLife,
-not the model, maps the categories through the frozen `city-cognition-influence-v1` tables into
-bounded deltas on a separate synthetic cognition sentiment/recall track. Movement, attention,
-the baseline responses and rule state, budgets, and the purchase-intention proxy never read
-that track. An `uncertain` category or any safety flag keeps the answer auditable but applies
-the exact neutral vector to the whole result. Name, age, occupation, background, and MBTI
-never reach the causal prompt.
+attention, and every deterministic baseline response. AdLife then sorts the noticed responses
+in stable time order, selects as many as the run's AI limit allows, spread evenly over the
+whole run (selection policy `city-cognition-selection-v3`, `spread-evenly`, with no per-person
+cap), and asks the source for one closed result per selected response: `affect`, `relevance`,
+`credibility`, and `salience` categories plus optional `safety_flags`. There is no provider
+prose and no provider-authored number. AdLife, not the model, maps the categories through the
+frozen `city-cognition-influence-v1` tables into bounded deltas on a separate synthetic
+cognition sentiment/recall track. Movement, attention, the baseline responses and rule state,
+budgets, and the purchase-intention proxy never read that track. An `uncertain` category or
+any safety flag keeps the answer auditable but applies the exact neutral vector to the whole
+result. Name, age, occupation, background, and MBTI never reach the causal prompt.
 
-Local and remote sources fund 10, 20 (default), 40, or 60 of the selected requests; the rest
-are recorded as budget-skipped neutral signals. Rules and mock resolve every selected request
-offline and reserve no tokens. Each funded request reserves 1,024 output tokens: at most 4
-HTTP attempts of up to 256 output tokens each, so 60 funded requests reserve 61,440 output
-tokens. Input tokens and vendor charges are not included, and the reservation is not a
-spending limit. A provider run first needs a passing bounded-signal compatibility check for
-that exact profile revision; an explanation check does not count.
+Local and remote sources choose an AI limit of 60, 120 (local default), 250, 500, or 1000
+(remote default) requests, where 1000 means every noticed ad, up to 1,000; every selected
+request is funded. Rules and mock resolve every selected request offline and reserve no
+tokens. Each funded request reserves 1,536 output tokens: at most 6 HTTP attempts of up to 256
+output tokens each (a first attempt, 3 transient retries, and 2 schema repairs), so 1000
+funded requests reserve 1,536,000 output tokens. Input tokens and vendor charges are not
+included, and the reservation is not a spending limit. A failed attempt is retried after an
+exponential backoff (1, 2, then 4 seconds, capped at 8) or a server's `Retry-After` of up to
+30 seconds, and the questions start in an interleaved order across the run, so a deadline cut
+thins every day evenly. Runs saved earlier keep selection policy V2 and still verify, replay,
+and open unchanged: it selected, earliest first, at most 4 noticed responses per agent and 60
+per run, funded 10, 20, 40, or 60 of them with 1,024 output tokens each, and recorded the rest
+as budget-skipped neutral signals. A provider run first needs a passing bounded-signal
+compatibility check for that exact profile revision; an explanation check does not count.
 
 Schema-v10 freezes the complete non-secret cognition input in `inputs/cognition.json`, one
 terminal record per selected request in `outputs/cognition.jsonl`, the outcome counts in

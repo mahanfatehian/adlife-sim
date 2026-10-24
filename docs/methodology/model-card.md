@@ -112,17 +112,19 @@ recorded terminal stream against the same numeric evidence and leaves the source
 ## The LLM's role in schema-v10 city runs
 
 In bounded AI cognition (workbench schema 4, manifest V10), the rules first compute movement,
-opportunities, attention, and every deterministic baseline response. For at most 4 noticed
-responses per agent and 60 per run, a local or remote OpenAI-compatible model then chooses
-one closed category for each of affect, relevance, credibility, and salience, plus optional
-safety flags. It writes no prose, number, identifier, event, or state. AdLife maps the
-categories through the frozen `city-cognition-influence-v1` tables and clamps into bounded
-deltas on a separate synthetic cognition sentiment/recall track. The model cannot move
-agents, create or select events, change attention, the baseline responses, the rule state,
-budgets, or the purchase-intention proxy, which never reads the cognition track; purchases
-are not modeled. The tables are explicit synthetic assumptions, not calibrated psychological
-effects, and the categories are not an agent's private thoughts, observed behavior, validated
-psychology, or a prediction about any person.
+opportunities, attention, and every deterministic baseline response. For the noticed responses
+the run's AI limit selects (spread evenly over the whole run in new runs; in runs saved
+earlier, the earliest, at most 4 noticed responses per agent and 60 per run), a local or
+remote OpenAI-compatible model then chooses one closed category for each of affect,
+relevance, credibility, and salience, plus optional safety flags. It writes no prose, number,
+identifier, event, or state. AdLife maps the categories through the frozen
+`city-cognition-influence-v1` tables and clamps into bounded deltas on a separate synthetic
+cognition sentiment/recall track. The model cannot move agents, create or select events,
+change attention, the baseline responses, the rule state, budgets, or the purchase-intention
+proxy, which never reads the cognition track; purchases are not modeled. The tables are
+explicit synthetic assumptions, not calibrated psychological effects, and the categories are
+not an agent's private thoughts, observed behavior, validated psychology, or a prediction
+about any person.
 
 The request contains only causal facts: interests, response traits, the initial rule
 sentiment and recall, the campaign's target interests and relative price, the creative as
@@ -130,13 +132,14 @@ delimited untrusted data, and the channel, time, frequency, and rule factors. Na
 occupation, background, and MBTI are excluded, so these descriptive labels cannot steer the
 model. An `uncertain` category or any safety flag (`stereotype-risk`,
 `unsupported-inference`, `unsafe-content`) neutralizes the whole answer; unavailable,
-timed-out, or invalid answers become typed neutral fallbacks; selected requests beyond the
-funded 10, 20, 40, or 60 are budget-skipped and neutral. Each funded request reserves 1,024
-output tokens: at most 4 HTTP attempts of up to 256 output tokens each; input tokens and
-vendor charges are outside that reservation. Rules and mock sources are offline: rules apply
-the exact neutral vector and mock derives a deterministic vector from each request. A remote
-source needs an API credential for a startup-approved endpoint; a ChatGPT or Codex
-subscription, product login, or OAuth token is not accepted, and no credential enters a
+timed-out, or invalid answers become typed neutral fallbacks; every selected request of a new
+run is funded (60, 120, 250, 500, or 1000), while runs saved earlier recorded selected
+requests beyond their funded 10, 20, 40, or 60 as budget-skipped and neutral. Each funded
+request reserves 1,536 output tokens: at most 6 HTTP attempts of up to 256 output tokens each;
+input tokens and vendor charges are outside that reservation. Rules and mock sources are
+offline: rules apply the exact neutral vector and mock derives a deterministic vector from each
+request. A remote source needs an API credential for a startup-approved endpoint; a ChatGPT or
+Codex subscription, product login, or OAuth token is not accepted, and no credential enters a
 prompt or artifact.
 
 A general-purpose model brings its own tendencies. In rehearsal a local `qwen2.5:7b-instruct`

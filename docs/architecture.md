@@ -355,8 +355,11 @@ The data flow of one run is:
 ```text
 frozen schema-4 inputs/workbench.json (city, scenario, personas, settings, cognition)
   -> rules: mobility -> opportunities -> attention -> deterministic baseline proposals
-  -> city-cognition-selection-v2: canonical (minute, agent, campaign, response) order,
-     at most 4 per agent and 60 per run; every other eligible response is `unselected`
+  -> canonical (minute, agent, campaign, response) order, then the run's stored policy:
+     city-cognition-selection-v3 (new runs) spreads the AI limit evenly over the whole run
+     with no per-person cap; city-cognition-selection-v2 (runs saved earlier) took the
+     earliest, at most 4 per agent and 60 per run; every other eligible response is
+     `unselected`
   -> content-addressed requests and output reservations, all built before provider work
   -> one terminal record per selected request:
        rules (neutral) | mock (deterministic) | provider | cache | fallback | budget-skipped
@@ -372,11 +375,14 @@ The core owns every identifier. `core/simulation/city_cognition_v2.py` builds th
 requests, reservations, rules/mock/fallback results, terminal records, and the frozen
 mapping; `core/simulation/spatial_response_v2.py` commits the dual-state stream; and
 `core/domain/city_cognition_v2.py` and `core/domain/city_run.py` hold the strict V2 contracts
-and the V10 manifest. None imports a provider, HTTP client, cache, credential store, or
-framework. Provider transport stays in `adapters/cognition` (`city_openai_compatible_v2.py`,
-`city_prompts_v2.py`, `city_service_v2.py`, `city_cache_v2.py`), and the workbench worker
-drives the phases `planning-cognition`, `requesting-cognition`, and `applying-cognition`
-before the shared persist and verify steps.
+and the V10 manifest. One frozen table, `CITY_COGNITION_SELECTION_LIMITS`, holds each
+selection-policy version's caps, funded choices, concurrency, deadline, retry ceilings, and
+size limits; every rebuild and verification reads the row of the run's stored version, so a
+run saved under V2 keeps its V2 limits. None imports a provider, HTTP client, cache,
+credential store, or framework. Provider transport stays in `adapters/cognition`
+(`city_openai_compatible_v2.py`, `city_prompts_v2.py`, `city_service_v2.py`,
+`city_cache_v2.py`), and the workbench worker drives the phases `planning-cognition`,
+`requesting-cognition`, and `applying-cognition` before the shared persist and verify steps.
 
 Each request binds a canonical causal identity: the response-input, scenario, and city
 hashes, the baseline proposal and its bindings, the channel and time, the pre-minute rule
@@ -394,9 +400,13 @@ with text that is still a complete valid result; an answer the output cap cut sh
 repairable `invalid-json` result. A vLLM server's own metadata members are admitted only as
 null or their observed type and are never parsed or kept, and a profile revision that turns
 model thinking off adds `chat_template_kwargs` `{"enable_thinking": false}` to each request.
-Each funded request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output
-tokens each. Expected provider failures become typed neutral fallback records; cache corruption,
-cancellation, storage failure, or a verification mismatch fails the run instead.
+Each funded request reserves 1,536 output tokens: at most 6 HTTP attempts of up to 256 output
+tokens each (1,024 tokens and 4 attempts in runs saved earlier). The service starts requests in
+an interleaved order across the run and retries a failed attempt after an exponential backoff
+with deterministic jitter, or a `Retry-After` hint of up to 30 seconds, never past the
+aggregate deadline; results are still written in request order. Expected provider failures
+become typed neutral fallback records; cache corruption, cancellation, storage failure, or a
+verification mismatch fails the run instead.
 
 V10 freezes `inputs/workbench.json` (schema 4), `inputs/cognition.json`,
 `outputs/cognition.jsonl`, `outputs/cognition-summary.json`, the dual-state

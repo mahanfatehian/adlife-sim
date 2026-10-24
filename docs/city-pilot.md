@@ -141,9 +141,14 @@ Bounded AI cognition (the `bounded-signals-v1` operation) submits workbench sche
 publishes manifest V10 under
 `spatial-response-v2`. Rules still compute movement, opportunities, attention, and every
 deterministic baseline response with the `spatial-response-v1` formulas below. AdLife then
-selects, in canonical `(model_minute, agent_id, campaign_id, baseline_response_id)` order, at
-most 4 noticed responses per agent and 60 per run; every other eligible response is
-`unselected` and keeps the neutral vector. For each selected response the source returns one
+sorts the eligible noticed responses in canonical `(model_minute, agent_id, campaign_id,
+baseline_response_id)` order. New runs use `city-cognition-selection-v3` (`spread-evenly`):
+with `E` eligible responses and the AI limit `L`, it selects the `k = min(E, L)` responses at
+positions `floor(i * E / k)` for `i` from 0 to `k - 1`, so time order is kept, every part of
+the run gets its share, there is no per-person cap, and `k = E` selects every noticed response.
+Runs saved earlier keep `city-cognition-selection-v2`, which selected the earliest, at most 4
+noticed responses per agent and 60 per run. Every other eligible response is `unselected` and
+keeps the neutral vector. For each selected response the source returns one
 closed `CityCognitionResultV2`: the echoed request ID, the exact disclosure
 `synthetic-bounded-cognition-not-observed-behavior`, and these categories.
 
@@ -208,10 +213,12 @@ unselected, fallback, budget-skipped, uncertain, and safety-neutralized ones, pr
 applied response, so final response counts match between the tracks and only sentiment and
 recall may differ.
 
-Rules and mock resolve every selected request offline. Local and remote sources fund 10, 20
-(default), 40, or 60 requests; the remaining selected requests are budget-skipped and neutral.
-Each funded request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output
-tokens each. Input tokens and vendor charges are outside that reservation. A provider run
+Rules and mock resolve every selected request offline. Local and remote sources fund 60, 120
+(local default), 250, 500, or 1000 (remote default) requests, and every selected request is
+funded; a run saved earlier under V2 funded 10, 20 (default), 40, or 60 requests and recorded
+the remaining selected requests as budget-skipped and neutral. Each funded request reserves
+1,536 output tokens: at most 6 HTTP attempts of up to 256 output tokens each (V2: 1,024 tokens
+and 4 attempts). Input tokens and vendor charges are outside that reservation. A provider run
 needs a passing bounded-signal compatibility check for the exact profile revision first.
 Unavailable, timed-out, rate-limited, oversized, protocol-incompatible, or invalid answers
 become typed neutral `fallback` records; corrupt cache content, cancellation, and storage or

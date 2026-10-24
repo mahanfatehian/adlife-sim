@@ -144,13 +144,16 @@ What this model cannot support. Read alongside the
   replay reapplies the saved signals and performs no provider call, so it reproduces a saved
   run but cannot validate one.
 - **The bounded-cognition budget is an output reservation, not a cost limit.** Each funded
-  request reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output tokens
+  request reserves 1,536 output tokens: at most 6 HTTP attempts of up to 256 output tokens
   each. Input tokens and vendor charges are outside that reservation. A local Ollama model
-  answers one request at a time, about 2.5-3 seconds each on the development laptop, so the
-  largest funding of 60 requests can approach the 180-second aggregate deadline, after which
-  unanswered requests fall back to the neutral vector. A ChatGPT or Codex subscription,
-  product login, or OAuth token is not accepted as a credential, and the workbench has no
-  user authentication.
+  answers one request at a time, about 2.5-3 seconds each on the development laptop, so a
+  local source defaults to 120 requests, and its largest funding of 1000 requests can outlast
+  the 1800-second aggregate deadline, after which unanswered requests fall back to the
+  neutral vector; because requests start in an interleaved order across the run, those
+  fallbacks thin every day evenly instead of removing the last days. Runs saved earlier keep
+  their V2 budget: 1,024 output tokens per request, at most 60 requests, and a 180-second
+  deadline. A ChatGPT or Codex subscription, product login, or OAuth token is not accepted as
+  a credential, and the workbench has no user authentication.
 - **V10 artifacts are unsigned and unreleased.** Canonical hashes detect damaged, partial,
   isolated, or rebound files but cannot attest who produced a provider answer or resist
   someone who rewrites every file and recomputes the hash chain. V10 runs written by earlier
