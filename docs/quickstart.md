@@ -124,8 +124,8 @@ uv run adlife demo --seed 7 --dir ./my-demo
 ```
 
 Twenty agents, three simulated days, mock provider, packaged campaigns, temp directory by
-default — the one-command zone-engine demonstration. The live presentation script for the
-city workbench is [docs/investor-demo.md](investor-demo.md); see section 10.
+default — the one-command zone-engine demonstration. The browser app for the city track is
+described in section 10 and in [docs/user-guide.md](user-guide.md).
 
 ## 9. Check your installation
 
@@ -145,24 +145,26 @@ The separate city track runs fictional agents on a street map in a local browser
 uv run adlife city-workbench --workspace ./workbench --port 8765
 ```
 
-Open `http://127.0.0.1:8765` yourself and follow `CITY -> CAMPAIGN -> RUN -> INSPECT`. In
-RUN, the **Model assistance** section separates **Operation** from **Source**:
+Open `http://127.0.0.1:8765/guide` yourself (the root address redirects there). The guided
+pages are the workbench's only browser interface: **New simulation** opens the setup
+page, whose third card picks the AI source. Every guided run is bounded AI cognition:
 
 | Operation | Source | Saved run | Needs |
 | --- | --- | --- | --- |
-| `Explanation only` | Rules (default), Mock, Local, or Remote | schema-v9 | nothing for Rules or Mock |
-| `Bounded AI cognition` | `Mock — reproducible demo` or `Rules — offline` | schema-v10 | nothing; fully offline |
-| `Bounded AI cognition` | `Local compatible model` | schema-v10 | Ollama with `ollama pull qwen2.5:7b-instruct`, a saved profile, and a passing **Check compatibility** |
+| `Explanation only` | rules, mock, local, or remote (schema-3 API requests only) | schema-v9 | nothing for rules or mock |
+| `Bounded AI cognition` | **Practice answers** or **No AI** | schema-v10 | nothing; fully offline |
+| `Bounded AI cognition` | **AI on this computer** | schema-v10 | Ollama with `ollama pull qwen2.5:7b-instruct` and a passing **Test connection** on the start page |
 
 In bounded AI cognition the model only chooses closed appraisal categories for ads an agent
 noticed; AdLife maps them through a fixed policy into a separate synthetic cognition state,
 and movement, attention, baseline responses, and the purchase-intention proxy stay
-rule-owned. A Mock run saves in a few seconds; a funded local run of the rehearsed demo
-configuration takes about 30 seconds. Each funded request reserves 1,024 output tokens: at
+rule-owned. A Mock run saves in a few seconds; a funded local run of the default study
+takes about 30 seconds. Each funded request reserves 1,024 output tokens: at
 most 4 HTTP attempts of up to 256 output tokens each; input tokens and vendor charges are
-not included. A remote endpoint must be approved with `--provider-origin` and needs its own
-API key; a ChatGPT or Codex subscription or OAuth token is not accepted. Inspect the saved
-run in the browser, then:
+not included. **Online AI** connects any OpenAI-compatible service: type its address,
+model, and API key on the start page (or approve it at startup with `--provider-origin`). A
+ChatGPT or Codex subscription or OAuth token is not accepted. Watch the saved run
+as a story and open its report in the browser, then:
 
 ```bash
 uv run adlife city-metrics ./workbench <run-id> --layer response
@@ -170,9 +172,11 @@ uv run adlife city-replay ./workbench <run-id>
 ```
 
 `city-metrics` prints the rule baseline separately from the exploratory cognition family,
-and `city-replay` reproduces the saved run offline without calling the model. The
-step-by-step presentation script, with Windows PowerShell commands, expected output,
-timings, and troubleshooting, is [docs/investor-demo.md](investor-demo.md).
+and `city-replay` reproduces the saved run offline without calling the model;
+`uv run adlife city-view ./workbench <run-id>` opens the saved run's per-response inspector.
+`uv run adlife app` starts the same server with a default workspace and opens the browser.
+The step-by-step guide for users, with every AI choice and troubleshooting, is
+[docs/user-guide.md](user-guide.md).
 
 ## Output contract
 

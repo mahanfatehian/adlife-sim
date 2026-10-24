@@ -211,7 +211,7 @@ def test_workspace_city_registry_public_contract_is_exact() -> None:
 
     _assert_terms_share_paragraph(
         readme,
-        "three",
+        "five",
         "bundled",
         "fictional",
         "zero",
@@ -1340,7 +1340,7 @@ def test_d1b_workbench_contract_is_documented_without_claiming_later_gates() -> 
         "GET /api/jobs/{job_id}",
         "POST /api/jobs/{job_id}/cancel",
         "GET /api/runs?offset=&limit=",
-        "GET /runs/{run_id}",
+        "GET /api/runs/{run_id}/meta",
     ):
         assert route in cli, route
 
@@ -1405,8 +1405,15 @@ def test_local_browser_workbench_is_documented_without_enterprise_overclaim() ->
         "docs", "superpowers", "plans", "2026-09-28-production-city-platform-roadmap.md"
     )
 
+    # The guided pages are the workbench's only browser interface; `/` redirects to them.
     for text in (readme, architecture, cli, city_pilot, changelog):
-        assert "CITY -> CAMPAIGN -> RUN -> INSPECT" in text
+        assert "/guide" in text
+        assert "redirects" in text
+    assert "`GET /` redirects (`307`) to `/guide`" in cli
+    _assert_terms_share_paragraph(
+        cli, "/runs/{run_id}", "/runs/{run_id}/reuse", "/static/*", "removed", "404"
+    )
+    _assert_terms_share_paragraph(changelog, "technical workbench", "removed", "adlife city-view")
 
     for term in (
         "http://127.0.0.1:8765",
@@ -1419,7 +1426,7 @@ def test_local_browser_workbench_is_documented_without_enterprise_overclaim() ->
         "GET /api/catalog/cities/{city_id}",
         "POST /api/scenarios/validate",
         "GET /api/runs/{run_id}/workbench-input",
-        "GET /runs/{run_id}",
+        "GET /api/runs/{run_id}/story",
     ):
         assert route in cli, route
     _assert_terms_share_paragraph(
@@ -1463,6 +1470,12 @@ def test_local_browser_workbench_is_documented_without_enterprise_overclaim() ->
         "packaged shell does not yet provide the four-stage campaign editor",
         "four-stage browser scenario editor and job controls",
         "full browser editor, authentication",
+        # The technical workbench page and its inspector were removed.
+        "operate `city -> campaign -> run -> inspect`",
+        "follow `city -> campaign -> run -> inspect`",
+        "implements `city -> campaign -> run -> inspect`",
+        "technical view link",
+        "serves the immutable inspector",
     ):
         assert stale_claim not in combined
 
@@ -1911,7 +1924,6 @@ def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
         "docs/cli-reference.md",
         "docs/architecture.md",
         "docs/city-pilot.md",
-        "docs/investor-demo.md",
         "docs/methodology/model-card.md",
         "docs/methodology/limitations.md",
         "docs/quickstart.md",
@@ -2110,208 +2122,41 @@ def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
     )
 
 
-def test_investor_demo_is_the_two_part_bounded_cognition_script() -> None:
-    demo = _read("docs", "investor-demo.md")
-    setup = _section(demo, "## Part 1 — SETUP")
-    simulation = _section(demo, "## Part 2 — SIMULATION")
-    assert demo.index("## Part 1 — SETUP") < demo.index("## Part 2 — SIMULATION")
-    assert "```powershell" in demo and "```bash" not in demo
-
-    for setup_step in (
-        "ollama pull qwen2.5:7b-instruct",
-        "uv sync",
-        "uv run adlife doctor --offline",
-        "8/8 checks passed",
-        "ollama run qwen2.5:7b-instruct --keepalive 30m hello",
-        r"uv run adlife city-workbench --workspace .\demo-workbench --port 50050",
-        "http://127.0.0.1:50050",
-        "`local-ollama`",
-        "http://127.0.0.1:11434/v1",
-        "--provider-origin ID=URL",
-        "--provider-key-env ID=ENVIRONMENT_VARIABLE",
-        "**Save profile revision**",
-        "**Check compatibility**",
-        "Bounded-signal contract confirmed.",
-    ):
-        assert setup_step in setup, setup_step
-    _assert_terms_share_paragraph(
-        setup, "chatgpt or codex subscription", "oauth token", "not accepted"
-    )
-
-    ordered_simulation = (
-        "`Fictional Grid City V2`",
-        "`Fictional Nuvin`",
-        "Operation `Bounded AI cognition`, Source `Local compatible model`",
-        "Funded responses `10 requests`",
-        "**Validate study**",
-        "**Start bounded cognition run**",
-        "Planning cognition",
-        "Requesting cognition",
-        "Applying cognition",
-        "**Inspect run**",
-        "**Saved signal timeline.**",
-        r"uv run adlife city-metrics .\demo-workbench demo-v10-001 --layer response",
-        r"uv run adlife city-replay .\demo-workbench demo-v10-001",
-    )
-    positions = [simulation.index(step) for step in ordered_simulation]
-    assert positions == sorted(positions), "the simulation steps are out of live order"
-    assert "Workbench schema 4 → run V10" in simulation
-    assert "frozen offline replay" in simulation
-
-    fallback = _section(demo, "## Without a working model: mock and rules")
-    assert "`Mock — reproducible demo`" in fallback
-    assert "makes no network call" in _squash(fallback)
-    troubleshooting = _section(demo, "## Troubleshooting")
-    for symptom in (
-        "endpoint resolution refused",
-        "protocol incompatible",
-        "did not answer within the check's time limit",
-        "Check bounded-signal compatibility for this profile revision to enable the run.",
-        "**Fallback**",
-        "Set aside · safety flag",
-        "**Cache**",
-        "Errno 10048",
-        "winerror 10013",
-    ):
-        assert symptom in troubleshooting, symptom
-    talking_points = _squash(_section(demo, "## Talking points"))
-    for claim in (
-        "chooses only closed categories",
-        "city-cognition-influence-v1",
-        "purchase-intention proxy stay rule-owned",
-        "names, ages, occupations, biographies, and mbti never reach the model",
-        "live model answers are not guaranteed to be reproducible",
-        "city-replay",
-        "not validated psychology",
-        "not a sales forecast or campaign effect",
-        "unsigned",
-    ):
-        assert claim in talking_points, claim
-    assert _RESERVATION_SENTENCE.search(talking_points), "talking points omit the reservation"
-
-    lowered = demo.lower()
-    for superseded in (
-        "adlife demo --headless",
-        "adlife compare",
-        "shares",
-        "five-minute",
-        "purchase count is structurally zero",
-    ):
-        assert superseded not in lowered, superseded
+def test_removed_investor_demo_script_is_absent_and_never_linked() -> None:
+    """The technical workbench page it walked through is gone, and so is the script."""
+    assert not (ROOT / "docs" / "investor-demo.md").exists()
+    for path, text in _public_documents().items():
+        for link in ("](investor-demo.md", "](docs/investor-demo.md"):
+            assert link not in text, f"{path} links the removed demo script"
+    for helper in ("scripts/demo_workspace.py", ".gitignore"):
+        assert "docs/investor-demo.md" not in _read(helper), helper
 
 
-# Labels and messages the live demo tells the presenter to look for. Each must still be
-# shipped verbatim, so a copy change in the product fails here instead of on stage.
-_DEMO_INTERFACE_COPY = (
-    "Bounded AI cognition",
-    "Local compatible model",
-    "Remote compatible model",
-    "Turn off model thinking (Qwen on vLLM servers)",
-    "Mock — reproducible demo",
-    "Rules — offline",
-    "Rules engine (offline)",
-    "Model assistance",
-    "Configure campaign",
-    "Review run",
-    "Create an immutable profile",
-    "Save profile revision",
-    "Exact profile revision",
-    "Available on server",
-    "per attempt for signals (profile allows",
-    "API credential",
-    "Check compatibility",
-    "Checking compatibility… a local model that is still loading may take a minute or more.",
-    "Bounded-signal contract confirmed.",
-    "Bounded-signal contract · required before start",
-    "confirmed for this revision",
-    "confirmed earlier in this workbench session",
-    "The local server refused this request. The usual cause is a model ID that is not installed",
-    "Not confirmed: the model did not answer within the check's time limit.",
-    "Check bounded-signal compatibility for this profile revision to enable the run.",
-    "Funded responses",
-    "selected responses go to the model; the rest are recorded as budget-skipped neutral signals.",
-    "Input tokens and vendor charges are not included; this is a reservation, not a spending "
-    "limit.",
-    "all selected, resolved offline",
-    "resolved offline · no reservation",
-    "External AI selects a small set of synthetic appraisal categories. AdLife applies a fixed "
-    "mapping. These categories may change only the displayed cognition state. They cannot "
-    "move agents, create or select events, change purchase intention, or make purchases.",
-    "Validate study",
-    "Validated. Review the immutable binding receipt before starting.",
-    "Bounded-signal check passed for this revision",
-    "Workbench schema 4 → run V10",
-    "Who decides what",
-    "Rules: an uncalibrated proxy score; purchases are not modeled",
-    "with deterministic neutral fallback",
-    "Live signals are not guaranteed reproducible",
-    "Frozen and offline",
-    "Start bounded cognition run",
-    "Simulation status",
-    "Planning cognition",
-    "Requesting cognition",
-    "Applying cognition",
-    "The run is saved and ready to view.",
-    "Inspect run",
-    "Fictional starting point",
-    "Add persona",
-    "Bundled fictional fixture",
-    "Verified pack",
-    "Model time",
-    "Modeled attention",
-    "Responses & bounded cognition",
-    "Final campaign state",
-    "Response metrics",
-    "Bounded AI cognition signals",
-    "Provider usage",
-    "Saved signal timeline",
-    "All selected requests",
-    "Uncertain or safety neutralized",
-    "Signal applied",
-    "Neutral · budget skipped",
-    "Set aside · safety flag",
-    "Set aside · uncertain answer",
-    "Neutral vector applied to",
-    "RULE TRACK · RULE-OWNED",
-    "COGNITION TRACK · SYNTHETIC",
-    "VS RULE TRACK",
-    "IDENTICAL TO THE RULE TRACK",
-    "Bounded cognition inspector assets are unavailable",
-    "Run again with these inputs",
-    "with a new run ID. Review them, then validate.",
-    "reused without a call",
-)
-_DEMO_COMMAND_COPY = (
-    ("doctor.py", "checks passed"),
-    ("city_workbench.py", "city workbench: http://127.0.0.1:"),
-    ("city_workbench.py", "workbench workspace is unsafe or unavailable"),
-    ("city_metrics.py", "synthetic bounded-cognition metrics, not observed outcomes"),
-    ("city_metrics.py", "Rule baseline (rule-owned)"),
-    ("city_metrics.py", "Provider-dependent cognition (exploratory, not a campaign effect)"),
-    ("city_replay.py", "city replay identical:"),
-    ("city_replay.py", "purchase intention remains rule-owned"),
-    ("city_replay.py", "frozen offline replay"),
-)
+def test_user_guide_points_to_the_app_and_the_offline_check() -> None:
+    guide = _read("docs", "user-guide.md")
+    lowered = guide.lower()
+    # No guided page links to a technical page any more, so the user guide names none.
+    assert "technical view" not in lowered
+    assert "investor-demo" not in lowered
+    assert "uv run adlife app" in guide
+    assert "http://127.0.0.1:8765/guide" in guide
+    assert "uv run adlife city-replay ./adlife-workspace <run-name>" in guide
+    assert "**Technical details**" in guide
 
 
-def test_live_demo_quotes_the_shipped_workbench_inspector_and_cli_copy() -> None:
-    from importlib import resources
+# Copy the user guide quotes from the command line. Each must still be printed verbatim.
+_GUIDE_COMMAND_COPY = (("city_workbench.py", "http://127.0.0.1:"),)
 
-    demo = _squash(_read("docs", "investor-demo.md"))
-    static = resources.files("adlife.city").joinpath("static")
-    shipped = "\n".join(
-        entry.read_text(encoding="utf-8")
-        for entry in static.iterdir()
-        if entry.name.endswith((".html", ".js"))
-    )
-    for fragment in _DEMO_INTERFACE_COPY:
-        assert _squash(fragment) in demo, f"the demo no longer quotes: {fragment}"
-        assert fragment in shipped, f"the demo quotes copy the product no longer ships: {fragment}"
+
+def test_user_guide_quotes_the_shipped_cli_copy() -> None:
+    guide = _squash(_read("docs", "user-guide.md"))
     commands = ROOT / "src" / "adlife" / "cli" / "commands"
-    for module, fragment in _DEMO_COMMAND_COPY:
-        assert _squash(fragment) in demo, f"the demo no longer quotes: {fragment}"
+    for module, fragment in _GUIDE_COMMAND_COPY:
+        assert _squash(fragment) in guide, f"the guide no longer quotes: {fragment}"
         source = (commands / module).read_text(encoding="utf-8")
-        assert fragment in source, f"{module} no longer prints: {fragment}"
+        assert f"city workbench: {fragment}" in source, f"{module} no longer prints: {fragment}"
+    app_source = (commands / "guided_app.py").read_text(encoding="utf-8")
+    assert 'Path("adlife-workspace")' in app_source
 
 
 def test_reproducibility_separates_live_v10_signals_from_frozen_offline_replay() -> None:
@@ -2463,7 +2308,10 @@ def test_quickstart_reaches_the_bounded_cognition_workbench() -> None:
     assert any("ollama pull qwen2.5:7b-instruct" in row for row in bounded_rows)
     assert "uv run adlife city-metrics ./workbench <run-id> --layer response" in section
     assert "uv run adlife city-replay ./workbench <run-id>" in section
-    assert "[docs/investor-demo.md](investor-demo.md)" in section
+    assert "uv run adlife city-view ./workbench <run-id>" in section
+    assert "http://127.0.0.1:8765/guide" in section and "redirects" in section
+    assert "[docs/user-guide.md](user-guide.md)" in section
+    assert "investor-demo" not in quickstart
     _assert_terms_share_paragraph(
         section, "chatgpt or codex subscription", "oauth token is not accepted"
     )
@@ -2500,10 +2348,13 @@ def test_readme_presents_the_three_mode_matrix_and_the_live_demo() -> None:
     assert "separate synthetic cognition state" in bounded
     assert "no model is called" in rules
 
-    # The demo script is linked prominently, before the first section break.
+    # The guided demo is linked prominently, before the first section break, and the removed
+    # technical demo script is not linked at all.
     introduction = readme.split("\n---\n", maxsplit=1)[0]
-    assert "[docs/investor-demo.md](docs/investor-demo.md)" in introduction
-    assert "SETUP" in introduction and "SIMULATION" in introduction
+    assert "[docs/user-guide.md](docs/user-guide.md)" in introduction
+    assert "redirects to `/guide`" in _squash(introduction)
+    assert "scripts/demo_workspace.py" in introduction
+    assert "investor-demo" not in readme
 
     status = next(line for line in readme.splitlines() if "manifest V10" in line)
     assert status.startswith("|") and "Planned" not in status
@@ -2566,7 +2417,17 @@ def test_changelog_records_bounded_cognition_without_overclaiming() -> None:
         "refuse v10",
         "v6-v9 keep them",
     )
-    assert "docs/investor-demo.md" in unreleased
+    # The removed demo script is recorded in history but never linked.
+    assert "](docs/investor-demo.md" not in unreleased
+    _assert_terms_share_paragraph(
+        unreleased,
+        "technical workbench interface",
+        "redirects (`307`) to `/guide`",
+        "/runs/{run_id}",
+        "removed",
+        "/api/*` route is unchanged",
+        "adlife city-view",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2645,7 +2506,7 @@ def test_readme_links_every_published_doc() -> None:
         "docs/cli-reference.md",
         "docs/architecture.md",
         "docs/reproducibility.md",
-        "docs/investor-demo.md",
+        "docs/user-guide.md",
         "docs/methodology/odd-protocol.md",
         "docs/methodology/model-card.md",
         "docs/methodology/experiment-protocol.md",

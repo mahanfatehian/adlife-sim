@@ -1,11 +1,70 @@
 # AdLife Lab
 
-**A local-first synthetic consumer society for studying advertising exposure, memory, and word of mouth.**
+**See how fictional people react to an ad, and what an AI adds: a local simulation you run in your browser.**
 
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-green)](LICENSE)
 [![Typing: strict](https://img.shields.io/badge/mypy-strict-brightgreen)](https://mypy.readthedocs.io/)
 [![Code style: ruff](https://img.shields.io/badge/lint-ruff-orange)](https://docs.astral.sh/ruff/)
+
+AdLife Lab simulates a fictional town for one or more simulated days. Rules decide who sees an
+ad (in a phone feed or on a billboard) and who notices it. An AI of your choice then labels
+each noticed ad, and a fixed formula turns those labels into a separate "with AI" score shown
+next to the rules-only one. You set the study up in your browser, watch it run, replay it as a
+story on a map, and get a report you can print or share, in English, German, or Persian (right
+to left). Everything runs on your own computer; every person, place, and product is fictional.
+
+## Quick start
+
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/) (it installs the right
+Python for you). Then:
+
+```bash
+git clone https://github.com/mahanfatehian/adlife-sim.git
+cd adlife-sim
+uv sync
+uv run adlife app
+```
+
+The app opens at `http://127.0.0.1:8765/guide` in your browser (the root address redirects to `/guide`). Click
+**New simulation**, choose **Practice answers** in the third card to try it without any AI,
+and click **Run simulation**: a few seconds later you can watch the story and open the report.
+Press Ctrl+C in the terminal to stop the app. Runs are saved in `./adlife-workspace`.
+
+**The step-by-step [docs/user-guide.md](docs/user-guide.md) covers installing, every AI choice,
+the story, the report, and troubleshooting.**
+
+## Use any AI
+
+| Choice | What you enter in the app |
+| --- | --- |
+| **Online AI**: any OpenAI-compatible service, such as OpenRouter | Its base URL, a model name, and an API key |
+| **AI on this computer**: Ollama, LM Studio, or another local server | Its address (`127.0.0.1:11434/v1` for Ollama, `127.0.0.1:1234/v1` for LM Studio) and a model name |
+| **Practice answers**: fixed offline answers, not an AI | Nothing |
+| **No AI**: rules only | Nothing |
+
+The AI only picks four labels from fixed lists for each noticed ad; it never moves anyone or
+decides who notices an ad. A typed API key is kept in the app's memory and forgotten when the
+app stops, unless you choose to remember it in your operating system's credential store; it is
+never written to a file or shown again.
+
+## What you get
+
+- Ten fictional people profiles, eight fictional products, and five fictional towns to combine.
+- Live progress while the AI answers ("3 of 10 answered").
+- A story on an animated map, moment by moment, with the exact arithmetic one click away.
+- A self-contained HTML report of every person's ad moments and the AI's labels.
+- Reproducible results: the same settings and seed give the same rules-only results, and
+  every saved run replays offline without calling the AI.
+
+The repository also contains the command-line research simulator AdLife started as (a zone-based
+consumer society with memory and word of mouth); see [What AdLife models](#what-adlife-models)
+and [Usage](#usage). Developers can seed a running app with ready-made runs using
+`uv run python scripts/demo_workspace.py --base-url http://127.0.0.1:8765`.
+
+---
+
+## What AdLife models
 
 AdLife Lab simulates a small fictional society of 1–30 synthetic consumers over a period of up to seven
 simulated days. Each agent follows a daily routine, moves between zones and along routes, maintains
@@ -24,21 +83,6 @@ Its **bounded AI cognition** mode lets a language model choose a few closed appr
 for an ad an agent noticed; AdLife maps them through a fixed policy into a separate synthetic
 cognition state, while movement, attention, baseline responses, and the purchase-intention proxy
 stay rule-owned.
-
-> **Live demonstration:** [docs/guided-demo.md](docs/guided-demo.md) is the presenter guide for
-> the guided view: plain-language pages at `/guide` in English, German, and Persian (right to
-> left) that set up a study, show live "3 of 10 answered" progress, replay the run as a story on
-> a map, and open a printable HTML report of every person's ad moments and the AI's labels. On
-> Windows, `powershell -ExecutionPolicy Bypass -File scripts\start-guided-demo.ps1` starts it
-> with an online OpenAI-compatible AI (GapGPT by default); it asks for the key without showing
-> it and never writes it anywhere. The guide also covers backups, a 10-minute script, and a
-> rehearsal checklist.
->
-> Technical view: [docs/investor-demo.md](docs/investor-demo.md) is the two-part SETUP and
-> SIMULATION script for the underlying city workbench with bounded AI cognition from a local
-> Ollama `qwen2.5:7b-instruct` model, including the offline fallback when no model is available.
->
-> Backup: `scripts/demo_workspace.py` seeds a running workbench with ready-to-open runs; see [Backup: seed a demo workspace](docs/investor-demo.md#backup-seed-a-demo-workspace).
 
 ---
 
@@ -115,9 +159,9 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
 | Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
 | Verified offline, content-addressed city catalog with three `fictional-fixture` entries | Foundation complete; zero rights-reviewed real-city entries |
-| Browser-operated local city workbench, immutable schema-v9 and schema-v10 cognition evidence, workspace V2 city-pack upload, verified run library, and run-scoped inspection | Local single-operator slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
+| Local city workbench with guided browser pages, immutable schema-v9 and schema-v10 cognition evidence, workspace V2 city-pack upload API, verified run library, and run-scoped read API | Local single-operator slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
 | Optional OpenAI-compatible noncausal explanations with approved origins, protected credentials, deterministic fallback, and frozen replay | Complete for the local workbench; authentication and OAuth are not implemented |
-| Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, verified saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
+| Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, guided story and report, verified `city-view` saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
 | Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
@@ -171,8 +215,9 @@ uv run adlife report my-study <run-id>   # self-contained HTML report (works off
 uv run adlife compare control treatment  # paired A/B across seeds (common random numbers)
 uv run adlife run my-study --live        # the four-panel terminal dashboard
 uv run adlife doctor --offline           # installation readiness, zero network
+uv run adlife app                        # the guided browser app (opens http://127.0.0.1:8765/guide)
 uv run adlife city                       # local street-mobility pilot at 127.0.0.1:8765
-uv run adlife city-workbench --workspace ./workbench  # browser-operated local city study
+uv run adlife city-workbench --workspace ./workbench  # the same app server, explicit options
 uv run adlife city-catalog list          # packaged catalog; currently fictional only
 uv run adlife city --city-id fictional-grid-v2
 uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
@@ -200,9 +245,9 @@ pack without network access; importing does not establish license or redistribut
 rights.
 
 `adlife city-catalog list` exposes a packaged, offline, content-addressed catalog. It
-contains exactly three bundled fictional fixtures and zero rights-reviewed real-city
-entries: `fictional-grid-v2`, `fictional-harbor-loop-v2`, and
-`fictional-river-junction-v2`. Selection verifies each immutable pack hash and its
+contains exactly five bundled fictional fixtures and zero rights-reviewed real-city
+entries: `fictional-grid-v2`, `fictional-harbor-loop-v2`, `fictional-new-district-v2`,
+`fictional-old-town-v2`, and `fictional-river-junction-v2`. Selection verifies each immutable pack hash and its
 metadata before use. Use a packaged ID with `city` or `city-run`. `city-import` writes a
 local pack file but does not register it in this packaged CLI catalog. No command contacts
 a public tile server or geocoder, and a locally imported real-world pack is not
@@ -210,31 +255,35 @@ automatically catalog-qualified. The
 [city-source qualification checklist](docs/data/city-source-qualification.md) defines
 the human rights review required before a real-world entry may ship.
 
-Start the local browser-operated workbench with:
+Start the local city workbench with:
 
 ```bash
 uv run adlife city-workbench --workspace ./workbench
 ```
 
-Then open `http://127.0.0.1:8765` yourself; the command never opens a browser or visible
-terminal. The packaged, no-network UI implements `CITY -> CAMPAIGN -> RUN -> INSPECT`:
-choose a verified bundled fixture or upload one local CityPack V2 into this workspace,
-compose bounded phone/billboard assumptions from a packaged fictional creative, validate
-without writing a run artifact, start and poll a deterministic run, then reopen it from the
-verified library in the immutable scoped inspector. Uploads are capped at 4 MiB for both
+Then open `http://127.0.0.1:8765/guide` yourself; the command never opens a browser or visible
+terminal, and its root address `http://127.0.0.1:8765` redirects to `/guide`. The guided pages
+are the workbench's only browser interface: they set up a bounded study from a packaged
+fictional product and audience, start and poll a deterministic run, list the verified library
+of saved runs, and replay a schema-v10 run as a story and a printable report (see
+[docs/user-guide.md](docs/user-guide.md)). `uv run adlife app` starts the same server with the
+workspace `./adlife-workspace` and opens the browser for you. The earlier technical workbench page and its
+saved-run inspector at `/runs/{run_id}` were removed; open any saved run's timeline and
+evidence with `adlife city-view <workspace> <run-id>` instead. The same server keeps its local
+JSON API: validate a draft without writing a run artifact, upload one local CityPack V2 into
+this workspace, and read the verified run library. Uploads are capped at 4 MiB for both
 raw request and canonical stored bytes; other JSON write routes remain capped at 128 KiB.
 Technical validation does not establish ownership, license compliance, redistribution
-rights, or real-city qualification, so uploaded entries are labelled
-`Operator supplied - rights not reviewed`. Source URLs are inert displayed metadata and
-are never dereferenced. The browser keeps only one unsaved in-memory draft. The server
-remains authoritative for geometry, validation, run-ID collisions, artifact integrity,
-and all scientific results.
+rights, or real-city qualification, so uploaded entries are classified
+`operator-supplied-unreviewed`. Source URLs are inert metadata and are never dereferenced.
+The browser keeps only one unsaved in-memory draft. The server remains authoritative for
+geometry, validation, run-ID collisions, artifact integrity, and all scientific results.
 
-The CAMPAIGN stage includes an Audience editor: choose from four bundled templates,
-add/duplicate/remove personas, edit counts and explicit assumptions, then validate and run.
-Counts must total 1–30 agents over 1–7 days; changing run agent count never silently changes
-the audience. Persona IDs are immutable in the UI. Saved schema-v8 inspection shows verified
-fictional names beside stable agent IDs; biography and MBTI stay collapsed with a noncausal label.
+The guided setup page chooses an audience from the ten bundled fictional persona templates
+and their counts. Counts must total 1–30 agents over 1–7 days. Persona IDs are structural and
+immutable. The `adlife city-view` inspector of a saved schema-v10 run shows verified
+fictional names beside stable agent IDs; biography and MBTI stay collapsed with a noncausal
+label.
 
 Name, age, occupation, background and MBTI are descriptive, noncausal context. They do not
 infer response values or mobility. Only explicit interests, six response traits and initial
@@ -255,45 +304,48 @@ resume polling the same active process through `/api/workbench` and its frozen
 library rediscovers fully verified run artifacts at
 `<workspace>/city-runs/<run-id>/`.
 
-Default browser workbench runs submit schema-3 and create schema-v9 city artifacts; choosing
-Operation `Bounded AI cognition` submits schema 4 and creates a schema-v10 artifact. Rules is
-the offline default with a zero explanation budget; mock is also offline and requires no
-credential. Schema-2/schema-v8 fictional-persona and schema-1/schema-v7 homogeneous-cohort
-requests remain compatible. Schema-v7 through schema-v9 retain schema-v6 scientific
+The guided setup page submits schema 4 and creates a schema-v10 artifact. A schema-3 request
+to `POST /api/jobs` creates a schema-v9 artifact (AI explanation); rules is its offline default
+with a zero explanation budget, and mock is also offline and requires no credential.
+Schema-2/schema-v8 fictional-persona and schema-1/schema-v7 homogeneous-cohort requests remain
+compatible. Schema-v7 through schema-v9 retain schema-v6 scientific
 evidence; schema-v10 keeps the same opportunity and attention evidence and a rule baseline
 computed by the same equations, stored in its dual-state `spatial-response-v2` form. All of
 them add canonical `inputs/workbench.json`, bound by
 `workbench_input_sha256`, so the accepted city, creative snapshot, campaign,
-population assumptions, and settings are frozen for load and replay. The scoped inspector
-freshly verifies the artifact when the page opens and exposes its read-only model-clock
-timeline and persisted evidence. That page's reads reuse one opaque-token-bound,
-process-local immutable snapshot; reload and direct tokenless API reads verify the files
-again. Playback, timeline scrubbing, filtering, and selection are presentation state only,
-and Play at the end restarts from minute zero. This visual replay does not replace the
-independent `adlife city-replay` recomputation. A run-scoped response-capable timeline
-transition uses one GET-only `/api/runs/{run_id}/timeline` projection from the page's
-verified context. The legacy
+population assumptions, and settings are frozen for load and replay. Every run-scoped read
+under `/api/runs/{run_id}/...` freshly verifies the artifact before it answers. The
+`adlife city-view` viewer verifies the run once at startup and exposes its read-only
+model-clock timeline and persisted evidence. Playback, timeline scrubbing, filtering, and
+selection are presentation state only, and Play at the end restarts from minute zero. This
+visual replay does not replace the independent `adlife city-replay` recomputation. A
+run-scoped response-capable timeline transition uses one GET-only
+`/api/runs/{run_id}/timeline` projection from one verified context. The legacy
 `/api/timeline` route exposes the same contract over the immutable context validated when
 that viewer starts, while older schema capabilities retain their compatible individual
-reads. This removes repeated reconstruction without changing any persisted result; a new
-page load re-verifies current files and refuses inconsistent changes.
+reads. This removes repeated reconstruction without changing any persisted result.
 
 ### Model assistance: AI explanation and bounded AI cognition
 
-The RUN step's **Model assistance** section keeps provider location separate from provider
-authority. **Operation** decides what a model may do, and with it the exact saved schema;
-**Source** decides where the output comes from: `Rules — offline`, `Mock — reproducible demo`,
-`Local compatible model`, or `Remote compatible model`. The presence of a provider profile
-never selects a schema. The three modes are:
+A job request keeps provider location separate from provider authority. Its schema and
+effect scope decide what a model may do, and with it the exact saved schema; its cognition
+`mode` decides where the output comes from: `rules`, `mock`, `local`, or `remote` (on the
+guided setup page: **No AI**, **Practice answers**, **AI on this computer**, or **Online AI**).
+The presence of a provider profile never selects a schema. The three modes are:
 
-| Mode | Workbench choice | Request / saved run | What the model may change | Network and credentials |
+| Mode | Request | Request / saved run | What the model may change | Network and credentials |
 | --- | --- | --- | --- | --- |
-| **Rules** | Source `Rules — offline` (the default) | schema 3 / V9 with `Explanation only`, or schema 4 / V10 with `Bounded AI cognition` (exact neutral vector) | nothing; no model is called | none |
-| **AI explanation** | Operation `Explanation only` with a Mock, Local, or Remote source | schema 3 / V9 | noncausal prose beside already-computed responses; no number, event, or state | Mock is offline; Local and Remote call one startup-approved endpoint |
-| **Bounded AI cognition** | Operation `Bounded AI cognition` with a Mock, Local, or Remote source | schema 4 / V10 | closed appraisal categories that AdLife maps through the frozen `city-cognition-influence-v1` policy into a separate synthetic cognition state only | Mock is offline; Local and Remote require a passing bounded-signal compatibility check |
+| **Rules** | mode `rules` (the default) | schema 3 / V9 with explanation only, or schema 4 / V10 with bounded AI cognition (exact neutral vector) | nothing; no model is called | none |
+| **AI explanation** | a schema-3 API request with mode `mock`, `local`, or `remote` | schema 3 / V9 | noncausal prose beside already-computed responses; no number, event, or state | Mock is offline; Local and Remote call one startup-approved endpoint |
+| **Bounded AI cognition** | the guided setup page, or a schema-4 API request, with mode `mock`, `local`, or `remote` | schema 4 / V10 | closed appraisal categories that AdLife maps through the frozen `city-cognition-influence-v1` policy into a separate synthetic cognition state only | Mock is offline; Local and Remote require a passing bounded-signal compatibility check |
 
-Start the workbench with explicit server-side endpoint policy; the fixed `local-ollama`
-loopback approval (`http://127.0.0.1:11434/v1`) is always available:
+In the guided pages, any OpenAI-compatible address can be connected while the server runs:
+type its base URL, model, and API key, and the server approves that exact address for this
+process only, with the same rules as below (https online, a loopback literal on any other
+port locally). A typed key is held in server memory until the process stops unless the user
+asks to remember it in the operating-system keyring. Addresses can also be approved at
+startup with explicit server-side endpoint policy; the fixed `local-ollama` loopback approval
+(`http://127.0.0.1:11434/v1`) is always available:
 
 ```bash
 uv run adlife city-workbench --workspace ./workbench \
@@ -303,7 +355,7 @@ uv run adlife city-workbench --workspace ./workbench \
 
 `--provider-origin ID=URL` approves one exact base URL for this process and may be repeated.
 `--provider-key-env ID=ENVIRONMENT_VARIABLE` binds a remote profile to an environment-variable
-*name*, never a credential value. A credential entered in the panel is sent once to the
+*name*, never a credential value. A credential submitted by a client is sent once to the
 dedicated loopback route and stored only through an approved operating-system keyring; it is
 not put in a profile, run artifact, prompt, URL, log, browser storage, report, or later API
 response. A ChatGPT or Codex product login, subscription, or OAuth token is not accepted as
@@ -322,8 +374,9 @@ Schema-v9 freezes the explanation request and every terminal outcome as
 `inputs/cognition.json`, `outputs/cognition.jsonl`, and
 `outputs/cognition-summary.json`, with hashes and counts in the manifest. Live provider
 explanations are nondeterministic; frozen schema-v9 replay is deterministic and performs no
-provider call. The saved-run inspector labels provider/cache, rules, mock, fallback, and
-budget-skipped records separately and renders each explanation beside its matching computed
+provider call. The verified `/api/runs/{run_id}/cognition-summary` and
+`/api/runs/{run_id}/cognition-records` reads label provider/cache, rules, mock, fallback, and
+budget-skipped records separately and bind each explanation to its matching computed
 response.
 
 **Bounded AI cognition (schema 4 / V10).** Rules first compute movement, opportunities,
@@ -352,7 +405,9 @@ terminal record per selected request in `outputs/cognition.jsonl`, the outcome c
 `outputs/response-state.json`, all bound by the manifest. Live provider signals are
 nondeterministic, even at temperature 0 with a fixed seed; frozen schema-v10 replay reapplies
 the saved signals and performs no provider call, cache read, keyring or environment lookup, or
-network request. The saved-run inspector shows each response's trace (deterministic baseline,
+network request. The guided story and report show each noticed ad's labels and their rule and
+"with AI" outcomes; the `adlife city-view` saved-run inspector shows each response's trace
+(deterministic baseline,
 signal or neutral status, fixed mapping, applied cognition delta, atomic rule/cognition state
 update) with source badges, coverage, profile/model/contract provenance, and the provider's
 actual HTTP attempts and reported tokens, kept apart from the reservation.
@@ -579,7 +634,7 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | [docs/methodology/model-card.md](docs/methodology/model-card.md) | Intended and excluded use, risks, validity status |
 | [docs/methodology/experiment-protocol.md](docs/methodology/experiment-protocol.md) | The pre-registered comparison and sensitivity protocol |
 | [docs/methodology/limitations.md](docs/methodology/limitations.md) | What the model cannot support |
-| [docs/investor-demo.md](docs/investor-demo.md) | The live two-part demo script: SETUP (workbench, local model, compatibility check) and SIMULATION (bounded AI cognition run, inspector, metrics, offline replay) |
+| [docs/user-guide.md](docs/user-guide.md) | The user guide for the browser app: install, start, connect any AI, set up a run, story, report, troubleshooting |
 
 ---
 

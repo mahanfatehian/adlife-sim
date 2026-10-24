@@ -62,9 +62,9 @@ What this model cannot support. Read alongside the
   process-local worker executes at most one job or provider operation, and operational job
   history disappears on restart; only fully verified run artifacts are rediscovered.
   Schema-v7/schema-v8/schema-v9 add canonical `inputs/workbench.json` provenance to schema-v6 evidence, not a
-  new or calibrated behavior model. The four-stage browser can validate and operate this
-  local deterministic workflow, cooperatively cancel before persistence, resume polling
-  after a page refresh in the same live process, and reopen the verified library. It does
+  new or calibrated behavior model. The guided pages and the local API can validate and
+  operate this local deterministic workflow, cooperatively cancel before persistence, resume
+  polling after a page refresh in the same live process, and reopen the verified library. It does
   not provide authentication or multi-user authorization, OAuth,
   report download, comparison/paired-study operation, process-restart recovery, or a
   rights-reviewed real city/worldwide catalog. It remains loopback-only and makes no
@@ -89,7 +89,7 @@ What this model cannot support. Read alongside the
   artifact for up to 30 agents and seven days, optionally with spatial campaign evidence;
   `city-replay` verifies every normalized minute-frame/evidence digest, and `city-view`
   observes the validated saved state. These are not zone campaign-engine run artifacts. The
-  packaged, offline, content-addressed catalog contains three fictional fixtures and no
+  packaged, offline, content-addressed catalog contains five fictional fixtures and no
   rights-reviewed real city. A local real street extract supplies geography, not
   real residents, measured traffic, legal navigation routes, or validated effects.
   Optional place sets constrain synthetic home, workplace and leisure nodes with stated
@@ -203,7 +203,7 @@ IDs/counts/assignments are structural. Reordering definitions preserves assignme
 changing IDs may remap agents. No identity-derived mobility or provider-generated personas
 are implemented. Frozen inputs/workbench.json supports replay independent of current templates.
 
-The Audience editor and verified identity inspector operate within 1–30 agents and 1–7 days.
+The guided audience choice and the verified identity inspector operate within 1–30 agents and 1–7 days.
 Purchase intention is an uncalibrated proxy, never a transaction. Canonical byte ceilings
 (3,072 per persona, 98,304 population, 131,072 input; 32,768 template catalog) bound resource
 use. Screening refuses recognized sensitive identifiers/secrets and unsafe text; it cannot

@@ -121,8 +121,8 @@ schema-v5 attention addition, and C3c adds a validated `--spatial-response` docu
 create a schema-v6 artifact with deterministic bounded response/state evidence. Older
 schema-v4 artifacts remain readable as opportunity-only evidence.
 
-The browser workbench defaults to schema-3/schema-v9, uses schema-4/schema-v10 for bounded AI
-cognition, and keeps schema-2/schema-v8 and
+The workbench's guided pages submit schema-4/schema-v10 bounded AI cognition requests; its
+API also accepts schema-3/schema-v9 and keeps schema-2/schema-v8 and
 schema-1/schema-v7 compatible without changing the CLI contract. V7, V8, and V9 retain the exact
 schema-v6 scientific receipt plus canonical `inputs/workbench.json`, which freezes the
 complete accepted draft and creative-template snapshot. Its canonical bytes must match
@@ -135,7 +135,7 @@ are operational metadata and do not enter the run, keyed draws, or artifact hash
 
 The browser control contract preserves every seed as a canonical decimal string, including
 `9223372036854775807`, until the HTTP adapter validates it and converts it exactly once to
-the bounded Python integer used by domain construction. The browser's unsaved draft, stage,
+the bounded Python integer used by domain construction. The browser's unsaved draft, page,
 validation display, polling interval, playback state, selected agent/evidence, filters, map
 zoom, and model-clock position are presentation state only and never enter a schema-v7, schema-v8, or schema-v9
 artifact. Refresh may resume polling a live process-local job from its frozen
@@ -205,11 +205,10 @@ who rewrites every artifact and recomputes the whole hash chain. V10 is an unrel
 schema: runs written by earlier development builds (before its final output budget and prompt
 contract) no longer validate and must be recreated.
 
-For the run-scoped workbench inspector, one GET-only `/api/runs/{run_id}/timeline` request
-projects the frame and four bounded evidence/state documents from the immutable run
-snapshot verified when that inspector page opened. Its opaque token is process-local,
-run-bound, and sent only in a request header. Reloading the page and direct scoped API
-requests without a token perform a fresh artifact verification. The legacy `/api/timeline`
+For a run-scoped workbench read, one GET-only `/api/runs/{run_id}/timeline` request
+projects the frame and four bounded evidence/state documents from one freshly verified run
+context; every scoped API request performs a fresh artifact verification, and a request
+carrying the removed inspector's view-token header is refused. The legacy `/api/timeline`
 route returns the same projection contract from the
 immutable context validated when that viewer starts. The nested documents are contract-equal
 to the existing individual endpoint projections. Batching changes neither canonical bytes

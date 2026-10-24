@@ -6,7 +6,7 @@ trusted. Read this before quoting any number the simulator produces.
 ## Intended use
 
 The opt-in city path is a separate product-track prototype alongside the zone campaign
-engine. Its packaged, content-addressed catalog contains three fictional fixtures and zero
+engine. Its packaged, content-addressed catalog contains five fictional fixtures and zero
 rights-reviewed real cities. The local workbench can store a V2 pack as
 `operator-supplied-unreviewed`; passing structural checks does not establish rights or
 license compliance. A street pack acquired under appropriate rights can provide real
@@ -41,9 +41,9 @@ The exact accepted city is frozen separately as canonical `inputs/city.json`; re
 metrics, reports, and run-scoped inspection use the verified artifact and never depend on
 the current workspace registry. Declared source URLs remain inert text and are not fetched.
 
-The packaged browser operates `CITY -> CAMPAIGN -> RUN -> INSPECT` for this local
-deterministic profile. Its Audience editor assigns explicitly displayed interests, traits,
-and initial response-state assumptions per persona. The schema-1 compatibility path is a
+The packaged guided pages at `/guide` operate this local deterministic profile. Each
+fictional persona carries explicitly displayed interests, traits, and initial response-state
+assumptions. The schema-1 compatibility path is a
 homogeneous response cohort, not demographic calibration or evidence about a real
 population. The model clock, map animation, playback speed, filtering, and selection are
 presentation only and cannot change the frozen run. Optional provider-backed city

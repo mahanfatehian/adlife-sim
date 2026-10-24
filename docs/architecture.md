@@ -48,11 +48,14 @@ frames, and exposes assignments as data rather than mutable agent fields. Neithe
 web adapter nor the CLI can inject an unvalidated assignment.
 
 The separate local city workbench is an application-layer adapter under `adlife.city`,
-not a new core dependency. Its browser-operated local deterministic path is deliberately
-bounded:
+not a new core dependency. Its server serves only the guided presenter pages under `/guide`
+(its root address `/` redirects there with `307`) and the local JSON API under `/api/*`; the
+earlier technical workbench page, the saved-run inspector at `/runs/{run_id}`, and their
+`/static/*` and `/assets/workbench*` script and style assets were removed. Its local
+deterministic path is deliberately bounded:
 
 ```text
-CITY -> CAMPAIGN -> RUN -> INSPECT (packaged vanilla browser)
+guided pages at /guide (packaged vanilla browser) or a local API client
         -> loopback schema-3 or schema-4 HTTP (schema-1/schema-2 compatibility)
         -> same-origin, CSRF, size and strict-JSON boundary
         -> packaged/workspace city + fictional creative resolution
@@ -61,7 +64,7 @@ CITY -> CAMPAIGN -> RUN -> INSPECT (packaged vanilla browser)
              schema 3: simulate -> explain -> publish -> verify
              schema 4: plan cognition -> request signals -> apply mapping -> publish -> verify
         -> schema-v9 or schema-v10 artifact (schema-v7/schema-v8 compatibility)
-           + immutable viewer
+           + verified run-scoped read API, guided story/report (schema-v10)
 ```
 
 `adlife city-workbench --workspace PATH` first checks every unresolved workspace path
@@ -93,18 +96,19 @@ it up again later. Workspace entries are always classified
 `operator-supplied-unreviewed`: structural validation cannot grant ownership, license, or
 redistribution rights. Source URL fields are inert text, are not dereferenced, and cause no
 outbound request; the only browser/API traffic is same-origin loopback. Registry corruption
-blocks catalog and new-run operations but not startup, saved-run inspection, or replay.
+blocks catalog and new-run operations but not startup, saved-run reads, or replay.
 
-The browser owns one unsaved draft and presentation state only. It retrieves verified city
-and creative choices, sends the seed as a canonical exact decimal string, and asks the
-server to validate the complete draft before enabling schema-v9 execution (schema-v8 and
-schema-v7 remain the authoritative schema-2 and schema-1 compatibility paths). The HTTP adapter
+The browser owns one unsaved draft and presentation state only. The guided setup page
+retrieves verified creative and persona choices, sends the seed as a canonical exact decimal
+string, and submits a schema-4 draft that the server validates completely before execution
+(schema-3 creates schema-v9, and schema-v8 and schema-v7 remain the authoritative schema-2
+and schema-1 compatibility paths). The HTTP adapter
 converts that string once to a bounded Python integer; the existing strict domain
 construction is still authoritative. A browser refresh can recover the active
 process-local job and resume polling from `/api/workbench`, but a process restart cannot
 recover transient job history.
-The four-stage client never computes a route, coordinate, hash, metric, or simulation
-result and stores nothing in browser persistence.
+The guided client never computes a route, coordinate, hash, metric, or simulation
+result.
 
 The run repository scans at most 256 portable run identifiers and lists only fully verified
 artifacts in stable order. Each listing re-reads every artifact byte of each candidate under
@@ -112,17 +116,14 @@ the store's link-refusing rules: a candidate whose exact content fingerprint mat
 earlier full verification in this process reuses that verification's summary, while any
 changed byte, file, or path, or anything the store would refuse, sends it through a new full
 `CityRunStore` verification.
-Opening `/runs/{run_id}` loads and verifies the selected artifact once, then gives that
-page an opaque, run-bound token for a bounded process-local immutable snapshot. Its scoped
-reads reuse that exact verified state, so a large timeline remains responsive and one page
-cannot combine files from different points in time. Reloading the page and direct scoped API
-reads without that token still perform fresh verification, and listing runs re-checks every
-artifact byte before it reuses a verification; unknown,
-malformed, and cross-run tokens are refused. Thus a file changed after a page opens is
-detected on reload rather than silently changing the already-open observation. The legacy
-single-run viewer and workbench routes share one immutable projection service; the latter
-mirrors scientific reads under `/api/runs/{run_id}/...` and serves the same packaged
-inspector at `/runs/{run_id}`. For schema-v7, schema-v8, and schema-v9,
+Every scoped read under `/api/runs/{run_id}/...` loads and freshly verifies the selected
+artifact before it answers, and listing runs re-checks every artifact byte before it reuses a
+verification. A request that still carries the removed inspector's view-token header is
+refused rather than served. The guided story API at `/api/runs/{run_id}/story` caches at most
+eight verified stories, each bound to the exact bytes it was built from, so a changed file is
+rebuilt rather than trusted. The legacy single-run viewer (`adlife city-view`) and the
+workbench routes share one immutable projection service; the latter mirrors scientific reads
+under `/api/runs/{run_id}/...`. For schema-v7, schema-v8, and schema-v9,
 `/api/runs/{run_id}/workbench-input` projects verified frozen assumptions and the exact
 creative snapshot; it never exposes a filesystem path or treats the presentation
 projection as canonical artifact bytes. A run-scoped response-capable interaction uses the
@@ -300,9 +301,9 @@ paired intervals per metric. After `city-report` performs the same source verifi
 analysis, its renderer consumes only that revalidated result and publishes a fixed-path,
 zero-JavaScript, no-network evidence ledger; the renderer never receives raw events,
 response inputs, provider bodies, or source paths. Both analysis and report are read-only.
-The packaged `CITY -> CAMPAIGN -> RUN -> INSPECT` workflow now operates the complete local
-deterministic slice, including validation, cooperative cancellation, verified run-library
-reopening, and transfer to the run-scoped inspector. Broader spatial social/purchase
+The guided pages and the local API operate the complete local deterministic slice,
+including validation, cooperative cancellation, and verified run-library reopening; a saved
+run's timeline and evidence open in `adlife city-view`. Broader spatial social/purchase
 mechanisms, OAuth, browser report download/comparison operation,
 authentication, rights-reviewed real-city data, calibration, and external validity remain
 open. It is still a single-operator loopback application rather than an authenticated or
@@ -345,7 +346,7 @@ provider call, keyring lookup, environment lookup, cache read, or network reques
 
 ## The bounded city cognition seam (schema-v10)
 
-Workbench schema 4 with Operation `Bounded AI cognition` makes provider inference part of the
+Workbench schema 4 with the `bounded-signals-v1` operation makes provider inference part of the
 modeled cognition path without granting it numeric, state, event, or identity authority. A
 source selects closed synthetic appraisal categories for a noticed response; AdLife maps them
 through a frozen policy into a separate cognition state before the response group commits.
@@ -363,7 +364,8 @@ frozen schema-4 inputs/workbench.json (city, scenario, personas, settings, cogni
   -> city-cognition-influence-v1 tables and clamps -> applied sentiment/recall deltas
   -> one atomic dual-state update per (minute, agent, campaign):
        rule state <- baseline deltas    cognition state <- applied deltas
-  -> manifest-V10 publication last -> independent load verification -> inspector
+  -> manifest-V10 publication last -> independent load verification -> guided story/report
+     and the `adlife city-view` inspector
 ```
 
 The core owns every identifier. `core/simulation/city_cognition_v2.py` builds the selected
@@ -403,8 +405,8 @@ V10 freezes `inputs/workbench.json` (schema 4), `inputs/cognition.json`,
 regenerate the deterministic layers and request identities, validate every frozen result
 against its exact request and policies, reapply the mapping, and require exact equality,
 without a provider, cache, keyring, environment variable, profile registry, or network
-request. The browser workbench reads its limits from `GET /api/workbench`
-`capabilities.bounded_cognition`; the saved-run page loads the frozen
+request. The guided setup page reads its limits from `GET /api/workbench`
+`capabilities.bounded_cognition`; the `adlife city-view` saved-run page loads the frozen
 `window.AdLifeBoundedCognition` helper from `app-cognition-v2.js`, which re-verifies hashes
 and mapping arithmetic and renders provider values only as inert text.
 
@@ -539,6 +541,6 @@ scientific response inputs and mobility. IDs/counts/assignments are structural p
 V8 load independently cross-binds every assignment/profile/state as well as canonical
 inputs/workbench.json and its hash. Frozen persona records make replay independent of the
 current template catalog. Schema-v8/schema-v9 consumers explicitly include metrics,
-comparisons, native paired studies and viewers; unknown future schemas remain refused. The saved inspector
-uses verified assignments to show fictional names beside immutable person IDs and collapses
-noncausal biography/MBTI. This preserves the token-bound immutable snapshot contract above.
+comparisons, native paired studies and viewers; unknown future schemas remain refused. The
+saved-run inspector uses verified assignments to show fictional names beside immutable person
+IDs and collapses noncausal biography/MBTI; every run-scoped read verifies afresh, as above.

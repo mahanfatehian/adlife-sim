@@ -7,7 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Windows demo start script and presenter guide (2026-10-21)** — `scripts/start-guided-demo.ps1`
+  and `docs/guided-demo.md` were removed. `uv run adlife app` starts the app on every operating
+  system, keys are typed into the app itself, and [docs/user-guide.md](docs/user-guide.md) is
+  the general user guide that replaces the presenter script.
+
+- **Technical workbench interface (2026-10-21)** — `adlife city-workbench` now serves only
+  the guided pages under `/guide` and the local JSON API under `/api/*`, and its root address
+  `/` redirects (`307`) to `/guide`. The technical workbench page at `/`
+  (`CITY -> CAMPAIGN -> RUN -> INSPECT`), the saved-run inspector at `/runs/{run_id}`, the
+  draft page at `/runs/{run_id}/reuse`, the `/static/*` dashboard assets, and the
+  `/assets/workbench*.js` and `.css` files were removed and answer `404`; only
+  `/assets/workbench-icon.svg` remains, as the pages' icon. The guided pages and the run
+  report no longer link to them (the report keeps its Technical details section). Every
+  `/api/*` route is unchanged; run-scoped reads always verify the saved files afresh, and a
+  request that still sends the removed inspector's view-token header is refused with `409`.
+  A saved run's timeline and evidence open with `adlife city-view ROOT RUN_ID`. The investor
+  demonstration script `docs/investor-demo.md` was removed with the interface it described;
+  `scripts/demo_workspace.py` now reads its security token from `/guide`, checks each V10
+  run's story, and prints guide addresses instead of inspector URLs.
+
 ### Added
+
+- **Connect any OpenAI-compatible service from the app (2026-10-21)** — the guided pages no
+  longer need an AI approved at startup. **Online AI** takes any service's base URL, model
+  name, and API key (OpenRouter, GapGPT, or another OpenAI-compatible gateway); **AI on this
+  computer** takes a local server's address, so LM Studio (`127.0.0.1:1234/v1`) works as well
+  as Ollama (`127.0.0.1:11434/v1`). The new `POST /api/providers/origins` route approves one
+  typed address for the running process through exactly the startup rules (https online, a
+  loopback literal on any port except the server's own locally, no private or reserved
+  addresses, at most 20 origins); the same address always gets the same approval id, so a
+  saved profile works again after a restart once its address is connected again. A typed key
+  is held in server memory for that address (`"remember": false`, the default) and cleared
+  when the server stops; `"remember": true` stores it in the approved OS keyring as before.
+  Addresses used before are offered for one-tap reuse, the setup page names a missing address,
+  and nothing names a default service any more. Provider answers that carry extra members
+  their gateway adds (OpenRouter's `provider` and `cost`, LM Studio's `stats`) are accepted:
+  members nobody reads are ignored, while tool calls, refusals, wrong types, and every size,
+  credential, and secret screen still refuse an answer.
+- **`adlife app` (2026-10-21)** — starts the guided app with the workspace `./adlife-workspace`
+  and port 8765 and opens `http://127.0.0.1:8765/guide` in the default browser once the server
+  answers (`--no-open` to skip). It shares the server and options of `adlife city-workbench`,
+  which still never opens a browser.
+- **More people, products, and towns (2026-10-21)** — ten fictional persona templates (Pimo,
+  Zarel, Ketra, Tavi, Selun, and Halvi join Lumo, Veyra, Orilo, and Nuvin) with ten distinct
+  colour and shape marks; eight fictional products (Spokelark Pass, Pagewren Box, Pulsefern
+  Coach, and Humvale Stream join the original four); and five fictional towns
+  (`fictional-old-town-v2`, 30 junctions with a ring road and two bridges, and
+  `fictional-new-district-v2`, 39 junctions with diagonals and one-way streets, join the grid,
+  harbour loop, and river junction). The setup page has a town picker with a street preview
+  and a verified billboard spot per town (a town without one offers phone ads only), and the
+  "All personas" audience puts three of each profile into a 30-person study. The grid town's
+  billboard now faces its traffic (259°) instead of away from it, so billboard runs there
+  produce ad moments.
 
 - **One-command guided demo start on Windows (2026-10-20)** —
   `scripts/start-guided-demo.ps1` asks for the online AI key without showing it, keeps it in
@@ -112,7 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requests (0 for rules and mock) and `k` counts provider answers, cache hits and fallbacks; `k`
   only grows, never exceeds `N` and equals it once cognition is applied. The count is
   operational only and never enters a V10 artifact or replay.
-- **Two-part live demonstration script** — [docs/investor-demo.md](docs/investor-demo.md) is
+- **Two-part live demonstration script** — docs/investor-demo.md (since removed) is
   now the SETUP and SIMULATION script for presenting bounded AI cognition through a local
   Ollama `qwen2.5:7b-instruct` model, with the offline mock/rules fallback and
   troubleshooting.
@@ -248,7 +302,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (4) and (5) applied, a check passed in 6.2 seconds and a Part 2 study (seed 42, 10 funded)
   completed in 31 seconds with 9 provider signals and 1 fallback from a whitespace runaway,
   the case that (3) now sends to the schema repair.
-  [docs/investor-demo.md](docs/investor-demo.md) shows the GapGPT start command and profile.
+  docs/investor-demo.md (since removed) shows the GapGPT start command and profile.
 - **Real local-model provider path (2026-10-19)** — a local `qwen2.5:7b-instruct` needs
   about 140-160 output tokens for the strict bounded-signal result, so the V10 per-attempt
   cap is 256 output tokens instead of the development value that truncated every answer.

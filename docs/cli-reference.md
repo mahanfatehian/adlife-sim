@@ -50,8 +50,9 @@ Print a JSON validation result and exit 0 when valid; exit 2 with a diagnostic o
 
 List the packaged, integrity-verified city catalog. Selection is offline and
 content-addressed: every entry pins a v2 resource by canonical SHA-256 and matching
-metadata. The three shipped entries are `fictional-grid-v2`,
-`fictional-harbor-loop-v2`, and `fictional-river-junction-v2`; all have origin
+metadata. The five shipped entries are `fictional-grid-v2`,
+`fictional-harbor-loop-v2`, `fictional-new-district-v2`, `fictional-old-town-v2`, and
+`fictional-river-junction-v2`; all have origin
 `fictional` and qualification `fictional-fixture`, and this release contains zero
 rights-reviewed real cities. `--search` applies case-insensitive local token matching to
 ID, display name, provider and dataset. No matches is a successful empty result. JSON mode
@@ -106,38 +107,53 @@ This command does not run or persist the advertising engine. Its minute-addressa
 frames model illustrative home/work/leisure travel on local roads; they are not
 traffic measurements or real-person predictions. See [city-pilot.md](city-pilot.md).
 
+## `adlife app [--workspace PATH] [--port N] [--open/--no-open] [--provider-origin ID=URL] [--provider-key-env ID=ENVIRONMENT_VARIABLE]`
+
+Start the guided app with sensible defaults: the same server as `adlife city-workbench`,
+with the workspace `./adlife-workspace` (created if missing) and port 8765, and the default
+browser opened at `http://127.0.0.1:8765/guide` once the server answers (`--no-open` skips
+that). Everything else, including the provider options and the loopback-only binding, is
+exactly as described for `adlife city-workbench` below. Press Ctrl+C to stop. The guided
+pages are documented for users in [user-guide.md](user-guide.md).
+
 ## `adlife city-workbench --workspace PATH [--port N] [--provider-origin ID=URL] [--provider-key-env ID=ENVIRONMENT_VARIABLE]`
 
-Start the browser-operated local deterministic workbench at
-`http://127.0.0.1:8765`. `--workspace` is required and names a dedicated local
+Serve the guided pages at `/guide` and their local API on loopback at
+`http://127.0.0.1:8765`. The root address `http://127.0.0.1:8765` redirects (`307`) to
+`/guide`. `--workspace` is required and names a dedicated local
 directory; each existing path component is checked without following symlinks or
 Windows reparse points, missing directories are created one at a time, and the resolved
 directory identity is pinned and rechecked before the server starts. `--port` accepts
 1–65535. The command is interactive, accepts human output mode only, uses one Uvicorn
 worker with reload disabled, and never opens a browser automatically. `--provider-origin
-ID=URL` may be repeated to approve exact provider base URLs for this process; the fixed
-`local-ollama` loopback approval is always present. `--provider-key-env
-ID=ENVIRONMENT_VARIABLE` may be repeated to bind a remote provider ID to an
+ID=URL` may be repeated to approve exact provider base URLs at startup; the fixed
+`local-ollama` loopback approval is always present. Any other OpenAI-compatible address can
+also be connected from the guided pages while the server runs (`POST /api/providers/origins`):
+it passes exactly the same rules (https for an online service, a `127.0.0.1` or `[::1]`
+literal on any port except this server's own for a server on this computer), is approved for
+this process only, and is forgotten on restart. `--provider-key-env
+ID=ENVIRONMENT_VARIABLE` may be repeated to bind a startup-approved remote provider ID to an
 environment-variable name. Credential values are never command-line arguments.
 
 The command prints one line, `city workbench: http://127.0.0.1:8765/guide`, the address of
-the guided view: plain-language pages for presenting a study in English, German, or Persian
-(`?lang=en`, `?lang=de`, or `?lang=fa`; Persian pages read right to left). Each guided page
-has a Technical view link: the start, setup, and progress pages link to the workbench at `/`,
-and the story and report pages link to that run's inspector at `/runs/{run_id}`. The guided
-view's presenter script is [guided-demo.md](guided-demo.md).
+the guided view: plain-language pages for running a study in English, German, or Persian
+(`?lang=en`, `?lang=de`, or `?lang=fa`; Persian pages read right to left). The guided pages
+are the only browser interface this server serves; [user-guide.md](user-guide.md) explains
+them step by step. The setup page composes a bounded phone/billboard study of
+one packaged fictional town from a packaged fictional creative and persona templates, runs it
+through the one local worker, and the start page lists verified artifacts from the bounded
+library. The browser owns an unsaved draft and presentation state only; the server derives
+coordinates and remains authoritative for validation, collisions, storage, and scientific
+evidence.
 
-The technical workbench at `/` uses `CITY -> CAMPAIGN -> RUN -> INSPECT`. The browser selects a
-verified packaged fictional city or uploads one local CityPack V2 into the immutable
-workspace registry, composes a bounded phone/billboard scenario from a packaged fictional
-creative, validates it without side effects, runs it through the one local worker, and
-reopens verified artifacts from the bounded library. The browser owns an unsaved draft and
-presentation state only; the server derives coordinates and remains authoritative for
-validation, collisions, storage, and scientific evidence. The [live demo script](investor-demo.md)
-walks through a bounded AI cognition run against a local Ollama model step by step.
+The earlier technical workbench page at `/` (`CITY -> CAMPAIGN -> RUN -> INSPECT`), the
+saved-run inspector at `/runs/{run_id}`, its `/runs/{run_id}/reuse` draft page, and their
+`/static/*` and `/assets/workbench*.js`/`.css` assets were removed and now answer `404`; only
+`/assets/workbench-icon.svg` remains, as the pages' icon. To inspect a saved run's timeline
+and evidence in a browser, run `adlife city-view ROOT RUN_ID` against the workspace.
 
-The bundled shell defaults to schema-3 rules requests, submits schema 4 when the RUN step's
-Operation is `Bounded AI cognition`, supports schema-1/schema-2 compatibility,
+The guided setup page submits schema-4 requests. The JSON API also accepts schema 3, which
+creates a schema-v9 run, and schema-1/schema-2 compatibility requests; it
 reports capabilities, lists the combined verified city choices and complete packaged
 fictional creative snapshots, and validates a bounded scenario through
 `POST /api/scenarios/validate`. Writes require an exact same-origin request, exact
@@ -152,7 +168,7 @@ identifier.
 An upload returns one path-free catalog row and is immutable within that workspace. It is
 always `operator-supplied-unreviewed`: technical validation does not establish ownership,
 license compliance, redistribution rights, or packaged-catalog qualification. The server
-does not fetch a source URL; the UI displays it as inert text, never a link. Default
+does not fetch a source URL; it stays inert metadata, never a link. Default
 workbench operation performs no outbound request.
 
 The process-local control API exposes these bounded catalog, job, and discovery routes:
@@ -173,11 +189,18 @@ The process-local control API exposes these bounded catalog, job, and discovery 
 - `GET /api/runs?offset=&limit=` lists only independently loaded, verified completed runs; a
   run whose exact artifact content is unchanged reuses its earlier full verification in this
   process;
-- `GET /api/persona-templates` returns the four validated fictional persona templates;
+- `GET /api/persona-templates` returns the ten validated fictional persona templates;
 - `GET /api/providers` lists approved origins and immutable profile revisions without credentials;
+- `POST /api/providers/origins` with exactly `{"base_url": "..."}` approves one typed
+  OpenAI-compatible address for this process and returns its origin view; a missing scheme
+  becomes https (http for a loopback literal), `localhost` becomes `127.0.0.1`, the same
+  address always returns the same approval, and an unsafe address is refused with `422`
+  `invalid-provider-origin` (at most 20 origins: `409` `provider-origin-limit`);
 - `POST /api/providers` creates one immutable profile revision at an approved origin;
-- `POST /api/providers/{profile_id}/revisions/{revision_id}/credential` stores one remote
-  credential through the approved server-side OS keyring and never echoes it;
+- `POST /api/providers/{profile_id}/revisions/{revision_id}/credential` takes
+  `{"credential": "..."}` with an optional exact boolean `"remember"`: without it the server
+  holds the key in memory for that origin until it stops; with `true` it stores the key in the
+  approved OS keyring for that revision. It never echoes the key;
 - `POST /api/providers/{profile_id}/revisions/{revision_id}/check` runs one bounded explicit
   compatibility check: body `{}` checks the explanation contract, and
   `{"effect_scope": "bounded-signals-v1"}` checks the bounded-signal contract;
@@ -195,12 +218,9 @@ The process-local control API exposes these bounded catalog, job, and discovery 
   bounded evidence/state pages from one verified run context; `/api/timeline`
   exposes the equivalent contract over the legacy viewer's startup-validated immutable
   context, and the individual read endpoints remain supported;
-- `GET /runs/{run_id}` serves the immutable inspector, whose scientific reads are mirrored
-  under `/api/runs/{run_id}/...`;
-- `GET /runs/{run_id}/reuse` serves the workbench seeded to start a new draft from that saved
-  run's verified inputs (schema-v8 and later), read through
-  `/api/runs/{run_id}/workbench-input`; the browser suggests the next free sibling run ID and
-  never changes the saved run;
+- `GET /api/runs/{run_id}/meta` and the other run-scoped reads under `/api/runs/{run_id}/...`
+  mirror the `adlife city-view` API of that one saved run;
+- `GET /` redirects (`307`) to `/guide`;
 - `GET /guide`, `GET /guide/new`, `GET /guide/jobs/{job_id}`, and `GET /guide/runs/{run_id}`
   serve the guided view's start, setup, live progress, and story pages, and
   `GET /guide/runs/{run_id}/report` renders that saved run as a script-free HTML report. They
@@ -215,16 +235,12 @@ The process-local control API exposes these bounded catalog, job, and discovery 
 - `GET /guide/assets/{asset_name}` serves the guide's allowlisted scripts, stylesheets, and
   translation catalogs.
 
-Opening an inspector performs one complete artifact verification and places an opaque,
-run-bound token in that page. Its same-origin API requests send the token in a header and
-reuse a bounded process-local immutable snapshot. The token is never a URL or persisted
-artifact value. Reloading the page and direct scoped API calls without a token perform fresh
-verification; library discovery re-reads every artifact byte and reuses an earlier full
-verification only for a run whose exact content is unchanged. Malformed, unknown, or
-cross-run tokens are refused.
-The ▶ control replays the saved timeline and restarts from minute zero at the end. It is a
-presentation control, not the independent scientific replay performed by
-`adlife city-replay ROOT ID`.
+Every scoped `/api/runs/{run_id}/...` read performs a fresh complete artifact verification;
+library discovery re-reads every artifact byte and reuses an earlier full verification only
+for a run whose exact content is unchanged. A request that still carries the removed
+inspector's `X-AdLife-View-Token` header is refused with `409` `run-unavailable`. The
+guided story's play control steps through the saved run's moments. It is a presentation
+control, not the independent scientific replay performed by `adlife city-replay ROOT ID`.
 
 Only one mutating provider/job operation is active; provider checks, credential writes, and
 simulation jobs share the same admission boundary. No simulation request is held open:
@@ -244,7 +260,7 @@ that receipt. A schema-4 receipt also records `run_schema_version` 10, the effec
 the funded response limit; its ceiling is the funded limit times the per-request
 reservation for a local or remote source and 0 for rules or mock.
 
-A default schema-3 workbench run is schema-v9, and a schema-4 run is schema-v10;
+A schema-3 workbench run is schema-v9, and a schema-4 run (every guided run) is schema-v10;
 schema-2/schema-v8 and schema-1/schema-v7 requests remain compatible. Schema-v7 through
 schema-v9 have the same deterministic spatial evidence as schema-v6, and schema-v10 keeps the
 same opportunity and attention evidence with its dual-state `spatial-response-v2` responses;
@@ -258,26 +274,26 @@ corruption. Ordinary CLI `city-run --spatial-response` output remains schema-v6.
 Workbench `settings.seed` must be a canonical decimal JSON string from `"0"` through
 `"9223372036854775807"`; JSON numbers, signs, whitespace, exponents, decimals, and leading
 zeroes are refused. The server converts the accepted string to the deterministic model's
-bounded Python integer. The UI never converts it through JavaScript `Number`.
+bounded Python integer. The guided pages never convert it through JavaScript `Number`.
 
 ### Workbench model assistance: operations, sources, and credentials
 
-The RUN step's **Operation** (`cognition.effect_scope`) and **Source** (`cognition.mode`)
-jointly select the exact request and manifest pair; the presence of a provider profile never
-selects a schema:
+A job request's operation (`cognition.effect_scope`) and source (`cognition.mode`) jointly
+select the exact request and manifest pair; the presence of a provider profile never selects a
+schema. The guided setup page always submits `bounded-signals-v1`:
 
 | Operation (`effect_scope`) | Source (`mode`) | Workbench / manifest | Provider budget | Compatibility check |
 | --- | --- | --- | --- | --- |
-| `explanation-only` (`Explanation only`) | `rules` or `mock` | schema 3 / V9 | none | not applicable |
-| `explanation-only` (`Explanation only`) | `local` or `remote` | schema 3 / V9 | 1,536 to 92,160 output-token ceiling | optional explanation check |
-| `bounded-signals-v1` (`Bounded AI cognition`) | `rules` or `mock` | schema 4 / V10 | none; every selected request resolves offline | not applicable |
-| `bounded-signals-v1` (`Bounded AI cognition`) | `local` or `remote` | schema 4 / V10 | 10, 20, 40, or 60 funded requests | exact bounded-signal check required |
+| `explanation-only` | `rules` or `mock` | schema 3 / V9 | none | not applicable |
+| `explanation-only` | `local` or `remote` | schema 3 / V9 | 1,536 to 92,160 output-token ceiling | optional explanation check |
+| `bounded-signals-v1` | `rules` or `mock` | schema 4 / V10 | none; every selected request resolves offline | not applicable |
+| `bounded-signals-v1` | `local` or `remote` | schema 4 / V10 | 10, 20, 40, or 60 funded requests | exact bounded-signal check required |
 
 **Explanation only.** `rules` is the offline default with a zero output-token ceiling.
 `mock` is deterministic and offline. `local` and `remote` require an exact immutable
 provider-profile revision plus an
-aggregate ceiling from 1,536 through 92,160 tokens in 1,536-token steps; the browser proposes
-15,360, which funds 10 explanations. The numeric response
+aggregate ceiling from 1,536 through 92,160 tokens in 1,536-token steps; a ceiling of
+15,360 funds 10 explanations. The numeric response
 mode remains deterministic rules in every case. Provider explanations are noncausal and
 cannot change movement, exposure, attention, response values, campaign state, budget,
 purchase probability, metrics, events, or identities.
@@ -286,7 +302,7 @@ purchase probability, metrics, events, or identities.
 `bounded-signals-v1`, `mode`, `provider_profile_id`, `provider_revision_sha256`, and
 `funded_response_limit`; the server derives the output-token ceiling. Rules and mock send
 null profile fields and the offline limit 60: every selected request resolves locally and
-reserves no tokens. Local and remote fund 10, 20 (the browser default), 40, or 60 requests,
+reserves no tokens. Local and remote fund 10, 20 (the default), 40, or 60 requests,
 and the remaining selected requests become budget-skipped neutral records. Each funded request
 reserves 1,024 output tokens: at most 4 HTTP attempts of up to 256 output tokens each, so 60
 funded requests reserve 61,440 output tokens. Input tokens and vendor charges are outside that
@@ -299,7 +315,7 @@ for a slow gateway; each check's single attempt may use its whole deadline, whil
 keep the profile's frozen timeout. At most 5 checks start per 60 seconds, results are
 process-local, and a job cannot start while a check runs. `GET /api/workbench` publishes
 these limits as
-`capabilities.bounded_cognition`, which the browser reads instead of pinning them. Movement,
+`capabilities.bounded_cognition`, which the guided setup page reads instead of pinning them. Movement,
 attention, baseline responses, and the purchase-intention proxy stay rule-owned: the source
 may only choose closed `affect`, `relevance`, `credibility`, `salience`, and `safety_flags`
 categories, which AdLife maps through the frozen `city-cognition-influence-v1` policy into
@@ -315,8 +331,8 @@ refuses duplicate safety flags itself). A vLLM server's own metadata members, su
 any other unknown member is refused. An answer cut at the output cap (`finish_reason`
 `length`) is accepted only when its text is a complete valid result; one that never closed,
 or has no text, is an `invalid-json` result that the one schema repair may recover. A
-profile revision may set `disable_thinking` (the browser's **Turn off model thinking (Qwen
-on vLLM servers)** checkbox, on by default for a remote model ID that names Qwen): every
+profile revision may set `disable_thinking` (the guided connection card sets it for a remote
+model ID that names Qwen): every
 request, repair, and compatibility check of that revision then carries
 `chat_template_kwargs` `{"enable_thinking": false}`, so a Qwen model on vLLM, such as
 GapGPT's `gapgpt-qwen-3.6`, answers instead of spending the output cap thinking. The member
@@ -333,7 +349,7 @@ Schema-v9 adds `inputs/cognition.json`, `outputs/cognition.jsonl`, and
 `outputs/cognition-summary.json`, all manifest-bound and independently verified. Live
 provider explanations are nondeterministic; frozen schema-v9 replay is deterministic and
 performs no provider call. Rules, mock, provider/cache, fallback, and budget-skipped outcomes
-remain distinguishable in the saved inspector.
+remain distinguishable in the verified `/api/runs/{run_id}/cognition-records` read.
 
 Schema-v10 writes the version-2 `inputs/cognition.json`, `outputs/cognition.jsonl`, and
 `outputs/cognition-summary.json` together with the dual-state `outputs/spatial-responses.jsonl`,
@@ -716,10 +732,9 @@ stderr, so `adlife --format json run my-study > doc.json` is clean piped output.
 
 ## Fictional persona request contract
 
-Default browser authoring loads GET /api/persona-templates and submits schema-3
-population.personas plus cognition settings to POST validation/jobs, or schema 4 when the
-Operation is `Bounded AI cognition`; schema-1/schema-2
-requests remain compatible. The exact pairs are (1,7), (2,8), (3,9), and (4,10), with
+The guided setup page loads GET /api/persona-templates and submits schema-4
+population.personas plus cognition settings to `POST /api/jobs`; API clients may also submit
+schema 3, and schema-1/schema-2 requests remain compatible. The exact pairs are (1,7), (2,8), (3,9), and (4,10), with
 schema-v9 used for schema-3 and schema-v10 for schema 4. Future versions, booleans, floats,
 and other pairs are refused. Schema 4 uses the same persona contract; its causal
 bounded-signal request carries only interests, the response traits (with the recall encoding
@@ -746,9 +761,9 @@ client-supplied mobility agent IDs, coordinates or hashes. Security screening re
 recognized identifiers, credentials, structural secret labels and unsafe display text;
 it does not prove absence of personal information. Supply fictional data only.
 
-The Audience editor supports template selection/add/duplicate/remove, explicit count
-reconciliation, causal editing and server validation; IDs cannot be renamed. V8 verified
-input DTOs expose normalized personas/assignments; the saved inspector collapses noncausal
+The guided setup page chooses templates and their counts; the server validates every
+request and IDs cannot be renamed. V8 verified input DTOs expose normalized
+personas/assignments; the `adlife city-view` inspector of a V10 run collapses noncausal
 context. V8 works with city-view, city-replay, city-metrics, city-compare and homogeneous
 all-v8 city-study sources. Paired studies accept descriptive-only changes and refuse causal
 profile/state changes. Browser comparison/study/report download remains unshipped.

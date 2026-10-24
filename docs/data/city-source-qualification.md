@@ -4,9 +4,9 @@ This is the release checklist for adding a **real-world** city pack to the packa
 catalog. It is a governance record template, not legal advice and not evidence that a
 city has already been approved.
 
-**Current status:** real-city qualification remains pending. The shipped catalog has three
-`fictional-fixture` entries (`fictional-grid-v2`, `fictional-harbor-loop-v2`, and
-`fictional-river-junction-v2`) and zero `rights-reviewed` real-world entries. Fictional
+**Current status:** real-city qualification remains pending. The shipped catalog has five
+`fictional-fixture` entries (`fictional-grid-v2`, `fictional-harbor-loop-v2`,
+`fictional-new-district-v2`, `fictional-old-town-v2`, and `fictional-river-junction-v2`) and zero `rights-reviewed` real-world entries. Fictional
 fixtures are not substitutes for a reviewed real-city pack.
 
 Passing city-pack validation proves only that a bounded graph is structurally usable.
