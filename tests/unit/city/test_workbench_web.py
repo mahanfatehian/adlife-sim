@@ -2379,7 +2379,8 @@ def test_schema4_api_enforces_funding_limit_as_unselected_evidence(tmp_path: Pat
         )
         submitted = _secure_post(client, "/api/jobs", payload)
         assert submitted.status_code == 202
-        terminal = _await_job(client, submitted.json()["status_url"])
+        # The dense two-day run takes longer than the default wait under coverage tracing.
+        terminal = _await_job(client, submitted.json()["status_url"], timeout=120.0)
 
     result = terminal["result"]
     assert terminal["phase"] == "completed"
