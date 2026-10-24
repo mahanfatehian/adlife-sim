@@ -146,17 +146,19 @@ async def test_service_returns_canonical_order_after_reverse_completion():
 
     provider = _Provider(reverse)
     task = asyncio.create_task(_resolve(module, case, provider=provider))
-    await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered[:4])), 2)
+    # Questions start interleaved over the run; the first four are the first started.
+    first = list(module._interleaved_order(len(requests))[:4])
+    await asyncio.wait_for(asyncio.gather(*(entered[index].wait() for index in first)), 2)
     assert maximum == 4
-    for index in (3, 2, 1, 0):
+    for index in reversed(first):
         released[index].set()
         await asyncio.wait_for(finished[index].wait(), 2)
-    assert completed == [request.request_id for request in reversed(requests[:4])]
+    assert completed == [requests[index].request_id for index in reversed(first)]
     for event in released:
         event.set()
     evaluation = await asyncio.wait_for(task, 3)
     assert maximum == 4
-    assert completed[:4] == [r.request_id for r in reversed(requests[:4])]
+    assert completed[:4] == [requests[index].request_id for index in reversed(first)]
     assert tuple(r.request_id for r in evaluation.records) == tuple(r.request_id for r in requests)
     assert tuple(r.selection_index for r in evaluation.records) == tuple(range(len(requests)))
     assert evaluation == validate_city_cognition_evaluation_v2(
@@ -394,10 +396,197 @@ async def test_each_approved_provider_failure_yields_exact_neutral_fallback(name
     for record in evaluation.records:
         _assert_neutral(record, reason, attempts)
     assert Counter(provider.calls) == {r.request_id: attempts for r in case[3]}
-    assert Counter(sleeps.delays) == (
-        {0.25: len(case[3]), 0.75: len(case[3])} if attempts == 3 else {}
+    assert Counter(sleeps.delays) == Counter(
+        module._retry_delay_seconds(request.request_id, retry, None)
+        for request in case[3]
+        for retry in range(attempts - 1)
     )
     assert provider.close_calls == 1
+
+
+def test_backoff_is_exponential_bounded_and_deterministic_per_request():
+    module = _module()
+    request_id = "cog-" + "a" * 64
+    delays = [module._retry_delay_seconds(request_id, retry, None) for retry in range(6)]
+    assert delays == [module._retry_delay_seconds(request_id, retry, None) for retry in range(6)]
+    for retry, delay in enumerate(delays):
+        base = min(2.0**retry, 8.0)
+        assert 0.8 * base <= delay <= 1.2 * base
+    # Jitter keeps simultaneous retries of different questions apart.
+    assert delays != [module._retry_delay_seconds("cog-" + "b" * 64, r, None) for r in range(6)]
+    # A server's own Retry-After hint wins, bounded to 30 seconds.
+    assert module._retry_delay_seconds(request_id, 0, 7) == 7.0
+    assert module._retry_delay_seconds(request_id, 3, 0) == 0.0
+    assert module._retry_delay_seconds(request_id, 0, 120) == 30.0
+
+
+@pytest.mark.parametrize(("hint", "waited"), [(7, 7.0), (120, 30.0)])
+async def test_a_retry_after_hint_sets_the_wait_before_the_next_attempt(hint, waited):
+    module = _module()
+    errors = importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+    counts = Counter()
+
+    async def call(request):
+        counts[request.request_id] += 1
+        if counts[request.request_id] == 1:
+            raise errors.CityProviderRateLimitError(retry_after_seconds=hint)
+        return _valid(request)
+
+    sleeps = _Sleeps()
+    evaluation = await _resolve(module, _case(), provider=_Provider(call), sleep=sleeps)
+    assert {record.source for record in evaluation.records} == {"provider"}
+    assert {record.attempt_count for record in evaluation.records} == {2}
+    assert sleeps.delays == [waited] * len(evaluation.records)
+
+
+async def test_a_transient_error_during_a_repair_is_retried_from_the_shared_budget():
+    module = _module()
+    errors = importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+    repairs = Counter()
+
+    async def invalid(request):
+        return _invalid("invalid-json")
+
+    async def repair(request, context):
+        repairs[request.request_id] += 1
+        assert context.reason_code == "invalid-json"
+        if repairs[request.request_id] == 1:
+            raise errors.CityProviderTimeoutError()
+        return _valid(request)
+
+    sleeps = _Sleeps()
+    provider = _Provider(invalid, repair=repair)
+    evaluation = await _resolve(module, _case(), provider=provider, sleep=sleeps)
+    for record in evaluation.records:
+        assert record.source == "provider"
+        assert record.attempt_count == 3
+    assert set(repairs.values()) == {2}
+    assert len(sleeps.delays) == len(evaluation.records)
+
+
+async def test_a_wait_that_would_pass_the_aggregate_deadline_falls_back_at_once(monkeypatch):
+    module = _module()
+    errors = importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+    case = _case()
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(module, "_loop_time", lambda: clock["now"])
+
+    async def call(request):
+        # The run's whole-batch deadline is now only five seconds away.
+        clock["now"] = 1000.0 + case[2].aggregate_deadline_seconds - 5
+        raise errors.CityProviderRateLimitError(retry_after_seconds=20)
+
+    sleeps = _Sleeps()
+    evaluation = await _resolve(module, case, provider=_Provider(call), sleep=sleeps)
+    for record in evaluation.records:
+        _assert_neutral(record, "rate-limit-exhausted", 1)
+    assert sleeps.delays == []
+
+
+def _v3_case(*, mode="local", limit=60, profile_updates=None):
+    """A run under selection policy V3, whose ceilings allow 3 retries and 2 repairs."""
+    from adlife.core.domain.city_cognition import (
+        CityCognitionProviderProfileSnapshotV1,
+        city_cognition_provider_profile_revision_sha256,
+    )
+    from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3
+    from adlife.core.simulation.city_cognition_v2 import (
+        build_city_cognition_input_v2,
+        build_city_cognition_requests_v2,
+    )
+    from tests.unit.city.test_city_cognition_v2_contract import profile_data
+    from tests.unit.cognition.test_city_cache_v2 import _evidence
+
+    context, mobility, baseline = _evidence(1)
+    contract = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3
+    requests = build_city_cognition_requests_v2(
+        context, mobility, baseline, causal_contract=contract, funded_response_limit=limit
+    )
+    facts = profile_data(mode)
+    facts.pop("revision_sha256")
+    facts.update(profile_updates or {})
+    profile = CityCognitionProviderProfileSnapshotV1.model_validate(
+        facts | {"revision_sha256": city_cognition_provider_profile_revision_sha256(facts)}
+    )
+    frozen = build_city_cognition_input_v2(
+        context,
+        requests,
+        mode=mode,
+        funded_response_limit=limit,
+        provider_profile=profile,
+        causal_contract=contract,
+    )
+    return context, baseline, frozen, requests
+
+
+async def test_a_v3_run_gives_an_invalid_answer_a_second_repair():
+    module = _module()
+    repairs = Counter()
+
+    async def invalid(request):
+        return _invalid("invalid-json")
+
+    async def repair(request, context):
+        repairs[request.request_id] += 1
+        if repairs[request.request_id] == 1:
+            return _invalid("invalid-schema")
+        assert context.reason_code == "invalid-schema"
+        return _valid(request)
+
+    case = _v3_case(profile_updates={"repair_attempts": 2})
+    evaluation = await _resolve(module, case, provider=_Provider(invalid, repair=repair))
+    assert evaluation.records
+    for record in evaluation.records:
+        assert record.source == "provider"
+        assert record.attempt_count == 3
+    assert set(repairs.values()) == {2}
+
+
+async def test_a_v3_run_retries_a_transient_failure_three_times():
+    module = _module()
+    errors = importlib.import_module("adlife.adapters.cognition.city_provider_transport")
+    counts = Counter()
+
+    async def call(request):
+        counts[request.request_id] += 1
+        if counts[request.request_id] <= 3:
+            raise errors.CityProviderServerError()
+        return _valid(request)
+
+    sleeps = _Sleeps()
+    case = _v3_case(profile_updates={"transient_retries": 3})
+    evaluation = await _resolve(module, case, provider=_Provider(call), sleep=sleeps)
+    for record in evaluation.records:
+        assert record.source == "provider"
+        assert record.attempt_count == 4
+    assert len(sleeps.delays) == 3 * len(evaluation.records)
+
+
+def test_interleaved_order_samples_the_whole_run_early():
+    module = _module()
+    assert module._interleaved_order(0) == ()
+    assert module._interleaved_order(1) == (0,)
+    assert module._interleaved_order(4) == (0, 2, 1, 3)
+    assert module._interleaved_order(8) == (0, 4, 2, 6, 1, 5, 3, 7)
+    for size in range(1, 70):
+        order = module._interleaved_order(size)
+        assert sorted(order) == list(range(size))
+        if size >= 4:
+            # The first half already reaches into the second half of the run.
+            assert max(order[: (size + 1) // 2]) >= size // 2
+
+
+async def test_provider_calls_start_interleaved_while_records_stay_in_request_order():
+    module = _module()
+    provider = _Provider()
+    case = _case(agent_count=4)
+    evaluation = await _resolve(module, case, provider=provider)
+    requests = case[3]
+    order = module._interleaved_order(len(requests))
+    assert provider.calls == [requests[index].request_id for index in order]
+    assert [record.request_id for record in evaluation.records] == [
+        request.request_id for request in requests
+    ]
 
 
 @pytest.mark.parametrize(

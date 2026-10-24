@@ -59,6 +59,8 @@ class CityProviderCallError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("city cognition provider attempt failed")
+        # A server's whole-second Retry-After hint; never provider content.
+        self.retry_after_seconds: int | None = None
 
 
 class CityProviderAuthenticationError(CityProviderCallError):
@@ -82,18 +84,20 @@ class CityProviderRateLimitError(CityProviderCallError):
     reason_code = "rate-limit-exhausted"
     retryable = True
 
-    def __init__(self) -> None:
+    def __init__(self, *, retry_after_seconds: int | None = None) -> None:
         super().__init__()
         self.args = ("city cognition provider rate limited the attempt",)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class CityProviderServerError(CityProviderCallError):
     reason_code = "server-error-exhausted"
     retryable = True
 
-    def __init__(self) -> None:
+    def __init__(self, *, retry_after_seconds: int | None = None) -> None:
         super().__init__()
         self.args = ("city cognition provider returned a transient server error",)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class CityProviderUnavailableError(CityProviderCallError):
@@ -157,7 +161,17 @@ _TransportFailure = Literal[
     "timeout",
     "unavailable",
 ]
-_TransportOutcome = _WireResponse | _TransportFailure
+
+
+@dataclass(frozen=True, slots=True)
+class _RetryLater:
+    """A transient refusal that carried a whole-second Retry-After hint."""
+
+    failure: Literal["rate-limit", "server"]
+    retry_after_seconds: int
+
+
+_TransportOutcome = _WireResponse | _TransportFailure | _RetryLater
 
 
 async def _redact_httpcore_trace(event: str, info: dict[str, Any]) -> None:
@@ -236,15 +250,30 @@ def _peer_address(response: httpcore.Response) -> str:
     return peer
 
 
-def _classify_status(status: int) -> None:
+def _retry_after_seconds(headers: tuple[tuple[bytes, bytes], ...]) -> int | None:
+    """One delta-seconds Retry-After value of at most five digits, else no hint.
+
+    HTTP dates, fractions, signs and repeated headers are ignored rather than trusted.
+    """
+    values = _header_values(headers, b"retry-after")
+    if len(values) != 1:
+        return None
+    value = values[0]
+    if not 1 <= len(value) <= 5 or not value.isdigit():
+        return None
+    return int(value)
+
+
+def _classify_status(status: int, headers: tuple[tuple[bytes, bytes], ...]) -> None:
     if status == 200:
         return
     if status in _AUTHENTICATION_STATUSES:
         raise CityProviderAuthenticationError from None
+    hint = _retry_after_seconds(headers)
     if status == 429:
-        raise CityProviderRateLimitError from None
+        raise CityProviderRateLimitError(retry_after_seconds=hint) from None
     if status in _TRANSIENT_SERVER_STATUSES:
-        raise CityProviderServerError from None
+        raise CityProviderServerError(retry_after_seconds=hint) from None
     raise CityProviderProtocolError from None
 
 
@@ -590,6 +619,12 @@ class CityProviderHttpTransport:
             timed_out = True
         if timed_out:
             raise CityProviderTimeoutError from None
+        if isinstance(outcome, _RetryLater):
+            if outcome.failure == "rate-limit":
+                raise CityProviderRateLimitError(
+                    retry_after_seconds=outcome.retry_after_seconds
+                ) from None
+            raise CityProviderServerError(retry_after_seconds=outcome.retry_after_seconds) from None
         if outcome == "timeout":
             raise CityProviderTimeoutError from None
         if outcome == "unavailable":
@@ -672,6 +707,7 @@ class CityProviderHttpTransport:
         ssl_context = ssl.create_default_context()
         response: _WireResponse | None = None
         failure: _TransportFailure | None = None
+        retry_after: int | None = None
         try:
             await backend.prepare(float(timeout))
             # No credential text or request header exists until peer verification passes.
@@ -710,10 +746,12 @@ class CityProviderHttpTransport:
                 response = await self._read_response(received, resolved)
         except CityProviderAuthenticationError:
             failure = "authentication"
-        except CityProviderRateLimitError:
+        except CityProviderRateLimitError as refusal:
             failure = "rate-limit"
-        except CityProviderServerError:
+            retry_after = refusal.retry_after_seconds
+        except CityProviderServerError as refusal:
             failure = "server"
+            retry_after = refusal.retry_after_seconds
         except CityProviderResponseTooLargeError:
             failure = "response-too-large"
         except CityProviderProtocolError:
@@ -728,6 +766,8 @@ class CityProviderHttpTransport:
             failure = "protocol"
         finally:
             await backend.aclose()
+        if failure in ("rate-limit", "server") and retry_after is not None:
+            return _RetryLater(failure=failure, retry_after_seconds=retry_after)
         if failure is not None:
             return failure
         assert response is not None
@@ -742,7 +782,7 @@ class CityProviderHttpTransport:
             raise CityProviderProtocolError from None
         resolved.verify_peer_address(_peer_address(response))
         headers = tuple(response.headers)
-        _classify_status(response.status)
+        _classify_status(response.status, headers)
         _content_type(headers)
         if _header_values(headers, b"content-encoding"):
             raise CityProviderProtocolError from None

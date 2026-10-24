@@ -141,13 +141,16 @@ def _unsafe(text: str, credential_present: Callable[[str | bytes], bool]) -> boo
     return True
 
 
-def _invalid(reason: CityProviderRepairReasonV2) -> CityProviderAttemptV2:
+def _invalid(
+    reason: CityProviderRepairReasonV2, usage: CityProviderUsageV2 | None = None
+) -> CityProviderAttemptV2:
+    # Usage is kept once the envelope parsed: the provider charged for the answer.
     return CityProviderAttemptV2.model_validate(
         {
             "schema_version": 2,
             "status": "invalid-result",
             "result": None,
-            "usage": None,
+            "usage": None if usage is None else usage.model_dump(mode="python", warnings="none"),
             "repair_context": {
                 "schema_version": 2,
                 "reason_code": reason,
@@ -593,21 +596,21 @@ class CityOpenAICompatibleProviderV2:
         content, usage = _content_and_usage(envelope)
         if content is None:
             # A length-truncated answer with no text at all; the schema repair may recover.
-            return _invalid("invalid-json")
+            return _invalid("invalid-json", usage)
         try:
             document = _strict_json(content)
         except _InvalidJson:
             # V2 has no accepted free-text result fields. Sensitive-persona
             # heuristics apply only to a rejected, unstructured prose answer.
             return _invalid(
-                "unsafe-content" if contains_sensitive_text(content) else "invalid-json"
+                "unsafe-content" if contains_sensitive_text(content) else "invalid-json", usage
             )
         if not isinstance(document, dict):
-            return _invalid("invalid-schema")
+            return _invalid("invalid-schema", usage)
         if contains_labelled_secret_member(document) or any(
             _unsafe(s, present) for s in _strings(document)
         ):
-            return _invalid("unsafe-content")
+            return _invalid("unsafe-content", usage)
         try:
             result = CityCognitionResultV2.model_validate_json(canonical_json(document))
             # Do not trust a constructed model or an existing instance at either boundary.
@@ -615,7 +618,7 @@ class CityOpenAICompatibleProviderV2:
                 result.model_dump(mode="python", warnings="none")
             )
             if result.request_id != request.request_id:
-                return _invalid("request-id-mismatch")
+                return _invalid("request-id-mismatch", usage)
             return CityProviderAttemptV2.model_validate(
                 {
                     "schema_version": 2,
@@ -626,7 +629,7 @@ class CityOpenAICompatibleProviderV2:
                 }
             )
         except (ValueError, TypeError):
-            return _invalid("invalid-schema")
+            return _invalid("invalid-schema", usage)
 
 
 __all__ = ["CityOpenAICompatibleProviderV2"]

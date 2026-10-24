@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -50,6 +51,42 @@ from adlife.core.simulation.city_cognition_v2 import (
 from adlife.core.simulation.spatial_response import SpatialResponseEvaluation
 
 _REPAIRABLE_RESULT_REASONS = frozenset({"invalid-json", "invalid-schema", "request-id-mismatch"})
+# Transient retries wait 1 s, 2 s, 4 s, then 8 s at most, each spread by +/-20 %.
+_BACKOFF_FIRST_SECONDS = 1.0
+_BACKOFF_CEILING_SECONDS = 8.0
+_BACKOFF_JITTER = 0.2
+_RETRY_AFTER_CEILING_SECONDS = 30
+
+
+def _retry_delay_seconds(request_id: str, retry: int, retry_after: int | None) -> float:
+    """The wait before transient retry ``retry`` (0-based) of one question.
+
+    A server's Retry-After hint wins, bounded to 30 s. Otherwise the backoff doubles,
+    with jitter derived from the question and retry number: a rerun waits exactly as
+    long, while simultaneous retries of different questions still spread out.
+    """
+    if retry_after is not None:
+        return float(min(retry_after, _RETRY_AFTER_CEILING_SECONDS))
+    base = min(_BACKOFF_FIRST_SECONDS * 2.0**retry, _BACKOFF_CEILING_SECONDS)
+    digest = hashlib.sha256(f"{request_id}:{retry}".encode()).digest()
+    unit = int.from_bytes(digest[:8], "big") / 2.0**64
+    return base * (1.0 - _BACKOFF_JITTER + 2.0 * _BACKOFF_JITTER * unit)
+
+
+def _interleaved_order(count: int) -> tuple[int, ...]:
+    """Positions ``0..count-1`` in bit-reversed order.
+
+    Questions start in this order, so if the run's deadline cuts the batch short, the
+    unanswered questions are spread over the whole run instead of being its last days.
+    """
+    if count <= 1:
+        return tuple(range(count))
+    width = (count - 1).bit_length()
+    return tuple(sorted(range(count), key=lambda position: int(f"{position:0{width}b}"[::-1], 2)))
+
+
+def _loop_time() -> float:
+    return asyncio.get_running_loop().time()
 
 
 @dataclass(slots=True)
@@ -431,6 +468,7 @@ class CityCognitionServiceV2:
     ) -> dict[int, _Resolution]:
         semaphore = asyncio.Semaphore(cognition_input.concurrency_limit)
         states = {index: _AttemptState() for index, _request in pending_requests}
+        deadline_at = _loop_time() + cognition_input.aggregate_deadline_seconds
         tasks = {
             index: asyncio.create_task(
                 self._resolve_one(
@@ -440,10 +478,13 @@ class CityCognitionServiceV2:
                     semaphore=semaphore,
                     cancellation=cancellation,
                     state=states[index],
+                    deadline_at=deadline_at,
                 ),
                 name=f"city-cognition:{request.request_id}",
             )
-            for index, request in pending_requests
+            for index, request in (
+                pending_requests[position] for position in _interleaved_order(len(pending_requests))
+            )
         }
         task_to_index = {task: index for index, task in tasks.items()}
         cancellation_waiter = asyncio.create_task(
@@ -548,11 +589,22 @@ class CityCognitionServiceV2:
         semaphore: asyncio.Semaphore,
         cancellation: CityCognitionCancellation,
         state: _AttemptState,
+        deadline_at: float,
     ) -> _Resolution:
+        """Ask one question until it is answered or its frozen retry budgets run out.
+
+        One transient budget covers the first call and every repair; repairable invalid
+        answers spend the repair budget. Every attempt counts, so a question never
+        exceeds 1 + transient_retries + repair_attempts calls.
+        """
         settings = cognition_input.effective_settings
         assert settings is not None
         usage = _Usage()
-        for retry_index in range(settings.transient_retries + 1):
+        transient_left = settings.transient_retries
+        repairs_left = settings.repair_attempts
+        retries = 0
+        repair_context: CityProviderRepairContextV2 | None = None
+        while True:
             try:
                 attempt = await self._invoke_provider(
                     request,
@@ -561,10 +613,15 @@ class CityCognitionServiceV2:
                     cancellation=cancellation,
                     state=state,
                     timeout_seconds=settings.attempt_timeout_seconds,
+                    repair_context=repair_context,
                 )
             except CityProviderCallError as error:
-                if error.retryable and retry_index < settings.transient_retries:
-                    await self._sleep(RETRY_DELAYS_SECONDS[retry_index])
+                delay = _retry_delay_seconds(request.request_id, retries, error.retry_after_seconds)
+                # A wait that would outlast the run's deadline cannot produce an answer.
+                if error.retryable and transient_left > 0 and _loop_time() + delay < deadline_at:
+                    transient_left -= 1
+                    retries += 1
+                    await self._sleep(delay)
                     cancellation.raise_if_cancelled()
                     continue
                 return _fallback(
@@ -598,10 +655,7 @@ class CityCognitionServiceV2:
 
             context = attempt.repair_context
             assert context is not None
-            if (
-                settings.repair_attempts == 0
-                or context.reason_code not in _REPAIRABLE_RESULT_REASONS
-            ):
+            if repairs_left == 0 or context.reason_code not in _REPAIRABLE_RESULT_REASONS:
                 return _fallback(
                     request,
                     cognition_input,
@@ -609,53 +663,8 @@ class CityCognitionServiceV2:
                     reason="invalid-result",
                     usage=usage,
                 )
-            try:
-                repaired = await self._invoke_provider(
-                    request,
-                    provider=provider,
-                    semaphore=semaphore,
-                    cancellation=cancellation,
-                    state=state,
-                    timeout_seconds=settings.attempt_timeout_seconds,
-                    repair_context=context,
-                )
-            except CityProviderCallError as error:
-                return _fallback(
-                    request,
-                    cognition_input,
-                    attempts=state.count,
-                    reason=error.reason_code,
-                    usage=usage,
-                )
-            try:
-                usage.add(repaired.usage)
-            except CityProviderProtocolError as error:
-                return _fallback(
-                    request,
-                    cognition_input,
-                    attempts=state.count,
-                    reason=error.reason_code,
-                    usage=_Usage(),
-                )
-            if repaired.status == "valid":
-                assert repaired.result is not None
-                prompt_tokens, completion_tokens = _usage_values(usage)
-                return _Resolution(
-                    request=request,
-                    source="provider",
-                    result=repaired.result,
-                    attempt_count=state.count,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                )
-            return _fallback(
-                request,
-                cognition_input,
-                attempts=state.count,
-                reason="invalid-result",
-                usage=usage,
-            )
-        raise AssertionError("provider retry loop did not terminate")
+            repairs_left -= 1
+            repair_context = context
 
     @staticmethod
     async def _invoke_provider(

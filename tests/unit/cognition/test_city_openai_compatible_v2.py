@@ -154,6 +154,31 @@ async def test_invalid_inner_fields_return_typed_invalid_attempt(field, value) -
 
 
 @pytest.mark.parametrize(
+    "content",
+    [
+        "invalid-schema",
+        "request-id-mismatch",
+        "prose",
+    ],
+)
+async def test_invalid_answers_keep_the_tokens_the_provider_reported(content) -> None:
+    _module()
+    request, _ = _provider_case()
+    text = {
+        "invalid-schema": json.dumps(_result(request.request_id, affect="happy")),
+        "request-id-mismatch": json.dumps(_result("cog-" + "0" * 64)),
+        "prose": "I think this ad is quite interesting.",
+    }[content]
+    _, _, provider, *_ = _provider(_completion(text))
+    attempt = await provider.call(request)
+    assert attempt.status == "invalid-result"
+    # The provider was paid for this answer, so a later fallback reports its usage.
+    assert attempt.usage is not None
+    assert attempt.usage.prompt_tokens == 20
+    await provider.aclose()
+
+
+@pytest.mark.parametrize(
     "field",
     [
         "schema_version",

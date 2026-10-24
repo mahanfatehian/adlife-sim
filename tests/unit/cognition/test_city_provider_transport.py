@@ -257,6 +257,45 @@ async def test_transport_refuses_unsafe_protocol_without_following_redirects(res
     credential.clear()
 
 
+@pytest.mark.parametrize(
+    ("status", "retry_after", "error", "seconds"),
+    [
+        (429, "7", "CityProviderRateLimitError", 7),
+        (503, "2", "CityProviderServerError", 2),
+        (429, "0", "CityProviderRateLimitError", 0),
+        (429, "120", "CityProviderRateLimitError", 120),
+        (429, None, "CityProviderRateLimitError", None),
+        (503, None, "CityProviderServerError", None),
+        (429, "soon", "CityProviderRateLimitError", None),
+        (429, "-1", "CityProviderRateLimitError", None),
+        (429, "1.5", "CityProviderRateLimitError", None),
+        (429, "99999999", "CityProviderRateLimitError", None),
+        (503, "Wed, 21 Oct 2026 07:28:00 GMT", "CityProviderServerError", None),
+    ],
+)
+async def test_transport_carries_only_a_bounded_whole_second_retry_after_hint(
+    status, retry_after, error, seconds
+):
+    headers = () if retry_after is None else (("Retry-After", retry_after),)
+    transport, credential, _resolver, _factory = _transport(
+        (_http_response(b"{}", status=status, headers=headers),)
+    )
+    with pytest.raises(getattr(_module(), error)) as caught:
+        await transport.post_json({})
+    assert caught.value.retry_after_seconds == seconds
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    await transport.aclose()
+    credential.clear()
+
+
+def test_errors_without_a_hint_default_to_no_retry_after():
+    module = _module()
+    names = ("CityProviderRateLimitError", "CityProviderServerError", "CityProviderTimeoutError")
+    for name in names:
+        assert getattr(module, name)().retry_after_seconds is None
+
+
 @pytest.mark.parametrize("limits", [{"declared": 1}, {"wire": 2}, {"decoded": 1}])
 async def test_transport_enforces_each_independent_response_limit(limits):
     transport, credential, _resolver, _factory = _transport((_http_response(b"{}"),), **limits)
