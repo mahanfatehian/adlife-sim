@@ -22,6 +22,7 @@ from adlife.city.workbench_workspace import (
     UnsafeWorkbenchWorkspace,
     prepare_workbench_workspace,
 )
+from adlife.core.domain.city_cognition_v2 import CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
 from adlife.core.ports.run_store import DuplicateRun, UnsafeRunLocation
 from tests.integration.test_city_cognition_v2_artifacts import V10_PATHS
 from tests.unit.city.test_city_run_preparation import _validated
@@ -85,11 +86,13 @@ def test_schema4_preflight_requires_exact_compatibility_before_endpoint_or_crede
     workspace = prepare_workbench_workspace(tmp_path / "state")
     profiles = ProviderProfileRegistry(workspace)
     profile = profiles.create(_draft(profile_id="provider-main"))
+    # A new run, frozen as the server freezes it: the current contract and its default limit.
     validated = compiled_v4(
         mode="local",
         mutation=lambda payload: payload["cognition"].update(
             provider_revision_sha256=profile.revision_sha256
         ),
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     )
     registry = module.WorkbenchProviderCompatibilityRegistry()
     key = module.build_workbench_provider_compatibility_key(
@@ -149,7 +152,9 @@ def test_schema4_offline_preflight_bypasses_profiles_and_compatibility(tmp_path,
         credential_store=Forbidden(),
         compatibility_registry=Forbidden(),
     )
-    operation = repository.preflight_cognition_v2(compiled_v4(mode=mode))
+    operation = repository.preflight_cognition_v2(
+        compiled_v4(mode=mode, causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT)
+    )
     assert operation.profile is operation.endpoint is operation.credential is None
 
 
@@ -1151,6 +1156,7 @@ def test_a_job_verification_seeds_the_listing_through_the_same_fingerprint(
             payload["settings"].update(run_id="seeded-v10", agent_count=1, days=2, seed=42),
             payload["population"]["personas"][0].update(count=1),
         ),
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     )
     loads = _StoreLoads(monkeypatch)
     manager = CityJobManager(repository)

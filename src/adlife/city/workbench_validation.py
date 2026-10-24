@@ -34,12 +34,14 @@ from adlife.city.workbench_input import (
     WorkbenchRunInputV3,
     WorkbenchRunInputV4,
     materialize_workbench_population,
+    workbench_selection_limit_refusal,
 )
 from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CityCognitionCausalContractV2,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
@@ -108,6 +110,8 @@ def _absolute_windows(
 
 def _normalize_draft(
     draft: WorkbenchRunDraftDocument,
+    *,
+    causal_contract: CityCognitionCausalContractV2,
 ) -> (
     NormalizedWorkbenchRunDraft
     | NormalizedWorkbenchRunDraftV2
@@ -157,7 +161,19 @@ def _normalize_draft(
     )
     if isinstance(draft, WorkbenchRunDraftV4):
         selection = draft.cognition
-        contract = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
+        contract = CityCognitionCausalContractV2.model_validate_json(
+            canonical_json(causal_contract)
+        )
+        limits = CITY_COGNITION_SELECTION_LIMITS[contract.selection_policy_version]
+        refusal = workbench_selection_limit_refusal(
+            mode=selection.mode,
+            funded_response_limit=selection.funded_response_limit,
+            selection_policy_version=contract.selection_policy_version,
+        )
+        if refusal is not None:
+            raise WorkbenchValidationError(
+                "invalid-cognition", "cognition.funded_response_limit", refusal
+            )
         return NormalizedWorkbenchRunDraftV4(
             city_id=draft.city_id,
             scenario=scenario,
@@ -165,34 +181,36 @@ def _normalize_draft(
                 draft.population, agent_count=draft.settings.agent_count
             ),
             settings=draft.settings,
-            cognition=NormalizedWorkbenchCognitionV4(
-                effect_scope=selection.effect_scope,
-                mode=selection.mode,
-                provider_profile_id=selection.provider_profile_id,
-                provider_revision_sha256=selection.provider_revision_sha256,
-                funded_response_limit=selection.funded_response_limit,
-                causal_contract=contract,
-                causal_contract_sha256=contract.fingerprint,
-                request_schema_version=2,
-                selected_requests_per_agent=4,
-                selected_requests_per_run=60,
-                concurrency_limit=4,
-                max_request_bytes=8192,
-                max_terminal_record_bytes=8192,
-                max_wire_response_bytes=1_048_576,
-                max_output_tokens_per_attempt=CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-                reservation_tokens_per_request=CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
-                initial_attempts=1,
-                transient_retries=2,
-                repair_attempts=1,
-                attempt_timeout_seconds=30,
-                aggregate_deadline_seconds=180,
-                aggregate_output_token_ceiling=0
-                if selection.mode in {"rules", "mock"}
-                else selection.funded_response_limit
-                * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
-                response_model="spatial-response-v2",
-                rule_state_noninterference=True,
+            # The limit row's plain integers are re-checked against the version's literals.
+            cognition=NormalizedWorkbenchCognitionV4.model_validate(
+                dict(
+                    effect_scope=selection.effect_scope,
+                    mode=selection.mode,
+                    provider_profile_id=selection.provider_profile_id,
+                    provider_revision_sha256=selection.provider_revision_sha256,
+                    funded_response_limit=selection.funded_response_limit,
+                    causal_contract=contract,
+                    causal_contract_sha256=contract.fingerprint,
+                    request_schema_version=2,
+                    selected_requests_per_agent=limits.selected_requests_per_agent,
+                    selected_requests_per_run=limits.selected_requests_per_run,
+                    concurrency_limit=limits.concurrency_limit(selection.mode),
+                    max_request_bytes=8192,
+                    max_terminal_record_bytes=8192,
+                    max_wire_response_bytes=1_048_576,
+                    max_output_tokens_per_attempt=CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+                    reservation_tokens_per_request=limits.reservation_tokens_per_request,
+                    initial_attempts=1,
+                    transient_retries=limits.transient_retries_ceiling,
+                    repair_attempts=limits.repair_attempts_ceiling,
+                    attempt_timeout_seconds=30,
+                    aggregate_deadline_seconds=limits.aggregate_deadline_seconds,
+                    aggregate_output_token_ceiling=limits.aggregate_output_token_ceiling(
+                        selection.mode, selection.funded_response_limit
+                    ),
+                    response_model="spatial-response-v2",
+                    rule_state_noninterference=True,
+                )
             ),
         )
     if isinstance(draft, WorkbenchRunDraftV3):
@@ -314,8 +332,17 @@ def construct_workbench_run(
     draft: WorkbenchRunDraftDocument,
     *,
     selected_pack: CityPackV2 | None = None,
+    causal_contract: CityCognitionCausalContractV2 = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
 ) -> ValidatedWorkbenchRun:
-    """Construct complete deterministic inputs without network or filesystem writes."""
+    """Construct complete deterministic inputs without network or filesystem writes.
+
+    A schema-4 draft is frozen with ``causal_contract`` and checked against that
+    contract's selection-policy version. The workbench server always passes
+    ``CURRENT_CITY_COGNITION_CAUSAL_CONTRACT``, so every new run uses the current
+    version; the V2 default keeps direct callers of the historical contract unchanged.
+    """
+    if not isinstance(causal_contract, CityCognitionCausalContractV2):
+        raise TypeError("causal_contract must be a CityCognitionCausalContractV2")
     if not isinstance(
         draft, (WorkbenchRunDraft, WorkbenchRunDraftV2, WorkbenchRunDraftV3, WorkbenchRunDraftV4)
     ):
@@ -324,7 +351,7 @@ def construct_workbench_run(
         raise TypeError("selected_pack must be a CityPackV2")
     draft = type(draft).model_validate_json(canonical_json(draft))
 
-    normalized = _normalize_draft(draft)
+    normalized = _normalize_draft(draft, causal_contract=causal_contract)
     if selected_pack is None:
         pack = _load_pack(normalized.city_id)
     elif selected_pack.city_id != normalized.city_id:

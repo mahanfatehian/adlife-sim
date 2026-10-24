@@ -32,7 +32,17 @@ from adlife.core.domain.city_cognition import (
     canonical_city_cognition_provider_profile_payload,
     city_cognition_provider_profile_revision_sha256,
 )
+from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_SELECTION_LIMITS
 from adlife.core.domain.serialization import canonical_json
+
+# A profile serves every selection-policy version, so it admits the widest retry ceilings;
+# each run input checks them against its own frozen version.
+_MAX_TRANSIENT_RETRIES = max(
+    limits.transient_retries_ceiling for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
+_MAX_REPAIR_ATTEMPTS = max(
+    limits.repair_attempts_ceiling for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
 
 
 def _draft(**updates: object) -> ProviderProfileDraftV1:
@@ -106,10 +116,16 @@ def test_profile_models_are_strict_frozen_and_accept_exact_boundaries() -> None:
         temperature=2.0,
         top_p=1.0,
         seed=2**63 - 1,
+        transient_retries=_MAX_TRANSIENT_RETRIES,
+        repair_attempts=_MAX_REPAIR_ATTEMPTS,
     )
 
     assert minimum.max_output_tokens == 1
     assert maximum.seed == 2**63 - 1
+    assert (maximum.transient_retries, maximum.repair_attempts) == (
+        _MAX_TRANSIENT_RETRIES,
+        _MAX_REPAIR_ATTEMPTS,
+    )
     with pytest.raises(ValidationError):
         minimum.profile_id = "changed"  # type: ignore[misc]
     with pytest.raises(ValidationError):
@@ -155,10 +171,10 @@ def test_profile_models_are_strict_frozen_and_accept_exact_boundaries() -> None:
         ("attempt_timeout_seconds", 31),
         ("transient_retries", True),
         ("transient_retries", -1),
-        ("transient_retries", 3),
+        ("transient_retries", _MAX_TRANSIENT_RETRIES + 1),
         ("repair_attempts", True),
         ("repair_attempts", -1),
-        ("repair_attempts", 2),
+        ("repair_attempts", _MAX_REPAIR_ATTEMPTS + 1),
         ("origin_approval_id", "aux"),
         ("origin_approval_id", "sk-" + "a" * 30),
         ("origin_approval_id", "approval/escape"),

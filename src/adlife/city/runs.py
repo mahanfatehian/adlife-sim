@@ -786,6 +786,7 @@ def prepare_city_scientific_run_v2(
         mobility,
         baseline,
         causal_contract=cognition.causal_contract,
+        funded_response_limit=cognition.funded_response_limit,
     )
     frozen = build_city_cognition_input_v2(
         context,
@@ -1329,6 +1330,7 @@ def _replay_city_run_v10(
             mobility,
             baseline,
             causal_contract=cognition_input.causal_contract,
+            funded_response_limit=cognition_settings.funded_response_limit,
         )
         rebuilt_input = build_city_cognition_input_v2(
             context,

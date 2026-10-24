@@ -24,8 +24,8 @@ from adlife.core.domain.city_cognition import (
     Hash,
 )
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CityCognitionCausalContractV2,
     CityCognitionEffectiveSettingsV2,
 )
@@ -55,7 +55,7 @@ def _scope_contract_hashes(effect_scope: ProviderEffectScope) -> dict[str, str |
     if effect_scope != "bounded-signals-v1":
         raise ValueError("provider effect scope is invalid")
     contract = CityCognitionCausalContractV2.model_validate(
-        CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2.model_dump(mode="python")
+        CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.model_dump(mode="python")
     )
     return {
         "causal_contract_sha256": contract.fingerprint,

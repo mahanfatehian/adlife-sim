@@ -20,7 +20,8 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from adlife.core.domain.city_cognition import Hash, _safe_text
 from adlife.core.domain.city_cognition_v2 import (
-    _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2,
+    _CITY_COGNITION_SELECTION_LIMITS,
+    _MAX_SELECTED_REQUESTS_ANY_VERSION,
     CityCognitionAffectV2,
     CityCognitionCoverageCountsV2,
     CityCognitionCredibilityV2,
@@ -33,6 +34,7 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionRelevanceV2,
     CityCognitionSalienceV2,
     CityCognitionTerminalRecordV2,
+    _terminal_policy_version,
 )
 from adlife.core.domain.city_run import build_city_cognition_manifest_receipt_v2
 from adlife.core.domain.person import DomainModel, contains_secret_or_email_text
@@ -75,9 +77,13 @@ from adlife.core.simulation.spatial_response_v2 import (
 _MAX_CITY_AGENTS = 30
 _MAX_CAMPAIGNS = 20
 _MAX_STATE_ROWS = _MAX_CITY_AGENTS * _MAX_CAMPAIGNS
-_MAX_SELECTED_REQUESTS = 60
-_MAX_SELECTED_REQUESTS_PER_AGENT = 4
-_FUNDED_RESPONSE_LIMITS = frozenset({10, 20, 40, 60})
+# Widest bounds of every selection-policy version; documents check their own version.
+_MAX_SELECTED_REQUESTS = _MAX_SELECTED_REQUESTS_ANY_VERSION
+_FUNDED_RESPONSE_LIMITS = frozenset(
+    limit
+    for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+    for limit in limits.funded_response_limits
+)
 _OFFLINE_MODES = frozenset({"rules", "mock"})
 # The manifest-V10 receipt binds offline runs to this exact null-settings digest.
 _NULL_EFFECTIVE_SETTINGS_SHA256 = sha256(
@@ -503,7 +509,7 @@ class SpatialProviderDependentCognitionMetricsV2(_SpatialResponseMetricsModelV2)
     provider_revision_sha256: Hash | None
     provider_profile_snapshot_sha256: Hash | None
     effective_settings_sha256: Hash
-    funded_response_limit: Literal[10, 20, 40, 60]
+    funded_response_limit: Literal[10, 20, 40, 60, 120, 250, 500, 1000]
     coverage: CityCognitionCoverageCountsV2
     source_counts: CityCognitionOutcomeCountsV2
     fallback_counts: CityCognitionReasonCountsV2
@@ -526,8 +532,16 @@ class SpatialProviderDependentCognitionMetricsV2(_SpatialResponseMetricsModelV2)
     @classmethod
     def exact_funded_limit(cls, value: object) -> object:
         if type(value) is not int or value not in _FUNDED_RESPONSE_LIMITS:
-            raise ValueError("funded response limit must be integer 10, 20, 40 or 60")
+            raise ValueError("funded response limit must be an allowed exact integer")
         return value
+
+    @property
+    def selection_policy_version(self) -> int:
+        """The selection-policy version whose frozen hashes these metrics bind."""
+        version = _terminal_policy_version(self)
+        if version is None:
+            raise ValueError("cognition metrics do not bind the frozen V2 causal contract")
+        return version
 
     @field_validator("provider_profile_id")
     @classmethod
@@ -547,11 +561,9 @@ class SpatialProviderDependentCognitionMetricsV2(_SpatialResponseMetricsModelV2)
 
     @model_validator(mode="after")
     def coherent_cognition_family(self) -> Self:
-        if any(
-            getattr(self, field) != expected
-            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2
-        ):
-            raise ValueError("cognition metrics do not bind the frozen V2 causal contract")
+        limits = _CITY_COGNITION_SELECTION_LIMITS[self.selection_policy_version]
+        if self.funded_response_limit not in limits.funded_response_limits:
+            raise ValueError("cognition funding is not allowed by its selection policy version")
         coverage, sources, reasons = self.coverage, self.source_counts, self.fallback_counts
         selected = coverage.selected_request_count
         if (
@@ -574,7 +586,7 @@ class SpatialProviderDependentCognitionMetricsV2(_SpatialResponseMetricsModelV2)
             if (
                 any(value is not None for value in provider_fields)
                 or self.effective_settings_sha256 != _NULL_EFFECTIVE_SETTINGS_SHA256
-                or self.funded_response_limit != _MAX_SELECTED_REQUESTS
+                or self.funded_response_limit != limits.offline_funded_response_limit
                 or getattr(sources, self.mode) != selected
             ):
                 raise ValueError(
@@ -694,10 +706,11 @@ class SpatialResponseMetricsV2(_SpatialResponseMetricsModelV2):
         ):
             raise ValueError("V10 outer provenance does not match the cognition metrics")
         coverage = cognition.coverage
+        limits = _CITY_COGNITION_SELECTION_LIMITS[cognition.selection_policy_version]
         if (
             coverage.eligible_response_count != baseline.response_count.numerator
             or coverage.selected_request_count
-            > _MAX_SELECTED_REQUESTS_PER_AGENT * self.population_size
+            > limits.selected_requests_per_agent * self.population_size
         ):
             raise ValueError("cognition coverage does not match the rule baseline responses")
         # Both tracks start from the same declared state.

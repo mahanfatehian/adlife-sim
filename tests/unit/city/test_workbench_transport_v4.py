@@ -10,13 +10,17 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from adlife.city import workbench_transport as transport
+from adlife.city.workbench_input import WORKBENCH_DEFAULT_FUNDED_RESPONSE_LIMITS
 from adlife.city.workbench_security import strict_json_object
-from adlife.city.workbench_validation import construct_workbench_run
+from adlife.city.workbench_validation import WorkbenchValidationError, construct_workbench_run
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
-    CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3,
+    CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
 )
 from adlife.core.domain.serialization import canonical_json
 from tests.unit.city.test_workbench_input import (
@@ -25,6 +29,22 @@ from tests.unit.city.test_workbench_input import (
     normalized_v3_input,
 )
 from tests.unit.city.test_workbench_validation import _draft
+
+# Every selection-policy version's frozen contract. A direct construction keeps V2, as a
+# stored run does; the server freezes every new run with the current version.
+CONTRACTS = {
+    2: CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    3: CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3,
+}
+CURRENT = CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION
+CURRENT_LIMITS = CITY_COGNITION_SELECTION_LIMITS[CURRENT]
+ALL_FUNDED_LIMITS = sorted(
+    {
+        limit
+        for row in CITY_COGNITION_SELECTION_LIMITS.values()
+        for limit in row.funded_response_limits
+    }
+)
 
 
 def v4_model(name):
@@ -43,12 +63,23 @@ def draft_v4_data(*, mode="rules", limit=None):
     return payload
 
 
-def compiled_v4(*, mode="rules", limit=None, mutation=None):
+def compiled_v4(*, mode="rules", limit=None, mutation=None, causal_contract=None):
     payload = draft_v4_data(mode=mode, limit=limit)
     if mutation is not None:
         mutation(payload)
     draft = v4_model("WorkbenchRunDraftV4").model_validate_json(json.dumps(payload))
-    return construct_workbench_run(draft)
+    if causal_contract is None:
+        return construct_workbench_run(draft)
+    return construct_workbench_run(draft, causal_contract=causal_contract)
+
+
+def compiled_version(version, *, mode="rules", limit=None, mutation=None):
+    """Freeze one draft with a version's contract; offline modes take its offline limit."""
+    if limit is None and mode in {"rules", "mock"}:
+        limit = CITY_COGNITION_SELECTION_LIMITS[version].offline_funded_response_limit
+    return compiled_v4(
+        mode=mode, limit=limit, mutation=mutation, causal_contract=CONTRACTS[version]
+    )
 
 
 def test_schema4_normalizes_exact_bounded_cognition_contract():
@@ -87,11 +118,54 @@ def test_schema4_normalizes_exact_bounded_cognition_contract():
 
 
 @pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
+def test_schema4_current_contract_freezes_its_own_version_ceilings(mode):
+    # The server freezes every new run with the current contract and that version's row.
+    payload = draft_v4_data(mode=mode)
+    payload["settings"]["seed"] = str(payload["settings"]["seed"])
+    compiled = construct_workbench_run(
+        transport.parse_workbench_http_draft(payload),
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    )
+    cognition = compiled.workbench_input.draft.cognition
+    assert cognition.causal_contract == CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
+    assert cognition.causal_contract.selection_policy_version == CURRENT
+    assert cognition.causal_contract_sha256 == cognition.causal_contract.fingerprint
+    limit = WORKBENCH_DEFAULT_FUNDED_RESPONSE_LIMITS[mode]
+    expected = {
+        "funded_response_limit": limit,
+        "selected_requests_per_agent": CURRENT_LIMITS.selected_requests_per_agent,
+        "selected_requests_per_run": CURRENT_LIMITS.selected_requests_per_run,
+        "concurrency_limit": CURRENT_LIMITS.concurrency_limit(mode),
+        "reservation_tokens_per_request": CURRENT_LIMITS.reservation_tokens_per_request,
+        "transient_retries": CURRENT_LIMITS.transient_retries_ceiling,
+        "repair_attempts": CURRENT_LIMITS.repair_attempts_ceiling,
+        "aggregate_deadline_seconds": CURRENT_LIMITS.aggregate_deadline_seconds,
+        "aggregate_output_token_ceiling": CURRENT_LIMITS.aggregate_output_token_ceiling(
+            mode, limit
+        ),
+    }
+    assert {name: getattr(cognition, name) for name in expected} == expected
+    assert len(canonical_json(compiled.workbench_input).encode()) <= 131_072
+
+
+@pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
 def test_schema4_funding_defaults_and_derived_ceiling(mode):
-    cognition = compiled_v4(mode=mode).workbench_input.draft.cognition
-    assert cognition.funded_response_limit == (60 if mode in {"rules", "mock"} else 20)
+    # An omitted limit takes the current version's default: offline modes and online AI
+    # cover every noticed ad, and a local server, which answers one at a time, 120.
+    cognition = compiled_v4(
+        mode=mode, causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
+    ).workbench_input.draft.cognition
+    offline = mode in {"rules", "mock"}
+    default = {
+        "rules": CURRENT_LIMITS.offline_funded_response_limit,
+        "mock": CURRENT_LIMITS.offline_funded_response_limit,
+        "local": 120,
+        "remote": max(CURRENT_LIMITS.funded_response_limits),
+    }[mode]
+    assert cognition.funded_response_limit == WORKBENCH_DEFAULT_FUNDED_RESPONSE_LIMITS[mode]
+    assert cognition.funded_response_limit == default
     assert cognition.aggregate_output_token_ceiling == (
-        0 if mode in {"rules", "mock"} else 20 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+        0 if offline else default * CURRENT_LIMITS.reservation_tokens_per_request
     )
     assert set(v4_model("WorkbenchCognitionDraftV4").model_fields) == {
         "effect_scope",
@@ -100,6 +174,13 @@ def test_schema4_funding_defaults_and_derived_ceiling(mode):
         "provider_revision_sha256",
         "funded_response_limit",
     }
+    # A direct call keeps the historical V2 contract, which admits none of these defaults.
+    with pytest.raises(WorkbenchValidationError) as error:
+        compiled_v4(mode=mode)
+    assert (error.value.code, error.value.field) == (
+        "invalid-cognition",
+        "cognition.funded_response_limit",
+    )
 
 
 @pytest.mark.parametrize("mode", [[], {}, True, 4, None])
@@ -112,13 +193,18 @@ def test_schema4_invalid_mode_is_a_validation_refusal(mode):
 
 
 @pytest.mark.parametrize("mode", ["local", "remote"])
-@pytest.mark.parametrize("limit", [10, 20, 40, 60])
-def test_schema4_provider_whole_response_limits(mode, limit):
-    cognition = compiled_v4(mode=mode, limit=limit).workbench_input.draft.cognition
-    assert (
-        cognition.aggregate_output_token_ceiling
-        == limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
-    )
+@pytest.mark.parametrize("version", sorted(CONTRACTS))
+@pytest.mark.parametrize("limit", ALL_FUNDED_LIMITS)
+def test_schema4_provider_whole_response_limits(mode, version, limit):
+    # Each frozen version admits only its own published options, reserved in whole requests.
+    limits = CITY_COGNITION_SELECTION_LIMITS[version]
+    if limit not in limits.funded_response_limits:
+        with pytest.raises(WorkbenchValidationError) as error:
+            compiled_version(version, mode=mode, limit=limit)
+        assert error.value.field == "cognition.funded_response_limit"
+        return
+    cognition = compiled_version(version, mode=mode, limit=limit).workbench_input.draft.cognition
+    assert cognition.aggregate_output_token_ceiling == limit * limits.reservation_tokens_per_request
 
 
 @pytest.mark.parametrize("mode", ["rules", "mock", "local", "remote"])
@@ -215,8 +301,9 @@ def test_schema4_browser_cannot_supply_derived_policies_limits_or_secrets(field)
     ],
 )
 @pytest.mark.parametrize("kind", ["bool", "float", "string"])
-def test_schema4_normalized_integer_fields_require_exact_tokens(field, kind):
-    cognition = compiled_v4().workbench_input.draft.cognition
+@pytest.mark.parametrize("version", sorted(CONTRACTS))
+def test_schema4_normalized_integer_fields_require_exact_tokens(field, kind, version):
+    cognition = compiled_version(version).workbench_input.draft.cognition
     payload = cognition.model_dump(mode="json")
     value = payload[field]
     payload[field] = True if kind == "bool" else float(value) if kind == "float" else str(value)
@@ -224,10 +311,24 @@ def test_schema4_normalized_integer_fields_require_exact_tokens(field, kind):
         type(cognition).model_validate_json(json.dumps(payload))
 
 
-@pytest.mark.parametrize("mutation", ["hash", "policy-hash", "policy-document", "ceiling", "bool"])
-def test_schema4_normalized_contract_cannot_be_rebound(mutation):
-    cognition = compiled_v4().workbench_input.draft.cognition
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "hash",
+        "policy-hash",
+        "policy-document",
+        "ceiling",
+        "bool",
+        "other-version-contract",
+        "other-version-retries",
+    ],
+)
+@pytest.mark.parametrize("version", sorted(CONTRACTS))
+def test_schema4_normalized_contract_cannot_be_rebound(mutation, version):
+    cognition = compiled_version(version).workbench_input.draft.cognition
     payload = cognition.model_dump(mode="json")
+    other = next(item for item in sorted(CONTRACTS) if item != version)
+    other_limits = CITY_COGNITION_SELECTION_LIMITS[other]
     if mutation == "hash":
         payload["causal_contract_sha256"] = "f" * 64
     elif mutation == "policy-hash":
@@ -235,15 +336,23 @@ def test_schema4_normalized_contract_cannot_be_rebound(mutation):
     elif mutation == "policy-document":
         payload["causal_contract"]["influence_policy"]["affect_adjustments"][2]["weight"] = -0.0
     elif mutation == "ceiling":
-        payload["aggregate_output_token_ceiling"] = CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+        limits = CITY_COGNITION_SELECTION_LIMITS[version]
+        payload["aggregate_output_token_ceiling"] = limits.max_aggregate_output_tokens
+    elif mutation == "other-version-contract":
+        # A coherent contract and limit of another version still disagree with this row.
+        payload["causal_contract"] = CONTRACTS[other].model_dump(mode="json")
+        payload["causal_contract_sha256"] = CONTRACTS[other].fingerprint
+        payload["funded_response_limit"] = other_limits.offline_funded_response_limit
+    elif mutation == "other-version-retries":
+        payload["transient_retries"] = other_limits.transient_retries_ceiling
     else:
         payload["rule_state_noninterference"] = 1
     with pytest.raises(ValidationError):
         type(cognition).model_validate_json(json.dumps(payload))
 
 
-def view_v4_data():
-    source = compiled_v4().workbench_input
+def view_v4_data(version=CURRENT):
+    source = compiled_version(version).workbench_input
     draft = source.draft
     return {
         "run_id": draft.settings.run_id,
@@ -262,9 +371,11 @@ def view_v4_data():
     }
 
 
-def test_schema4_exact_input_and_view_union_dispatch():
+@pytest.mark.parametrize("version", sorted(CONTRACTS))
+def test_schema4_exact_input_and_view_union_dispatch(version):
+    # Stored V2 inputs and new current-version inputs dispatch through the same union.
     models = importlib.import_module("adlife.city.workbench_input")
-    source = compiled_v4().workbench_input
+    source = compiled_version(version).workbench_input
     assert models.parse_workbench_run_input_json(canonical_json(source)) == source
     assert (
         TypeAdapter(models.WorkbenchRunInputDocument).validate_json(canonical_json(source))
@@ -272,7 +383,7 @@ def test_schema4_exact_input_and_view_union_dispatch():
     )
     view_model = getattr(transport, "WorkbenchRunInputViewV4", None)
     assert view_model is not None
-    view = view_model.model_validate_json(json.dumps(view_v4_data()))
+    view = view_model.model_validate_json(json.dumps(view_v4_data(version)))
     assert (
         TypeAdapter(transport.WorkbenchRunInputViewDocument).validate_json(canonical_json(view))
         == view
@@ -297,7 +408,7 @@ def test_schema4_view_refuses_every_unsupported_pair(input_version, run_version)
 
 @pytest.mark.parametrize("version", [5, True, 4.0, "4"])
 def test_schema4_transport_refuses_future_or_coerced_versions(version):
-    source = compiled_v4().workbench_input.model_dump(mode="json")
+    source = compiled_version(CURRENT).workbench_input.model_dump(mode="json")
     source["schema_version"] = version
     parser = importlib.import_module("adlife.city.workbench_input").parse_workbench_run_input_json
     with pytest.raises(ValueError):
@@ -313,7 +424,7 @@ def test_schema4_transport_refuses_future_or_coerced_versions(version):
     "kind", ["duplicate", "nested-duplicate", "nan", "infinity", "overflow", "utf8", "oversized"]
 )
 def test_schema4_raw_json_is_unambiguous_and_bounded(kind):
-    source = canonical_json(compiled_v4().workbench_input).encode()
+    source = canonical_json(compiled_version(CURRENT).workbench_input).encode()
     if kind == "duplicate":
         source = source.replace(b'"schema_version":4', b'"schema_version":4,"schema_version":4', 1)
     elif kind == "nested-duplicate":
@@ -335,7 +446,7 @@ def test_schema4_raw_json_is_unambiguous_and_bounded(kind):
 
 
 def test_schema4_input_raw_byte_boundary_is_inclusive():
-    source = canonical_json(compiled_v4().workbench_input).encode()
+    source = canonical_json(compiled_version(CURRENT).workbench_input).encode()
     parser = importlib.import_module("adlife.city.workbench_input").parse_workbench_run_input_json
     assert parser(source + b" " * (131072 - len(source))).schema_version == 4
     with pytest.raises(ValueError):
@@ -355,12 +466,12 @@ def test_historical_workbench_canonical_bytes_are_unchanged():
     ]
 
 
-def evidence_v4(*, mutation=None):
+def evidence_v4(*, mutation=None, version=CURRENT):
     from adlife.core.simulation.spatial_attention import evaluate_spatial_attention
     from adlife.core.simulation.spatial_opportunity import evaluate_spatial_opportunities
     from adlife.core.simulation.spatial_response import evaluate_spatial_responses
 
-    compiled = compiled_v4(mode="mock", mutation=mutation)
+    compiled = compiled_version(version, mode="mock", mutation=mutation)
     opportunities = evaluate_spatial_opportunities(compiled.mobility, compiled.scenario)
     attention = evaluate_spatial_attention(opportunities, seed=42)
     baseline = evaluate_spatial_responses(
@@ -390,6 +501,15 @@ def context_v4(compiled, baseline, **changes):
     )
 
 
+def frozen_selection(compiled):
+    """The contract and funded limit a run froze, exactly as preparation binds them."""
+    cognition = compiled.workbench_input.draft.cognition
+    return {
+        "causal_contract": cognition.causal_contract,
+        "funded_response_limit": cognition.funded_response_limit,
+    }
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -400,16 +520,20 @@ def context_v4(compiled, baseline, **changes):
         ("mbti", "ESTP"),
     ],
 )
-def test_schema4_descriptive_changes_preserve_causal_identity_but_change_provenance(field, value):
+@pytest.mark.parametrize("version", sorted(CONTRACTS))
+def test_schema4_descriptive_changes_preserve_causal_identity_but_change_provenance(
+    field, value, version
+):
     from adlife.core.simulation.city_cognition_v2 import (
         build_city_cognition_input_v2,
         build_city_cognition_requests_v2,
         build_city_mock_result_v2,
     )
 
-    original, baseline = evidence_v4()
+    original, baseline = evidence_v4(version=version)
     changed, changed_baseline = evidence_v4(
-        mutation=lambda data: data["population"]["personas"][0].update({field: value})
+        mutation=lambda data: data["population"]["personas"][0].update({field: value}),
+        version=version,
     )
     first = context_v4(original, baseline)
     second = context_v4(changed, changed_baseline)
@@ -418,8 +542,10 @@ def test_schema4_descriptive_changes_preserve_causal_identity_but_change_provena
     assert first.initial_states == second.initial_states
     assert first.run_input_sha256 != second.run_input_sha256
     assert first.fingerprint != second.fingerprint
-    one = build_city_cognition_requests_v2(first, original.mobility, baseline)
-    two = build_city_cognition_requests_v2(second, changed.mobility, changed_baseline)
+    frozen = frozen_selection(original)
+    assert frozen == frozen_selection(changed)
+    one = build_city_cognition_requests_v2(first, original.mobility, baseline, **frozen)
+    two = build_city_cognition_requests_v2(second, changed.mobility, changed_baseline, **frozen)
     assert one and len(one) == len(two)
     assert [r.causal_identity for r in one] == [r.causal_identity for r in two]
     assert [r.request_id for r in one] == [r.request_id for r in two]
@@ -430,31 +556,29 @@ def test_schema4_descriptive_changes_preserve_causal_identity_but_change_provena
         a.request_record_sha256 != b.request_record_sha256 for a, b in zip(one, two, strict=True)
     )
     assert (
-        build_city_cognition_input_v2(first, one, mode="mock", funded_response_limit=60).fingerprint
-        != build_city_cognition_input_v2(
-            second, two, mode="mock", funded_response_limit=60
-        ).fingerprint
+        build_city_cognition_input_v2(first, one, mode="mock", **frozen).fingerprint
+        != build_city_cognition_input_v2(second, two, mode="mock", **frozen).fingerprint
     )
 
 
-def test_schema4_causal_change_changes_request_identity_and_rejects_stale_baseline():
+@pytest.mark.parametrize("version", sorted(CONTRACTS))
+def test_schema4_causal_change_changes_request_identity_and_rejects_stale_baseline(version):
     from adlife.core.simulation.city_cognition_v2 import build_city_cognition_requests_v2
 
-    original, baseline = evidence_v4()
+    original, baseline = evidence_v4(version=version)
     changed, changed_baseline = evidence_v4(
         mutation=lambda data: data["population"]["personas"][0]["traits"].update(
             novelty_seeking=0.99
-        )
+        ),
+        version=version,
     )
     first = context_v4(original, baseline)
     second = context_v4(changed, changed_baseline)
     assert first.agents != second.agents
-    assert (
-        build_city_cognition_requests_v2(first, original.mobility, baseline)[0].request_id
-        != build_city_cognition_requests_v2(second, changed.mobility, changed_baseline)[
-            0
-        ].request_id
-    )
+    frozen = frozen_selection(original)
+    one = build_city_cognition_requests_v2(first, original.mobility, baseline, **frozen)
+    two = build_city_cognition_requests_v2(second, changed.mobility, changed_baseline, **frozen)
+    assert one[0].request_id != two[0].request_id
     with pytest.raises(ValueError):
         context_v4(changed, baseline)
 

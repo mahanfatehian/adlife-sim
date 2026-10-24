@@ -13,8 +13,8 @@ from adlife.city.provider_profiles import ProviderProfileRegistry
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CityCognitionEffectiveSettingsV2,
 )
 from tests.unit.city.test_provider_profiles import _draft
@@ -70,7 +70,8 @@ def test_v2_key_binds_original_profile_and_capped_exact_settings(tmp_path: Path)
     assert key.revision_sha256 == profile.revision_sha256
     assert key.profile_snapshot_sha256 == snapshot.fingerprint
     assert key.effective_settings_sha256 == settings.fingerprint
-    contract = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
+    # A check authorizes new runs, so the key binds the contract every new run is frozen with.
+    contract = CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
     assert key.causal_contract_sha256 == contract.fingerprint
     for name in (
         "prompt_contract_sha256",

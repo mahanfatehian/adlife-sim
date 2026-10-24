@@ -74,12 +74,16 @@ def test_v10_direct_storage_freezes_schema4_without_job_submission(tmp_path):
 
 def test_v10_workbench_job_publishes_then_verifies_from_storage(tmp_path):
     from adlife.city.workbench_jobs import CityJobManager
+    from adlife.core.domain.city_cognition_v2 import CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
     from tests.unit.city.test_workbench_transport_v4 import compiled_v4
 
     workspace = prepare_workbench_workspace(tmp_path)
     repository = WorkbenchRunRepository(workspace)
+    # Frozen as the workbench server freezes every new run: the current contract, with the
+    # omitted funded limit materialized as that version's offline limit.
     validated = compiled_v4(
         mode="rules",
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
         mutation=lambda payload: (
             payload["settings"].update(
                 run_id="job-artifact-v10",
@@ -107,6 +111,7 @@ def test_v10_workbench_job_publishes_then_verifies_from_storage(tmp_path):
         assert restored.manifest.schema_version == 10
         assert restored.workbench_input == validated.workbench_input
         assert restored.cognition_input is not None
+        assert restored.cognition_input.causal_contract == CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
         assert restored.cognition_evaluation is not None
         assert restored.response_evaluation is not None
     finally:

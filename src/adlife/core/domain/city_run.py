@@ -20,10 +20,15 @@ from adlife.core.domain.city_cognition import (
     Hash,
 )
 from adlife.core.domain.city_cognition_v2 import (
-    _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2,
-    _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    _CITY_COGNITION_SELECTION_LIMITS,
+    _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION,
+    _MAX_COGNITION_INPUT_BYTES_ANY_VERSION,
+    _MAX_SELECTED_REQUESTS_ANY_VERSION,
+    _MAX_SUMMARY_ATTEMPTS_ANY_VERSION,
+    _MAX_TERMINAL_STREAM_BYTES_ANY_VERSION,
     CityCognitionCoverageCountsV2,
     CityCognitionEvaluationV2,
+    CityCognitionFundedResponseLimit,
     CityCognitionInputV2,
     CityCognitionModeV2,
     CityCognitionNeutralizationCountsV2,
@@ -757,7 +762,8 @@ class CityCognitionManifestReceiptV2(DomainModel):
     model_config = ConfigDict(hide_input_in_errors=True, revalidate_instances="always")
 
     cognition_input_sha256: Hash
-    cognition_input_bytes: int = Field(ge=1, le=131_073)
+    # Widest version bounds; the receipt checks its own selection-policy version row.
+    cognition_input_bytes: int = Field(ge=1, le=_MAX_COGNITION_INPUT_BYTES_ANY_VERSION + 1)
     causal_contract_sha256: Hash
     request_schema_version: Literal[2]
     result_schema_version: Literal[2]
@@ -767,7 +773,7 @@ class CityCognitionManifestReceiptV2(DomainModel):
     prompt_contract_sha256: Hash
     result_schema_contract_version: Literal[2]
     result_schema_contract_sha256: Hash
-    selection_policy_version: Literal[2]
+    selection_policy_version: Literal[2, 3]
     selection_policy_sha256: Hash
     fallback_policy_version: Literal[2]
     fallback_policy_sha256: Hash
@@ -779,17 +785,21 @@ class CityCognitionManifestReceiptV2(DomainModel):
     provider_revision_sha256: Hash | None
     effective_settings_sha256: Hash
     budget_allocation_sha256: Hash
-    funded_response_limit: Literal[10, 20, 40, 60]
+    funded_response_limit: CityCognitionFundedResponseLimit
     coverage: CityCognitionCoverageCountsV2
     outcomes: CityCognitionOutcomeCountsV2
     reasons: CityCognitionReasonCountsV2
     neutralization: CityCognitionNeutralizationCountsV2
-    attempt_count: int = Field(ge=0, le=240)
-    prompt_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
-    completion_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
+    attempt_count: int = Field(ge=0, le=_MAX_SUMMARY_ATTEMPTS_ANY_VERSION)
+    prompt_tokens: int = Field(
+        ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION * MAX_CITY_COGNITION_USAGE_INTEGER
+    )
+    completion_tokens: int = Field(
+        ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION * MAX_CITY_COGNITION_USAGE_INTEGER
+    )
     terminal_stream_sha256: Hash
-    terminal_stream_bytes: int = Field(ge=0, le=1_048_576)
-    terminal_record_count: int = Field(ge=0, le=60)
+    terminal_stream_bytes: int = Field(ge=0, le=_MAX_TERMINAL_STREAM_BYTES_ANY_VERSION)
+    terminal_record_count: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
     summary_sha256: Hash
 
     @field_validator(
@@ -797,7 +807,6 @@ class CityCognitionManifestReceiptV2(DomainModel):
         "result_schema_version",
         "prompt_contract_version",
         "result_schema_contract_version",
-        "selection_policy_version",
         "fallback_policy_version",
         mode="before",
     )
@@ -805,6 +814,13 @@ class CityCognitionManifestReceiptV2(DomainModel):
     def exact_v2_versions(cls, value: object) -> object:
         if type(value) is not int or value != 2:
             raise ValueError("city cognition V2 receipt versions must be integer 2")
+        return value
+
+    @field_validator("selection_policy_version", mode="before")
+    @classmethod
+    def exact_selection_policy_version(cls, value: object) -> object:
+        if type(value) is not int or value not in _CITY_COGNITION_SELECTION_LIMITS:
+            raise ValueError("city cognition receipt selection policy version must be 2 or 3")
         return value
 
     @field_validator("mock_policy_version", "influence_policy_version", mode="before")
@@ -817,17 +833,28 @@ class CityCognitionManifestReceiptV2(DomainModel):
     @field_validator("funded_response_limit", mode="before")
     @classmethod
     def exact_funded_limit(cls, value: object) -> object:
-        if type(value) is not int or value not in {10, 20, 40, 60}:
-            raise ValueError("funded_response_limit must be integer 10, 20, 40, or 60")
+        if type(value) is not int or not any(
+            value in limits.funded_response_limits
+            for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+        ):
+            raise ValueError("funded_response_limit must be an allowed exact integer")
         return value
 
     @model_validator(mode="after")
     def complete_receipt(self) -> Self:
+        limits = _CITY_COGNITION_SELECTION_LIMITS[self.selection_policy_version]
         if any(
             getattr(self, field) != expected
-            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2
+            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION[
+                self.selection_policy_version
+            ]
         ):
             raise ValueError("city cognition receipt policies do not match the frozen V2 contract")
+        if (
+            self.cognition_input_bytes > limits.max_cognition_input_bytes + 1
+            or self.funded_response_limit not in limits.funded_response_limits
+        ):
+            raise ValueError("city cognition receipt exceeds its selection policy version limits")
         summary_fields = set(CityCognitionSummaryV2.model_fields) - {"schema_version", "disclosure"}
         receipt_fields = self.model_dump(mode="json")
         summary = CityCognitionSummaryV2.model_validate_json(
@@ -857,7 +884,7 @@ class CityCognitionManifestReceiptV2(DomainModel):
             raise ValueError(
                 "city cognition receipt requires a complete mode-specific provider binding"
             )
-        if offline and self.funded_response_limit != 60:
+        if offline and self.funded_response_limit != limits.offline_funded_response_limit:
             raise ValueError("offline cognition requires the complete local funded limit")
         if self.coverage.funded_request_count != min(
             self.coverage.selected_request_count, self.funded_response_limit
@@ -869,10 +896,9 @@ class CityCognitionManifestReceiptV2(DomainModel):
                 canonical_json(
                     {
                         "aggregate_output_token_ceiling": (
-                            0
-                            if offline
-                            else _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
-                            * self.funded_response_limit
+                            limits.aggregate_output_token_ceiling(
+                                self.mode, self.funded_response_limit
+                            )
                         ),
                         "reservations": [],
                     }

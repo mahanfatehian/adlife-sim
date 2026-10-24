@@ -170,14 +170,17 @@ print(canonical_json(_derive(arguments)))
     for hash_seed in ("0", "12345"):
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = hash_seed
+        # The child imports src and tests afresh from the repository root, so its stderr
+        # is the only evidence of a failure; report it rather than a bare exit status.
         completed = subprocess.run(
             [sys.executable, "-c", script, str(tmp_path / f"seed-{hash_seed}")],
-            check=True,
             capture_output=True,
             text=True,
             encoding="utf-8",
+            cwd=Path(__file__).resolve().parents[2],
             env=environment,
         )
+        assert completed.returncode == 0, completed.stderr
         assert "Traceback" not in completed.stderr
         outputs.append(completed.stdout)
 

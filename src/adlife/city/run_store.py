@@ -53,6 +53,7 @@ from adlife.core.domain.city_cognition import (
     CityCognitionTerminalRecordV1,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
     CityCognitionEvaluationV2,
     CityCognitionInputV2,
     CityCognitionSummaryV2,
@@ -151,6 +152,14 @@ MAX_CITY_OPPORTUNITY_SUMMARY_BYTES = 65_536
 MAX_CITY_ATTENTION_SUMMARY_BYTES = 65_536
 MAX_WORKBENCH_INPUT_BYTES = 131_072
 MAX_CITY_COGNITION_INPUT_BYTES_V2 = 131_072
+# A V10 document is read under the widest selection-policy bounds, then held to the
+# bounds of its own stored version once parsed.
+MAX_CITY_COGNITION_INPUT_BYTES_V10 = max(
+    limits.max_cognition_input_bytes for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
+MAX_CITY_COGNITION_STREAM_BYTES_V10 = max(
+    limits.max_terminal_stream_bytes for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
 _IO_CHUNK_BYTES = 65_536
 _V10_INPUT_NAMES = frozenset(
     {
@@ -270,6 +279,11 @@ def _runtime_version() -> str:
 
 def _canonical_bytes(value: BaseModel | Mapping[str, object]) -> bytes:
     return (canonical_json(value) + "\n").encode("utf-8")
+
+
+def _cognition_input_limit_v10(cognition_input: CityCognitionInputV2) -> int:
+    """The canonical input file size, newline included, its stored version allows."""
+    return cognition_input.selection_limits.max_cognition_input_bytes + 1
 
 
 def _identity(status: os.stat_result) -> tuple[int, int]:
@@ -702,7 +716,7 @@ def _write_cognition_stream(
         _write_lines(
             path,
             city_cognition_terminal_lines_v2(evaluation),
-            limit=MAX_CITY_COGNITION_STREAM_BYTES,
+            limit=evaluation.summary.selection_limits.max_terminal_stream_bytes,
         )
         return
     with path.open("xb") as target:
@@ -914,6 +928,7 @@ class CityRunStore:
             mobility,
             baseline,
             causal_contract=cognition_input.causal_contract,
+            funded_response_limit=settings.funded_response_limit,
         )
         rebuilt_input = build_city_cognition_input_v2(
             context,
@@ -993,7 +1008,9 @@ class CityRunStore:
             (
                 "inputs/cognition.json",
                 prepared.cognition_input,
-                MAX_CITY_COGNITION_INPUT_BYTES_V2 + 1,
+                _cognition_input_limit_v10(prepared.cognition_input)
+                if isinstance(prepared.cognition_input, CityCognitionInputV2)
+                else MAX_CITY_COGNITION_INPUT_BYTES_V10 + 1,
             ),
         )
         for name, model, limit in required:
@@ -1174,11 +1191,12 @@ class CityRunStore:
             cognition_path = directory / "outputs/cognition.jsonl"
             _write_cognition_stream(cognition_path, rebuilt.cognition_evaluation)
             hold_artifact(cognition_path)
+            cognition_limits = rebuilt.cognition_evaluation.summary.selection_limits
             _verify_lines(
                 cognition_path,
                 city_cognition_terminal_lines_v2(rebuilt.cognition_evaluation),
                 size=manifest.cognition.terminal_stream_bytes,
-                limit=MAX_CITY_COGNITION_STREAM_BYTES,
+                limit=cognition_limits.max_terminal_stream_bytes,
             )
             _publish_manifest(
                 directory, documents["run.json"][0], self, verify_evidence=verify_held_evidence
@@ -1226,7 +1244,7 @@ class CityRunStore:
                 "inputs/workbench.json": MAX_WORKBENCH_INPUT_BYTES + 1,
                 "inputs/spatial-campaign.json": MAX_SPATIAL_CAMPAIGN_BYTES,
                 "inputs/spatial-response.json": MAX_SPATIAL_RESPONSE_INPUT_BYTES,
-                "inputs/cognition.json": MAX_CITY_COGNITION_INPUT_BYTES_V2 + 1,
+                "inputs/cognition.json": MAX_CITY_COGNITION_INPUT_BYTES_V10 + 1,
                 "outputs/cognition-summary.json": MAX_CITY_COGNITION_SUMMARY_BYTES + 1,
                 "outputs/response-state.json": MAX_SPATIAL_RESPONSE_STATE_BYTES_V2,
                 "outputs/response-summary.json": MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2,
@@ -1248,18 +1266,22 @@ class CityRunStore:
                 documents["inputs/spatial-response.json"]
             )
             frozen = CityCognitionInputV2.model_validate_json(documents["inputs/cognition.json"])
+            if len(documents["inputs/cognition.json"]) > _cognition_input_limit_v10(frozen):
+                raise CorruptRunArtifact("city run cognition input exceeds its version limit")
             summary = CityCognitionSummaryV2.model_validate_json(
                 documents["outputs/cognition-summary.json"]
             )
+            # The stored input's own selection-policy version bounds its terminal stream.
+            selection_limits = frozen.selection_limits
             stream = self._read_document(
                 directory / "outputs/cognition.jsonl",
-                limit=MAX_CITY_COGNITION_STREAM_BYTES,
+                limit=selection_limits.max_terminal_stream_bytes,
                 label="V10 cognition stream",
             )
             records = []
             for index, line in enumerate(stream.splitlines(keepends=True)):
                 if (
-                    index >= MAX_CITY_COGNITION_REQUESTS
+                    index >= selection_limits.max_terminal_records
                     or not line.endswith(b"\n")
                     or line.endswith(b"\r\n")
                     or len(line) - 1 > frozen.max_terminal_record_bytes

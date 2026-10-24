@@ -16,7 +16,12 @@ import pytest
 from pydantic import ValidationError
 
 from adlife.city.workbench_workspace import prepare_workbench_workspace
-from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+)
 from adlife.core.domain.serialization import canonical_json
 from tests.unit.city.test_city_run_preparation import _validated
 
@@ -1316,19 +1321,19 @@ async def test_job_manager_shutdown_cancels_an_active_provider_check(tmp_path: P
 
 
 def _schema4_validated(*, run_id: str, mode: str = "rules", limit: int | None = None):
-    from tests.unit.city.test_workbench_transport_v4 import compiled_v4
+    """A one-person, two-day schema-4 run frozen exactly as the server freezes a new run."""
+    from adlife.city.workbench_input import WorkbenchRunDraftV4
+    from adlife.city.workbench_validation import construct_workbench_run
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
 
-    return compiled_v4(
-        mode=mode,
-        limit=limit,
-        mutation=lambda payload: (
-            payload["settings"].update(
-                run_id=run_id,
-                agent_count=1,
-                days=2,
-            ),
-            payload["population"]["personas"][0].update(count=1),
-        ),
+    payload = draft_v4_data(mode=mode, limit=limit)
+    payload["settings"].update(run_id=run_id, agent_count=1, days=2)
+    payload["population"]["personas"][0].update(count=1)
+    # A direct call keeps the historical V2 contract; the server freezes every new run with
+    # the current one, so an omitted limit takes the current version's default.
+    return construct_workbench_run(
+        WorkbenchRunDraftV4.model_validate_json(json.dumps(payload)),
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     )
 
 
@@ -1444,7 +1449,10 @@ def test_schema4_success_uses_only_v2_paths_and_exact_phase_order(tmp_path: Path
             "cognition_mode": "rules",
             "provider_profile_id": None,
             "provider_revision_sha256": None,
-            "funded_response_limit": 60,
+            # Offline cognition answers every request the current selection policy selects.
+            "funded_response_limit": CITY_COGNITION_SELECTION_LIMITS[
+                CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION
+            ].offline_funded_response_limit,
             "aggregate_output_token_ceiling": 0,
         }
 

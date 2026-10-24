@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from hashlib import sha256
 from math import fsum, isfinite
-from typing import Literal, get_args
+from typing import get_args
 
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
     _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256,
     _CITY_COGNITION_MOCK_POLICY_V1_SHA256,
     _CITY_COGNITION_MOCK_VECTOR_V1,
+    _CITY_COGNITION_SELECTION_LIMITS,
     _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-    _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    _MAX_SELECTED_REQUESTS_ANY_VERSION,
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
     CITY_COGNITION_DEFAULT_MOCK_POLICY_V1,
@@ -44,6 +45,8 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionSourceV2,
     CityCognitionSummaryV2,
     CityCognitionTerminalRecordV2,
+    CitySelectionLimits,
+    city_cognition_contract_selection_version,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_response import (
@@ -60,6 +63,78 @@ from adlife.core.simulation.spatial_response import (
     SpatialRuleResponse,
     SpatialStateUpdated,
 )
+
+
+def select_spread_indices(eligible_count: int, limit: int) -> tuple[int, ...]:
+    """Spread ``k = min(eligible_count, limit)`` picks evenly over a time-sorted list.
+
+    Selection ``i`` is ``(i * E) // k``. The indices strictly increase, so time order
+    is kept, and ``k == E`` selects every eligible position. This pure function is the
+    only definition of selection policy V3; every build and verify path calls it.
+    """
+    if type(eligible_count) is not int or eligible_count < 0:
+        raise ValueError("eligible count must be a non-negative exact integer")
+    if type(limit) is not int or limit < 1:
+        raise ValueError("selection limit must be a positive exact integer")
+    selected = min(eligible_count, limit)
+    return tuple((index * eligible_count) // selected for index in range(selected))
+
+
+def _selected_positions(
+    responses: Sequence[SpatialRuleResponse],
+    *,
+    limits: CitySelectionLimits,
+    funded_response_limit: int | None,
+) -> tuple[int, ...]:
+    """Positions selected from canonically sorted baselines under one version's policy."""
+    if limits.strategy == "spread-evenly":
+        if type(funded_response_limit) is not int or (
+            funded_response_limit not in limits.funded_response_limits
+        ):
+            raise ValueError(
+                "spread-evenly selection requires an allowed exact funded response limit"
+            )
+        return select_spread_indices(len(responses), funded_response_limit)
+    counts: Counter[str] = Counter()
+    positions: list[int] = []
+    for position, response in enumerate(responses):
+        if (
+            counts[response.agent_id] < limits.selected_requests_per_agent
+            and len(positions) < limits.selected_requests_per_run
+        ):
+            positions.append(position)
+            counts[response.agent_id] += 1
+    return tuple(positions)
+
+
+def _requests_selection_limits(
+    requests: Sequence[CityCognitionRequestV2],
+    *,
+    selection_policy_version: int | None = None,
+) -> CitySelectionLimits | None:
+    """The limit row bound by the requests' contract, or the explicit version."""
+    versions = {
+        city_cognition_contract_selection_version(request.causal_identity.causal_contract_sha256)
+        for request in requests
+    }
+    if selection_policy_version is not None:
+        if (
+            type(selection_policy_version) is not int
+            or selection_policy_version not in _CITY_COGNITION_SELECTION_LIMITS
+        ):
+            raise ValueError("unsupported city cognition selection policy version")
+        if versions - {selection_policy_version, None}:
+            raise ValueError("city cognition requests bind a different selection policy version")
+        return _CITY_COGNITION_SELECTION_LIMITS[selection_policy_version]
+    known = {version for version in versions if version is not None}
+    if len(known) > 1:
+        raise ValueError("city cognition requests contain mixed scientific or run provenance")
+    if known:
+        return _CITY_COGNITION_SELECTION_LIMITS[known.pop()]
+    if versions:
+        # Requests bound to no frozen contract keep the historical V2 bounds.
+        return _CITY_COGNITION_SELECTION_LIMITS[2]
+    return None
 
 
 def _validate_context_against_science(
@@ -222,8 +297,14 @@ def build_city_cognition_requests_v2(
     baseline_evaluation: SpatialResponseEvaluation,
     *,
     causal_contract: CityCognitionCausalContractV2 = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    funded_response_limit: int | None = None,
 ) -> tuple[CityCognitionRequestV2, ...]:
-    """Bind deterministic proposals to causal snapshots before any provider work."""
+    """Bind deterministic proposals to causal snapshots before any provider work.
+
+    Selection follows the contract's own selection-policy version. V2 takes the earliest
+    responses under its per-person and per-run caps and ignores the funded limit; V3
+    spreads ``min(E, funded_response_limit)`` selections over the whole run.
+    """
     context = revalidate_model(context, CityCognitionRunContextV2, label="city cognition context")
     contract = revalidate_model(
         causal_contract, CityCognitionCausalContractV2, label="city cognition causal contract"
@@ -247,14 +328,17 @@ def build_city_cognition_requests_v2(
         (record for record in evaluation.records if isinstance(record, SpatialRuleResponse)),
         key=lambda item: (item.model_minute, item.agent_id, item.campaign_id, item.event_id),
     )
-    # Validate every admitted response, including those beyond either selection cap.
-    # Retain <=60 validated facts and one live frame, then materialize requests only
-    # after the entire baseline passes. Never re-fetch unbound activity evidence.
+    limits = _CITY_COGNITION_SELECTION_LIMITS[contract.selection_policy_version]
+    chosen = frozenset(
+        _selected_positions(responses, limits=limits, funded_response_limit=funded_response_limit)
+    )
+    # Validate every admitted response, including those beyond the selection. Retain
+    # only the selected validated facts and one live frame, then materialize requests
+    # only after the entire baseline passes. Never re-fetch unbound activity evidence.
     frame_minute = -1
     positions: dict[str, CityPosition] = {}
     selected: list[tuple[SpatialRuleResponse, SpatialStateUpdated, Activity]] = []
-    counts: Counter[str] = Counter()
-    for response in responses:
+    for position_index, response in enumerate(responses):
         updates = updates_by_cause[response.event_id]
         if len(updates) != 1:
             raise ValueError("baseline response must bind to exactly one state update")
@@ -283,12 +367,8 @@ def build_city_cognition_requests_v2(
         _validate_response_assumptions(
             response, agents[response.agent_id], campaigns[response.campaign_id]
         )
-        if (
-            counts[response.agent_id] < contract.selection_policy.selected_requests_per_agent
-            and len(selected) < contract.selection_policy.selected_requests_per_run
-        ):
+        if position_index in chosen:
             selected.append((response, update, position.activity))
-            counts[response.agent_id] += 1
     requests: list[CityCognitionRequestV2] = []
     for response, update, activity in selected:
         factors = {
@@ -364,6 +444,8 @@ def _request_key(request: CityCognitionRequestV2) -> tuple[int, str, str, str]:
 
 def _checked_requests(
     requests: tuple[CityCognitionRequestV2, ...],
+    *,
+    selection_policy_version: int | None = None,
 ) -> tuple[CityCognitionRequestV2, ...]:
     if type(requests) is not tuple:
         raise TypeError("city cognition requests must be a tuple")
@@ -371,7 +453,8 @@ def _checked_requests(
         revalidate_model(item, CityCognitionRequestV2, label="city cognition request")
         for item in requests
     )
-    if len(checked) > 60:
+    limits = _requests_selection_limits(checked, selection_policy_version=selection_policy_version)
+    if limits is not None and len(checked) > limits.selected_requests_per_run:
         raise ValueError("too many city cognition requests")
     if checked != tuple(sorted(checked, key=_request_key)):
         raise ValueError("city cognition requests must be in canonical selection order")
@@ -395,7 +478,9 @@ def _checked_requests(
     if len(bindings) > 1:
         raise ValueError("city cognition requests contain mixed scientific or run provenance")
     counts = Counter(item.baseline.agent_id for item in identities)
-    if any(count > 4 for count in counts.values()):
+    if limits is not None and any(
+        count > limits.selected_requests_per_agent for count in counts.values()
+    ):
         raise ValueError("city cognition requests exceed the per-agent selection limit")
     snapshots: dict[tuple[str, ...], str] = {}
     groups: dict[tuple[int, str, str], tuple[str, int, str]] = {}
@@ -431,37 +516,60 @@ def _checked_requests(
     return checked
 
 
-def _validate_mode_limit(mode: CityCognitionModeV2, limit: int) -> None:
+def _mode_limit_error(mode: CityCognitionModeV2, limit: int, limits: CitySelectionLimits) -> str:
     if mode not in {"rules", "mock", "local", "remote"}:
-        raise ValueError("unsupported city cognition mode")
-    if type(limit) is not int or limit not in {10, 20, 40, 60}:
-        raise ValueError("funded response limit must be an exact integer 10, 20, 40, or 60")
-    if mode in {"rules", "mock"} and limit != 60:
-        raise ValueError("rules and mock require funded response limit 60")
+        return "unsupported city cognition mode"
+    if type(limit) is not int or limit not in limits.funded_response_limits:
+        return "funded response limit must be an exact integer " + limits.funded_limit_text()
+    if mode in {"rules", "mock"} and limit != limits.offline_funded_response_limit:
+        return (
+            f"rules and mock require funded response limit {limits.offline_funded_response_limit}"
+        )
+    return ""
+
+
+def _validate_mode_limit(
+    mode: CityCognitionModeV2, limit: int, limits: CitySelectionLimits | None = None
+) -> None:
+    """Refuse a mode/limit pair outside the version row, or outside every row if unknown."""
+    rows = (limits,) if limits is not None else tuple(_CITY_COGNITION_SELECTION_LIMITS.values())
+    errors = [_mode_limit_error(mode, limit, row) for row in rows]
+    if all(errors):
+        raise ValueError(errors[0])
 
 
 def allocate_city_cognition_reservations_v2(
     requests: tuple[CityCognitionRequestV2, ...],
     *,
     mode: CityCognitionModeV2,
-    funded_response_limit: Literal[10, 20, 40, 60],
+    funded_response_limit: int,
+    selection_policy_version: int | None = None,
 ) -> tuple[CityCognitionReservationV2, ...]:
-    """Freeze whole-request funding in canonical order before cache or provider work."""
-    _validate_mode_limit(mode, funded_response_limit)
-    checked = _checked_requests(requests)
+    """Freeze whole-request funding in canonical order before cache or provider work.
+
+    The version row comes from the requests' frozen contract or the explicit
+    ``selection_policy_version``; an empty request tuple needs neither.
+    """
+    checked = _checked_requests(requests, selection_policy_version=selection_policy_version)
+    limits = _requests_selection_limits(checked, selection_policy_version=selection_policy_version)
+    _validate_mode_limit(mode, funded_response_limit, limits)
     offline = mode in {"rules", "mock"}
+    if limits is None:
+        return ()
     return tuple(
-        CityCognitionReservationV2(
-            schema_version=2,
-            selection_index=index,
-            request_id=request.request_id,
-            request_record_sha256=request.request_record_sha256,
-            funded=offline or index < funded_response_limit,
-            reserved_output_tokens=(
-                _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
-                if not offline and index < funded_response_limit
-                else 0
-            ),
+        CityCognitionReservationV2.model_validate(
+            {
+                "schema_version": 2,
+                "selection_index": index,
+                "request_id": request.request_id,
+                "request_record_sha256": request.request_record_sha256,
+                "funded": offline or index < funded_response_limit,
+                "reserved_output_tokens": (
+                    limits.reservation_tokens_per_request
+                    if not offline and index < funded_response_limit
+                    else 0
+                ),
+            }
         )
         for index, request in enumerate(checked)
     )
@@ -472,17 +580,22 @@ def build_city_cognition_input_v2(
     requests: tuple[CityCognitionRequestV2, ...],
     *,
     mode: CityCognitionModeV2,
-    funded_response_limit: Literal[10, 20, 40, 60],
+    funded_response_limit: int,
     provider_profile: CityCognitionProviderProfileSnapshotV1 | None = None,
     causal_contract: CityCognitionCausalContractV2 = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
 ) -> CityCognitionInputV2:
-    """Bind validated requests, causal policy, and optional provider configuration."""
+    """Bind validated requests, causal policy, and optional provider configuration.
+
+    Every ceiling comes from the limit row of the contract's selection-policy version.
+    """
     context = revalidate_model(context, CityCognitionRunContextV2, label="city cognition context")
     contract = revalidate_model(
         causal_contract, CityCognitionCausalContractV2, label="city cognition causal contract"
     )
-    _validate_mode_limit(mode, funded_response_limit)
-    checked = _checked_requests(requests)
+    version = contract.selection_policy_version
+    limits = _CITY_COGNITION_SELECTION_LIMITS[version]
+    _validate_mode_limit(mode, funded_response_limit, limits)
+    checked = _checked_requests(requests, selection_policy_version=version)
     initial_hash = build_city_cognition_initial_state_document_v2(context).fingerprint
     agents = {a.agent_id: a for a in context.agents}
     campaigns = {c.campaign_id: c for c in context.campaigns}
@@ -527,35 +640,40 @@ def build_city_cognition_input_v2(
             profile.max_output_tokens, _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
         )
         settings = CityCognitionEffectiveSettingsV2.model_validate(fields)
-    return CityCognitionInputV2(
-        schema_version=2,
-        effect_scope="bounded-signals-v1",
-        mode=mode,
-        run_input_sha256=context.run_input_sha256,
-        causal_contract=contract,
-        causal_contract_sha256=contract.fingerprint,
-        provider_profile=profile,
-        effective_settings=settings,
-        funded_response_limit=funded_response_limit,
-        selected_requests_per_agent=4,
-        selected_requests_per_run=60,
-        concurrency_limit=4,
-        max_request_bytes=8192,
-        max_terminal_record_bytes=8192,
-        max_wire_response_bytes=1_048_576,
-        max_output_tokens_per_attempt=_CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-        reservation_tokens_per_request=_CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
-        initial_attempts=1,
-        transient_retries_ceiling=2,
-        repair_attempts_ceiling=1,
-        attempt_timeout_seconds_ceiling=30,
-        aggregate_deadline_seconds=180,
-        aggregate_output_token_ceiling=0
-        if mode in {"rules", "mock"}
-        else funded_response_limit * _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
-        reservations=allocate_city_cognition_reservations_v2(
-            checked, mode=mode, funded_response_limit=funded_response_limit
-        ),
+    return CityCognitionInputV2.model_validate(
+        {
+            "schema_version": 2,
+            "effect_scope": "bounded-signals-v1",
+            "mode": mode,
+            "run_input_sha256": context.run_input_sha256,
+            "causal_contract": contract,
+            "causal_contract_sha256": contract.fingerprint,
+            "provider_profile": profile,
+            "effective_settings": settings,
+            "funded_response_limit": funded_response_limit,
+            "selected_requests_per_agent": limits.selected_requests_per_agent,
+            "selected_requests_per_run": limits.selected_requests_per_run,
+            "concurrency_limit": limits.concurrency_limit(mode),
+            "max_request_bytes": 8192,
+            "max_terminal_record_bytes": 8192,
+            "max_wire_response_bytes": 1_048_576,
+            "max_output_tokens_per_attempt": _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+            "reservation_tokens_per_request": limits.reservation_tokens_per_request,
+            "initial_attempts": 1,
+            "transient_retries_ceiling": limits.transient_retries_ceiling,
+            "repair_attempts_ceiling": limits.repair_attempts_ceiling,
+            "attempt_timeout_seconds_ceiling": 30,
+            "aggregate_deadline_seconds": limits.aggregate_deadline_seconds,
+            "aggregate_output_token_ceiling": limits.aggregate_output_token_ceiling(
+                mode, funded_response_limit
+            ),
+            "reservations": allocate_city_cognition_reservations_v2(
+                checked,
+                mode=mode,
+                funded_response_limit=funded_response_limit,
+                selection_policy_version=version,
+            ),
+        }
     )
 
 
@@ -794,6 +912,9 @@ def build_city_cognition_terminal_record_v2(
 def _bind_requests_to_baseline(
     requests: tuple[CityCognitionRequestV2, ...],
     evaluation: SpatialResponseEvaluation,
+    *,
+    limits: CitySelectionLimits,
+    funded_response_limit: int,
 ) -> int:
     responses = sorted(
         (r for r in evaluation.records if isinstance(r, SpatialRuleResponse)),
@@ -824,12 +945,12 @@ def _bind_requests_to_baseline(
     )
     if any(s.response_count != 0 or s.last_response_minute is not None for s in initial.values()):
         raise ValueError("baseline initial state must have no response history")
-    counts: Counter[str] = Counter()
-    selected: list[SpatialRuleResponse] = []
-    for response in responses:
-        if counts[response.agent_id] < 4 and len(selected) < 60:
-            selected.append(response)
-            counts[response.agent_id] += 1
+    selected = [
+        responses[position]
+        for position in _selected_positions(
+            responses, limits=limits, funded_response_limit=funded_response_limit
+        )
+    ]
     if tuple(r.causal_identity.baseline.baseline_response_id for r in requests) != tuple(
         r.event_id for r in selected
     ):
@@ -899,14 +1020,21 @@ def validate_city_cognition_evaluation_v2(
     """Validate complete bound arrivals before normalizing their persisted order."""
     if type(records) is not tuple:
         raise TypeError("city cognition records must be a tuple")
-    if len(records) > 60:
+    # The widest ceiling of any version refuses an oversized container before model work;
+    # the stored version's own ceiling applies once the input is revalidated.
+    if len(records) > _MAX_SELECTED_REQUESTS_ANY_VERSION:
         raise ValueError("too many city cognition terminal arrivals")
     frozen = revalidate_model(cognition_input, CityCognitionInputV2, label="city cognition input")
-    checked = _checked_requests(requests)
+    limits = frozen.selection_limits
+    if len(records) > limits.max_terminal_records:
+        raise ValueError("too many city cognition terminal arrivals")
+    checked = _checked_requests(requests, selection_policy_version=limits.selection_policy_version)
     baseline = revalidate_model(
         baseline_evaluation, SpatialResponseEvaluation, label="baseline evaluation"
     )
-    eligible = _bind_requests_to_baseline(checked, baseline)
+    eligible = _bind_requests_to_baseline(
+        checked, baseline, limits=limits, funded_response_limit=frozen.funded_response_limit
+    )
     terminals = tuple(
         revalidate_model(r, CityCognitionTerminalRecordV2, label="city cognition terminal")
         for r in records
@@ -919,7 +1047,10 @@ def validate_city_cognition_evaluation_v2(
     if indices != set(range(len(checked))):
         raise ValueError("terminal arrival indices must cover the complete selected requests")
     reservations = allocate_city_cognition_reservations_v2(
-        checked, mode=frozen.mode, funded_response_limit=frozen.funded_response_limit
+        checked,
+        mode=frozen.mode,
+        funded_response_limit=frozen.funded_response_limit,
+        selection_policy_version=limits.selection_policy_version,
     )
     if frozen.reservations != reservations or len(terminals) != len(checked):
         raise ValueError("terminal/request/reservation evidence is incomplete")

@@ -45,9 +45,10 @@ from adlife.city.workbench_validation import construct_workbench_run
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+    CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.ports.run_store import UnsafeRunLocation
@@ -61,6 +62,10 @@ from tests.unit.city.test_workbench_input import (
 TOKEN = "fixed-workbench-web-token"
 ORIGIN = "http://127.0.0.1:8765"
 UPLOAD_PATH = "/api/catalog/cities/upload"
+# The server freezes every new run with the current selection policy's row.
+CURRENT_SELECTION = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+# The smallest AI limit a new run may choose.
+FIRST_LIMIT = CURRENT_SELECTION.funded_response_limits[0]
 
 
 def _assert_no_live_city_stage_bytes(root: Path) -> None:
@@ -424,16 +429,30 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
                 "workbench_schema_version": 4,
                 "run_schema_version": 10,
                 "modes": ["rules", "mock", "local", "remote"],
-                "funded_response_limits": [10, 20, 40, 60],
-                "default_provider_funded_response_limit": 20,
-                "offline_funded_response_limit": 60,
-                "selected_requests_per_run": 60,
+                # New runs use the current selection policy's frozen row.
+                "selection_policy_version": CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+                "selection_strategy": CURRENT_SELECTION.strategy,
+                "funded_response_limits": list(CURRENT_SELECTION.funded_response_limits),
+                "all_noticed_funded_response_limit": CURRENT_SELECTION.selected_requests_per_run,
+                # Online AI asks about every noticed ad; a local server answers one at a time.
+                "default_provider_funded_response_limit": (
+                    CURRENT_SELECTION.selected_requests_per_run
+                ),
+                "default_local_funded_response_limit": 120,
+                "offline_funded_response_limit": CURRENT_SELECTION.offline_funded_response_limit,
+                "selected_requests_per_run": CURRENT_SELECTION.selected_requests_per_run,
+                "selected_requests_per_agent": CURRENT_SELECTION.selected_requests_per_agent,
+                "concurrency_limits": {
+                    "remote": CURRENT_SELECTION.remote_concurrency_limit,
+                    "local": CURRENT_SELECTION.local_concurrency_limit,
+                },
+                "aggregate_deadline_seconds": CURRENT_SELECTION.aggregate_deadline_seconds,
                 # The frozen output budget is a runtime constant; never pin its value here.
                 "reserved_output_tokens_per_request": (
-                    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                    CURRENT_SELECTION.reservation_tokens_per_request
                 ),
                 "max_output_tokens_per_attempt": CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-                "max_http_attempts_per_request": CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+                "max_http_attempts_per_request": CURRENT_SELECTION.max_attempts_per_request,
                 "compatibility_check_required_modes": ["local", "remote"],
             },
         },
@@ -475,35 +494,46 @@ def test_bounded_capabilities_follow_runtime_models_and_expose_no_contract_autho
     assert bounded["modes"] == list(
         get_args(WorkbenchCognitionDraftV4.model_fields["mode"].annotation)
     )
-    assert bounded["funded_response_limits"] == list(
+    # The draft admits every version's options; the browser is offered the current ones.
+    assert bounded["funded_response_limits"] == list(CURRENT_SELECTION.funded_response_limits)
+    assert set(bounded["funded_response_limits"]) <= set(
         get_args(WorkbenchCognitionDraftV4.model_fields["funded_response_limit"].annotation)
     )
-    provider = WorkbenchCognitionDraftV4.model_validate(
-        {
-            "effect_scope": "bounded-signals-v1",
-            "mode": "remote",
-            "provider_profile_id": "any-profile",
-            "provider_revision_sha256": "a" * 64,
-        }
-    )
-    assert bounded["default_provider_funded_response_limit"] == provider.funded_response_limit
+    for mode, published in (
+        ("remote", "default_provider_funded_response_limit"),
+        ("local", "default_local_funded_response_limit"),
+    ):
+        provider = WorkbenchCognitionDraftV4.model_validate(
+            {
+                "effect_scope": "bounded-signals-v1",
+                "mode": mode,
+                "provider_profile_id": "any-profile",
+                "provider_revision_sha256": "a" * 64,
+            }
+        )
+        assert bounded[published] == provider.funded_response_limit
     fields = NormalizedWorkbenchCognitionV4.model_fields
-    assert (
-        bounded["reserved_output_tokens_per_request"]
-        == get_args(fields["reservation_tokens_per_request"].annotation)[0]
+
+    def admitted(name: str) -> tuple[object, ...]:
+        # Frozen ceilings are unions of every version's values, checked per stored run.
+        return get_args(fields[name].annotation)
+
+    assert bounded["reserved_output_tokens_per_request"] in admitted(
+        "reservation_tokens_per_request"
     )
-    assert (
-        bounded["max_output_tokens_per_attempt"]
-        == get_args(fields["max_output_tokens_per_attempt"].annotation)[0]
-    )
+    assert bounded["max_output_tokens_per_attempt"] in admitted("max_output_tokens_per_attempt")
     # A whole funded request reserves its worst case: every attempt at the per-attempt cap.
     assert (
         bounded["reserved_output_tokens_per_request"]
         == bounded["max_http_attempts_per_request"] * bounded["max_output_tokens_per_attempt"]
     )
-    assert bounded["max_http_attempts_per_request"] == sum(
-        get_args(fields[name].annotation)[0]
-        for name in ("initial_attempts", "transient_retries", "repair_attempts")
+    assert CURRENT_SELECTION.transient_retries_ceiling in admitted("transient_retries")
+    assert CURRENT_SELECTION.repair_attempts_ceiling in admitted("repair_attempts")
+    (initial,) = admitted("initial_attempts")
+    assert bounded["max_http_attempts_per_request"] == (
+        initial
+        + CURRENT_SELECTION.transient_retries_ceiling
+        + CURRENT_SELECTION.repair_attempts_ceiling
     )
     # Browser options only: no policy hash, ceiling, or contract document to echo back.
     encoded = json.dumps(bounded)
@@ -2073,7 +2103,7 @@ def test_schema4_provider_job_requires_explicit_bounded_compatibility_without_le
     )
     with TestClient(app, base_url=ORIGIN) as client:
         profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
-        payload = draft_v4_data(mode="local", limit=10)
+        payload = draft_v4_data(mode="local", limit=FIRST_LIMIT)
         payload["settings"].update(run_id="needs-v2-check", agent_count=1, days=2, seed="42")
         payload["population"]["personas"][0]["count"] = 1
         payload["cognition"].update(
@@ -2118,7 +2148,7 @@ def test_schema4_checked_provider_runs_with_the_same_v2_factory(tmp_path: Path) 
             {"effect_scope": "bounded-signals-v1"},
         )
         assert checked.status_code == 200
-        payload = draft_v4_data(mode="local", limit=10)
+        payload = draft_v4_data(mode="local", limit=FIRST_LIMIT)
         payload["settings"].update(
             run_id="checked-provider-v10",
             seed="42",
@@ -2198,7 +2228,7 @@ def test_schema4_job_status_counts_slow_model_answers_as_they_arrive(tmp_path: P
                 {"effect_scope": "bounded-signals-v1"},
             )
             assert checked.status_code == 200
-            payload = draft_v4_data(mode="local", limit=10)
+            payload = draft_v4_data(mode="local", limit=FIRST_LIMIT)
             payload["settings"].update(
                 run_id="progress-provider-v10", seed="42", agent_count=3, days=2
             )
@@ -2214,9 +2244,16 @@ def test_schema4_job_status_counts_slow_model_answers_as_they_arrive(tmp_path: P
 
             first = _await_job_where(client, status_url, lambda job: answered(job) >= 0)
             assert first["phase"] == "requesting-cognition"
-            assert first["cognition_progress"] == {"resolved": 0, "total": 6}
+            # Planning froze the funded total and the run's local in-flight ceiling.
+            total = first["cognition_progress"]["total"]
+            assert 0 < total <= FIRST_LIMIT
+            assert first["cognition_progress"] == {
+                "resolved": 0,
+                "total": total,
+                "concurrency_limit": CURRENT_SELECTION.concurrency_limit("local"),
+            }
             polled.append(first)
-            for count in range(1, 7):
+            for count in range(1, total + 1):
                 permits.release()
                 polled.append(
                     _await_job_where(
@@ -2228,13 +2265,22 @@ def test_schema4_job_status_counts_slow_model_answers_as_they_arrive(tmp_path: P
     finally:
         permits.release(64)
 
-    assert [job["cognition_progress"] for job in polled] == [
-        {"resolved": count, "total": 6} for count in range(7)
+    expected = [
+        {
+            "resolved": count,
+            "total": total,
+            "concurrency_limit": CURRENT_SELECTION.concurrency_limit("local"),
+        }
+        for count in range(total + 1)
     ]
+    assert [job["cognition_progress"] for job in polled] == expected
     assert terminal["phase"] == "completed"
-    assert terminal["cognition_progress"] == {"resolved": 6, "total": 6}
-    assert terminal["result"]["funded_request_count"] == 6
-    assert terminal["result"]["provider_count"] == 6
+    assert terminal["cognition_progress"] == expected[-1]
+    # The current policy funds every request it selects, so none is budget-skipped.
+    assert terminal["result"]["funded_request_count"] == total
+    assert terminal["result"]["selected_request_count"] == total
+    assert terminal["result"]["budget_skipped_count"] == 0
+    assert terminal["result"]["provider_count"] == total
     assert active is None
     assert len(providers) == 2 and all(provider.closed for provider in providers)
 
@@ -2271,7 +2317,7 @@ def test_schema4_api_provider_failure_completes_with_fallback_evidence(tmp_path:
             {"effect_scope": "bounded-signals-v1"},
         )
         assert checked.status_code == 200
-        payload = draft_v4_data(mode="local", limit=10)
+        payload = draft_v4_data(mode="local", limit=FIRST_LIMIT)
         payload["settings"].update(run_id="fallback-provider-v10", seed="42", days=2)
         payload["cognition"].update(
             provider_profile_id=profile["profile_id"],
@@ -2288,7 +2334,7 @@ def test_schema4_api_provider_failure_completes_with_fallback_evidence(tmp_path:
     assert CityRunStore(root).load("fallback-provider-v10").manifest.schema_version == 10
 
 
-def test_schema4_api_enforces_funding_limit_as_budget_skipped_evidence(tmp_path: Path) -> None:
+def test_schema4_api_enforces_funding_limit_as_unselected_evidence(tmp_path: Path) -> None:
     from tests.unit.city.test_workbench_providers import _ProviderV2
     from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
 
@@ -2313,14 +2359,20 @@ def test_schema4_api_enforces_funding_limit_as_budget_skipped_evidence(tmp_path:
             {"effect_scope": "bounded-signals-v1"},
         )
         assert checked.status_code == 200
-        payload = draft_v4_data(mode="local", limit=10)
+        payload = draft_v4_data(mode="local", limit=FIRST_LIMIT)
         payload["settings"].update(
             run_id="budget-provider-v10",
             seed="42",
-            agent_count=10,
+            agent_count=5,
             days=2,
         )
-        payload["population"]["personas"][0]["count"] = 10
+        payload["population"]["personas"][0]["count"] = 5
+        # Dense phone opportunities notice more ads than the smallest AI limit allows.
+        payload["scenario"]["phone"].update(
+            opportunity_probability_per_minute=1.0,
+            frequency_cap_per_agent_per_day=20,
+            eligible_activities=["home", "commute", "work", "leisure"],
+        )
         payload["cognition"].update(
             provider_profile_id=profile["profile_id"],
             provider_revision_sha256=profile["revision_sha256"],
@@ -2331,10 +2383,15 @@ def test_schema4_api_enforces_funding_limit_as_budget_skipped_evidence(tmp_path:
 
     result = terminal["result"]
     assert terminal["phase"] == "completed"
-    assert result["funded_request_count"] == 10
-    assert result["budget_skipped_count"] == result["selected_request_count"] - 10
-    assert result["budget_skipped_count"] > 0
-    assert result["provider_count"] == 10
+    # The current policy selects exactly the limit, spread over the run, and funds every
+    # selected request; the other noticed ads are never asked, so nothing is budget-skipped.
+    assert result["eligible_response_count"] > FIRST_LIMIT
+    assert result["selected_request_count"] == FIRST_LIMIT
+    assert result["unselected_response_count"] == result["eligible_response_count"] - FIRST_LIMIT
+    assert result["funded_request_count"] == FIRST_LIMIT
+    assert result["budget_skipped_count"] == 0
+    assert result["provider_count"] == FIRST_LIMIT
+    assert len(providers) == 2 and providers[1].calls == FIRST_LIMIT
     assert CityRunStore(root).load("budget-provider-v10").manifest.schema_version == 10
 
 
@@ -2353,13 +2410,17 @@ def test_schema4_api_uses_prevalidated_v2_cache_records_without_provider_calls(
     workspace = prepare_workbench_workspace(root)
     registry = ProviderProfileRegistry(workspace)
     profile = registry.create(ProviderProfileDraftV1.model_validate(_local_provider_payload()))
-    payload = draft_v4_data(mode="local", limit=10)
+    payload = draft_v4_data(mode="local", limit=FIRST_LIMIT)
     payload["settings"].update(run_id="cache-provider-v10", seed="42", days=2)
     payload["cognition"].update(
         provider_profile_id=profile.profile_id,
         provider_revision_sha256=profile.revision_sha256,
     )
-    validated = construct_workbench_run(workbench_transport.parse_workbench_http_draft(payload))
+    # Freeze the run as the server will, so the cached records bind the same contract.
+    validated = construct_workbench_run(
+        workbench_transport.parse_workbench_http_draft(payload),
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    )
     repository = WorkbenchRunRepository(workspace, provider_registry=registry)
     staged = repository.prepare_scientific_v2(
         validated,
@@ -3208,11 +3269,13 @@ def test_app_owns_one_lazy_resolver_and_resolves_each_accepted_draft_once(
         parse_calls += 1
         return real_parse(payload)
 
-    def counted_construct(draft: Any, *, selected_pack: Any = None):
+    def counted_construct(draft: Any, *, selected_pack: Any = None, causal_contract: Any = None):
         nonlocal construct_calls
         construct_calls += 1
         assert selected_pack is selected_pack_reference
-        return real_construct(draft, selected_pack=selected_pack)
+        # Every new run freezes the current contract, never the historical V2 default.
+        assert causal_contract is CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
+        return real_construct(draft, selected_pack=selected_pack, causal_contract=causal_contract)
 
     selected_pack_reference = selected_pack
     monkeypatch.setattr(module, "WorkbenchCityResolver", RecordingResolver)
@@ -3643,7 +3706,7 @@ def test_validation_maps_unknown_keys_to_constant_field_without_echo(
 def _schema4_provider_draft() -> dict[str, Any]:
     from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
 
-    payload = draft_v4_data(mode="local", limit=20)
+    payload = draft_v4_data(mode="local", limit=FIRST_LIMIT)
     payload["settings"]["seed"] = str(payload["settings"]["seed"])
     payload["cognition"]["provider_profile_id"] = "local-ollama"
     payload["cognition"]["provider_revision_sha256"] = "a" * 64
@@ -3732,8 +3795,8 @@ def test_request_validation_and_unexpected_failures_are_screened(
     absolute_path = r"C:\private\workspace\run.json"
     before = _snapshot(root)
 
-    def request_failure(_draft: object, *, selected_pack: object) -> None:
-        del selected_pack
+    def request_failure(_draft: object, *, selected_pack: object, causal_contract: object) -> None:
+        del selected_pack, causal_contract
         raise RequestValidationError(
             [
                 {
@@ -3754,8 +3817,10 @@ def test_request_validation_and_unexpected_failures_are_screened(
     }
     assert secret not in request_response.text
 
-    def unexpected_failure(_draft: object, *, selected_pack: object) -> None:
-        del selected_pack
+    def unexpected_failure(
+        _draft: object, *, selected_pack: object, causal_contract: object
+    ) -> None:
+        del selected_pack, causal_contract
         try:
             raise ValueError(secret)
         except ValueError as cause:

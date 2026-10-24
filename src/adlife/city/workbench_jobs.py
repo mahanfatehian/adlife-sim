@@ -35,13 +35,26 @@ from adlife.city.workbench_runs import (
 )
 from adlife.city.workbench_validation import ValidatedWorkbenchRun
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_SELECTION_LIMITS,
     CityCognitionEvaluationV2,
+    CityCognitionFundedResponseLimit,
+    city_cognition_funding_versions,
 )
 from adlife.core.domain.person import DomainModel
 from adlife.core.ports.run_store import ISO_UTC_PATTERN
 
 MAX_TERMINAL_JOBS = 32
+_MAX_ACCEPTED_TOKEN_CEILING = CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS
+_OFFLINE_LIMITS = frozenset(
+    limits.offline_funded_response_limit for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
+
+
+def _versioned_provider_funding(mode: object, limit: object, ceiling: object) -> bool:
+    """Whether some frozen selection-policy version allows this provider funding."""
+    return bool(city_cognition_funding_versions(mode, limit, ceiling))
+
 
 WorkbenchJobPhase = Literal[
     "queued",
@@ -73,8 +86,16 @@ _CANCELLABLE_PHASES = frozenset(
     }
 )
 _SEED_PATTERN = r"^(?:0|[1-9][0-9]{0,18})$"
-# The frozen V10 selection admits at most 60 requests per run, so no run funds more.
-MAX_COGNITION_PROGRESS_REQUESTS = 60
+# The widest frozen V10 selection admits at most 1000 requests per run (policy V3;
+# V2 runs fund at most 60), so no run funds more.
+MAX_COGNITION_PROGRESS_REQUESTS = max(
+    limits.selected_requests_per_run for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
+# The widest frozen in-flight request ceiling of any selection-policy version.
+MAX_COGNITION_PROGRESS_CONCURRENCY = max(
+    max(limits.concurrency_limit("remote"), limits.concurrency_limit("local"))
+    for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
 # Planning has frozen the funded requests in these phases, so each reports a live count.
 _PROGRESS_PHASES = frozenset(
     {"requesting-cognition", "applying-cognition", "persisting", "verifying", "completed"}
@@ -151,11 +172,13 @@ class WorkbenchAcceptedSettings(DomainModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
-    funded_response_limit: Literal[10, 20, 40, 60] | None = Field(
+    funded_response_limit: CityCognitionFundedResponseLimit | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
-    aggregate_output_token_ceiling: int | None = Field(default=None, ge=0, le=92_160)
+    aggregate_output_token_ceiling: int | None = Field(
+        default=None, ge=0, le=_MAX_ACCEPTED_TOKEN_CEILING
+    )
 
     @field_validator(
         "workbench_input_schema_version",
@@ -202,15 +225,16 @@ class WorkbenchAcceptedSettings(DomainModel):
             if provider_mode:
                 if self.provider_profile_id is None or self.provider_revision_sha256 is None:
                     raise ValueError("schema-4 provider binding is incomplete")
-                if (
-                    self.aggregate_output_token_ceiling
-                    != self.funded_response_limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                if not _versioned_provider_funding(
+                    self.cognition_mode,
+                    self.funded_response_limit,
+                    self.aggregate_output_token_ceiling,
                 ):
                     raise ValueError("schema-4 provider funding ceiling is inconsistent")
             elif (
                 self.provider_profile_id is not None
                 or self.provider_revision_sha256 is not None
-                or self.funded_response_limit != 60
+                or self.funded_response_limit not in _OFFLINE_LIMITS
                 or self.aggregate_output_token_ceiling != 0
             ):
                 raise ValueError("offline schema-4 provider configuration is misplaced")
@@ -274,6 +298,15 @@ class WorkbenchCognitionProgress(DomainModel):
 
     resolved: int = Field(ge=0, le=MAX_COGNITION_PROGRESS_REQUESTS)
     total: int = Field(ge=0, le=MAX_COGNITION_PROGRESS_REQUESTS)
+    # The run's frozen in-flight request ceiling, so the page can estimate the wait.
+    concurrency_limit: int = Field(ge=1, le=MAX_COGNITION_PROGRESS_CONCURRENCY)
+
+    @field_validator("resolved", "total", "concurrency_limit", mode="before")
+    @classmethod
+    def exact_progress_integers(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("cognition progress counts must be exact integers")
+        return value
 
     @model_validator(mode="after")
     def bounded_count(self) -> Self:
@@ -293,16 +326,21 @@ class WorkbenchCognitionProgressCounter:
     immutable ``snapshot``.
     """
 
-    __slots__ = ("_lock", "_resolved", "_total")
+    __slots__ = ("_concurrency_limit", "_lock", "_resolved", "_total")
 
-    def __init__(self, total: int) -> None:
+    def __init__(self, total: int, *, concurrency_limit: int = 4) -> None:
         if type(total) is not int:
             raise TypeError("cognition progress total must be an exact integer")
         if not 0 <= total <= MAX_COGNITION_PROGRESS_REQUESTS:
             raise ValueError("cognition progress total is outside the funded request range")
+        if type(concurrency_limit) is not int:
+            raise TypeError("cognition progress concurrency must be an exact integer")
+        if not 1 <= concurrency_limit <= MAX_COGNITION_PROGRESS_CONCURRENCY:
+            raise ValueError("cognition progress concurrency is outside the frozen range")
         self._lock = Lock()
         self._resolved = 0
         self._total = total
+        self._concurrency_limit = concurrency_limit
 
     def advance(self) -> None:
         """Count one more funded request with a terminal outcome."""
@@ -319,7 +357,9 @@ class WorkbenchCognitionProgressCounter:
         """Return one immutable, internally consistent reading."""
         with self._lock:
             resolved, total = self._resolved, self._total
-        return WorkbenchCognitionProgress(resolved=resolved, total=total)
+        return WorkbenchCognitionProgress(
+            resolved=resolved, total=total, concurrency_limit=self._concurrency_limit
+        )
 
 
 class WorkbenchJobView(DomainModel):
@@ -990,7 +1030,10 @@ class CityJobManager:
         try:
             scientific = self._repository.prepare_scientific_v2(validated, operation)
             # Planning froze the funding: the count of funded provider requests is final.
-            progress = WorkbenchCognitionProgressCounter(scientific.funded_provider_request_count)
+            progress = WorkbenchCognitionProgressCounter(
+                scientific.funded_provider_request_count,
+                concurrency_limit=scientific.cognition_input.concurrency_limit,
+            )
         except Exception:
             self._fail(job_id, "planning-cognition")
             return

@@ -35,12 +35,16 @@ from adlife.core.domain.city_cognition import (
     Hash,
 )
 from adlife.core.domain.city_cognition_v2 import (
-    _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2,
+    _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION,
+    CITY_COGNITION_MAX_SELECTED_REQUESTS,
+    CITY_COGNITION_SELECTION_LIMITS,
     CityCognitionEvaluationV2,
+    CityCognitionFundedResponseLimit,
     CityCognitionInputV2,
     CityCognitionModeV2,
     CityCognitionSummaryV2,
     CityCognitionTerminalRecordV2,
+    city_cognition_contract_selection_version,
 )
 from adlife.core.domain.city_run import (
     CityRunManifestV9,
@@ -127,7 +131,7 @@ class WorkbenchCognitionSummaryViewV2(_CognitionView):
     provider_profile_id: _ProfileId | None
     provider_revision_sha256: Hash | None
     model_id: _ModelId | None
-    funded_response_limit: Literal[10, 20, 40, 60]
+    funded_response_limit: CityCognitionFundedResponseLimit
     causal_contract_sha256: Hash
     prompt_contract_id: Literal["city-cognition-signal-prompt-v2"]
     prompt_contract_sha256: Hash
@@ -143,11 +147,13 @@ class WorkbenchCognitionSummaryViewV2(_CognitionView):
     @model_validator(mode="after")
     def bound_summary(self) -> Self:
         summary = self.summary
-        if any(
+        version = city_cognition_contract_selection_version(self.causal_contract_sha256)
+        if version is None or any(
             getattr(self, field) != expected
-            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2
+            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION[version]
         ):
             raise ValueError("cognition summary view does not bind the frozen V2 contract")
+        limits = CITY_COGNITION_SELECTION_LIMITS[version]
         if (
             summary.effect_scope != self.effect_scope
             or summary.mode != self.mode
@@ -163,7 +169,13 @@ class WorkbenchCognitionSummaryViewV2(_CognitionView):
             self.model_id,
         )
         coverage = summary.coverage
-        if (self.mode in _OFFLINE_MODES and self.funded_response_limit != 60) or (
+        if (
+            self.funded_response_limit not in limits.funded_response_limits
+            or (
+                self.mode in _OFFLINE_MODES
+                and self.funded_response_limit != limits.offline_funded_response_limit
+            )
+        ) or (
             coverage.funded_request_count
             != min(coverage.selected_request_count, self.funded_response_limit)
         ):
@@ -190,7 +202,9 @@ class WorkbenchCognitionRecordsViewV2(_CognitionView):
     run_id: _RunId
     run_schema_version: Literal[10]
     cognition_input_sha256: Hash
-    records: tuple[CityCognitionTerminalRecordV2, ...] = Field(max_length=60)
+    records: tuple[CityCognitionTerminalRecordV2, ...] = Field(
+        max_length=CITY_COGNITION_MAX_SELECTED_REQUESTS
+    )
 
     @model_validator(mode="after")
     def canonical_records(self) -> Self:

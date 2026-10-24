@@ -37,6 +37,7 @@ def test_uploaded_city_v10_storage_fresh_load_needs_no_live_registry(tmp_path, m
     from adlife.city.workbench_catalog import WorkbenchCityResolver
     from adlife.city.workbench_input import WorkbenchRunDraftV4
     from adlife.city.workbench_validation import construct_workbench_run
+    from adlife.core.domain.city_cognition_v2 import CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
     from tests.integration.test_city_cognition_v2_artifacts import _prepared_v10, _save_prepared
     from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
 
@@ -44,9 +45,12 @@ def test_uploaded_city_v10_storage_fresh_load_needs_no_live_registry(tmp_path, m
     resolved = WorkbenchCityResolver(workspace).register_city(_document("v10-uploaded-city"))
     document = draft_v4_data(mode="rules")
     document["city_id"] = resolved.pack.city_id
+    # The draft omits its funded limit, so it is frozen with the current contract, as the
+    # workbench server freezes every new run.
     compiled = construct_workbench_run(
         WorkbenchRunDraftV4.model_validate_json(json.dumps(document)),
         selected_pack=resolved.pack,
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     )
     _, prepared = _prepared_v10(tmp_path, validated=compiled)
     _save_prepared(tmp_path, prepared)

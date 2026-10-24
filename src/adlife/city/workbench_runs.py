@@ -80,9 +80,12 @@ from adlife.city.workbench_workspace import (
 )
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_MAX_SELECTED_REQUESTS,
     CityCognitionEvaluationV2,
+    CityCognitionFundedResponseLimit,
     CityCognitionInputV2,
+    city_cognition_funding_versions,
 )
 from adlife.core.domain.city_run import CityRunManifestV10
 from adlife.core.domain.person import DomainModel
@@ -149,11 +152,13 @@ class WorkbenchRunSummary(DomainModel):
         pattern=r"^[a-z0-9][a-z0-9-]{0,63}$",
     )
     provider_revision_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
-    funded_response_limit: Literal[10, 20, 40, 60] | None = Field(
+    funded_response_limit: CityCognitionFundedResponseLimit | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
-    aggregate_output_token_ceiling: int | None = Field(default=None, ge=0, le=92_160)
+    aggregate_output_token_ceiling: int | None = Field(
+        default=None, ge=0, le=CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS
+    )
     eligible_response_count: int | None = Field(
         default=None,
         ge=0,
@@ -163,19 +168,19 @@ class WorkbenchRunSummary(DomainModel):
     selected_request_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     funded_request_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     budget_skipped_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     unselected_response_count: int | None = Field(
@@ -193,31 +198,31 @@ class WorkbenchRunSummary(DomainModel):
     rules_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     mock_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     provider_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     cache_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     fallback_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     neutralized_response_count: int | None = Field(
@@ -229,13 +234,13 @@ class WorkbenchRunSummary(DomainModel):
     uncertain_result_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     safety_neutralized_result_count: int | None = Field(
         default=None,
         ge=0,
-        le=60,
+        le=CITY_COGNITION_MAX_SELECTED_REQUESTS,
         exclude_if=lambda value: value is None,
     )
     inspector_url: str = Field(pattern=r"^/runs/[a-z0-9][a-z0-9-]{0,39}$", max_length=46)
@@ -364,16 +369,20 @@ class WorkbenchRunSummary(DomainModel):
             if provider_mode:
                 if self.provider_profile_id is None or self.provider_revision_sha256 is None:
                     raise ValueError("V10 provider binding is incomplete")
-                if (
-                    self.aggregate_output_token_ceiling
-                    != self.funded_response_limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                if not city_cognition_funding_versions(
+                    self.cognition_mode,
+                    self.funded_response_limit,
+                    self.aggregate_output_token_ceiling,
                 ):
                     raise ValueError("V10 provider funding ceiling is inconsistent")
             elif (
                 self.provider_profile_id is not None
                 or self.provider_revision_sha256 is not None
-                or self.funded_response_limit != 60
-                or self.aggregate_output_token_ceiling != 0
+                or not city_cognition_funding_versions(
+                    self.cognition_mode,
+                    self.funded_response_limit,
+                    self.aggregate_output_token_ceiling,
+                )
             ):
                 raise ValueError("offline V10 provider settings are misplaced")
             assert self.eligible_response_count is not None
@@ -1032,6 +1041,7 @@ class WorkbenchRunRepository:
             prepared.cognition_requests,
             mode=frozen.mode,
             funded_response_limit=frozen.funded_response_limit,
+            selection_policy_version=frozen.causal_contract.selection_policy_version,
         )
         if frozen.reservations != expected:
             raise ValueError("V2 cognition funding does not match the frozen requests")

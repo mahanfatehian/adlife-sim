@@ -203,7 +203,7 @@ def test_seeds_ready_to_open_offline_runs_through_the_real_http_api(tmp_path: Pa
     assert store.load("seeded-v9-rules-001").manifest.schema_version == 9
 
 
-def test_with_llm_reuses_the_local_profile_warms_ollama_and_funds_ten(
+def test_with_llm_reuses_the_local_profile_warms_ollama_and_funds_every_selected_request(
     tmp_path: Path, script: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     providers: list[_SignalProvider] = []
@@ -246,8 +246,9 @@ def test_with_llm_reuses_the_local_profile_warms_ollama_and_funds_ten(
         counts = dict(outcome.counts)
         selected = sum(counts.values())
         assert selected > 0
-        assert counts["provider"] == min(selected, 10)
-        assert counts["budget_skipped"] == selected - counts["provider"]
+        # Selection policy V3 selects at most the AI limit and funds every selected request.
+        assert counts["provider"] == selected <= 60
+        assert counts["budget_skipped"] == 0
         assert out.getvalue().splitlines() == [outcome.line()]
         # One check probe plus every funded request reached the provider.
         assert sum(provider.calls for provider in providers) == 1 + counts["provider"]
@@ -274,7 +275,9 @@ def test_with_llm_reuses_the_local_profile_warms_ollama_and_funds_ten(
     assert stored.manifest.schema_version == 10
     assert isinstance(stored.workbench_input, WorkbenchRunInputV4)
     cognition = stored.workbench_input.draft.cognition
-    assert (cognition.mode, cognition.funded_response_limit) == ("local", 10)
+    # The smallest published V3 AI limit.
+    assert (cognition.mode, cognition.funded_response_limit) == ("local", 60)
+    assert stored.cognition_input.causal_contract.selection_policy_version == 3
     assert (cognition.provider_profile_id, cognition.provider_revision_sha256) == (
         profile_id,
         revision,

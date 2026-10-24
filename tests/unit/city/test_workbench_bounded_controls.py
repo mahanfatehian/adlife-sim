@@ -17,7 +17,12 @@ from adlife.city.workbench_input import (
 from adlife.city.workbench_providers import WorkbenchProviderCheckResultV2
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
-from adlife.core.domain.city_cognition_v2 import CityCognitionResultV2, CityProviderAttemptV2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+    CityCognitionResultV2,
+    CityProviderAttemptV2,
+)
 from adlife.core.domain.city_run import CityRunManifestV10
 from tests.unit.city.test_workbench_input import draft_v3_data
 
@@ -32,10 +37,17 @@ CAPABILITY_KEYS = {
     "workbench_schema_version",
     "run_schema_version",
     "modes",
+    "selection_policy_version",
+    "selection_strategy",
     "funded_response_limits",
+    "all_noticed_funded_response_limit",
     "default_provider_funded_response_limit",
+    "default_local_funded_response_limit",
     "offline_funded_response_limit",
     "selected_requests_per_run",
+    "selected_requests_per_agent",
+    "concurrency_limits",
+    "aggregate_deadline_seconds",
     "reserved_output_tokens_per_request",
     "max_output_tokens_per_attempt",
     "max_http_attempts_per_request",
@@ -68,23 +80,29 @@ def runtime_bounded_capability() -> dict[str, Any]:
 
     frozen = NormalizedWorkbenchCognitionV4
     modes = list(get_args(WorkbenchCognitionDraftV4.model_fields["mode"].annotation))
+    current = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
     return {
         "effect_scope": _single(WorkbenchCognitionDraftV4, "effect_scope"),
         "workbench_schema_version": _single(WorkbenchRunDraftV4, "schema_version"),
         "run_schema_version": _single(CityRunManifestV10, "schema_version"),
         "modes": modes,
-        "funded_response_limits": list(
-            get_args(WorkbenchCognitionDraftV4.model_fields["funded_response_limit"].annotation)
-        ),
-        "default_provider_funded_response_limit": materialized("local"),
+        "selection_policy_version": current.selection_policy_version,
+        "selection_strategy": current.strategy,
+        "funded_response_limits": list(current.funded_response_limits),
+        "all_noticed_funded_response_limit": current.selected_requests_per_run,
+        "default_provider_funded_response_limit": materialized("remote"),
+        "default_local_funded_response_limit": materialized("local"),
         "offline_funded_response_limit": materialized("rules"),
-        "selected_requests_per_run": _single(frozen, "selected_requests_per_run"),
-        "reserved_output_tokens_per_request": _single(frozen, "reservation_tokens_per_request"),
+        "selected_requests_per_run": current.selected_requests_per_run,
+        "selected_requests_per_agent": current.selected_requests_per_agent,
+        "concurrency_limits": {
+            "remote": current.concurrency_limit("remote"),
+            "local": current.concurrency_limit("local"),
+        },
+        "aggregate_deadline_seconds": current.aggregate_deadline_seconds,
+        "reserved_output_tokens_per_request": current.reservation_tokens_per_request,
         "max_output_tokens_per_attempt": _single(frozen, "max_output_tokens_per_attempt"),
-        "max_http_attempts_per_request": sum(
-            _single(frozen, name)
-            for name in ("initial_attempts", "transient_retries", "repair_attempts")
-        ),
+        "max_http_attempts_per_request": current.max_attempts_per_request,
         "compatibility_check_required_modes": [mode for mode in modes if mode in PROVIDER_MODES],
     }
 
@@ -213,14 +231,30 @@ def test_bounded_capability_is_the_runtime_contract_the_browser_accepts(tmp_path
     assert limits == sorted(set(limits)) and limits[0] >= 1
     assert limits[-1] <= bounded["selected_requests_per_run"]
     assert bounded["default_provider_funded_response_limit"] in limits
+    assert bounded["default_local_funded_response_limit"] in limits
+    # "Every noticed ad" is one of the published options, up to the per-run cap.
+    assert bounded["all_noticed_funded_response_limit"] == limits[-1]
     assert bounded["offline_funded_response_limit"] == bounded["selected_requests_per_run"]
+    assert set(bounded["concurrency_limits"]) == set(PROVIDER_MODES)
+    assert all(
+        type(value) is int and value >= 1 for value in bounded["concurrency_limits"].values()
+    )
     assert bounded["modes"] == capabilities["cognition_modes"]
     assert bounded["compatibility_check_required_modes"] == ["local", "remote"]
-    # Attempts are one initial call plus the frozen transient-retry and repair ceilings.
+    # Attempts are one initial call plus the current version's transient-retry and repair
+    # ceilings; the frozen model admits every version's ceilings and checks them per run.
     frozen = NormalizedWorkbenchCognitionV4
-    assert bounded["max_http_attempts_per_request"] == 1 + _single(
-        frozen, "transient_retries"
-    ) + _single(frozen, "repair_attempts")
+    current = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+    for name, ceiling in (
+        ("transient_retries", current.transient_retries_ceiling),
+        ("repair_attempts", current.repair_attempts_ceiling),
+    ):
+        assert ceiling in get_args(frozen.model_fields[name].annotation)
+    assert bounded["max_http_attempts_per_request"] == (
+        _single(frozen, "initial_attempts")
+        + current.transient_retries_ceiling
+        + current.repair_attempts_ceiling
+    )
     assert _single(WorkbenchCognitionDraftV4, "effect_scope") == bounded["effect_scope"] == BOUNDED
 
 

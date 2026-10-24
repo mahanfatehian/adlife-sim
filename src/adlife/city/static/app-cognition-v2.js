@@ -23,30 +23,52 @@
   const CREDIBILITIES = Object.freeze(["low", "medium", "high", "uncertain"]);
   const SALIENCES = Object.freeze(["none", "low", "medium", "high", "uncertain"]);
   const SAFETY_FLAGS = Object.freeze(["stereotype-risk", "unsupported-inference", "unsafe-content"]);
-  const FUNDED_RESPONSE_LIMITS = Object.freeze([10, 20, 40, 60]);
   const CHANNELS = Object.freeze(["roadside-billboard", "mobile-feed"]);
   const ACTIVITIES = Object.freeze(["home", "commute", "work", "leisure"]);
   const PROVIDER_PROTOCOL = "openai-chat-completions-json-schema-v1";
   const MAX_USAGE_INTEGER = 2147483647;
   const MAX_RESPONSES = 520800;
-  const MAX_SELECTED = 60;
+  // Frozen selection-policy versions, keyed by the policy's canonical hash. A saved run is
+  // checked against the version it was made with: V2 took the earliest four noticed ads per
+  // person and sixty per run; V3 spreads the run's AI limit evenly over the whole run.
+  const SELECTION_VERSIONS = Object.freeze({
+    "547d141edb2706a972ff6d98fe26433f48bf6398ef60b4438aee27335b2563e3": Object.freeze({
+      fundedLimits: Object.freeze([10, 20, 40, 60]),
+      offlineLimit: 60,
+      maxSelected: 60,
+      attemptsPerRequest: 4,
+      maxStreamBytes: 1048576,
+    }),
+    "2ccb4dc58bf0fa1a58d8192e00a192e4a10dffa83f2626da01caf723b191ac5a": Object.freeze({
+      fundedLimits: Object.freeze([60, 120, 250, 500, 1000]),
+      offlineLimit: 1000,
+      maxSelected: 1000,
+      attemptsPerRequest: 6,
+      maxStreamBytes: 8388608,
+    }),
+  });
 
-  // Frozen city-cognition V2 identities. The selection, fallback, mock, and influence
-  // policies are prompt-independent canonical documents, so their hashes stay exact here.
+  function selectionVersion(hash) {
+    return typeof hash === "string" && Object.hasOwn(SELECTION_VERSIONS, hash)
+      ? SELECTION_VERSIONS[hash]
+      : null;
+  }
+
+  // Frozen city-cognition V2 identities. The fallback, mock, and influence policies are
+  // prompt-independent canonical documents, so their hashes stay exact here; the
+  // selection policy is one of SELECTION_VERSIONS.
   // The prompt text, result schema, and causal contract are bound by their saved run
   // instead: each must be well-formed and agree across the summary, every terminal record,
   // and the frozen workbench input, so a revised prompt contract needs no browser change.
   const FROZEN = Object.freeze({
     promptContractId: "city-cognition-signal-prompt-v2",
     resultSchemaId: "city-cognition-signal-result-v2",
-    selectionPolicySha256: "547d141edb2706a972ff6d98fe26433f48bf6398ef60b4438aee27335b2563e3",
     fallbackPolicySha256: "2c8f7734948c1c70eaf5df54e3e20fc99625c62ff124c00596c86db86fa9cf6b",
     mockPolicySha256: "31efe5733e4bcfd4bf30294ec5e309f8e05b4312d99467311136f3e2ca1b2841",
     influencePolicyId: "city-cognition-influence-v1",
     influencePolicySha256: "9fca4386ff82c3e5247bd00b54c4a353a71eba55a2716b434d7b46c9b18cb460",
   });
   const FROZEN_POLICY_HASHES = Object.freeze([
-    ["selection_policy_sha256", FROZEN.selectionPolicySha256],
     ["fallback_policy_sha256", FROZEN.fallbackPolicySha256],
     ["mock_policy_sha256", FROZEN.mockPolicySha256],
     ["influence_policy_sha256", FROZEN.influencePolicySha256],
@@ -435,6 +457,7 @@
   function validateSummary(value) {
     const label = "Saved bounded cognition summary";
     const documentValue = exactKeys(value, SUMMARY_DOCUMENT_KEYS, label);
+    const version = selectionVersion(documentValue.selection_policy_sha256);
     if (
       documentValue.schema_version !== 2
       || documentValue.run_schema_version !== 10
@@ -442,6 +465,7 @@
       || documentValue.prompt_contract_id !== FROZEN.promptContractId
       || documentValue.result_schema_id !== FROZEN.resultSchemaId
       || documentValue.influence_policy_id !== FROZEN.influencePolicyId
+      || version === null
       || FROZEN_POLICY_HASHES.some(([field, expected]) => documentValue[field] !== expected)
     ) invalid(label);
     for (const field of RUN_CONTRACT_HASH_FIELDS) pattern(documentValue[field], HASH, label);
@@ -450,7 +474,7 @@
     const mode = oneOf(documentValue.mode, MODES, label);
     if (
       !Number.isInteger(documentValue.funded_response_limit)
-      || !FUNDED_RESPONSE_LIMITS.includes(documentValue.funded_response_limit)
+      || !version.fundedLimits.includes(documentValue.funded_response_limit)
     ) invalid(label);
     const offline = OFFLINE_MODES.includes(mode);
     if (offline) {
@@ -458,7 +482,7 @@
         documentValue.provider_profile_id !== null
         || documentValue.provider_revision_sha256 !== null
         || documentValue.model_id !== null
-        || documentValue.funded_response_limit !== 60
+        || documentValue.funded_response_limit !== version.offlineLimit
       ) invalid(label);
     } else {
       pattern(documentValue.provider_profile_id, PROFILE_ID, label);
@@ -477,17 +501,18 @@
       || summary.disclosure !== DISCLOSURE
     ) invalid(label);
     pattern(summary.terminal_stream_sha256, HASH, label);
-    integer(summary.terminal_stream_bytes, 0, 1048576, label);
+    integer(summary.terminal_stream_bytes, 0, version.maxStreamBytes, label);
+    const maxSelected = version.maxSelected;
     const coverage = validateCounts(summary.coverage, COVERAGE_KEYS, MAX_RESPONSES, label);
-    const outcomes = validateCounts(summary.outcomes, OUTCOME_KEYS, MAX_SELECTED, label);
-    const reasons = validateCounts(summary.reasons, REASON_KEYS, MAX_SELECTED, label);
+    const outcomes = validateCounts(summary.outcomes, OUTCOME_KEYS, maxSelected, label);
+    const reasons = validateCounts(summary.reasons, REASON_KEYS, maxSelected, label);
     const neutralization = validateCounts(
       summary.neutralization, NEUTRALIZATION_KEYS, MAX_RESPONSES, label,
     );
-    const selected = integer(coverage.selected_request_count, 0, MAX_SELECTED, label);
-    integer(coverage.funded_request_count, 0, MAX_SELECTED, label);
-    integer(coverage.budget_skipped_count, 0, MAX_SELECTED, label);
-    integer(summary.terminal_record_count, 0, MAX_SELECTED, label);
+    const selected = integer(coverage.selected_request_count, 0, maxSelected, label);
+    integer(coverage.funded_request_count, 0, maxSelected, label);
+    integer(coverage.budget_skipped_count, 0, maxSelected, label);
+    integer(summary.terminal_record_count, 0, maxSelected, label);
     if (
       coverage.eligible_response_count !== selected + coverage.unselected_response_count
       || selected !== coverage.funded_request_count + coverage.budget_skipped_count
@@ -506,8 +531,13 @@
     } else if (outcomes.rules !== 0 || outcomes.mock !== 0) {
       invalid(label);
     }
-    const attempts = integer(summary.attempt_count, 0, 240, label);
-    if (attempts < outcomes.provider || attempts > 4 * (outcomes.provider + outcomes.fallback)) {
+    const attempts = integer(
+      summary.attempt_count, 0, maxSelected * version.attemptsPerRequest, label,
+    );
+    if (
+      attempts < outcomes.provider
+      || attempts > version.attemptsPerRequest * (outcomes.provider + outcomes.fallback)
+    ) {
       invalid(label);
     }
     const usageCapacity = (outcomes.provider + outcomes.cache + outcomes.fallback)
@@ -548,10 +578,12 @@
     for (const [field, expected] of FROZEN_POLICY_HASHES) {
       if (record[field] !== expected) invalid(label);
     }
-    // Every terminal binds the exact contract its run summary declares.
-    for (const field of RUN_CONTRACT_HASH_FIELDS) {
+    // Every terminal binds the exact contract and selection policy its run summary declares.
+    for (const field of [...RUN_CONTRACT_HASH_FIELDS, "selection_policy_sha256"]) {
       if (record[field] !== summaryDocument[field]) invalid(label);
     }
+    const version = selectionVersion(summaryDocument.selection_policy_sha256);
+    if (version === null) invalid(label);
     integer(record.baseline_state_update_cause_count, 1, MAX_RESPONSES, label);
     pattern(record.agent_id, AGENT_ID, label);
     pattern(record.campaign_id, IDENTIFIER, label);
@@ -563,7 +595,7 @@
     integer(record.millisecond_within_minute, 0, 59999, label);
     const source = oneOf(record.source, SOURCES, label);
     const result = validateResult(record.result, record.request_id);
-    integer(record.attempt_count, 0, 4, label);
+    integer(record.attempt_count, 0, version.attemptsPerRequest, label);
     if (record.reason !== null) oneOf(record.reason, REASONS, label);
     const providerValues = [
       nullable(record.provider_profile_id, (item) => pattern(item, PROFILE_ID, label)),
@@ -861,8 +893,8 @@
     let detail;
     if (source === "unselected") {
       statusLabel = "Neutral · not selected";
-      detail = "No request was sent: this response falls beyond the 4-per-agent or 60-per-run"
-        + ` selection. ${NEUTRAL_OUTCOME}`;
+      detail = "No request was sent: this response was not among the run's selected AI"
+        + ` questions. ${NEUTRAL_OUTCOME}`;
     } else if (status === "rules") {
       statusLabel = "Neutral · rules identity";
       detail = `Rules mode sends no request. ${NEUTRAL_OUTCOME}`;

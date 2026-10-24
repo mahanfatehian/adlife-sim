@@ -31,8 +31,8 @@ from adlife.city.workbench_workspace import WorkbenchWorkspace
 from adlife.core.domain.city_cognition import (
     CITY_COGNITION_OUTPUT_TOKENS_PER_ATTEMPT,
     MAX_CITY_COGNITION_ATTEMPT_TIMEOUT_SECONDS,
-    MAX_CITY_COGNITION_REPAIR_ATTEMPTS,
-    MAX_CITY_COGNITION_TRANSIENT_RETRIES,
+    MAX_CITY_PROVIDER_PROFILE_REPAIR_ATTEMPTS,
+    MAX_CITY_PROVIDER_PROFILE_TRANSIENT_RETRIES,
     Hash,
     canonical_city_cognition_provider_profile_payload,
     city_cognition_provider_profile_revision_sha256,
@@ -165,8 +165,8 @@ class ProviderProfileDraftV1(_ProviderProfileModel):
     seed: int | None = Field(ge=0, le=2**63 - 1)
     max_output_tokens: int = Field(ge=1, le=CITY_COGNITION_OUTPUT_TOKENS_PER_ATTEMPT)
     attempt_timeout_seconds: int = Field(ge=1, le=MAX_CITY_COGNITION_ATTEMPT_TIMEOUT_SECONDS)
-    transient_retries: int = Field(ge=0, le=MAX_CITY_COGNITION_TRANSIENT_RETRIES)
-    repair_attempts: int = Field(ge=0, le=MAX_CITY_COGNITION_REPAIR_ATTEMPTS)
+    transient_retries: int = Field(ge=0, le=MAX_CITY_PROVIDER_PROFILE_TRANSIENT_RETRIES)
+    repair_attempts: int = Field(ge=0, le=MAX_CITY_PROVIDER_PROFILE_REPAIR_ATTEMPTS)
     origin_approval_id: str = Field(pattern=_PROFILE_ID_PATTERN)
     # True adds chat_template_kwargs {"enable_thinking": false} to every request, for a
     # Qwen model on a vLLM server. Omitted from the canonical revision bytes while false, so

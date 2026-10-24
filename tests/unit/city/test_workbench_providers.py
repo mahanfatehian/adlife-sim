@@ -51,8 +51,10 @@ from adlife.core.domain.city_cognition import (
     CityProviderRepairContextV1,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
     CityCognitionResultV2,
     CityProviderAttemptV2,
 )
@@ -214,12 +216,13 @@ async def test_v2_check_uses_exact_fixed_causal_probe_and_original_profile(tmp_p
         "seed",
     ):
         assert getattr(input_.effective_settings, name) == getattr(profile, name)
-    assert input_.funded_response_limit == 10 and len(input_.reservations) == 1
+    # The probe is frozen like a new run: the current contract and its smallest AI limit.
+    limits = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+    assert input_.causal_contract == CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
+    assert input_.funded_response_limit == min(limits.funded_response_limits)
+    assert len(input_.reservations) == 1
     assert input_.reservations[0].funded
-    assert (
-        input_.reservations[0].reserved_output_tokens
-        == CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
-    )
+    assert input_.reservations[0].reserved_output_tokens == limits.reservation_tokens_per_request
     assert provider.kwargs["credential"].secret.cleared
     assert controller.list().profiles[0].last_check is None
     module = importlib.import_module("adlife.city.provider_compatibility")

@@ -85,8 +85,8 @@ from adlife.core.domain.city_cognition import (
     city_cognition_provider_profile_revision_sha256,
 )
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_V2_DISCLOSURE,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CityCognitionBaselineProposalV2,
     CityCognitionCausalAgentV2,
     CityCognitionCausalCampaignV2,
@@ -379,7 +379,7 @@ def _compatibility_probe_v2(
         return sha256((probe_id + "\0" + field).encode("utf-8")).hexdigest()
 
     contract = CityCognitionCausalContractV2.model_validate(
-        CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2.model_dump(mode="python")
+        CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.model_dump(mode="python")
     )
     agent = CityCognitionCausalAgentV2(
         schema_version=2,
@@ -518,7 +518,7 @@ def _compatibility_probe_v2(
         context,
         (request,),
         mode=profile.mode,
-        funded_response_limit=10,
+        funded_response_limit=60,
         provider_profile=CityCognitionProviderProfileSnapshotV1.model_validate(
             profile.model_dump(mode="python")
         ),

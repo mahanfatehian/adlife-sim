@@ -451,18 +451,25 @@ async def test_v10_reverse_completion_and_source_input_permutations_are_identica
     reverse_provider = _SignalProvider(second.cognition_requests, reverse=True)
     forward = await _resolve(first, provider=forward_provider)
     task = asyncio.create_task(_resolve(second, provider=reverse_provider))
+    # Questions start in the service's interleaved order, so the first concurrent batch is
+    # the head of that order; it is released in reverse of its start order.
+    from adlife.adapters.cognition.city_service_v2 import _interleaved_order
+
+    started = _interleaved_order(len(second.cognition_requests))
+    batch = started[: second.cognition_input.concurrency_limit]
+    assert len(batch) == 4 and batch != tuple(range(4))
     await asyncio.wait_for(
-        asyncio.gather(*(event.wait() for event in reverse_provider.entered[:4])),
+        asyncio.gather(*(reverse_provider.entered[index].wait() for index in batch)),
         5,
     )
-    for index in (3, 2, 1, 0):
+    for index in reversed(batch):
         reverse_provider.release[index].set()
         await asyncio.wait_for(reverse_provider.finished[index].wait(), 5)
     for event in reverse_provider.release:
         event.set()
     reverse = await asyncio.wait_for(task, 5)
-    assert reverse_provider.completed[:4] == [
-        r.request_id for r in reversed(second.cognition_requests[:4])
+    assert reverse_provider.completed[: len(batch)] == [
+        second.cognition_requests[index].request_id for index in reversed(batch)
     ]
     assert canonical_json(forward) == canonical_json(reverse)
     a, b = _finalize(first, forward), _finalize(second, reverse)

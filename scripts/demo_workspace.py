@@ -14,7 +14,7 @@ invocation creates new runs with fresh, numbered run IDs:
 
 * a Bounded AI cognition run (workbench schema 4, run V10) with the Mock source;
 * an Explanation-only run (workbench schema 3, run V9) with the Rules source; and,
-* with ``--with-llm``, a Bounded AI cognition run with the Local source and 10 funded
+* with ``--with-llm``, a Bounded AI cognition run with the Local source and 60 funded
   responses, after warming the model in Ollama, reusing or creating the ``local-ollama``
   profile revision the browser would create, and passing the bounded-signal check.
 
@@ -61,7 +61,8 @@ MODEL_DAYS: Final = 1
 BOUNDED_SCOPE: Final = "bounded-signals-v1"
 LOCAL_APPROVAL_ID: Final = "local-ollama"
 LOCAL_PROFILE_LABEL: Final = "Local Ollama"
-LOCAL_FUNDED_RESPONSES: Final = 10
+# The smallest published V3 AI limit: a local server answers one question at a time.
+LOCAL_FUNDED_RESPONSES: Final = 60
 OLLAMA_KEEP_ALIVE: Final = "30m"
 OUTCOMES: Final = ("rules", "mock", "provider", "cache", "fallback", "budget_skipped")
 RUN_KINDS: Final = ("v10-mock", "v9-rules", "v10-local")

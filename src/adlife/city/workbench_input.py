@@ -20,11 +20,13 @@ from pydantic import (
 
 from adlife.core.domain.city import TravelDirection, _validate_public_metadata
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_SELECTION_LIMITS,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
     CityCognitionCausalContractV2,
+    CityCognitionFundedResponseLimit,
     CityCognitionOutputTokensPerAttemptV2,
-    CityCognitionReservationTokensPerRequestV2,
+    CityCognitionReservationTokensPerRequest,
 )
 from adlife.core.domain.identifiers import (
     WINDOWS_RESERVED_RUN_IDS,
@@ -593,8 +595,44 @@ class NormalizedWorkbenchCognitionV3(DomainModel):
         return self
 
 
+# Server-side defaults for a new browser draft that omits its AI limit: online AI asks
+# about every noticed ad (up to the per-run cap); a local server answers one at a time.
+WORKBENCH_DEFAULT_FUNDED_RESPONSE_LIMITS: Final[Mapping[str, int]] = {
+    "rules": CITY_COGNITION_SELECTION_LIMITS[
+        CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION
+    ].offline_funded_response_limit,
+    "mock": CITY_COGNITION_SELECTION_LIMITS[
+        CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION
+    ].offline_funded_response_limit,
+    "local": 120,
+    "remote": 1000,
+}
+_OFFLINE_FUNDED_RESPONSE_LIMITS: Final = frozenset(
+    limits.offline_funded_response_limit for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
+
+
+def workbench_selection_limit_refusal(
+    *, mode: str, funded_response_limit: int, selection_policy_version: int
+) -> str | None:
+    """Why one draft limit is not allowed by a selection-policy version, if it is not."""
+    limits = CITY_COGNITION_SELECTION_LIMITS[selection_policy_version]
+    if mode in {"rules", "mock"}:
+        if funded_response_limit != limits.offline_funded_response_limit:
+            return "Offline cognition answers every selected request."
+        return None
+    if funded_response_limit not in limits.funded_response_limits:
+        return "The AI limit is not one of the published options."
+    return None
+
+
 class WorkbenchCognitionDraftV4(DomainModel):
-    """The browser chooses only scope, source, immutable profile, and whole requests."""
+    """The browser chooses only scope, source, immutable profile, and whole requests.
+
+    The limit is a union of every selection-policy version's options so stored schema-4
+    documents keep validating; a new run is checked against the current version when it
+    is constructed, and a stored one against its own frozen version.
+    """
 
     model_config = ConfigDict(hide_input_in_errors=True)
 
@@ -602,7 +640,7 @@ class WorkbenchCognitionDraftV4(DomainModel):
     mode: Literal["rules", "mock", "local", "remote"]
     provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
     provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
-    funded_response_limit: Literal[10, 20, 40, 60]
+    funded_response_limit: CityCognitionFundedResponseLimit
 
     @model_validator(mode="wrap")
     @classmethod
@@ -611,10 +649,12 @@ class WorkbenchCognitionDraftV4(DomainModel):
     ) -> Self:
         _reject_structural_secrets(value)
         if isinstance(value, Mapping) and "funded_response_limit" not in value:
-            value = {
-                **value,
-                "funded_response_limit": 60 if value.get("mode") in ("rules", "mock") else 20,
-            }
+            mode = value.get("mode")
+            if isinstance(mode, str) and mode in WORKBENCH_DEFAULT_FUNDED_RESPONSE_LIMITS:
+                value = {
+                    **value,
+                    "funded_response_limit": WORKBENCH_DEFAULT_FUNDED_RESPONSE_LIMITS[mode],
+                }
         return handler(value)
 
     @field_validator("provider_profile_id")
@@ -635,7 +675,7 @@ class WorkbenchCognitionDraftV4(DomainModel):
             if (
                 self.provider_profile_id is not None
                 or self.provider_revision_sha256 is not None
-                or self.funded_response_limit != 60
+                or self.funded_response_limit not in _OFFLINE_FUNDED_RESPONSE_LIMITS
             ):
                 raise ValueError("offline cognition requires no profile and all selected responses")
         elif self.provider_profile_id is None or self.provider_revision_sha256 is None:
@@ -652,26 +692,25 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
     mode: Literal["rules", "mock", "local", "remote"]
     provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
     provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
-    funded_response_limit: Literal[10, 20, 40, 60]
+    funded_response_limit: CityCognitionFundedResponseLimit
     causal_contract: CityCognitionCausalContractV2
     causal_contract_sha256: Annotated[str, Field(pattern=_SHA256_PATTERN)]
     request_schema_version: Literal[2]
-    selected_requests_per_agent: Literal[4]
-    selected_requests_per_run: Literal[60]
-    concurrency_limit: Literal[4]
+    # Unions of every version's values; checked against the contract's version row.
+    selected_requests_per_agent: Literal[4, 1000]
+    selected_requests_per_run: Literal[60, 1000]
+    concurrency_limit: Literal[4, 8]
     max_request_bytes: Literal[8192]
     max_terminal_record_bytes: Literal[8192]
     max_wire_response_bytes: Literal[1048576]
     max_output_tokens_per_attempt: CityCognitionOutputTokensPerAttemptV2
-    reservation_tokens_per_request: CityCognitionReservationTokensPerRequestV2
+    reservation_tokens_per_request: CityCognitionReservationTokensPerRequest
     initial_attempts: Literal[1]
-    transient_retries: Literal[2]
-    repair_attempts: Literal[1]
+    transient_retries: Literal[2, 3]
+    repair_attempts: Literal[1, 2]
     attempt_timeout_seconds: Literal[30]
-    aggregate_deadline_seconds: Literal[180]
-    aggregate_output_token_ceiling: int = Field(
-        ge=0, le=CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
-    )
+    aggregate_deadline_seconds: Literal[180, 1800]
+    aggregate_output_token_ceiling: int = Field(ge=0, le=CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS)
     response_model: Literal["spatial-response-v2"]
     rule_state_noninterference: Literal[True]
 
@@ -734,11 +773,26 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
         )
         if contract.fingerprint != self.causal_contract_sha256:
             raise ValueError("causal contract hash does not match the frozen document")
-        ceiling = (
-            0
-            if self.mode in {"rules", "mock"}
-            else self.funded_response_limit * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
-        )
+        # Every frozen ceiling is the row of the STORED selection-policy version.
+        version = contract.selection_policy_version
+        limits = CITY_COGNITION_SELECTION_LIMITS[version]
+        if workbench_selection_limit_refusal(
+            mode=self.mode,
+            funded_response_limit=self.funded_response_limit,
+            selection_policy_version=version,
+        ):
+            raise ValueError("funded response limit is not allowed by the frozen contract")
+        if (
+            self.selected_requests_per_agent != limits.selected_requests_per_agent
+            or self.selected_requests_per_run != limits.selected_requests_per_run
+            or self.concurrency_limit != limits.concurrency_limit(self.mode)
+            or self.reservation_tokens_per_request != limits.reservation_tokens_per_request
+            or self.transient_retries != limits.transient_retries_ceiling
+            or self.repair_attempts != limits.repair_attempts_ceiling
+            or self.aggregate_deadline_seconds != limits.aggregate_deadline_seconds
+        ):
+            raise ValueError("frozen cognition ceilings do not match the selection policy version")
+        ceiling = limits.aggregate_output_token_ceiling(self.mode, self.funded_response_limit)
         if self.aggregate_output_token_ceiling != ceiling:
             raise ValueError("aggregate output ceiling does not match the funded response limit")
         return self

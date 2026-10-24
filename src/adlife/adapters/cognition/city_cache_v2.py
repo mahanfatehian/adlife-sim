@@ -7,6 +7,7 @@ then freshly bound by the service when a cache result becomes a terminal record.
 from __future__ import annotations
 
 import json
+import weakref
 from contextlib import suppress
 from hashlib import sha256
 from typing import Any, Literal, Self
@@ -26,11 +27,11 @@ from adlife.adapters.cognition.city_prompts_v2 import (
 from adlife.city.workbench_workspace import WorkbenchWorkspace
 from adlife.core.domain.city_cognition import MAX_CITY_COGNITION_USAGE_INTEGER, Hash, RequestId
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
-    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION,
     CityCognitionInputV2,
     CityCognitionRequestV2,
     CityCognitionResultV2,
+    city_cognition_contract_selection_version,
 )
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
@@ -57,6 +58,33 @@ _IDENTITY_FIELDS = (
 )
 
 
+# One frozen input serves every cache key of a run. Revalidate each input object once
+# and reuse that validated copy, so admitting N requests costs N request checks plus
+# one input check instead of N input checks (quadratic at 1000 requests). Entries are
+# keyed by object identity, verified through a weak reference, and dropped with it.
+_CHECKED_INPUTS: dict[
+    int, tuple[weakref.ReferenceType[CityCognitionInputV2], CityCognitionInputV2]
+] = {}
+
+
+def _checked_cache_input(cognition_input: CityCognitionInputV2) -> CityCognitionInputV2:
+    object_id = id(cognition_input)
+    entry = _CHECKED_INPUTS.get(object_id)
+    if entry is not None and entry[0]() is cognition_input:
+        return entry[1]
+    checked = CityCognitionInputV2.model_validate(
+        cognition_input.model_dump(mode="python", warnings="none")
+    )
+
+    def forget(reference: weakref.ReferenceType[CityCognitionInputV2]) -> None:
+        current = _CHECKED_INPUTS.get(object_id)
+        if current is not None and current[0] is reference:
+            _CHECKED_INPUTS.pop(object_id, None)
+
+    _CHECKED_INPUTS[object_id] = (weakref.ref(cognition_input, forget), checked)
+    return checked
+
+
 def _cache_key_material_v2(
     request: CityCognitionRequestV2,
     cognition_input: CityCognitionInputV2,
@@ -72,9 +100,7 @@ def _cache_key_material_v2(
             CityCognitionRequestV2.model_validate(
                 request.model_dump(mode="python", warnings="none")
             ),
-            CityCognitionInputV2.model_validate(
-                cognition_input.model_dump(mode="python", warnings="none")
-            ),
+            _checked_cache_input(cognition_input),
         )
     if checked is None:
         raise ValueError("city cognition V2 cache key material failed validation")
@@ -90,7 +116,8 @@ def _cache_key_material_v2(
         reservation is None
         or reservation.request_record_sha256 != request.request_record_sha256
         or not reservation.funded
-        or reservation.reserved_output_tokens != CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+        or reservation.reserved_output_tokens
+        != frozen.selection_limits.reservation_tokens_per_request
     ):
         raise ValueError("city cognition V2 cache requires a funded frozen selection")
     profile, settings = frozen.provider_profile, frozen.effective_settings
@@ -158,9 +185,12 @@ class CityCognitionCacheRecordV2(DomainModel):
         )
         if result.request_id != self.request_id:
             raise ValueError("city cognition V2 cache result answers another request")
-        contract = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2
-        if self.causal_contract_sha256 != contract.fingerprint or any(
-            getattr(self, field) != getattr(contract, field) for field in _POLICY_FIELDS
+        # A record keeps the frozen contract of the run that answered it: V2 and V3
+        # request IDs differ, so a cached answer is only ever reused by its own version.
+        version = city_cognition_contract_selection_version(self.causal_contract_sha256)
+        if version is None or any(
+            getattr(self, field) != expected
+            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION[version]
         ):
             raise ValueError("city cognition V2 cache policies differ from the frozen contract")
         if self.key != _key({field: getattr(self, field) for field in _IDENTITY_FIELDS}):

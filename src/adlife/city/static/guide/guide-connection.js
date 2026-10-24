@@ -660,8 +660,8 @@ class Connection {
       seed: 42,
       max_output_tokens: 256,
       attempt_timeout_seconds: 30,
-      transient_retries: remote ? 1 : 2,
-      repair_attempts: 1,
+      transient_retries: 3,
+      repair_attempts: 2,
       origin_approval_id: origin.approval_id,
     };
     if (remote && /qwen/i.test(model)) value.disable_thinking = true;

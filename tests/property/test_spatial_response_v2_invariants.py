@@ -16,7 +16,10 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_MAX_SELECTED_REQUESTS,
+    CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.simulation import city_cognition_v2 as cognition
 from tests.unit.city.test_city_cognition_v2 import (
@@ -92,8 +95,10 @@ def test_provider_completion_order_produces_identical_canonical_evaluation():
 @pytest.mark.parametrize("shape", ["too-many", "list", "generator"])
 def test_arrival_admission_refuses_invalid_container_before_any_model_work(monkeypatch, shape):
     baseline, frozen, requests, records = _three_arrivals()
+    # Before the input is revalidated only the widest ceiling of any version is known.
+    oversized = records * (CITY_COGNITION_MAX_SELECTED_REQUESTS // len(records) + 1)
     arrivals = (
-        records * 21 if shape == "too-many" else list(records) if shape == "list" else iter(records)
+        oversized if shape == "too-many" else list(records) if shape == "list" else iter(records)
     )
 
     def fail(*args, **kwargs):
@@ -101,6 +106,18 @@ def test_arrival_admission_refuses_invalid_container_before_any_model_work(monke
 
     monkeypatch.setattr(cognition, "revalidate_model", fail)
     with pytest.raises(ValueError if shape == "too-many" else TypeError):
+        cognition.validate_city_cognition_evaluation_v2(
+            frozen, requests, arrivals, baseline_evaluation=baseline
+        )
+
+
+def test_arrival_admission_holds_a_v2_input_to_its_own_arrival_ceiling():
+    baseline, frozen, requests, records = _three_arrivals()
+    limits = frozen.selection_limits
+    assert (limits.selection_policy_version, limits.max_terminal_records) == (2, 60)
+    arrivals = records * (limits.max_terminal_records // len(records) + 1)
+    assert len(arrivals) <= CITY_COGNITION_MAX_SELECTED_REQUESTS
+    with pytest.raises(ValueError, match="too many city cognition terminal arrivals"):
         cognition.validate_city_cognition_evaluation_v2(
             frozen, requests, arrivals, baseline_evaluation=baseline
         )

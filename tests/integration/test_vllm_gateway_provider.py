@@ -331,12 +331,14 @@ def test_a_vllm_gateway_runs_a_v10_study_once_model_thinking_is_turned_off(
 
         assert outcome.phase == "completed", outcome.error_code
         counts = dict(outcome.counts)
-        assert counts["provider"] == 10
-        assert counts["fallback"] == counts["cache"] == 0
-        assert counts["budget_skipped"] == sum(counts.values()) - 10
+        # Selection policy V3 funds every selected request, at most the plan's AI limit.
+        selected = sum(counts.values())
+        assert 0 < selected <= 60
+        assert counts["provider"] == selected
+        assert counts["fallback"] == counts["cache"] == counts["budget_skipped"] == 0
         bodies = [entry["body"] for entry in gateway.requests]
-        # Two checks, ten funded first attempts, and one repair of the runaway answer.
-        assert len(bodies) == 2 + 10 + 1
+        # Two checks, one first attempt per selected request, and one repair of the runaway.
+        assert len(bodies) == 2 + selected + 1
         assert all(entry["path"] == "/v1/chat/completions" for entry in gateway.requests)
         assert all("uniqueItems" not in json.dumps(body["response_format"]) for body in bodies)
         assert "chat_template_kwargs" not in bodies[0]
@@ -353,8 +355,8 @@ def test_a_vllm_gateway_runs_a_v10_study_once_model_thinking_is_turned_off(
     assert frozen.effective_settings.disable_thinking is True
     records = stored.cognition_evaluation.records
     provider_records = [record for record in records if record.source == "provider"]
-    assert len(provider_records) == 10
-    assert sorted(record.attempt_count for record in provider_records) == [1] * 9 + [2]
+    assert len(provider_records) == selected
+    assert sorted(record.attempt_count for record in provider_records) == [1] * (selected - 1) + [2]
     assert {record.provider_effective_settings_sha256 for record in provider_records} == {
         frozen.effective_settings.fingerprint
     }

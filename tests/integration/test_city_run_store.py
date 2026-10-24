@@ -50,12 +50,14 @@ def test_v10_store_uses_frozen_core_capacity_and_payload_lf_scopes(tmp_path, mon
     from adlife.core.simulation import spatial_response_v2 as response
     from tests.integration.test_city_cognition_v2_artifacts import _saved_v10
 
-    _, prepared, _ = _saved_v10(tmp_path)
+    _, prepared, directory = _saved_v10(tmp_path)
     frozen = prepared.cognition_input
     assert frozen.max_request_bytes == frozen.max_terminal_record_bytes == 8192
     expected = {
         "MAX_CITY_COGNITION_INPUT_BYTES_V2": 131_072,
+        "MAX_CITY_COGNITION_INPUT_BYTES_V10": 524_288,
         "MAX_CITY_COGNITION_STREAM_BYTES": 1_048_576,
+        "MAX_CITY_COGNITION_STREAM_BYTES_V10": 8_388_608,
         "MAX_CITY_COGNITION_SUMMARY_BYTES": 16_384,
         "MAX_SPATIAL_RESPONSE_STREAM_BYTES_V2": 2_147_483_648,
         "MAX_SPATIAL_RESPONSE_STATE_BYTES_V2": 8_388_608,
@@ -75,8 +77,10 @@ def test_v10_store_uses_frozen_core_capacity_and_payload_lf_scopes(tmp_path, mon
         city_store_module.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
         == response.MAX_SPATIAL_RESPONSE_SUMMARY_BYTES_V2
     )
+    # The input is read under the widest selection-policy scope, newline included, and is
+    # then held to the bound of its own stored version.
     required = {
-        "inputs/cognition.json": 131_073,
+        "inputs/cognition.json": 524_289,
         "outputs/cognition-summary.json": 16_385,
         "outputs/response-state.json": 8_388_608,
         "outputs/response-summary.json": 131_072,
@@ -93,6 +97,19 @@ def test_v10_store_uses_frozen_core_capacity_and_payload_lf_scopes(tmp_path, mon
     monkeypatch.setattr(CityRunStore, "_read_document", read_with_scope)
     CityRunStore(tmp_path).load(prepared.manifest.run_id)
     assert observed == required
+
+    # A V2 input stays bounded by 131,072 bytes before its newline: padded with whitespace
+    # to one byte more, it still parses and fits the widest read scope, but its own version
+    # refuses it.
+    assert frozen.selection_limits.selection_policy_version == 2
+    sidecar = directory / "inputs" / "cognition.json"
+    document = sidecar.read_bytes()
+    padding = 131_072 + 1 - (len(document) - 1)
+    assert padding > 0
+    sidecar.write_bytes(document[:-1] + b" " * padding + b"\n")
+    assert len(sidecar.read_bytes()) == 131_072 + 2
+    with pytest.raises(CorruptRunArtifact, match="version limit"):
+        CityRunStore(tmp_path).load(prepared.manifest.run_id)
 
 
 class _GeneratedReader:

@@ -1013,25 +1013,36 @@ def test_v2_output_budget_is_one_closed_derived_contract() -> None:
         == m._CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
     )
     frozen = m.CityCognitionInputV2.model_fields
-    assert attempts == sum(
-        get_args(frozen[name].annotation)[0]
-        for name in ("initial_attempts", "transient_retries_ceiling", "repair_attempts_ceiling")
-    )
+    v2 = m.CITY_COGNITION_SELECTION_LIMITS[2]
     assert (
-        get_args(frozen["selected_requests_per_run"].annotation)[0] * reservation_tokens()
-    ) == m.CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+        attempts
+        == v2.max_attempts_per_request
+        == (
+            get_args(frozen["initial_attempts"].annotation)[0]
+            + v2.transient_retries_ceiling
+            + v2.repair_attempts_ceiling
+        )
+    )
+    assert v2.selected_requests_per_run * reservation_tokens() == (
+        m.CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    )
+    # Every version keeps reservation = attempts x per-attempt cap, and the wire
+    # unions hold exactly the values of the version rows.
+    rows = tuple(m.CITY_COGNITION_SELECTION_LIMITS.values())
+    for row in rows:
+        assert row.reservation_tokens_per_request == row.max_attempts_per_request * cap
+        assert row.max_attempts_per_request == (
+            1 + row.transient_retries_ceiling + row.repair_attempts_ceiling
+        )
     workbench = NormalizedWorkbenchCognitionV4.model_fields
     for fields in (frozen, workbench):
         assert get_args(fields["max_output_tokens_per_attempt"].annotation) == (cap,)
-        assert get_args(fields["reservation_tokens_per_request"].annotation) == (
-            reservation_tokens(),
+        assert get_args(fields["reservation_tokens_per_request"].annotation) == tuple(
+            row.reservation_tokens_per_request for row in rows
         )
     assert get_args(
         m.CityCognitionReservationV2.model_fields["reserved_output_tokens"].annotation
-    ) == (
-        0,
-        reservation_tokens(),
-    )
+    ) == (0, *(row.reservation_tokens_per_request for row in rows))
     settings = m.CityCognitionEffectiveSettingsV2.model_validate(
         settings_data(profile_data("local", 384))
     )
@@ -1180,8 +1191,8 @@ def test_v2_attempts_require_complete_closed_screened_outcomes(status: str) -> N
         ("max_output_tokens", True),
         ("attempt_timeout_seconds", 31),
         ("attempt_timeout_seconds", 0),
-        ("transient_retries", 3),
-        ("repair_attempts", 2),
+        ("transient_retries", 4),
+        ("repair_attempts", 3),
         ("seed", True),
         ("seed", 0),
         ("seed_policy", "fixed"),

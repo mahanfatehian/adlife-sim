@@ -149,7 +149,13 @@ from adlife.city.workbench_workspace import (
     verify_workbench_workspace,
 )
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
-from adlife.core.domain.city_cognition_v2 import CityCognitionEvaluationV2, CityCognitionInputV2
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+    CityCognitionEvaluationV2,
+    CityCognitionInputV2,
+)
 from adlife.core.domain.city_run import (
     CityRunManifestV7,
     CityRunManifestV8,
@@ -389,7 +395,12 @@ def _construct_validated_run(
             "city_id",
             "The selected city is unavailable.",
         ) from None
-    return construct_workbench_run(draft, selected_pack=selected.pack)
+    # Every new run freezes the current causal contract and its selection policy.
+    return construct_workbench_run(
+        draft,
+        selected_pack=selected.pack,
+        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    )
 
 
 def _pagination(request: Request) -> tuple[int, int]:
@@ -445,13 +456,14 @@ def _single_literal(model: type[BaseModel], field: str) -> Any:
 
 
 def _bounded_cognition_capabilities() -> dict[str, object]:
-    """Derive browser-visible schema-4 options from the frozen runtime models.
+    """Derive browser-visible schema-4 options from the current selection-policy row.
 
     Only selectable options and disclosure ceilings are exposed; policy documents,
     hashes, and transport ceilings stay server-derived and are never submitted.
     """
     draft = WorkbenchCognitionDraftV4
     frozen = NormalizedWorkbenchCognitionV4
+    current = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
     effect_scope = _single_literal(draft, "effect_scope")
     modes = _literal_values(draft, "mode")
     provider_modes = _literal_values(CityCognitionProviderProfileSnapshotV1, "mode")
@@ -469,27 +481,38 @@ def _bounded_cognition_capabilities() -> dict[str, object]:
         )
         return selection.funded_response_limit
 
-    provider_limits = {materialized_limit(mode) for mode in modes if mode in provider_modes}
     offline_limits = {materialized_limit(mode) for mode in modes if mode not in provider_modes}
-    if len(provider_limits) != 1 or len(offline_limits) != 1:
-        raise RuntimeError("bounded cognition default funding is not mode independent")
+    default_limits = {mode: materialized_limit(mode) for mode in provider_modes}
+    allowed = set(current.funded_response_limits)
+    if (
+        offline_limits != {current.offline_funded_response_limit}
+        or not set(default_limits.values()) <= allowed
+        or not allowed <= set(_literal_values(draft, "funded_response_limit"))
+    ):
+        raise RuntimeError("bounded cognition default funding is outside the current policy")
     return {
         "effect_scope": effect_scope,
         "workbench_schema_version": _single_literal(WorkbenchRunDraftV4, "schema_version"),
         "run_schema_version": _single_literal(CityRunManifestV10, "schema_version"),
         "modes": list(modes),
-        "funded_response_limits": list(_literal_values(draft, "funded_response_limit")),
-        "default_provider_funded_response_limit": provider_limits.pop(),
+        "selection_policy_version": current.selection_policy_version,
+        "selection_strategy": current.strategy,
+        "funded_response_limits": list(current.funded_response_limits),
+        # The largest option means "every noticed ad", up to the per-run cap.
+        "all_noticed_funded_response_limit": current.selected_requests_per_run,
+        "default_provider_funded_response_limit": default_limits["remote"],
+        "default_local_funded_response_limit": default_limits["local"],
         "offline_funded_response_limit": offline_limits.pop(),
-        "selected_requests_per_run": _single_literal(frozen, "selected_requests_per_run"),
-        "reserved_output_tokens_per_request": _single_literal(
-            frozen, "reservation_tokens_per_request"
-        ),
+        "selected_requests_per_run": current.selected_requests_per_run,
+        "selected_requests_per_agent": current.selected_requests_per_agent,
+        "concurrency_limits": {
+            "remote": current.concurrency_limit("remote"),
+            "local": current.concurrency_limit("local"),
+        },
+        "aggregate_deadline_seconds": current.aggregate_deadline_seconds,
+        "reserved_output_tokens_per_request": current.reservation_tokens_per_request,
         "max_output_tokens_per_attempt": _single_literal(frozen, "max_output_tokens_per_attempt"),
-        "max_http_attempts_per_request": sum(
-            _single_literal(frozen, field)
-            for field in ("initial_attempts", "transient_retries", "repair_attempts")
-        ),
+        "max_http_attempts_per_request": current.max_attempts_per_request,
         "compatibility_check_required_modes": [mode for mode in modes if mode in provider_modes],
     }
 

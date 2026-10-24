@@ -7,7 +7,10 @@ separate from full run provenance so descriptive changes cannot perturb inferenc
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
+from dataclasses import dataclass
 from hashlib import sha256
+from types import MappingProxyType
 from typing import Annotated, Any, Final, Literal, Self, get_args, get_origin
 
 from pydantic import (
@@ -109,6 +112,194 @@ CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST: Final = (
 CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS: Final = (
     _CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
 )
+# Wire unions that hold every generation's value. Each document cross-checks the value
+# against the per-version table below, so a V2 document validates exactly as before.
+CityCognitionReservationTokensPerRequest = Literal[1024, 1536]
+CityCognitionReservedOutputTokens = Literal[0, 1024, 1536]
+CityCognitionFundedResponseLimit = Literal[10, 20, 40, 60, 120, 250, 500, 1000]
+CityCognitionSelectionPolicyVersion = Literal[2, 3]
+
+
+@dataclass(frozen=True, slots=True)
+class CitySelectionLimits:
+    """Frozen selection, funding, retry and size ceilings of one selection-policy version.
+
+    Every rebuild and verification path reads the row of the run's STORED
+    ``selection_policy_version``, never the current default, so saved runs keep their
+    historical authority while new runs use the current row.
+    """
+
+    selection_policy_version: int
+    policy_id: str
+    strategy: Literal["earliest-first", "spread-evenly"]
+    selected_requests_per_agent: int
+    selected_requests_per_run: int
+    funded_response_limits: tuple[int, ...]
+    offline_funded_response_limit: int
+    remote_concurrency_limit: int
+    local_concurrency_limit: int
+    aggregate_deadline_seconds: int
+    transient_retries_ceiling: int
+    repair_attempts_ceiling: int
+    max_attempts_per_request: int
+    reservation_tokens_per_request: int
+    max_cognition_input_bytes: int
+    max_terminal_stream_bytes: int
+    max_terminal_records: int
+    max_summary_attempts: int
+
+    def concurrency_limit(self, mode: str) -> int:
+        """The frozen in-flight request ceiling for one cognition mode."""
+        return self.remote_concurrency_limit if mode == "remote" else self.local_concurrency_limit
+
+    def aggregate_output_token_ceiling(self, mode: str, funded_response_limit: int) -> int:
+        """Whole-request output reservation of a run; offline modes reserve none."""
+        if mode in {"rules", "mock"}:
+            return 0
+        return funded_response_limit * self.reservation_tokens_per_request
+
+    @property
+    def max_aggregate_output_tokens(self) -> int:
+        return max(self.funded_response_limits) * self.reservation_tokens_per_request
+
+    def funded_limit_text(self) -> str:
+        """The allowed funded limits as words, for exact refusal messages."""
+        *head, last = (str(value) for value in self.funded_response_limits)
+        return f"{', '.join(head)}, or {last}"
+
+
+_CITY_COGNITION_SELECTION_LIMITS_V2: Final = CitySelectionLimits(
+    selection_policy_version=2,
+    policy_id="city-cognition-selection-v2",
+    strategy="earliest-first",
+    selected_requests_per_agent=4,
+    selected_requests_per_run=60,
+    funded_response_limits=(10, 20, 40, 60),
+    offline_funded_response_limit=60,
+    remote_concurrency_limit=4,
+    local_concurrency_limit=4,
+    aggregate_deadline_seconds=180,
+    transient_retries_ceiling=2,
+    repair_attempts_ceiling=1,
+    max_attempts_per_request=_CITY_COGNITION_V2_MAX_ATTEMPTS_PER_REQUEST,
+    reservation_tokens_per_request=_CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    max_cognition_input_bytes=131_072,
+    max_terminal_stream_bytes=1_048_576,
+    max_terminal_records=60,
+    max_summary_attempts=240,
+)
+_CITY_COGNITION_SELECTION_LIMITS_V3: Final = CitySelectionLimits(
+    selection_policy_version=3,
+    policy_id="city-cognition-selection-v3",
+    strategy="spread-evenly",
+    selected_requests_per_agent=1000,
+    selected_requests_per_run=1000,
+    funded_response_limits=(60, 120, 250, 500, 1000),
+    offline_funded_response_limit=1000,
+    remote_concurrency_limit=8,
+    local_concurrency_limit=4,
+    aggregate_deadline_seconds=1800,
+    transient_retries_ceiling=3,
+    repair_attempts_ceiling=2,
+    max_attempts_per_request=6,
+    reservation_tokens_per_request=6 * _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    max_cognition_input_bytes=524_288,
+    max_terminal_stream_bytes=8_388_608,
+    max_terminal_records=1000,
+    max_summary_attempts=6000,
+)
+# Validators read only this private table; the public name is an alias for adapters,
+# the server and the browser capabilities.
+_CITY_COGNITION_SELECTION_LIMITS: Final[Mapping[int, CitySelectionLimits]] = MappingProxyType(
+    {2: _CITY_COGNITION_SELECTION_LIMITS_V2, 3: _CITY_COGNITION_SELECTION_LIMITS_V3}
+)
+CITY_COGNITION_SELECTION_LIMITS: Final[Mapping[int, CitySelectionLimits]] = (
+    _CITY_COGNITION_SELECTION_LIMITS
+)
+CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION: Final = 3
+for _version, _limits in _CITY_COGNITION_SELECTION_LIMITS.items():
+    if (
+        _limits.selection_policy_version != _version
+        or _limits.max_attempts_per_request
+        != 1 + _limits.transient_retries_ceiling + _limits.repair_attempts_ceiling
+        or _limits.reservation_tokens_per_request
+        != _limits.max_attempts_per_request * _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
+        or _limits.max_summary_attempts
+        != _limits.max_terminal_records * _limits.max_attempts_per_request
+        or _limits.max_terminal_records != _limits.selected_requests_per_run
+        or _limits.offline_funded_response_limit != _limits.selected_requests_per_run
+        or max(_limits.funded_response_limits) > _limits.selected_requests_per_run
+        or not set(_limits.funded_response_limits)
+        <= set(get_args(CityCognitionFundedResponseLimit))
+        or _limits.reservation_tokens_per_request
+        not in get_args(CityCognitionReservationTokensPerRequest)
+    ):  # pragma: no cover - import guard
+        raise RuntimeError("bounded city cognition selection limits are inconsistent")
+if (
+    _CITY_COGNITION_SELECTION_LIMITS[2].max_aggregate_output_tokens
+    != _CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    or CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION not in _CITY_COGNITION_SELECTION_LIMITS
+):  # pragma: no cover - import guard
+    raise RuntimeError("bounded city cognition selection limits are inconsistent")
+_MAX_SELECTED_REQUESTS_ANY_VERSION: Final = max(
+    limits.selected_requests_per_run for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+)
+_MAX_ATTEMPTS_ANY_VERSION: Final = max(
+    limits.max_attempts_per_request for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+)
+_MAX_AGGREGATE_OUTPUT_TOKENS_ANY_VERSION: Final = max(
+    limits.max_aggregate_output_tokens for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+)
+_MAX_TERMINAL_STREAM_BYTES_ANY_VERSION: Final = max(
+    limits.max_terminal_stream_bytes for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+)
+_MAX_COGNITION_INPUT_BYTES_ANY_VERSION: Final = max(
+    limits.max_cognition_input_bytes for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+)
+_MAX_SUMMARY_ATTEMPTS_ANY_VERSION: Final = max(
+    limits.max_summary_attempts for limits in _CITY_COGNITION_SELECTION_LIMITS.values()
+)
+# Public widest bounds for summaries that do not carry their contract.
+CITY_COGNITION_MAX_SELECTED_REQUESTS: Final = _MAX_SELECTED_REQUESTS_ANY_VERSION
+CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS: Final = _MAX_AGGREGATE_OUTPUT_TOKENS_ANY_VERSION
+CITY_COGNITION_MAX_SUMMARY_ATTEMPTS: Final = _MAX_SUMMARY_ATTEMPTS_ANY_VERSION
+
+
+def city_cognition_selection_limits(version: object) -> CitySelectionLimits:
+    """The frozen row of one stored selection-policy version, or a refusal."""
+    if type(version) is not int or version not in _CITY_COGNITION_SELECTION_LIMITS:
+        raise ValueError("unsupported city cognition selection policy version")
+    return _CITY_COGNITION_SELECTION_LIMITS[version]
+
+
+def city_cognition_funding_versions(
+    mode: object, funded_response_limit: object, aggregate_output_token_ceiling: object
+) -> tuple[int, ...]:
+    """Selection-policy versions under which a mode, funded limit and ceiling cohere.
+
+    Summaries that do not carry the contract (job settings, run lists) accept exactly
+    the combinations some frozen version allows, never a mix of two versions.
+    """
+    if (
+        type(funded_response_limit) is not int
+        or type(aggregate_output_token_ceiling) is not int
+        or mode not in {"rules", "mock", "local", "remote"}
+    ):
+        return ()
+    assert isinstance(mode, str)
+    offline = mode in {"rules", "mock"}
+    return tuple(
+        version
+        for version, limits in _CITY_COGNITION_SELECTION_LIMITS.items()
+        if (
+            funded_response_limit == limits.offline_funded_response_limit
+            if offline
+            else funded_response_limit in limits.funded_response_limits
+        )
+        and aggregate_output_token_ceiling
+        == limits.aggregate_output_token_ceiling(mode, funded_response_limit)
+    )
+
 
 CITY_COGNITION_V2_DISCLOSURE: Literal["synthetic-bounded-cognition-not-observed-behavior"] = (
     "synthetic-bounded-cognition-not-observed-behavior"
@@ -289,6 +480,34 @@ class CityCognitionSelectionPolicyV2(_CityCognitionModelV2):
     selected_requests_per_run: Literal[60]
 
 
+class CityCognitionSelectionPolicyV3(_CityCognitionModelV2):
+    """Same eligibility and order as V2; ``k = min(E, limit)`` spread over the whole run.
+
+    With E eligible responses, selection ``i`` is ``sorted[(i * E) // k]``. The indices
+    strictly increase, so time order is kept, and ``k == E`` selects every response.
+    There is no per-person cap, and every selected request is funded.
+    """
+
+    schema_version: Literal[3]
+    policy_id: Literal["city-cognition-selection-v3"]
+    eligible_event_type: Literal["spatial.response"]
+    noticed_responses_only: Literal[True]
+    sort_order: tuple[
+        Literal["model_minute"],
+        Literal["agent_id"],
+        Literal["campaign_id"],
+        Literal["baseline_response_id"],
+    ]
+    strategy: Literal["spread-evenly"]
+    selected_requests_per_agent: Literal[1000]
+    selected_requests_per_run: Literal[1000]
+
+
+# The closed ``policy_id`` literal admits exactly one member; the contract then checks
+# the stored ``selection_policy_version`` and frozen hash of that member.
+CityCognitionSelectionPolicy = CityCognitionSelectionPolicyV2 | CityCognitionSelectionPolicyV3
+
+
 class CityCognitionFallbackPolicyV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     policy_id: Literal["city-cognition-fallback-v2"]
@@ -381,6 +600,32 @@ CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2 = CityCognitionSelectionPolicyV2(
 )
 _CITY_COGNITION_SELECTION_POLICY_V2_SHA256 = CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2.fingerprint
 CITY_COGNITION_SELECTION_POLICY_V2_SHA256 = _CITY_COGNITION_SELECTION_POLICY_V2_SHA256
+CITY_COGNITION_DEFAULT_SELECTION_POLICY_V3 = CityCognitionSelectionPolicyV3(
+    schema_version=3,
+    policy_id="city-cognition-selection-v3",
+    eligible_event_type="spatial.response",
+    noticed_responses_only=True,
+    sort_order=("model_minute", "agent_id", "campaign_id", "baseline_response_id"),
+    strategy="spread-evenly",
+    selected_requests_per_agent=1000,
+    selected_requests_per_run=1000,
+)
+_CITY_COGNITION_SELECTION_POLICY_V3_SHA256 = CITY_COGNITION_DEFAULT_SELECTION_POLICY_V3.fingerprint
+CITY_COGNITION_SELECTION_POLICY_V3_SHA256 = _CITY_COGNITION_SELECTION_POLICY_V3_SHA256
+_CITY_COGNITION_SELECTION_POLICY_SHA256_BY_VERSION: Final[Mapping[int, str]] = MappingProxyType(
+    {2: _CITY_COGNITION_SELECTION_POLICY_V2_SHA256, 3: _CITY_COGNITION_SELECTION_POLICY_V3_SHA256}
+)
+for _version, _policy in (
+    (2, CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2),
+    (3, CITY_COGNITION_DEFAULT_SELECTION_POLICY_V3),
+):
+    _row = _CITY_COGNITION_SELECTION_LIMITS[_version]
+    if (
+        _policy.policy_id != _row.policy_id
+        or _policy.selected_requests_per_agent != _row.selected_requests_per_agent
+        or _policy.selected_requests_per_run != _row.selected_requests_per_run
+    ):  # pragma: no cover - import guard
+        raise RuntimeError("selection policy documents disagree with the limit table")
 CITY_COGNITION_DEFAULT_FALLBACK_POLICY_V2 = CityCognitionFallbackPolicyV2(
     schema_version=2,
     policy_id="city-cognition-fallback-v2",
@@ -450,8 +695,8 @@ class CityCognitionCausalContractV2(_CityCognitionModelV2):
     result_schema_version: Literal[2]
     result_schema_document: str
     result_schema_contract_sha256: Hash
-    selection_policy_version: Literal[2]
-    selection_policy: CityCognitionSelectionPolicyV2
+    selection_policy_version: CityCognitionSelectionPolicyVersion
+    selection_policy: CityCognitionSelectionPolicy
     selection_policy_sha256: Hash
     fallback_policy_version: Literal[2]
     fallback_policy: CityCognitionFallbackPolicyV2
@@ -472,9 +717,14 @@ class CityCognitionCausalContractV2(_CityCognitionModelV2):
             or self.result_schema_contract_sha256 != _CITY_COGNITION_RESULT_SCHEMA_V2_SHA256
         ):
             raise ValueError("prompt and result schema must match their frozen V2 documents")
+        if self.selection_policy.schema_version != self.selection_policy_version:
+            raise ValueError("causal contract policy must match its frozen canonical document")
         # Numeric equality alone cannot freeze bytes: -0.0 and 0.0 compare equal.
         for name, expected in (
-            ("selection", _CITY_COGNITION_SELECTION_POLICY_V2_SHA256),
+            (
+                "selection",
+                _CITY_COGNITION_SELECTION_POLICY_SHA256_BY_VERSION[self.selection_policy_version],
+            ),
             ("fallback", _CITY_COGNITION_FALLBACK_POLICY_V2_SHA256),
             ("mock", _CITY_COGNITION_MOCK_POLICY_V1_SHA256),
             ("influence", _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256),
@@ -527,6 +777,71 @@ _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2 = (
     ("mock_policy_sha256", _CITY_COGNITION_MOCK_POLICY_V1_SHA256),
     ("influence_policy_sha256", _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256),
 )
+# Selection policy V3 changes only the selection document; every other frozen
+# document, and the V2 contract above, stays byte-identical.
+CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3 = CityCognitionCausalContractV2(
+    schema_version=2,
+    disclosure=CITY_COGNITION_V2_DISCLOSURE,
+    prompt_contract_id="city-cognition-signal-prompt-v2",
+    prompt_contract_version=2,
+    prompt_contract_text=CITY_COGNITION_PROMPT_CONTRACT_V2_TEXT,
+    prompt_contract_sha256=CITY_COGNITION_PROMPT_CONTRACT_V2_SHA256,
+    result_schema_id="city-cognition-signal-result-v2",
+    result_schema_version=2,
+    result_schema_document=CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT,
+    result_schema_contract_sha256=CITY_COGNITION_RESULT_SCHEMA_V2_SHA256,
+    selection_policy_version=3,
+    selection_policy=CITY_COGNITION_DEFAULT_SELECTION_POLICY_V3,
+    selection_policy_sha256=CITY_COGNITION_SELECTION_POLICY_V3_SHA256,
+    fallback_policy_version=2,
+    fallback_policy=CITY_COGNITION_DEFAULT_FALLBACK_POLICY_V2,
+    fallback_policy_sha256=CITY_COGNITION_FALLBACK_POLICY_V2_SHA256,
+    mock_policy_version=1,
+    mock_policy=CITY_COGNITION_DEFAULT_MOCK_POLICY_V1,
+    mock_policy_sha256=CITY_COGNITION_MOCK_POLICY_V1_SHA256,
+    influence_policy_version=1,
+    influence_policy=CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
+    influence_policy_sha256=CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256,
+)
+# The contract new runs use. Saved runs keep the contract they were frozen with.
+CURRENT_CITY_COGNITION_CAUSAL_CONTRACT = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3
+_CITY_COGNITION_CAUSAL_CONTRACT_V3_SHA256 = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3.fingerprint
+_CITY_COGNITION_TERMINAL_POLICY_HASHES_V3 = (
+    ("causal_contract_sha256", _CITY_COGNITION_CAUSAL_CONTRACT_V3_SHA256),
+    ("prompt_contract_sha256", _CITY_COGNITION_PROMPT_CONTRACT_V2_SHA256),
+    ("result_schema_contract_sha256", _CITY_COGNITION_RESULT_SCHEMA_V2_SHA256),
+    ("selection_policy_sha256", _CITY_COGNITION_SELECTION_POLICY_V3_SHA256),
+    ("fallback_policy_sha256", _CITY_COGNITION_FALLBACK_POLICY_V2_SHA256),
+    ("mock_policy_sha256", _CITY_COGNITION_MOCK_POLICY_V1_SHA256),
+    ("influence_policy_sha256", _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256),
+)
+_CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION: Final[
+    Mapping[int, tuple[tuple[str, str], ...]]
+] = MappingProxyType(
+    {2: _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2, 3: _CITY_COGNITION_TERMINAL_POLICY_HASHES_V3}
+)
+_CITY_COGNITION_SELECTION_VERSION_BY_CONTRACT_SHA256: Final[Mapping[str, int]] = MappingProxyType(
+    {
+        _CITY_COGNITION_CAUSAL_CONTRACT_V2_SHA256: 2,
+        _CITY_COGNITION_CAUSAL_CONTRACT_V3_SHA256: 3,
+    }
+)
+
+
+def city_cognition_contract_selection_version(causal_contract_sha256: object) -> int | None:
+    """The selection-policy version of one frozen causal contract hash, if it is one."""
+    if type(causal_contract_sha256) is not str:
+        return None
+    return _CITY_COGNITION_SELECTION_VERSION_BY_CONTRACT_SHA256.get(causal_contract_sha256)
+
+
+def _terminal_policy_version(source: object) -> int | None:
+    """The version whose complete frozen policy hashes ``source`` carries, if any."""
+    for version, hashes in _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION.items():
+        if all(getattr(source, field, None) == expected for field, expected in hashes):
+            return version
+    return None
+
 
 _AgentId = Annotated[str, Field(pattern=r"^person-[0-9]{3}$")]
 _Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")]
@@ -816,8 +1131,9 @@ class CityCognitionEffectiveSettingsV2(_CityCognitionModelV2):
     seed: int | None = Field(ge=0, le=2**63 - 1)
     max_output_tokens: int = Field(ge=1, le=_CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT)
     attempt_timeout_seconds: int = Field(ge=1, le=30)
-    transient_retries: int = Field(ge=0, le=2)
-    repair_attempts: int = Field(ge=0, le=1)
+    # The widest version ceilings; each input checks them against its own version.
+    transient_retries: int = Field(ge=0, le=3)
+    repair_attempts: int = Field(ge=0, le=2)
     # Copied from the profile like every other setting; true adds chat_template_kwargs
     # {"enable_thinking": false} to each request. Omitted from canonical bytes while false,
     # so settings hashes of runs saved before the control existed are unchanged.
@@ -836,11 +1152,12 @@ class CityCognitionEffectiveSettingsV2(_CityCognitionModelV2):
 
 class CityCognitionReservationV2(_CityCognitionModelV2):
     schema_version: Literal[2]
-    selection_index: int = Field(ge=0, lt=60)
+    # Version bounds (60 for V2, 1000 for V3) are checked by the owning input.
+    selection_index: int = Field(ge=0, lt=_MAX_SELECTED_REQUESTS_ANY_VERSION)
     request_id: RequestId
     request_record_sha256: Hash
     funded: bool
-    reserved_output_tokens: CityCognitionReservedOutputTokensV2
+    reserved_output_tokens: CityCognitionReservedOutputTokens
 
     @model_validator(mode="after")
     def coherent_unfunded_tokens(self) -> Self:
@@ -860,36 +1177,56 @@ class CityCognitionInputV2(_CityCognitionModelV2):
     causal_contract_sha256: Hash
     provider_profile: CityCognitionProviderProfileSnapshotV1 | None
     effective_settings: CityCognitionEffectiveSettingsV2 | None
-    funded_response_limit: Literal[10, 20, 40, 60]
-    selected_requests_per_agent: Literal[4]
-    selected_requests_per_run: Literal[60]
-    concurrency_limit: Literal[4]
+    # Unions of every version's values; the validator checks the stored version's row.
+    funded_response_limit: CityCognitionFundedResponseLimit
+    selected_requests_per_agent: Literal[4, 1000]
+    selected_requests_per_run: Literal[60, 1000]
+    concurrency_limit: Literal[4, 8]
     max_request_bytes: Literal[8192]
     max_terminal_record_bytes: Literal[8192]
     max_wire_response_bytes: Literal[1048576]
     max_output_tokens_per_attempt: CityCognitionOutputTokensPerAttemptV2
-    reservation_tokens_per_request: CityCognitionReservationTokensPerRequestV2
+    reservation_tokens_per_request: CityCognitionReservationTokensPerRequest
     initial_attempts: Literal[1]
-    transient_retries_ceiling: Literal[2]
-    repair_attempts_ceiling: Literal[1]
+    transient_retries_ceiling: Literal[2, 3]
+    repair_attempts_ceiling: Literal[1, 2]
     attempt_timeout_seconds_ceiling: Literal[30]
-    aggregate_deadline_seconds: Literal[180]
-    aggregate_output_token_ceiling: int = Field(
-        ge=0, le=_CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
+    aggregate_deadline_seconds: Literal[180, 1800]
+    aggregate_output_token_ceiling: int = Field(ge=0, le=_MAX_AGGREGATE_OUTPUT_TOKENS_ANY_VERSION)
+    reservations: tuple[CityCognitionReservationV2, ...] = Field(
+        max_length=_MAX_SELECTED_REQUESTS_ANY_VERSION
     )
-    reservations: tuple[CityCognitionReservationV2, ...] = Field(max_length=60)
+
+    @property
+    def selection_limits(self) -> CitySelectionLimits:
+        """The frozen limit row of this input's stored selection-policy version."""
+        return _CITY_COGNITION_SELECTION_LIMITS[self.causal_contract.selection_policy_version]
 
     @model_validator(mode="after")
     def coherent_mode_budget_and_profile(self) -> Self:
         if self.causal_contract_sha256 != self.causal_contract.fingerprint:
             raise ValueError("causal contract hash does not match its frozen document")
+        limits = self.selection_limits
+        if (
+            self.selected_requests_per_agent != limits.selected_requests_per_agent
+            or self.selected_requests_per_run != limits.selected_requests_per_run
+            or self.concurrency_limit != limits.concurrency_limit(self.mode)
+            or self.reservation_tokens_per_request != limits.reservation_tokens_per_request
+            or self.transient_retries_ceiling != limits.transient_retries_ceiling
+            or self.repair_attempts_ceiling != limits.repair_attempts_ceiling
+            or self.aggregate_deadline_seconds != limits.aggregate_deadline_seconds
+            or len(self.reservations) > limits.selected_requests_per_run
+        ):
+            raise ValueError("cognition input does not match its selection policy version limits")
+        if self.funded_response_limit not in limits.funded_response_limits:
+            raise ValueError("funded response limit is not allowed by the selection policy version")
         offline = self.mode in {"rules", "mock"}
         if offline:
             if (
                 self.provider_profile is not None
                 or self.effective_settings is not None
                 or self.aggregate_output_token_ceiling != 0
-                or self.funded_response_limit != 60
+                or self.funded_response_limit != limits.offline_funded_response_limit
             ):
                 raise ValueError(
                     "rules and mock require local resolution without provider settings"
@@ -916,8 +1253,12 @@ class CityCognitionInputV2(_CityCognitionModelV2):
             ):
                 raise ValueError("effective settings do not match the capped frozen profile")
             if (
-                self.aggregate_output_token_ceiling
-                != self.funded_response_limit * _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                settings.transient_retries > limits.transient_retries_ceiling
+                or settings.repair_attempts > limits.repair_attempts_ceiling
+            ):
+                raise ValueError("effective settings exceed the frozen retry ceilings")
+            if self.aggregate_output_token_ceiling != limits.aggregate_output_token_ceiling(
+                self.mode, self.funded_response_limit
             ):
                 raise ValueError("aggregate ceiling must reserve the configured funded limit")
         if tuple(item.selection_index for item in self.reservations) != tuple(
@@ -930,13 +1271,11 @@ class CityCognitionInputV2(_CityCognitionModelV2):
         for item in self.reservations:
             expected_funded = offline or item.selection_index < self.funded_response_limit
             expected_tokens = (
-                0
-                if offline or not expected_funded
-                else _CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+                0 if offline or not expected_funded else limits.reservation_tokens_per_request
             )
             if item.funded != expected_funded or item.reserved_output_tokens != expected_tokens:
                 raise ValueError("reservations do not match the canonical funding prefix")
-        if len(canonical_json(self).encode("utf-8")) > 131_072:
+        if len(canonical_json(self).encode("utf-8")) > limits.max_cognition_input_bytes:
             raise ValueError("cognition input exceeds the canonical byte limit")
         return self
 
@@ -949,7 +1288,8 @@ class CityCognitionTerminalRecordV2(_CityCognitionModelV2):
     """One closed terminal outcome, content addressed with full run provenance."""
 
     schema_version: Literal[2]
-    selection_index: int = Field(ge=0, lt=60)
+    # Version bounds (60 records and 4 attempts for V2) are checked below.
+    selection_index: int = Field(ge=0, lt=_MAX_SELECTED_REQUESTS_ANY_VERSION)
     request_id: RequestId
     request_record_sha256: Hash
     run_input_sha256: Hash
@@ -972,7 +1312,7 @@ class CityCognitionTerminalRecordV2(_CityCognitionModelV2):
     millisecond_within_minute: int = Field(ge=0, lt=60_000)
     source: CityCognitionSourceV2
     result: CityCognitionResultV2
-    attempt_count: int = Field(ge=0, le=4)
+    attempt_count: int = Field(ge=0, le=_MAX_ATTEMPTS_ANY_VERSION)
     reason: CityCognitionFallbackReasonV2 | None
     provider_profile_id: Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")] | None
     provider_revision_sha256: Hash | None
@@ -1003,11 +1343,15 @@ class CityCognitionTerminalRecordV2(_CityCognitionModelV2):
             raise ValueError("result does not match terminal request")
         if self.day_index != self.model_minute // 1440:
             raise ValueError("terminal day does not match model minute")
-        if any(
-            getattr(self, field) != expected
-            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_V2
-        ):
+        version = _terminal_policy_version(self)
+        if version is None:
             raise ValueError("terminal policies do not match the frozen causal contract")
+        limits = _CITY_COGNITION_SELECTION_LIMITS[version]
+        if (
+            self.selection_index >= limits.max_terminal_records
+            or self.attempt_count > limits.max_attempts_per_request
+        ):
+            raise ValueError("terminal index or attempts exceed the selection policy limits")
         profile_values = (
             self.provider_profile_id,
             self.provider_revision_sha256,
@@ -1075,9 +1419,9 @@ class CityCognitionTerminalRecordV2(_CityCognitionModelV2):
 class CityCognitionCoverageCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     eligible_response_count: int = Field(ge=0, le=520_800)
-    selected_request_count: int = Field(ge=0, le=60)
-    funded_request_count: int = Field(ge=0, le=60)
-    budget_skipped_count: int = Field(ge=0, le=60)
+    selected_request_count: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    funded_request_count: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    budget_skipped_count: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
     unselected_response_count: int = Field(ge=0, le=520_800)
     applied_response_count: int = Field(ge=0, le=520_800)
 
@@ -1095,12 +1439,12 @@ class CityCognitionCoverageCountsV2(_CityCognitionModelV2):
 
 class CityCognitionOutcomeCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
-    rules: int = Field(ge=0, le=60)
-    mock: int = Field(ge=0, le=60)
-    provider: int = Field(ge=0, le=60)
-    cache: int = Field(ge=0, le=60)
-    fallback: int = Field(ge=0, le=60)
-    budget_skipped: int = Field(ge=0, le=60)
+    rules: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    mock: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    provider: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    cache: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    fallback: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    budget_skipped: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
 
     @property
     def total(self) -> int:
@@ -1116,15 +1460,15 @@ class CityCognitionOutcomeCountsV2(_CityCognitionModelV2):
 
 class CityCognitionReasonCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
-    endpoint_resolution_refused: int = Field(ge=0, le=60)
-    authentication_refused: int = Field(ge=0, le=60)
-    timeout_exhausted: int = Field(ge=0, le=60)
-    rate_limit_exhausted: int = Field(ge=0, le=60)
-    server_error_exhausted: int = Field(ge=0, le=60)
-    response_too_large: int = Field(ge=0, le=60)
-    protocol_incompatible: int = Field(ge=0, le=60)
-    invalid_result: int = Field(ge=0, le=60)
-    budget_skipped: int = Field(ge=0, le=60)
+    endpoint_resolution_refused: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    authentication_refused: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    timeout_exhausted: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    rate_limit_exhausted: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    server_error_exhausted: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    response_too_large: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    protocol_incompatible: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    invalid_result: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    budget_skipped: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
 
     @property
     def total(self) -> int:
@@ -1144,8 +1488,8 @@ class CityCognitionReasonCountsV2(_CityCognitionModelV2):
 class CityCognitionNeutralizationCountsV2(_CityCognitionModelV2):
     schema_version: Literal[2]
     neutralized_response_count: int = Field(ge=0, le=520_800)
-    uncertain_result_count: int = Field(ge=0, le=60)
-    safety_neutralized_result_count: int = Field(ge=0, le=60)
+    uncertain_result_count: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
+    safety_neutralized_result_count: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
 
 
 class CityCognitionSummaryV2(_CityCognitionModelV2):
@@ -1159,22 +1503,48 @@ class CityCognitionSummaryV2(_CityCognitionModelV2):
     outcomes: CityCognitionOutcomeCountsV2
     reasons: CityCognitionReasonCountsV2
     neutralization: CityCognitionNeutralizationCountsV2
-    attempt_count: int = Field(ge=0, le=240)
-    prompt_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
-    completion_tokens: int = Field(ge=0, le=60 * MAX_CITY_COGNITION_USAGE_INTEGER)
+    # The widest version bounds; the validator checks the contract's own version row.
+    attempt_count: int = Field(ge=0, le=_MAX_SUMMARY_ATTEMPTS_ANY_VERSION)
+    prompt_tokens: int = Field(
+        ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION * MAX_CITY_COGNITION_USAGE_INTEGER
+    )
+    completion_tokens: int = Field(
+        ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION * MAX_CITY_COGNITION_USAGE_INTEGER
+    )
     terminal_stream_sha256: Hash
-    terminal_stream_bytes: int = Field(ge=0, le=1_048_576)
-    terminal_record_count: int = Field(ge=0, le=60)
+    terminal_stream_bytes: int = Field(ge=0, le=_MAX_TERMINAL_STREAM_BYTES_ANY_VERSION)
+    terminal_record_count: int = Field(ge=0, le=_MAX_SELECTED_REQUESTS_ANY_VERSION)
     disclosure: Literal["synthetic-bounded-cognition-not-observed-behavior"]
+
+    @property
+    def selection_limits(self) -> CitySelectionLimits:
+        """The limit row of the summary's frozen causal contract."""
+        version = city_cognition_contract_selection_version(self.causal_contract_sha256)
+        if version is None:
+            raise ValueError("summary policy hashes do not match the frozen contract")
+        return _CITY_COGNITION_SELECTION_LIMITS[version]
 
     @model_validator(mode="after")
     def coherent_counts(self) -> Self:
+        version = city_cognition_contract_selection_version(self.causal_contract_sha256)
         if (
-            self.causal_contract_sha256 != _CITY_COGNITION_CAUSAL_CONTRACT_V2_SHA256
+            version is None
             or self.mock_policy_sha256 != _CITY_COGNITION_MOCK_POLICY_V1_SHA256
             or self.influence_policy_sha256 != _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256
         ):
             raise ValueError("summary policy hashes do not match the frozen contract")
+        limits = _CITY_COGNITION_SELECTION_LIMITS[version]
+        usage_ceiling = limits.max_terminal_records * MAX_CITY_COGNITION_USAGE_INTEGER
+        if (
+            self.terminal_record_count > limits.max_terminal_records
+            or self.terminal_stream_bytes > limits.max_terminal_stream_bytes
+            or self.attempt_count > limits.max_summary_attempts
+            or self.prompt_tokens > usage_ceiling
+            or self.completion_tokens > usage_ceiling
+        ):
+            raise ValueError("summary exceeds its selection policy version limits")
+        if limits.strategy == "spread-evenly" and self.coverage.budget_skipped_count:
+            raise ValueError("spread-evenly selection funds every selected request")
         coverage, outcomes, reasons, neutralization = (
             self.coverage,
             self.outcomes,
@@ -1197,7 +1567,7 @@ class CityCognitionSummaryV2(_CityCognitionModelV2):
         if (
             not outcomes.provider
             <= self.attempt_count
-            <= 4 * (outcomes.provider + outcomes.fallback)
+            <= limits.max_attempts_per_request * (outcomes.provider + outcomes.fallback)
         ):
             raise ValueError("summary attempts do not match terminal attempt capacity")
         usage_capacity = (
@@ -1237,11 +1607,16 @@ class CityCognitionEvaluationV2(_CityCognitionModelV2):
     run_input_sha256: Hash
     effect_scope: Literal["bounded-signals-v1"]
     mode: CityCognitionModeV2
-    records: tuple[CityCognitionTerminalRecordV2, ...] = Field(max_length=60)
+    records: tuple[CityCognitionTerminalRecordV2, ...] = Field(
+        max_length=_MAX_SELECTED_REQUESTS_ANY_VERSION
+    )
     summary: CityCognitionSummaryV2
 
     @model_validator(mode="after")
     def canonical_complete_records(self) -> Self:
+        limits = self.summary.selection_limits
+        if len(self.records) > limits.max_terminal_records:
+            raise ValueError("terminal records exceed the selection policy version limit")
         if tuple(record.selection_index for record in self.records) != tuple(
             range(len(self.records))
         ):
@@ -1286,7 +1661,7 @@ class CityCognitionEvaluationV2(_CityCognitionModelV2):
         stream = b"".join(
             (canonical_json(record) + "\n").encode("utf-8") for record in self.records
         )
-        if len(stream) > 1_048_576:
+        if len(stream) > limits.max_terminal_stream_bytes:
             raise ValueError("terminal stream exceeds the canonical byte limit")
         sources = Counter(record.source for record in self.records)
         reasons = Counter(record.reason for record in self.records if record.reason is not None)

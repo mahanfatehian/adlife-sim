@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Iterator, Sequence
 from hashlib import sha256
 from math import fsum, prod
@@ -25,7 +24,10 @@ from adlife.core.domain.city_cognition_v2 import (
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.simulation._validation import revalidate_model
-from adlife.core.simulation.city_cognition_v2 import apply_city_cognition_influence_v1
+from adlife.core.simulation.city_cognition_v2 import (
+    _selected_positions,
+    apply_city_cognition_influence_v1,
+)
 from adlife.core.simulation.spatial_response import (
     MAX_SPATIAL_RESPONSE_RECORDS,
     MAX_SPATIAL_RESPONSES,
@@ -532,12 +534,15 @@ def _terminal_bindings(
         (r for r in baseline.records if isinstance(r, SpatialRuleResponse)),
         key=lambda r: (r.model_minute, r.agent_id, r.campaign_id, r.event_id),
     )
-    counts: Counter[str] = Counter()
-    selected: list[SpatialRuleResponse] = []
-    for response in responses:
-        if counts[response.agent_id] < 4 and len(selected) < 60:
-            selected.append(response)
-            counts[response.agent_id] += 1
+    # The stored input's own selection-policy version decides the canonical selection.
+    selected = [
+        responses[position]
+        for position in _selected_positions(
+            responses,
+            limits=frozen.selection_limits,
+            funded_response_limit=frozen.funded_response_limit,
+        )
+    ]
     if tuple(r.baseline_response_id for r in signals.records) != tuple(
         r.event_id for r in selected
     ) or len(frozen.reservations) != len(selected):

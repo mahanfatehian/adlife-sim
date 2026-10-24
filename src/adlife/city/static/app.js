@@ -5049,27 +5049,59 @@ function validateWorkbenchCognition(value) {
   return cognition;
 }
 
+// Frozen limits of each bounded selection-policy version (V2 took the earliest noticed ads,
+// V3 spreads the AI limit evenly over the run). A saved input is checked against the
+// version its own causal contract names, never against the newest one.
+const boundedSelectionLimits = Object.freeze({
+  2: Object.freeze({
+    fixed: Object.freeze({
+      selected_requests_per_agent: 4,
+      selected_requests_per_run: 60,
+      transient_retries: 2,
+      repair_attempts: 1,
+      aggregate_deadline_seconds: 180,
+    }),
+    concurrency: Object.freeze({ rules: 4, mock: 4, local: 4, remote: 4 }),
+    fundedLimits: Object.freeze([10, 20, 40, 60]),
+    offlineLimit: 60,
+  }),
+  3: Object.freeze({
+    fixed: Object.freeze({
+      selected_requests_per_agent: 1000,
+      selected_requests_per_run: 1000,
+      transient_retries: 3,
+      repair_attempts: 2,
+      aggregate_deadline_seconds: 1800,
+    }),
+    concurrency: Object.freeze({ rules: 4, mock: 4, local: 4, remote: 8 }),
+    fundedLimits: Object.freeze([60, 120, 250, 500, 1000]),
+    offlineLimit: 1000,
+  }),
+});
+
 function validateBoundedWorkbenchCognition(value) {
   const cognition = requireRecord(value, "Frozen workbench input");
+  const contractValue = cognition.causal_contract;
+  const version = contractValue !== null && typeof contractValue === "object"
+    ? contractValue.selection_policy_version
+    : null;
+  if (version !== 2 && version !== 3) invalidWorkbenchInput();
+  const limits = boundedSelectionLimits[version];
   const fixedIntegers = {
     request_schema_version: 2,
-    selected_requests_per_agent: 4,
-    selected_requests_per_run: 60,
-    concurrency_limit: 4,
     max_request_bytes: 8192,
     max_terminal_record_bytes: 8192,
     max_wire_response_bytes: 1048576,
     initial_attempts: 1,
-    transient_retries: 2,
-    repair_attempts: 1,
     attempt_timeout_seconds: 30,
-    aggregate_deadline_seconds: 180,
+    ...limits.fixed,
   };
   if (
     !hasExactKeys(cognition, boundedWorkbenchCognitionKeys)
     || cognition.effect_scope !== boundedEffectScope
     || !["rules", "mock", "local", "remote"].includes(cognition.mode)
-    || ![10, 20, 40, 60].includes(cognition.funded_response_limit)
+    || !limits.fundedLimits.includes(cognition.funded_response_limit)
+    || cognition.concurrency_limit !== limits.concurrency[cognition.mode]
     || Object.entries(fixedIntegers).some(([key, expected]) => cognition[key] !== expected)
     || cognition.response_model !== boundedResponseModelId
     || cognition.rule_state_noninterference !== true
@@ -5090,7 +5122,7 @@ function validateBoundedWorkbenchCognition(value) {
     offline
       ? cognition.provider_profile_id !== null
         || cognition.provider_revision_sha256 !== null
-        || cognition.funded_response_limit !== 60
+        || cognition.funded_response_limit !== limits.offlineLimit
         || cognition.aggregate_output_token_ceiling !== 0
       : !validEvidenceId(cognition.provider_profile_id)
         || cognition.provider_profile_id.length > 64
@@ -5107,7 +5139,7 @@ function validateBoundedWorkbenchCognition(value) {
     || contract.prompt_contract_version !== 2
     || contract.result_schema_id !== "city-cognition-signal-result-v2"
     || contract.result_schema_version !== 2
-    || contract.selection_policy_version !== 2
+    || contract.selection_policy_version !== version
     || contract.fallback_policy_version !== 2
     || contract.mock_policy_version !== 1
     || contract.influence_policy_version !== 1

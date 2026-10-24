@@ -17,7 +17,11 @@ from pydantic import ValidationError
 
 from adlife.adapters.cognition.city_service import CityCognitionCancellation
 from adlife.city.workbench_workspace import prepare_workbench_workspace
-from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+)
 from adlife.core.domain.serialization import canonical_json
 from tests.unit.city.test_city_run_preparation import _validated, _validated_v4
 from tests.unit.city.test_workbench_jobs import (
@@ -41,6 +45,17 @@ CANCELLABLE = {
     "requesting-cognition",
     "applying-cognition",
 }
+V2 = CITY_COGNITION_SELECTION_LIMITS[2]
+CURRENT = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+# Every version's widest per-run selection and in-flight ceiling bound a progress document.
+MAX_TOTAL = max(
+    limits.selected_requests_per_run for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+)
+MAX_CONCURRENCY = max(
+    limits.concurrency_limit(mode)
+    for limits in CITY_COGNITION_SELECTION_LIMITS.values()
+    for mode in ("local", "remote")
+)
 
 
 def _jobs():
@@ -58,16 +73,26 @@ def _service():
 # --- the thread-safe counter -------------------------------------------------------------
 
 
+def _progress(
+    resolved: int, total: int, concurrency_limit: int = V2.concurrency_limit("local")
+) -> dict[str, int]:
+    """One public progress document; by default with a V2 local run's in-flight ceiling."""
+    return {"resolved": resolved, "total": total, "concurrency_limit": concurrency_limit}
+
+
 def test_counter_counts_each_terminal_outcome_once_and_never_past_its_total() -> None:
     jobs = _jobs()
-    counter = jobs.WorkbenchCognitionProgressCounter(3)
-    assert counter.snapshot().model_dump(mode="json") == {"resolved": 0, "total": 3}
+    remote = CURRENT.concurrency_limit("remote")
+    counter = jobs.WorkbenchCognitionProgressCounter(3, concurrency_limit=remote)
+    assert counter.snapshot().model_dump(mode="json") == _progress(0, 3, remote)
     counter.advance()
     counter.advance()
-    assert counter.snapshot() == jobs.WorkbenchCognitionProgress(resolved=2, total=3)
+    assert counter.snapshot() == jobs.WorkbenchCognitionProgress(
+        resolved=2, total=3, concurrency_limit=remote
+    )
     for _ in range(5):
         counter.advance()
-    assert counter.snapshot().model_dump(mode="json") == {"resolved": 3, "total": 3}
+    assert counter.snapshot().model_dump(mode="json") == _progress(3, 3, remote)
 
 
 def test_counter_completion_is_final_and_later_reports_change_nothing() -> None:
@@ -76,19 +101,35 @@ def test_counter_completion_is_final_and_later_reports_change_nothing() -> None:
     counter.complete()
     counter.advance()
     counter.complete()
-    assert counter.snapshot().model_dump(mode="json") == {"resolved": 4, "total": 4}
+    assert counter.snapshot().model_dump(mode="json") == _progress(4, 4)
 
 
 def test_zero_total_counter_is_already_final() -> None:
     counter = _jobs().WorkbenchCognitionProgressCounter(0)
     counter.advance()
-    assert counter.snapshot().model_dump(mode="json") == {"resolved": 0, "total": 0}
+    assert counter.snapshot().model_dump(mode="json") == _progress(0, 0)
 
 
-@pytest.mark.parametrize("total", [-1, 61, True, 1.0, "3", None])
+@pytest.mark.parametrize("total", [-1, MAX_TOTAL + 1, True, 1.0, "3", None])
 def test_counter_refuses_totals_outside_the_frozen_funding_range(total: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         _jobs().WorkbenchCognitionProgressCounter(total)
+
+
+@pytest.mark.parametrize("concurrency_limit", [0, MAX_CONCURRENCY + 1, True, 4.0, "4", None])
+def test_counter_refuses_concurrency_outside_the_frozen_range(concurrency_limit: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        _jobs().WorkbenchCognitionProgressCounter(3, concurrency_limit=concurrency_limit)
+
+
+def test_counter_accepts_the_widest_frozen_run() -> None:
+    counter = _jobs().WorkbenchCognitionProgressCounter(
+        MAX_TOTAL, concurrency_limit=MAX_CONCURRENCY
+    )
+    counter.complete()
+    assert counter.snapshot().model_dump(mode="json") == _progress(
+        MAX_TOTAL, MAX_TOTAL, MAX_CONCURRENCY
+    )
 
 
 def test_concurrent_advances_never_lose_an_answer_and_snapshots_never_regress() -> None:
@@ -125,7 +166,7 @@ def test_concurrent_advances_never_lose_an_answer_and_snapshots_never_regress() 
         sys.setswitchinterval(interval)
 
     # Exactly 60 reports from six threads reach exactly 60, and no reader saw a regression.
-    assert counter.snapshot().model_dump(mode="json") == {"resolved": 60, "total": 60}
+    assert counter.snapshot().model_dump(mode="json") == _progress(60, 60)
     for values in observed:
         assert values == sorted(values)
         assert values[-1] == 60
@@ -158,20 +199,33 @@ def test_every_counter_operation_waits_for_the_counter_lock(operation: str) -> N
 
 def test_progress_document_is_an_exact_bounded_pair() -> None:
     jobs = _jobs()
-    progress = jobs.WorkbenchCognitionProgress(resolved=3, total=10)
-    assert progress.model_dump_json() == '{"resolved":3,"total":10}'
-    for document in (
-        {"resolved": 4, "total": 3},
-        {"resolved": -1, "total": 3},
-        {"resolved": 0, "total": 61},
-        {"resolved": True, "total": 3},
-        {"resolved": 1.0, "total": 3},
-        {"resolved": "1", "total": 3},
-        {"resolved": 1},
-        {"resolved": 1, "total": 3, "percent": 33},
+    # The resolved/total pair carries the run's frozen in-flight ceiling for the wait estimate.
+    remote = CURRENT.concurrency_limit("remote")
+    progress = jobs.WorkbenchCognitionProgress(resolved=3, total=10, concurrency_limit=remote)
+    assert progress.model_dump_json() == f'{{"resolved":3,"total":10,"concurrency_limit":{remote}}}'
+    widest = _progress(MAX_TOTAL, MAX_TOTAL, MAX_CONCURRENCY)
+    assert jobs.WorkbenchCognitionProgress.model_validate(widest).model_dump() == widest
+    valid = _progress(1, 3)
+    for update in (
+        {"resolved": 4},
+        {"resolved": -1},
+        {"total": MAX_TOTAL + 1},
+        {"resolved": True},
+        {"resolved": 1.0},
+        {"resolved": "1"},
+        {"concurrency_limit": 0},
+        {"concurrency_limit": MAX_CONCURRENCY + 1},
+        {"concurrency_limit": True},
+        {"concurrency_limit": 4.0},
+        {"percent": 33},
     ):
         with pytest.raises(ValidationError):
-            jobs.WorkbenchCognitionProgress.model_validate(document)
+            jobs.WorkbenchCognitionProgress.model_validate(valid | update)
+    for missing in valid:
+        with pytest.raises(ValidationError):
+            jobs.WorkbenchCognitionProgress.model_validate(
+                {name: value for name, value in valid.items() if name != missing}
+            )
     with pytest.raises(ValidationError, match="frozen"):
         progress.resolved = 4
 
@@ -204,7 +258,23 @@ _LOCAL_SETTINGS: dict[str, object] = {
     "funded_response_limit": 10,
     "aggregate_output_token_ceiling": 10 * CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
 }
-_SETTINGS = {"v1": _V1_SETTINGS, "rules": _RULES_SETTINGS, "local": _LOCAL_SETTINGS}
+# A new online run of the current version asks about every noticed ad, up to its cap.
+_ALL_NOTICED = CURRENT.selected_requests_per_run
+_REMOTE_CONCURRENCY = CURRENT.concurrency_limit("remote")
+_REMOTE_SETTINGS: dict[str, object] = {
+    **_LOCAL_SETTINGS,
+    "cognition_mode": "remote",
+    "funded_response_limit": _ALL_NOTICED,
+    "aggregate_output_token_ceiling": CURRENT.aggregate_output_token_ceiling(
+        "remote", _ALL_NOTICED
+    ),
+}
+_SETTINGS = {
+    "v1": _V1_SETTINGS,
+    "rules": _RULES_SETTINGS,
+    "local": _LOCAL_SETTINGS,
+    "remote": _REMOTE_SETTINGS,
+}
 
 
 def _summary(mode: str) -> Any:
@@ -301,10 +371,6 @@ def _view(settings: str, phase: str, progress: object) -> Any:
     )
 
 
-def _pair(resolved: int, total: int) -> dict[str, int]:
-    return {"resolved": resolved, "total": total}
-
-
 @pytest.mark.parametrize(
     ("settings", "phase", "progress"),
     [
@@ -312,19 +378,25 @@ def _pair(resolved: int, total: int) -> dict[str, int]:
         ("v1", "evaluating", None),
         ("local", "queued", None),
         ("local", "planning-cognition", None),
-        ("local", "requesting-cognition", _pair(0, 10)),
-        ("local", "requesting-cognition", _pair(3, 10)),
-        ("local", "requesting-cognition", _pair(0, 6)),
-        ("local", "applying-cognition", _pair(10, 10)),
-        ("local", "persisting", _pair(10, 10)),
-        ("local", "verifying", _pair(10, 10)),
-        ("local", "completed", _pair(10, 10)),
+        ("local", "requesting-cognition", _progress(0, 10)),
+        ("local", "requesting-cognition", _progress(3, 10)),
+        ("local", "requesting-cognition", _progress(0, 6)),
+        ("local", "applying-cognition", _progress(10, 10)),
+        ("local", "persisting", _progress(10, 10)),
+        ("local", "verifying", _progress(10, 10)),
+        ("local", "completed", _progress(10, 10)),
         ("local", "failed", None),
-        ("local", "failed", _pair(3, 10)),
+        ("local", "failed", _progress(3, 10)),
         ("local", "cancelled", None),
-        ("local", "cancelled", _pair(3, 10)),
-        ("rules", "requesting-cognition", _pair(0, 0)),
-        ("rules", "completed", _pair(0, 0)),
+        ("local", "cancelled", _progress(3, 10)),
+        ("rules", "requesting-cognition", _progress(0, 0)),
+        ("rules", "completed", _progress(0, 0)),
+        ("remote", "requesting-cognition", _progress(0, _ALL_NOTICED, _REMOTE_CONCURRENCY)),
+        (
+            "remote",
+            "applying-cognition",
+            _progress(_ALL_NOTICED, _ALL_NOTICED, _REMOTE_CONCURRENCY),
+        ),
     ],
 )
 def test_job_view_accepts_progress_only_where_the_phase_contract_allows(
@@ -337,20 +409,20 @@ def test_job_view_accepts_progress_only_where_the_phase_contract_allows(
 @pytest.mark.parametrize(
     ("settings", "phase", "progress", "message"),
     [
-        ("v1", "queued", _pair(0, 0), "pre-schema-4"),
-        ("v1", "evaluating", _pair(0, 0), "pre-schema-4"),
-        ("local", "queued", _pair(0, 10), "precede planning"),
-        ("local", "planning-cognition", _pair(0, 10), "precede planning"),
+        ("v1", "queued", _progress(0, 0), "pre-schema-4"),
+        ("v1", "evaluating", _progress(0, 0), "pre-schema-4"),
+        ("local", "queued", _progress(0, 10), "precede planning"),
+        ("local", "planning-cognition", _progress(0, 10), "precede planning"),
         ("local", "requesting-cognition", None, "requires progress"),
         ("local", "applying-cognition", None, "requires progress"),
         ("local", "completed", None, "requires progress"),
-        ("local", "applying-cognition", _pair(9, 10), "final"),
-        ("local", "persisting", _pair(9, 10), "final"),
-        ("local", "verifying", _pair(9, 10), "final"),
-        ("local", "completed", _pair(9, 10), "final"),
-        ("local", "requesting-cognition", _pair(0, 11), "funding"),
-        ("rules", "requesting-cognition", _pair(0, 1), "funding"),
-        ("local", "completed", _pair(9, 9), "funded requests"),
+        ("local", "applying-cognition", _progress(9, 10), "final"),
+        ("local", "persisting", _progress(9, 10), "final"),
+        ("local", "verifying", _progress(9, 10), "final"),
+        ("local", "completed", _progress(9, 10), "final"),
+        ("local", "requesting-cognition", _progress(0, 11), "funding"),
+        ("rules", "requesting-cognition", _progress(0, 1), "funding"),
+        ("local", "completed", _progress(9, 9), "funded requests"),
     ],
 )
 def test_job_view_refuses_progress_that_contradicts_its_phase_or_funding(
@@ -361,8 +433,8 @@ def test_job_view_refuses_progress_that_contradicts_its_phase_or_funding(
 
 
 def test_constructed_progress_is_revalidated_inside_a_job_view() -> None:
-    forged = _jobs().WorkbenchCognitionProgress.model_construct(resolved=11, total=10)
-    with pytest.raises(ValidationError):
+    forged = _jobs().WorkbenchCognitionProgress.model_construct(**_progress(11, 10))
+    with pytest.raises(ValidationError, match="more requests than it funds"):
         _view("local", "requesting-cognition", forged)
 
 
@@ -418,18 +490,24 @@ async def test_service_reports_each_funded_answer_once_as_it_arrives() -> None:
         answered += 1
         return _valid(request)
 
+    provider = _Provider(slow)
     task = asyncio.create_task(
-        _resolve_with(case, provider=_Provider(slow), progress=lambda: reports.append(answered))
+        _resolve_with(case, provider=provider, progress=lambda: reports.append(answered))
     )
     await asyncio.sleep(0.02)
     assert reports == []
-    for count, request in enumerate(requests[:funded], start=1):
-        release[request.request_id].set()
+    # Requests start in the service's interleaved order, so answer each one as it is sent.
+    for count in range(1, funded + 1):
+        await _until(lambda expected=count: len(provider.calls) >= expected)
+        release[provider.calls[count - 1]].set()
         await _until(lambda expected=count: len(reports) >= expected)
         assert reports == list(range(1, count + 1))
     evaluation = await asyncio.wait_for(task, 5)
 
     assert reports == list(range(1, funded + 1))
+    assert sorted(provider.calls) == sorted(
+        reservation.request_id for reservation in frozen.reservations if reservation.funded
+    )
     sources = Counter(record.source for record in evaluation.records)
     assert sources == {"provider": funded, "budget-skipped": len(requests) - funded}
     # The hook only observes: the frozen terminal evidence is byte-identical without it.
@@ -560,7 +638,11 @@ def _local_job(
     run_id: str,
     agents: int = 3,
 ) -> tuple[Any, Any]:
-    """A checked local profile whose three agents select six funded requests in two days."""
+    """A checked local profile whose three agents select six funded requests in two days.
+
+    The run is frozen directly, so it keeps the historical V2 contract and its in-flight
+    ceiling.
+    """
     from adlife.city.provider_compatibility import (
         WorkbenchProviderCompatibilityRecord,
         WorkbenchProviderCompatibilityRegistry,
@@ -650,34 +732,22 @@ def test_slow_provider_job_counts_each_answer_from_planning_to_completion(
         assert gated.requesting_entered.wait(10)
         requesting = manager.get(submitted.job_id)
         assert requesting.phase == "requesting-cognition"
-        assert requesting.model_dump(mode="json")["cognition_progress"] == {
-            "resolved": 0,
-            "total": 6,
-        }
+        assert requesting.model_dump(mode="json")["cognition_progress"] == _progress(0, 6)
 
         gated.allow_requesting.set()
         for answered in range(1, 7):
             permits.release()
             view = _await_view(manager, submitted.job_id, _resolved_at_least(answered))
-            assert view.model_dump(mode="json")["cognition_progress"] == {
-                "resolved": answered,
-                "total": 6,
-            }
+            assert view.model_dump(mode="json")["cognition_progress"] == _progress(answered, 6)
 
         assert gated.applying_entered.wait(10)
         applying = manager.get(submitted.job_id)
         assert applying.phase == "applying-cognition"
-        assert applying.model_dump(mode="json")["cognition_progress"] == {
-            "resolved": 6,
-            "total": 6,
-        }
+        assert applying.model_dump(mode="json")["cognition_progress"] == _progress(6, 6)
         gated.release_all()
         completed = _await_terminal(manager, submitted.job_id)
         assert completed.phase == "completed"
-        assert completed.model_dump(mode="json")["cognition_progress"] == {
-            "resolved": 6,
-            "total": 6,
-        }
+        assert completed.model_dump(mode="json")["cognition_progress"] == _progress(6, 6)
         assert completed.result is not None
         assert completed.result.funded_request_count == 6
         assert completed.result.provider_count == 6
@@ -769,16 +839,10 @@ def test_cancelled_requesting_job_keeps_its_partial_count(tmp_path: Path) -> Non
         permits.release()
         _await_view(manager, submitted.job_id, _resolved_at_least(1))
         requested = manager.cancel(submitted.job_id)
-        assert requested.model_dump(mode="json")["cognition_progress"] == {
-            "resolved": 1,
-            "total": 6,
-        }
+        assert requested.model_dump(mode="json")["cognition_progress"] == _progress(1, 6)
         terminal = _await_terminal(manager, submitted.job_id)
         assert terminal.phase == "cancelled"
-        assert terminal.model_dump(mode="json")["cognition_progress"] == {
-            "resolved": 1,
-            "total": 6,
-        }
+        assert terminal.model_dump(mode="json")["cognition_progress"] == _progress(1, 6)
     finally:
         permits.release(64)
         manager.close()
@@ -792,21 +856,20 @@ def test_offline_bounded_job_reports_zero_model_requests(tmp_path: Path, mode: s
     )
     manager = jobs.CityJobManager(gated)
     try:
+        # A new offline run answers every selected request itself and sends none.
         submitted = manager.submit(_schema4_validated(run_id=f"offline-progress-{mode}", mode=mode))
+        expected = _progress(0, 0, CURRENT.concurrency_limit(mode))
         gated.allow_planning.set()
         assert gated.requesting_entered.wait(10)
         requesting = manager.get(submitted.job_id)
-        assert requesting.model_dump(mode="json")["cognition_progress"] == {
-            "resolved": 0,
-            "total": 0,
-        }
+        assert requesting.model_dump(mode="json")["cognition_progress"] == expected
         gated.release_all()
         terminal = _await_terminal(manager, submitted.job_id)
         assert terminal.phase == "completed"
-        assert terminal.model_dump(mode="json")["cognition_progress"] == {
-            "resolved": 0,
-            "total": 0,
-        }
+        assert terminal.model_dump(mode="json")["cognition_progress"] == expected
+        assert terminal.accepted_settings.funded_response_limit == (
+            CURRENT.offline_funded_response_limit
+        )
     finally:
         gated.release_all()
         manager.close()
