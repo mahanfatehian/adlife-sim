@@ -49,6 +49,12 @@ def test_fictional_persona_templates_load_through_importlib() -> None:
         "persona-002",
         "persona-003",
         "persona-004",
+        "persona-005",
+        "persona-006",
+        "persona-007",
+        "persona-008",
+        "persona-009",
+        "persona-010",
     ]
     assert all(item.fictional is True for item in catalog.templates)
 
@@ -60,6 +66,8 @@ def test_all_fictional_city_and_creative_choices_load_through_importlib() -> Non
     for resource_name in (
         "catalog/fictional-grid-v2.json",
         "catalog/fictional-harbor-loop-v2.json",
+        "catalog/fictional-new-district-v2.json",
+        "catalog/fictional-old-town-v2.json",
         "catalog/fictional-river-junction-v2.json",
         "catalog.json",
         "creative_templates.json",
@@ -72,13 +80,19 @@ def test_all_fictional_city_and_creative_choices_load_through_importlib() -> Non
     assert [city.entry.city_id for city in load_verified_catalog_cities()] == [
         "fictional-grid-v2",
         "fictional-harbor-loop-v2",
+        "fictional-new-district-v2",
+        "fictional-old-town-v2",
         "fictional-river-junction-v2",
     ]
     assert [item.template_id for item in load_creative_template_catalog().templates] == [
+        "fictional-bike-share-v1",
+        "fictional-book-box-v1",
         "fictional-coffee-pass-v1",
         "fictional-crispy-meal-v1",
         "fictional-device-launch-v1",
+        "fictional-fitness-app-v1",
         "fictional-home-delivery-v1",
+        "fictional-music-stream-v1",
     ]
 
 
@@ -108,6 +122,27 @@ def test_packaged_city_static_assets_include_the_bounded_cognition_inspector() -
     for asset in ("app-cognition-v2.js", "app-cognition-v2.css"):
         packaged_path = f"src/adlife/city/static/{asset}"
         assert any(fnmatch.fnmatch(packaged_path, pattern) for pattern in patterns), asset
+
+
+def test_packaged_city_static_assets_are_the_viewer_dashboard_and_icon_only() -> None:
+    """The workbench serves only the guided pages, so its old technical UI is not packaged.
+
+    The `adlife city` and `adlife city-view` viewers keep their dashboard; the guided pages
+    and the run report keep the icon.
+    """
+    from importlib import resources
+
+    static = resources.files("adlife.city").joinpath("static")
+    files = {entry.name for entry in static.iterdir() if entry.is_file()}
+    assert files == {
+        "index.html",
+        "app.js",
+        "app.css",
+        "app-cognition-v2.js",
+        "app-cognition-v2.css",
+        "workbench-icon.svg",
+    }
+    assert static.joinpath("guide").is_dir()
 
 
 def test_wheel_contains_report_resources() -> None:

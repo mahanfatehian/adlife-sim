@@ -1,9 +1,9 @@
 """The live-demo backup script, driven against a real loopback city workbench.
 
 ``scripts/demo_workspace.py`` may reach the workbench only the way the browser page does:
-the per-process security token read from the page, then same-origin JSON writes. These
-tests start a real workbench on an ephemeral loopback port with a temporary workspace, run
-the script, and check the saved runs through the same public routes the inspector uses.
+the per-process security token read from the guide page, then same-origin JSON writes.
+These tests start a real workbench on an ephemeral loopback port with a temporary
+workspace, run the script, and check the saved runs through the routes the guide uses.
 """
 
 from __future__ import annotations
@@ -160,6 +160,11 @@ def test_seeds_ready_to_open_offline_runs_through_the_real_http_api(tmp_path: Pa
     root = tmp_path / "workspace"
     app = create_city_workbench_app(prepare_workbench_workspace(root), csrf_token=TOKEN)
     expected = {"seeded-v10-mock-001": "mock", "seeded-v9-rules-001": "rules"}
+    # A V10 run opens as its guided story; the V9 run has none and is listed on /guide.
+    views = {
+        "seeded-v10-mock-001": "/guide/runs/seeded-v10-mock-001",
+        "seeded-v9-rules-001": "/guide",
+    }
     with _serve(app) as base_url:
         completed = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-url", base_url, "--run-prefix", "seeded"],
@@ -178,7 +183,7 @@ def test_seeds_ready_to_open_offline_runs_through_the_real_http_api(tmp_path: Pa
         for line, (run_id, source) in zip(lines, expected.items(), strict=True):
             fields = line.split()
             assert fields[1] == "completed"
-            assert fields[-1] == f"{base_url}/runs/{run_id}"
+            assert fields[-1] == f"{base_url}{views[run_id]}"
             counts = _counts(line)
             assert tuple(counts) == SOURCES
             assert counts[source] > 0
@@ -187,10 +192,11 @@ def test_seeds_ready_to_open_offline_runs_through_the_real_http_api(tmp_path: Pa
         with httpx.Client(base_url=base_url, trust_env=False) as client:
             listed = client.get("/api/runs", params={"limit": 100}).json()
             assert {run["run_id"] for run in listed["runs"]} == set(expected)
+            story = client.get("/api/runs/seeded-v10-mock-001/story")
+            assert story.status_code == 200
+            assert story.json()["run"]["run_id"] == "seeded-v10-mock-001"
             for run_id in expected:
-                page = client.get(f"/runs/{run_id}")
-                assert page.status_code == 200
-                assert page.headers["content-type"].startswith("text/html")
+                assert client.get(f"/api/runs/{run_id}/meta").status_code == 200
 
     store = CityRunStore(root)
     assert store.load("seeded-v10-mock-001").manifest.schema_version == 10
@@ -236,7 +242,7 @@ def test_with_llm_reuses_the_local_profile_warms_ollama_and_funds_ten(
         ]
         assert outcome.run_id == "llm-v10-local-001"
         assert outcome.phase == "completed"
-        assert outcome.inspector_url == f"{base_url}/runs/llm-v10-local-001"
+        assert outcome.view_url == f"{base_url}/guide/runs/llm-v10-local-001"
         counts = dict(outcome.counts)
         selected = sum(counts.values())
         assert selected > 0

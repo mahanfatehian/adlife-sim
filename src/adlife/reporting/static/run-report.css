@@ -40,6 +40,8 @@
   --persona-6: #E69F00;
   --persona-7: #F0E442;
   --persona-8: #000000;
+  --persona-9: #882255;
+  --persona-10: #44AA99;
   --font-ui: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
   --font-fa: "Segoe UI", Tahoma, "Vazirmatn", "Noto Sans Arabic", "Geeza Pro", "SF Arabic", "DejaVu Sans", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace;
@@ -428,6 +430,8 @@ h1 {
 .mark.c5 { --mark: var(--persona-6); }
 .mark.c6 { --mark: var(--persona-7); }
 .mark.c7 { --mark: var(--persona-8); }
+.mark.c8 { --mark: var(--persona-9); }
+.mark.c9 { --mark: var(--persona-10); }
 
 /* Contents */
 

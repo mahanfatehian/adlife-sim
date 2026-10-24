@@ -11,7 +11,7 @@
   Chrome      .g-header > .g-header-inner holding a.g-brand (.g-brand-icon,
               .g-brand-text > .g-brand-name + .g-brand-tag) and .g-header-tools
               (nav.g-lang > ul.g-lang-list > li.g-lang-item > a, aria-current="true"
-              on the current language; then a.g-tech-link). Also .g-footer,
+              on the current language). Also .g-footer,
               .g-skip, .g-visually-hidden, and .g-dir on every directional glyph
               (mirrored under dir="rtl").
   Layout      .g-page, .g-stack (--s, --l, --xl), .g-cluster, .g-grid,
@@ -40,7 +40,7 @@
               colour is never the only cue. Tones also via .g-badge--ai,
               --rules, --practice, --neutral, --ok, --bad.
   Personas    <span class="g-mark g-mark--c1" aria-hidden="true"></span>:
-              colour_index 0..7 picks colour and shape (circle, square,
+              colour_index 0..9 picks colour and shape (circle, square,
               triangle, diamond, repeating); explicit --circle, --square,
               --triangle, --diamond override the shape. .g-legend lists them.
   Numbers     .g-stat > .g-stat__value + .g-stat__label (--ai, --rules,
@@ -103,6 +103,8 @@
   --persona-6: #E69F00;
   --persona-7: #F0E442;
   --persona-8: #000000;
+  --persona-9: #882255;
+  --persona-10: #44AA99;
   --map-bg: #F8FAFC;
   --map-road: #A3AEC2;
   --map-node: #CBD5E1;
@@ -461,36 +463,6 @@ hr {
   box-shadow: var(--shadow);
 }
 
-.g-tech-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-2);
-  min-block-size: var(--tap);
-  padding-inline: var(--s-4);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-2);
-  background: var(--surface);
-  color: var(--ink-2);
-  font-weight: 600;
-  text-decoration: none;
-  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
-}
-
-.g-tech-link:hover {
-  border-color: var(--primary);
-  background: var(--primary-tint);
-  color: var(--ink);
-}
-
-.g-header a[target="_blank"]::after {
-  content: "\2197" / "";
-  display: inline-block;
-  color: var(--ink-3);
-  font-weight: 400;
-}
-
-[dir="rtl"] .g-header a[target="_blank"]::after { transform: scaleX(-1); }
-
 .g-header details { position: relative; }
 
 .g-header details > summary {
@@ -519,8 +491,6 @@ hr {
   .g-brand-name { font-size: var(--fs-m); }
 
   .g-lang a { padding-inline: var(--s-2); }
-
-  .g-tech-link { padding-inline: var(--s-3); }
 }
 
 .g-footer {
@@ -1338,10 +1308,12 @@ kbd {
 }
 
 .g-mark--c0,
-.g-mark--c4 { border-radius: 50%; }
+.g-mark--c4,
+.g-mark--c8 { border-radius: 50%; }
 
 .g-mark--c1,
 .g-mark--c5,
+.g-mark--c9,
 .g-mark--square { border-radius: 2px; }
 
 .g-mark--c3,
@@ -1372,15 +1344,36 @@ kbd {
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
-.g-mark--circle {
+/* An explicit shape wins over the one a colour class implies: personas after the ten
+   templates reuse a template colour, always with a different shape. */
+.g-mark.g-mark--circle,
+.g-mark.g-mark--square,
+.g-mark.g-mark--diamond {
   border: 2px solid var(--ink);
-  border-radius: 50%;
   background: var(--mark);
   clip-path: none;
-  transform: none;
 }
 
-.g-mark--circle::after { content: none; }
+.g-mark.g-mark--circle { border-radius: 50%; transform: none; }
+
+.g-mark.g-mark--square { border-radius: 2px; transform: none; }
+
+.g-mark.g-mark--diamond {
+  border-radius: 2px;
+  transform: rotate(45deg) scale(.82);
+}
+
+.g-mark.g-mark--circle::after,
+.g-mark.g-mark--square::after,
+.g-mark.g-mark--diamond::after { content: none; }
+
+.g-mark.g-mark--triangle {
+  border: 0;
+  border-radius: 0;
+  background: var(--ink);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  transform: none;
+}
 
 .g-mark--c0 { --mark: var(--persona-1); }
 .g-mark--c1 { --mark: var(--persona-2); }
@@ -1390,6 +1383,8 @@ kbd {
 .g-mark--c5 { --mark: var(--persona-6); }
 .g-mark--c6 { --mark: var(--persona-7); }
 .g-mark--c7 { --mark: var(--persona-8); }
+.g-mark--c8 { --mark: var(--persona-9); }
+.g-mark--c9 { --mark: var(--persona-10); }
 
 .g-mark--large { inline-size: 1.375rem; block-size: 1.375rem; }
 
@@ -2002,7 +1997,6 @@ kbd {
   .g-details,
   .g-funnel > li,
   .g-how__box,
-  .g-tech-link,
   .g-lang a[aria-current="true"] { border: 1px solid CanvasText; }
 
   .g-seg > [aria-checked="true"],

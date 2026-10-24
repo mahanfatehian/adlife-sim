@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "issued_on": "2026-10-13",
+  "issued_on": "2026-10-21",
   "entries": [
     {
       "city_id": "fictional-grid-v2",
@@ -56,6 +56,64 @@
         "No measured traffic, population, land use, or resident calibration",
         "No turn restrictions or time-dependent access",
         "Synthetic geometry; not a real city"
+      ]
+    },
+    {
+      "city_id": "fictional-new-district-v2",
+      "display_name": "Fictional New District V2",
+      "resource_name": "fictional-new-district-v2.json",
+      "pack_sha256": "31272d8a0b420a868e37c5cb4b5b4bd1b5112ae6d80cc68a564691adc422943b",
+      "pack_schema_version": 2,
+      "data_origin": "fictional",
+      "qualification": "fictional-fixture",
+      "reviewer_role": null,
+      "reviewed_on": null,
+      "coverage": {"west": 0.5, "south": 0.3, "east": 0.6, "north": 0.36},
+      "time_zone": "Etc/UTC",
+      "source": {
+        "provider": "AdLife Fictional Cartography",
+        "dataset": "Bundled fictional new district",
+        "version": "2.0.0",
+        "published_on": "2026-10-21",
+        "source_sha256": "d617a83dea0968782977a44e71998e77f26383252d68083a61a0bf0f1fbdbe8e",
+        "source_url": "https://example.org/fictional-new-district",
+        "license": "CC0-1.0",
+        "attribution": "Fictional new-district streets; not real map data"
+      },
+      "known_omissions": [
+        "No measured traffic, population, land use, or resident calibration",
+        "No turn restrictions or time-dependent access",
+        "Synthetic geometry; not a real city",
+        "The park and industrial areas are implied by the road layout; no land-use polygons"
+      ]
+    },
+    {
+      "city_id": "fictional-old-town-v2",
+      "display_name": "Fictional Old Town V2",
+      "resource_name": "fictional-old-town-v2.json",
+      "pack_sha256": "192fb5bcef0fbfa441afd6945a6c134697895ab3a6735eb74d86e04563f09524",
+      "pack_schema_version": 2,
+      "data_origin": "fictional",
+      "qualification": "fictional-fixture",
+      "reviewer_role": null,
+      "reviewed_on": null,
+      "coverage": {"west": 2.0, "south": -0.006, "east": 2.09, "north": 0.07},
+      "time_zone": "Etc/UTC",
+      "source": {
+        "provider": "AdLife Fictional Cartography",
+        "dataset": "Bundled fictional old town",
+        "version": "2.0.0",
+        "published_on": "2026-10-21",
+        "source_sha256": "404f5f10148e697033574d02b36b3bcdebb93b4f7b0cc940b47e51286f09ecc8",
+        "source_url": "https://example.org/fictional-old-town",
+        "license": "CC0-1.0",
+        "attribution": "Fictional old-town streets; not real map data"
+      },
+      "known_omissions": [
+        "No measured traffic, population, land use, or resident calibration",
+        "No turn restrictions or time-dependent access",
+        "Synthetic geometry; not a real city",
+        "The river is implied by the two bridges; no water or building geometry"
       ]
     },
     {

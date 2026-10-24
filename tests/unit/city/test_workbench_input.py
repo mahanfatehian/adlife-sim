@@ -431,22 +431,26 @@ def test_persisted_workbench_input_parser_refuses_unknown_fields_and_creative_dr
         models.parse_workbench_run_input_json(json.dumps(mismatch))
 
 
-def test_packaged_creative_catalog_has_exactly_four_safe_fictional_choices() -> None:
+def test_packaged_creative_catalog_has_exactly_eight_safe_fictional_choices() -> None:
     creatives = _creatives()
     catalog = creatives.load_creative_template_catalog()
 
     assert catalog.schema_version == 1
     assert tuple(item.template_id for item in catalog.templates) == (
+        "fictional-bike-share-v1",
+        "fictional-book-box-v1",
         "fictional-coffee-pass-v1",
         "fictional-crispy-meal-v1",
         "fictional-device-launch-v1",
+        "fictional-fitness-app-v1",
         "fictional-home-delivery-v1",
+        "fictional-music-stream-v1",
     )
     assert all(
         item.disclosure == "Fictional creative for synthetic simulation only."
         for item in catalog.templates
     )
-    assert len({item.fingerprint for item in catalog.templates}) == 4
+    assert len({item.fingerprint for item in catalog.templates}) == 8
     assert all(
         1 <= len(text) <= limit
         for item in catalog.templates

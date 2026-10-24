@@ -8,6 +8,15 @@
 
   <div id="active-job" class="g-callout g-callout--info setup-banner" hidden></div>
 
+  <section id="setup-town" class="g-card setup-card setup-towns" aria-labelledby="town-title" hidden>
+    <div class="setup-towns__head">
+      <h2 id="town-title" class="setup-towns__title">{{ tr("setup.town.title") }}</h2>
+      <p id="town-help" class="g-help">{{ tr("setup.town.help") }}</p>
+    </div>
+    <div id="town-list" class="g-choices setup-towns__list" role="radiogroup" aria-labelledby="town-title" aria-describedby="town-help"></div>
+    <p id="town-error" class="g-error" hidden></p>
+  </section>
+
   <div class="setup-cards">
     <section id="setup-card-ad" class="g-card setup-card setup-card--ad" aria-labelledby="ad-title">
       <h2 id="ad-title" class="setup-card__title">{{ tr("setup.ad.title") }}</h2>
@@ -22,6 +31,7 @@
           <button type="button" role="radio" aria-checked="false" data-value="billboard">{{ tr("setup.ad.where.billboard") }}</button>
           <button type="button" role="radio" aria-checked="false" data-value="both">{{ tr("setup.ad.where.both") }}</button>
         </div>
+        <p id="ad-where-note" class="g-help" hidden>{{ tr("setup.town.no_billboard") }}</p>
       </div>
       <p id="ad-aimed" class="setup-aimed"></p>
       <p id="ad-error" class="g-error" hidden></p>
@@ -157,6 +167,11 @@
           <label class="g-check"><input type="checkbox" name="interest" value="technology"><span>{{ tr("interest.technology") }}</span></label>
           <label class="g-check"><input type="checkbox" name="interest" value="food"><span>{{ tr("interest.food") }}</span></label>
           <label class="g-check"><input type="checkbox" name="interest" value="leisure"><span>{{ tr("interest.leisure") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="books"><span>{{ tr("interest.books") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="cooking"><span>{{ tr("interest.cooking") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="crafts"><span>{{ tr("interest.crafts") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="gardening"><span>{{ tr("interest.gardening") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="interest" value="music"><span>{{ tr("interest.music") }}</span></label>
         </div>
         <p id="more-interests-error" class="g-error" hidden></p>
       </fieldset>

@@ -13,13 +13,17 @@ import {
 
 const SHOWN_RUNS = 8;
 const GUIDED_SCENARIO = /^guided-/;
-const PRODUCT_SCENARIO = /^guided-(device|coffee|meal|delivery)$/;
+const PRODUCT_SCENARIO = /^guided-(device|coffee|meal|delivery|bike|books|fitness|music)$/;
 const RUN_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const TEMPLATE_BY_KEY = Object.freeze({
   device: "fictional-device-launch-v1",
   coffee: "fictional-coffee-pass-v1",
   meal: "fictional-crispy-meal-v1",
   delivery: "fictional-home-delivery-v1",
+  bike: "fictional-bike-share-v1",
+  books: "fictional-book-box-v1",
+  fitness: "fictional-fitness-app-v1",
+  music: "fictional-music-stream-v1",
 });
 const MODES = new Set(["rules", "mock", "local", "remote"]);
 const PROVIDER_MODES = new Set(["local", "remote"]);
@@ -51,18 +55,6 @@ function isGuided(run) {
   return GUIDED_SCENARIO.test(run.scenario_id ?? "");
 }
 
-function technicalLink(path) {
-  return el(
-    "a",
-    {
-      className: "g-btn g-btn--quiet",
-      attrs: { href: path, target: "_blank", rel: "noopener noreferrer" },
-    },
-    t("common.technical_view"),
-    el("span", { className: "g-visually-hidden", text: ` ${t("common.new_tab")}` }),
-  );
-}
-
 function runCard(run, products, models) {
   const v10 = run.run_schema_version === 10;
   const match = PRODUCT_SCENARIO.exec(run.scenario_id ?? "");
@@ -84,9 +76,11 @@ function runCard(run, products, models) {
   if (v10 && PROVIDER_MODES.has(run.cognition_mode)) {
     counts.push(tn("start.runs.answers", (run.provider_count ?? 0) + (run.cache_count ?? 0)));
   }
-  const actions = el("div", { className: "setup-run__actions" });
-  if (v10) {
-    actions.append(
+  // Only a V10 run has a story and a report; an older run shows its format note instead.
+  const actions = v10
+    ? el(
+      "div",
+      { className: "setup-run__actions" },
       el("a", {
         className: "g-btn g-btn--secondary",
         text: t("start.runs.story"),
@@ -97,11 +91,8 @@ function runCard(run, products, models) {
         text: t("start.runs.report"),
         attrs: { href: href(`/guide/runs/${run.run_id}/report`) },
       }),
-    );
-  }
-  if (typeof run.inspector_url === "string" && run.inspector_url.startsWith("/runs/")) {
-    actions.append(technicalLink(run.inspector_url));
-  }
+    )
+    : null;
   const card = el(
     "li",
     { className: "setup-run", dataset: { runId: run.run_id, guided: isGuided(run) ? "true" : "false" } },

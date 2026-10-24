@@ -20,7 +20,7 @@ from adlife.core.domain.person import DomainModel, contains_labelled_secret_memb
 from adlife.core.domain.serialization import canonical_json
 
 MAX_PERSONA_TEMPLATE_CATALOG_BYTES = 32_768
-_TEMPLATE_IDS = ("persona-001", "persona-002", "persona-003", "persona-004")
+_TEMPLATE_IDS = tuple(f"persona-{index:03d}" for index in range(1, 11))
 
 
 class PersonaTemplateCatalogError(ValueError):
@@ -28,10 +28,10 @@ class PersonaTemplateCatalogError(ValueError):
 
 
 class PersonaTemplateCatalog(DomainModel):
-    """Exactly four immutable, validated persona drafts in stable ID order."""
+    """Exactly ten immutable, validated persona drafts in stable ID order."""
 
     schema_version: Literal[1]
-    templates: tuple[WorkbenchPersonaDraftV2, ...] = Field(min_length=4, max_length=4)
+    templates: tuple[WorkbenchPersonaDraftV2, ...] = Field(min_length=10, max_length=10)
 
     @field_validator("schema_version", mode="before")
     @classmethod

@@ -1,15 +1,14 @@
 """Seed a running AdLife city workbench with ready-to-open demonstration runs.
 
-This is the backup for the live demonstration in ``docs/investor-demo.md``. When the local
-model is slow, or the presenter wants pre-made results, one command fills a workspace with
-saved runs that open straight in the inspector. Start the workbench first, then run this
-from the repository folder:
+This is a backup for a live demonstration. When the local model is slow, or the presenter
+wants pre-made results, one command fills a workspace with saved runs that the guided
+pages list. Start the workbench first, then run this from the repository folder:
 
     uv run python scripts/demo_workspace.py --base-url http://127.0.0.1:50050
     uv run python scripts/demo_workspace.py --base-url http://127.0.0.1:50050 --with-llm
 
 The script is only a loopback HTTP client of that running workbench. It drives the same
-API the browser page uses: it reads the per-process security token from the page, then
+API the guided pages use: it reads the per-process security token from the guide page, then
 validates and submits each fictional study and polls its job to a terminal phase. Every
 invocation creates new runs with fresh, numbered run IDs:
 
@@ -24,8 +23,9 @@ with four people each, one model day, and seed 1 by default. The live script use
 a different seed keeps the saved model answers of a backup run from being reused from the
 workspace cache by a later live run.
 
-Standard output gets one line per run: its ID, terminal phase, source counts, and
-inspector URL. Progress goes to standard error. Any failure exits non-zero with a concise
+Standard output gets one line per run: its ID, terminal phase, source counts, and the guide
+address that shows it (the story of a V10 run; the saved-runs list for the V9 run, which
+has no story view). Progress goes to standard error. Any failure exits non-zero with a concise
 message. The script talks only to ``127.0.0.1`` or ``localhost``, needs no credential,
 writes no file, and never prints or stores the workbench security token. Every person,
 place, product, and number in these runs is fictional and synthetic.
@@ -130,14 +130,14 @@ class RunOutcome:
     phase: str
     label: str
     counts: Mapping[str, int] | None = None
-    inspector_url: str | None = None
+    view_url: str | None = None
     error_code: str | None = None
 
     def line(self) -> str:
-        if self.counts is None or self.inspector_url is None:
+        if self.counts is None or self.view_url is None:
             return f"{self.run_id}  {self.phase}  {self.label}  error={self.error_code or 'none'}"
         sources = " ".join(f"{name.replace('_', '-')}={self.counts[name]}" for name in OUTCOMES)
-        return f"{self.run_id}  {self.phase}  {self.label}  {sources}  {self.inspector_url}"
+        return f"{self.run_id}  {self.phase}  {self.label}  {sources}  {self.view_url}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,8 +385,8 @@ class Workbench:
         return self.request_json("GET", path, step=step)[1]
 
     def connect(self) -> None:
-        """Read the per-process security token from the page, as the browser does."""
-        response = self._send("GET", "/", step="open the workbench page", accept="text/html")
+        """Read the per-process security token from the guide page, as the browser does."""
+        response = self._send("GET", "/guide", step="open the guide page", accept="text/html")
         content_type = response.headers.get("content-type", "").lower()
         match = (
             _CSRF_META.search(response.text)
@@ -399,16 +399,9 @@ class Workbench:
             )
         self._token = match.group(1)
 
-    def open_inspector(self, run_id: str) -> None:
-        """Require the saved-run inspector page to verify the run and open."""
-        response = self._send(
-            "GET", f"/runs/{run_id}", step=f"open the inspector of {run_id}", accept="text/html"
-        )
-        content_type = response.headers.get("content-type", "").lower()
-        if response.status_code != 200 or not content_type.startswith("text/html"):
-            raise DemoError(
-                f"the inspector page of {run_id} did not open (HTTP {response.status_code})"
-            )
+    def open_story(self, run_id: str) -> None:
+        """Require the guide's story of one V10 run to verify the run and build."""
+        self.get_json(f"/api/runs/{run_id}/story", step=f"open the story of {run_id}")
 
 
 def require_bounded_workbench(workbench: Workbench, *, with_llm: bool) -> int:
@@ -631,17 +624,19 @@ def follow_job(
             label=plan.label,
             error_code=code if isinstance(code, str) else None,
         )
-    inspector_path = _text(_mapping(job, "result", step=step), "inspector_url", step=step)
-    if inspector_path != f"/runs/{run_id}":
-        raise DemoError(f"{step}: the workbench returned an unexpected inspector URL")
     counts = read_source_counts(workbench, run_id)
-    workbench.open_inspector(run_id)
+    if plan.schema_version == 4:
+        workbench.open_story(run_id)
+        view_path = f"/guide/runs/{run_id}"
+    else:
+        # Only a V10 run has a story; the guide lists an older run with its saved runs.
+        view_path = "/guide"
     return RunOutcome(
         run_id=run_id,
         phase=phase,
         label=plan.label,
         counts=counts,
-        inspector_url=f"{workbench.base_url}{inspector_path}",
+        view_url=f"{workbench.base_url}{view_path}",
     )
 
 

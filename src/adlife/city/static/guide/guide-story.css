@@ -31,6 +31,8 @@ main:has(> .story) {
 .story-tone-c5 { --persona: var(--persona-6); }
 .story-tone-c6 { --persona: var(--persona-7); }
 .story-tone-c7 { --persona: var(--persona-8); }
+.story-tone-c8 { --persona: var(--persona-9); }
+.story-tone-c9 { --persona: var(--persona-10); }
 
 /* Boot: loading and problems */
 

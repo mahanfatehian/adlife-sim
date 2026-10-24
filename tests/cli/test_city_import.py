@@ -298,6 +298,8 @@ def test_city_import_v2_does_not_register_output_in_packaged_cli_catalog(
     assert [item["city_id"] for item in json.loads(listed.stdout)["cities"]] == [
         "fictional-grid-v2",
         "fictional-harbor-loop-v2",
+        "fictional-new-district-v2",
+        "fictional-old-town-v2",
         "fictional-river-junction-v2",
     ]
     assert shown.exit_code == 2

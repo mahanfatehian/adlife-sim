@@ -26,6 +26,11 @@ const PLACE_CLEARANCE = FOCUS_RADIUS + PERSON_SIZE / 2 + 1;
 const PASSING_CLEARANCE = 8;
 const LABEL_GAP = 4;
 const EDGE = 3;
+// Past this many places a label with no free spot shrinks to a badge on its place.
+const CROWDED_PLACES = 12;
+const BADGE_DIAMETER = 16;
+// Roads thin out in a dense town, so its streets stay apart on a small map.
+const MIN_ROAD_WIDTH = 3;
 
 export const PLACE_ROLES = Object.freeze(["home", "work", "leisure"]);
 // Glyphs on a 16 x 16 grid: a house, a briefcase and a tree. story.html.j2 draws the same
@@ -65,6 +70,8 @@ const TOKENS = {
   "--persona-6": "#E69F00",
   "--persona-7": "#F0E442",
   "--persona-8": "#000000",
+  "--persona-9": "#882255",
+  "--persona-10": "#44AA99",
 };
 
 // Status ring colour and whether the ring is dashed ("no AI effect" is never solid colour).
@@ -224,7 +231,7 @@ function readTokens(element) {
 }
 
 function personaToken(colorIndex) {
-  return `--persona-${(colorIndex % 8) + 1}`;
+  return `--persona-${(colorIndex % 10) + 1}`;
 }
 
 function rootFontSize() {
@@ -510,6 +517,23 @@ export class StoryMap {
     ];
   }
 
+  // The full road width, unless the town's typical street is drawn shorter than eight road
+  // widths; then thinner, never below MIN_ROAD_WIDTH.
+  roadWidth() {
+    const lengths = this.story.map.roads
+      .map((road) => {
+        const [x0, y0] = this.project(...road.points[0]);
+        const [x1, y1] = this.project(...road.points[road.points.length - 1]);
+        return Math.hypot(x1 - x0, y1 - y0);
+      })
+      .sort((a, b) => a - b);
+    if (lengths.length === 0) {
+      return ROAD_WIDTH;
+    }
+    const typical = lengths[Math.floor(lengths.length / 2)];
+    return Math.max(MIN_ROAD_WIDTH, Math.min(ROAD_WIDTH, typical / 8));
+  }
+
   drawBase() {
     const layer = document.createElement("canvas");
     layer.width = this.canvas.width;
@@ -522,7 +546,7 @@ export class StoryMap {
     context.lineCap = "round";
     context.lineJoin = "round";
     context.strokeStyle = tokens["--map-road"];
-    context.lineWidth = ROAD_WIDTH;
+    context.lineWidth = this.roadWidth();
     for (const road of this.story.map.roads) {
       context.beginPath();
       road.points.forEach(([longitude, latitude], index) => {
@@ -585,9 +609,13 @@ export class StoryMap {
     }
     const labels = this.arrangePlaceLabels(entries, metrics.height);
     // The speech bubble steers clear of these, so it never hides a place's words.
-    this.placeBoxes = labels.map((label) => label.box);
+    this.placeBoxes = labels.filter((label) => label.box).map((label) => label.box);
     for (const { entry, box, hasWords } of labels) {
-      this.drawPlaceLabel(context, box, entry, hasWords, metrics, rtl);
+      if (box) {
+        this.drawPlaceLabel(context, box, entry, hasWords, metrics, rtl);
+      } else {
+        this.drawPlaceBadge(context, entry);
+      }
     }
     context.restore();
     // What the map marks, for tests and tools: "node:home+work ..." and the worded count.
@@ -631,10 +659,17 @@ export class StoryMap {
       const placed = [];
       let cost = 0;
       for (const entry of order) {
-        const boxes = placed.map((label) => label.box);
+        const boxes = placed.filter((label) => label.box).map((label) => label.box);
         let option = this.labelOptions(entry, entry.full, height, scene, boxes)[0];
         const hasWords = Boolean(option);
         option = option || this.labelOptions(entry, entry.compact, height, scene, boxes)[0];
+        if (!option && entries.length > CROWDED_PLACES) {
+          // A crowded town: a label with no free spot becomes a small glyph badge on the
+          // place itself instead of a box laid over its neighbours.
+          cost += 40;
+          placed.push({ entry, box: null, hasWords: false });
+          continue;
+        }
         option = option || this.labelOptions(entry, entry.compact, height, scene, boxes, true)[0];
         if (!option) {
           continue;
@@ -708,6 +743,23 @@ export class StoryMap {
       options.push({ box, score });
     }
     return options.sort((a, b) => a.score - b.score);
+  }
+
+  // The first role's glyph in a small disc centred on the place, for a crowded town.
+  drawPlaceBadge(context, entry) {
+    const tokens = this.tokens;
+    context.save();
+    context.beginPath();
+    context.arc(entry.x, entry.y, BADGE_DIAMETER / 2, 0, Math.PI * 2);
+    context.fillStyle = tokens["--surface"];
+    context.fill();
+    context.lineWidth = 1.5;
+    context.strokeStyle = tokens["--ink-3"];
+    context.stroke();
+    context.fillStyle = tokens["--ink-2"];
+    const glyph = BADGE_DIAMETER - 6;
+    drawGlyph(context, entry.roles[0], entry.x - glyph / 2, entry.y - glyph / 2, glyph);
+    context.restore();
   }
 
   drawPlaceLabel(context, box, entry, hasWords, metrics, rtl) {

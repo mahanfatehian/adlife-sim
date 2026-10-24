@@ -53,7 +53,9 @@ Status: TypeAlias = Literal[
 Compare: TypeAlias = Literal["lower", "slightly_lower", "about_same", "slightly_higher", "higher"]
 Effect: TypeAlias = Literal["higher", "lower", "same"]
 StoryChannel: TypeAlias = Literal["mobile-feed", "roadside-billboard"]
-TemplateKey: TypeAlias = Literal["lumo", "veyra", "orilo", "nuvin"]
+TemplateKey: TypeAlias = Literal[
+    "lumo", "veyra", "orilo", "nuvin", "pimo", "zarel", "ketra", "tavi", "selun", "halvi"
+]
 LabelGroup: TypeAlias = Literal["ai", "practice"]
 TraitName: TypeAlias = Literal[
     "advertising_skepticism",
@@ -400,15 +402,15 @@ class StoryPersona(_StoryModel):
     count: int = Field(ge=1, le=30)
     interests: tuple[_ShortText, ...] = Field(min_length=1, max_length=12)
     trait_chips: tuple[StoryTraitChip, ...] = Field(max_length=3)
-    color_index: int = Field(ge=0, le=33)
+    color_index: int = Field(ge=0, le=39)
     agent_ids: tuple[_AgentId, ...] = Field(min_length=1, max_length=30)
 
     @model_validator(mode="after")
     def coherent_persona(self) -> Self:
         if len(self.agent_ids) != self.count or len(set(self.agent_ids)) != self.count:
             raise ValueError("a story persona must list one distinct agent per count")
-        if (self.template_key is None) != (self.color_index >= 4):
-            raise ValueError("template personas use colours 0-3 and others 4 onward")
+        if (self.template_key is None) != (self.color_index >= 10):
+            raise ValueError("template personas use colours 0-9 and others 10 onward")
         return self
 
 

@@ -64,10 +64,16 @@ function numberNode(value, decimals = 2, signed = false) {
   return bdi(fmt.dec(value, decimals, { signed }), "ltr");
 }
 
+// Ten colours; the shape is colour_index % 4, as on the map. A template colour class
+// implies its own shape, so a persona from 10 on names its different shape explicitly.
+const MARK_SHAPES = ["circle", "square", "triangle", "diamond"];
+
 function mark(colorIndex, large = false) {
   const size = large ? " g-mark--large" : "";
+  const slot = colorIndex % 10;
+  const shape = colorIndex % 4 === slot % 4 ? "" : ` g-mark--${MARK_SHAPES[colorIndex % 4]}`;
   return h("span", {
-    className: `g-mark g-mark--c${colorIndex % 8}${size}`,
+    className: `g-mark g-mark--c${slot}${shape}${size}`,
     attrs: { "aria-hidden": "true" },
   });
 }
@@ -194,7 +200,7 @@ function modeTone() {
 
 // ---------------------------------------------------------------- boot
 
-function showProblem(kind, { retry = false, technical = false, code = null } = {}) {
+function showProblem(kind, { retry = false, code = null } = {}) {
   const root = byId("story-root");
   root.dataset.state = "problem";
   byId("story-loading").hidden = true;
@@ -217,7 +223,6 @@ function showProblem(kind, { retry = false, technical = false, code = null } = {
     }
   }
   byId("story-retry").hidden = !retry;
-  byId("story-problem-technical").hidden = !technical;
 }
 
 function showLoading() {
@@ -236,13 +241,13 @@ function problemFor(error) {
       return ["not_found", {}];
     }
     if (error.status === 404 && error.code === "story-unavailable") {
-      return ["unavailable", { technical: true }];
+      return ["unavailable", {}];
     }
     if (error.status === 409 && error.code === "run-unavailable") {
       return ["unverifiable", { retry: true }];
     }
     if (error.status === 409 && error.code === "story-too-large") {
-      return ["too_large", { technical: true }];
+      return ["too_large", {}];
     }
     if (error.status >= 500) {
       return ["server", { retry: true }];
@@ -947,7 +952,7 @@ function personCard(person) {
   });
   return h(
     "article",
-    { className: `g-card story-person story-tone-c${ci % 8}`, dataset: { agent: person.agent_id } },
+    { className: `g-card story-person story-tone-c${ci % 10}`, dataset: { agent: person.agent_id } },
     h("h3", { className: "story-person-name" }, mark(ci), h("span", {}, refNodes(personRef(person)))),
     h("p", { className: "story-person-summary" }, refNodes(person.summary)),
     personLabels(person),
@@ -999,7 +1004,7 @@ function renderPeople() {
     host.append(
       h(
         "section",
-        { className: `story-group story-tone-c${persona.color_index % 8}`, dataset: { persona: persona.persona_id } },
+        { className: `story-group story-tone-c${persona.color_index % 10}`, dataset: { persona: persona.persona_id } },
         head,
         about,
         h("div", { className: "story-people-grid" }, ...members.map(personCard)),

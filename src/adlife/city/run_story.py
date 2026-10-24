@@ -141,11 +141,13 @@ MAX_STORY_BYTES: Final = 4_194_304
 PER_PERSON_REQUESTS: Final = 4
 PER_RUN_REQUESTS: Final = 60
 
-# The three packaged fictional towns that have catalog names; a test pins this tuple to
+# The five packaged fictional towns that have catalog names; a test pins this tuple to
 # the packaged catalog so a new town cannot ship without its translated name.
 PACKAGED_CITY_IDS: Final = (
     "fictional-grid-v2",
     "fictional-harbor-loop-v2",
+    "fictional-new-district-v2",
+    "fictional-old-town-v2",
     "fictional-river-junction-v2",
 )
 _TEMPLATE_KEYS: Final[Mapping[str, TemplateKey]] = {
@@ -153,13 +155,18 @@ _TEMPLATE_KEYS: Final[Mapping[str, TemplateKey]] = {
     "persona-002": "veyra",
     "persona-003": "orilo",
     "persona-004": "nuvin",
+    "persona-005": "pimo",
+    "persona-006": "zarel",
+    "persona-007": "ketra",
+    "persona-008": "tavi",
+    "persona-009": "selun",
+    "persona-010": "halvi",
 }
+# Template personas keep colours 0-9 in catalog order; every other persona follows from 10.
 _TEMPLATE_COLOURS: Final[Mapping[TemplateKey, int]] = {
-    "lumo": 0,
-    "veyra": 1,
-    "orilo": 2,
-    "nuvin": 3,
+    key: index for index, key in enumerate(_TEMPLATE_KEYS.values())
 }
+_OTHER_COLOURS_FROM: Final = len(_TEMPLATE_COLOURS)
 _TRAIT_ORDER: Final[tuple[TraitName, ...]] = (
     "advertising_skepticism",
     "price_sensitivity",
@@ -764,7 +771,7 @@ def _personas(evidence: _Evidence) -> tuple[StoryPersona, ...]:
     for persona in population.personas:
         key = _template_key(persona, templates)
         if key is None:
-            colour = 4 + others
+            colour = _OTHER_COLOURS_FROM + others
             others += 1
         else:
             colour = _TEMPLATE_COLOURS[key]

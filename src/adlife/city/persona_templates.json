@@ -96,6 +96,150 @@
         "recall_strength": 0.2,
         "purchase_intention": 0.1
       }
+    },
+    {
+      "persona_id": "persona-005",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Pimo",
+      "age": 31,
+      "occupation": "Invented night courier",
+      "background": "A wholly invented character who rides imagined delivery loops and hums along to street music. This story and MBTI label are descriptive scenario context only; numeric assumptions are supplied explicitly below.",
+      "mbti": "ESTP",
+      "interests": ["commuting", "food", "music"],
+      "traits": {
+        "price_sensitivity": 0.55,
+        "novelty_seeking": 0.6,
+        "advertising_skepticism": 0.3,
+        "mobile_recall_encoding": 0.85,
+        "roadside_recall_encoding": 0.65,
+        "impulsivity": 0.75
+      },
+      "initial_state": {
+        "brand_sentiment": 0.1,
+        "recall_strength": 0.05,
+        "purchase_intention": 0.25
+      }
+    },
+    {
+      "persona_id": "persona-006",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Zarel",
+      "age": 46,
+      "occupation": "Invented clockwork repairer",
+      "background": "A wholly invented character who restores imagined clocks and reads technical manuals for fun. Neither this biography nor the optional personality label determines response values or a mobility schedule.",
+      "mbti": "INTJ",
+      "interests": ["books", "technology"],
+      "traits": {
+        "price_sensitivity": 0.45,
+        "novelty_seeking": 0.35,
+        "advertising_skepticism": 0.9,
+        "mobile_recall_encoding": 0.3,
+        "roadside_recall_encoding": 0.5,
+        "impulsivity": 0.2
+      },
+      "initial_state": {
+        "brand_sentiment": -0.3,
+        "recall_strength": 0.0,
+        "purchase_intention": 0.05
+      }
+    },
+    {
+      "persona_id": "persona-007",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Ketra",
+      "age": 27,
+      "occupation": "Invented garden organiser",
+      "background": "A wholly invented character who runs an imagined shared garden and cooks with whatever it grows. The explicit response assumptions below are editable scenario choices, independent of age and occupation.",
+      "mbti": "ESFJ",
+      "interests": ["cooking", "food", "gardening"],
+      "traits": {
+        "price_sensitivity": 0.7,
+        "novelty_seeking": 0.4,
+        "advertising_skepticism": 0.5,
+        "mobile_recall_encoding": 0.55,
+        "roadside_recall_encoding": 0.8,
+        "impulsivity": 0.35
+      },
+      "initial_state": {
+        "brand_sentiment": 0.05,
+        "recall_strength": 0.1,
+        "purchase_intention": 0.15
+      }
+    },
+    {
+      "persona_id": "persona-008",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Tavi",
+      "age": 19,
+      "occupation": "Invented student radio host",
+      "background": "A wholly invented character who hosts an imagined campus radio show and collects new gadgets. Descriptive details are optional and do not generate the explicit causal assumptions.",
+      "mbti": "ENFJ",
+      "interests": ["leisure", "music", "technology"],
+      "traits": {
+        "price_sensitivity": 0.85,
+        "novelty_seeking": 0.9,
+        "advertising_skepticism": 0.4,
+        "mobile_recall_encoding": 0.75,
+        "roadside_recall_encoding": 0.3,
+        "impulsivity": 0.6
+      },
+      "initial_state": {
+        "brand_sentiment": 0.15,
+        "recall_strength": 0.0,
+        "purchase_intention": 0.2
+      }
+    },
+    {
+      "persona_id": "persona-009",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Selun",
+      "age": 63,
+      "occupation": "Invented retired ferry pilot",
+      "background": "A wholly invented character who tells imagined river stories and tends a small balcony garden. This story and MBTI label are descriptive scenario context only; numeric assumptions are supplied explicitly below.",
+      "mbti": "ISFP",
+      "interests": ["books", "gardening", "leisure"],
+      "traits": {
+        "price_sensitivity": 0.6,
+        "novelty_seeking": 0.15,
+        "advertising_skepticism": 0.65,
+        "mobile_recall_encoding": 0.2,
+        "roadside_recall_encoding": 0.7,
+        "impulsivity": 0.1
+      },
+      "initial_state": {
+        "brand_sentiment": 0.0,
+        "recall_strength": 0.15,
+        "purchase_intention": 0.05
+      }
+    },
+    {
+      "persona_id": "persona-010",
+      "count": 1,
+      "fictional": true,
+      "display_name": "Fictional Halvi",
+      "age": 35,
+      "occupation": "Invented food-truck cook",
+      "background": "A wholly invented character who drives an imagined food truck and builds its signs by hand. The explicit response assumptions below are editable scenario choices, independent of age and occupation.",
+      "mbti": null,
+      "interests": ["commuting", "crafts", "food"],
+      "traits": {
+        "price_sensitivity": 0.25,
+        "novelty_seeking": 0.7,
+        "advertising_skepticism": 0.2,
+        "mobile_recall_encoding": 0.5,
+        "roadside_recall_encoding": 0.55,
+        "impulsivity": 0.45
+      },
+      "initial_state": {
+        "brand_sentiment": 0.2,
+        "recall_strength": 0.05,
+        "purchase_intention": 0.3
+      }
     }
   ]
 }

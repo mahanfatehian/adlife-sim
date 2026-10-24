@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from adlife.city.workbench_input import WorkbenchPersonaDraftV2
 from adlife.core.domain.serialization import canonical_json
 
-IDS = ["persona-001", "persona-002", "persona-003", "persona-004"]
+IDS = [f"persona-{index:03d}" for index in range(1, 11)]
 PERSONA_FIELDS = [
     "persona_id",
     "count",
@@ -85,7 +85,7 @@ def _load(tmp_path: Path, payload: object):
     return _personas().load_persona_template_catalog(root=tmp_path)
 
 
-def test_packaged_catalog_contains_four_flat_validated_fictional_starting_points() -> None:
+def test_packaged_catalog_contains_ten_flat_validated_fictional_starting_points() -> None:
     resource = files("adlife.city").joinpath("persona_templates.json")
     assert resource.is_file(), "persona catalog resource is missing"
     raw = json.loads(resource.read_bytes())
@@ -105,8 +105,8 @@ def test_packaged_catalog_contains_four_flat_validated_fictional_starting_points
         assert template.count == 1
         assert len(canonical_json(template).encode("utf-8")) <= 3_072
         assert template == WorkbenchPersonaDraftV2.model_validate_json(json.dumps(item))
-    assert len({item.display_name for item in catalog.templates}) == 4
-    assert len({canonical_json(item.traits) for item in catalog.templates}) == 4
+    assert len({item.display_name for item in catalog.templates}) == 10
+    assert len({canonical_json(item.traits) for item in catalog.templates}) == 10
 
 
 def test_loader_orders_templates_by_fixed_id_and_preserves_explicit_assumptions(tmp_path: Path):
@@ -138,7 +138,7 @@ def test_descriptive_edits_never_infer_or_replace_explicit_causal_values(tmp_pat
 
 
 @pytest.mark.parametrize("mutation", ["empty", "missing", "extra", "duplicate", "wrong-id"])
-def test_catalog_refuses_any_set_other_than_the_four_fixed_ids(tmp_path: Path, mutation: str):
+def test_catalog_refuses_any_set_other_than_the_ten_fixed_ids(tmp_path: Path, mutation: str):
     payload = catalog_data()
     if mutation == "empty":
         payload["templates"] = []
@@ -149,7 +149,7 @@ def test_catalog_refuses_any_set_other_than_the_four_fixed_ids(tmp_path: Path, m
     elif mutation == "duplicate":
         payload["templates"][1]["persona_id"] = "persona-001"
     else:
-        payload["templates"][0]["persona_id"] = "persona-005"
+        payload["templates"][0]["persona_id"] = "persona-011"
     with pytest.raises(_personas().PersonaTemplateCatalogError, match="schema"):
         _load(tmp_path, payload)
 
@@ -329,7 +329,7 @@ def test_loader_byte_limit_is_inclusive_and_read_failure_is_value_free(tmp_path)
     exact = document + b" " * (32_768 - len(document))
     resource = tmp_path / "persona_templates.json"
     resource.write_bytes(exact)
-    assert len(module.load_persona_template_catalog(root=tmp_path).templates) == 4
+    assert len(module.load_persona_template_catalog(root=tmp_path).templates) == 10
     resource.write_bytes(exact + b" ")
     with pytest.raises(module.PersonaTemplateCatalogError, match="size"):
         module.load_persona_template_catalog(root=tmp_path)

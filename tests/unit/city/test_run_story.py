@@ -523,7 +523,7 @@ def test_personas_recognize_templates_and_name_people_through_the_context(saved)
     assert context.people["person-006"].number == 6
     hostile = saved("hostile").story
     persona = hostile.personas[0]
-    assert (persona.template_key, persona.color_index) == (None, 4)
+    assert (persona.template_key, persona.color_index) == (None, 10)
     assert persona.display_name == HOSTILE_PERSONA_NAME
     assert story_ref_context(hostile).people["person-001"].display_name == HOSTILE_PERSONA_NAME
 
@@ -1001,7 +1001,7 @@ _REFUSED_STORIES: dict[str, Callable[[dict[str, Any]], None]] = {
     "reason on an answer": lambda d: _moment(d, noticed=True).__setitem__("reason", "timeout"),
     "math without an answer": _unnoticed_with_math,
     "persona count": lambda d: _bump(d["personas"][0], "count"),
-    "persona colour": lambda d: d["personas"][0].__setitem__("color_index", 4),
+    "persona colour": lambda d: d["personas"][0].__setitem__("color_index", 10),
     "persona assigned twice": _persona_assigned_twice,
     "unknown key moment": lambda d: d["key_moments"][0].__setitem__("moment_id", "0" * 16),
     "key moment order": lambda d: d["key_moments"].reverse(),

@@ -2,6 +2,24 @@
   "schema_version": 1,
   "templates": [
     {
+      "template_id": "fictional-bike-share-v1",
+      "template_version": 1,
+      "product_name": "Spokelark Pass",
+      "product_category": "fictional bike-share pass",
+      "message": "A fictional bike-share pass for short rides across a synthetic town.",
+      "call_to_action": "Explore the fictional pass",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    },
+    {
+      "template_id": "fictional-book-box-v1",
+      "template_version": 1,
+      "product_name": "Pagewren Box",
+      "product_category": "fictional bookshop subscription",
+      "message": "A fictional monthly book box for slow evenings in a synthetic neighborhood.",
+      "call_to_action": "Explore the fictional subscription",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    },
+    {
       "template_id": "fictional-coffee-pass-v1",
       "template_version": 1,
       "product_name": "Ember Cup Pass",
@@ -29,11 +47,29 @@
       "disclosure": "Fictional creative for synthetic simulation only."
     },
     {
+      "template_id": "fictional-fitness-app-v1",
+      "template_version": 1,
+      "product_name": "Pulsefern Coach",
+      "product_category": "fictional fitness app",
+      "message": "A fictional training app with short workouts and simple recipes for a synthetic week.",
+      "call_to_action": "Explore the fictional app",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    },
+    {
       "template_id": "fictional-home-delivery-v1",
       "template_version": 1,
       "product_name": "Parcel Finch",
       "product_category": "fictional home delivery service",
       "message": "A fictional delivery concept for planned errands in a synthetic city.",
+      "call_to_action": "Explore the fictional service",
+      "disclosure": "Fictional creative for synthetic simulation only."
+    },
+    {
+      "template_id": "fictional-music-stream-v1",
+      "template_version": 1,
+      "product_name": "Humvale Stream",
+      "product_category": "fictional music streaming service",
+      "message": "A fictional music stream for synthetic commutes and late playlists.",
       "call_to_action": "Explore the fictional service",
       "disclosure": "Fictional creative for synthetic simulation only."
     }
