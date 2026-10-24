@@ -36,7 +36,11 @@ from adlife.city.workbench_personas import load_persona_template_catalog
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city_cognition import CityCognitionRuntimeFallbackReason
-from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
+    CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+)
 from tests.browser.browser_support import (
     _LONG_BROWSER_TEST,
     _HeldSignalProvider,
@@ -46,6 +50,8 @@ from tests.browser.browser_support import (
     _wait_for_route_handler,
 )
 
+# The selection limits new runs are made under: the page reads them from the server.
+CURRENT_LIMITS = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
 CATALOG_DIRECTORY = Path(__file__).resolve().parents[2] / "src" / "adlife" / "i18n" / "catalogs"
 CATALOGS: dict[str, dict[str, Any]] = {
     language: json.loads((CATALOG_DIRECTORY / f"{language}.json").read_text(encoding="utf-8"))[
@@ -327,7 +333,11 @@ def _scripted_job(
         "can_cancel": True,
         "error": None,
         "result": None,
-        "cognition_progress": None if resolved is None else {"resolved": resolved, "total": total},
+        "cognition_progress": (
+            None
+            if resolved is None
+            else {"resolved": resolved, "total": total, "concurrency_limit": 4}
+        ),
     }
     WorkbenchJobView.model_validate(document)
     return document
@@ -394,7 +404,9 @@ def test_practice_path_submits_the_exact_default_draft_and_finishes_with_links(
         body = json.loads(posted[0])
         run_id = body["settings"]["run_id"]
         assert re.fullmatch(r"guided-device-[0-9]{4}-[0-9]{4}", run_id)
-        assert body == _default_draft(mode="mock", run_id=run_id)
+        assert body == _default_draft(
+            mode="mock", run_id=run_id, limit=CURRENT_LIMITS.offline_funded_response_limit
+        )
 
         expect(page.locator("#job-counter-text")).to_have_text(_say("progress.offline"))
         watch = page.locator("#job-watch")
@@ -503,8 +515,10 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             page.locator("#conn-model").fill("qwen/qwen3-8b")
             expect(page.locator("#conn-status")).to_have_text(_say("connection.untested"))
             expect(run).to_have_text(_say("setup.run_with_test"))
+            # Online AI defaults to every noticed ad (selection policy 3: up to 1,000, spread
+            # over the run), so the estimate is an upper bound.
             expect(page.locator("#ai-estimate")).to_have_text(
-                _say("setup.ai.limit.estimate", tokens="13,000")
+                _say("setup.ai.limit.estimate.max", tokens="1,300,000")
             )
 
             # "Test the AI and run" approves the address, creates the profile, then stops:
@@ -521,7 +535,7 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             assert profile.profile_id.startswith("guide-example-invalid-")
             assert profile.model_id == "qwen/qwen3-8b"
             assert profile.disable_thinking is True
-            assert profile.transient_retries == 1
+            assert profile.transient_retries == 3
             assert profile.max_output_tokens == 256
             expect(page.locator("#setup-connection")).to_contain_text(
                 _say("connection.thinking_off")
@@ -538,7 +552,7 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             assert checks == ['{"effect_scope":"bounded-signals-v1"}']
             counter = page.locator("#job-counter-text")
             expect(counter).to_have_text(
-                _say("progress.answered", resolved="0", total="10"), timeout=20_000
+                _say("progress.answered", resolved="0", total="13"), timeout=20_000
             )
             attributes = page.evaluate(
                 "() => [...document.querySelectorAll('*')]"
@@ -550,14 +564,14 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             bar = page.locator("#job-bar")
             expect(bar).to_be_visible()
             expect(page.locator("#job-counter-note")).to_have_text(
-                _say("progress.parallel", parallel="4")
+                _say("progress.parallel", parallel="8")
             )
             for answered in (1, 2):
                 permits.release()
                 expect(counter).to_have_text(
-                    _say("progress.answered", resolved=str(answered), total="10"), timeout=10_000
+                    _say("progress.answered", resolved=str(answered), total="13"), timeout=10_000
                 )
-                assert bar.evaluate("node => [node.value, node.max]") == [answered, 10]
+                assert bar.evaluate("node => [node.value, node.max]") == [answered, 13]
             ask = page.locator("#job-steps > li[data-step='ask']")
             expect(ask).to_have_attribute("data-state", "active")
             expect(ask).to_have_attribute("aria-current", "step")
@@ -565,12 +579,13 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             permits.release(64)
             watch = page.locator("#job-watch")
             expect(watch).to_be_visible(timeout=30_000)
-            expect(counter).to_have_text(_say("progress.answered", resolved="10", total="10"))
+            # Every one of the default study's 13 noticed ads is asked; none is over the limit.
+            expect(counter).to_have_text(_say("progress.answered", resolved="13", total="13"))
             expect(page.locator("#job-outcome-counts")).to_have_text(
-                _say("progress.done.counts", answered="10", reused="0", failed="0", over="3")
+                _say("progress.done.counts", answered="13", reused="0", failed="0", over="0")
             )
             expect(page.locator("#job-stop")).to_be_hidden()
-            assert sum(provider.calls for provider in providers[1:]) == 10
+            assert sum(provider.calls for provider in providers[1:]) == 13
 
             # D9: the same study with the same connection gets a fresh seed next time, and
             # the service comes back with its address and model already filled in.
@@ -743,6 +758,111 @@ def test_a_taken_run_name_is_renamed_and_submitted_again(tmp_path: Path, browser
             _say("progress.run", run_id=second["settings"]["run_id"])
         )
         expect(page.locator("#job-watch")).to_be_visible(timeout=30_000)
+
+
+# ----- 4b. the AI limit follows the server's selection policy ---------------------------------
+
+# What a server running selection policy 3 publishes (spec section 2): every noticed ad up
+# to 1,000, spread evenly over the run, with separate online and local defaults.
+_SPREAD_CAPABILITIES: dict[str, Any] = {
+    "funded_response_limits": [60, 120, 250, 500, 1000],
+    "all_noticed_funded_response_limit": 1000,
+    "default_provider_funded_response_limit": 1000,
+    "default_local_funded_response_limit": 120,
+    "offline_funded_response_limit": 1000,
+    "selected_requests_per_run": 1000,
+    "selected_requests_per_agent": 1000,
+    "selection_strategy": "spread-evenly",
+    "concurrency_limits": {"remote": 8, "local": 4},
+    "aggregate_deadline_seconds": 1800,
+    "max_http_attempts_per_request": 6,
+}
+
+
+def _choose_source(page: Page, source: str) -> None:
+    option = page.locator(f"#conn-sources [role='radio'][data-value='{source}']")
+    option.click()
+    expect(option).to_have_attribute("aria-checked", "true")
+
+
+def test_the_ai_limit_options_and_wording_come_from_the_published_capabilities(
+    tmp_path: Path, browser: Browser
+) -> None:
+    def spread(route: Route) -> None:
+        response = route.fetch()
+        document = response.json()
+        document["capabilities"]["bounded_cognition"].update(_SPREAD_CAPABILITIES)
+        route.fulfill(response=response, json=document)
+
+    job_id = "job-" + "e" * 32
+    job = _scripted_job(job_id, "requesting-cognition", resolved=3)
+    # A run frozen with eight questions at a time and 250 questions in all.
+    job["cognition_progress"] = {"resolved": 3, "total": 250, "concurrency_limit": 8}
+
+    with _guide(tmp_path, browser) as (page, base_url, _root):
+        # The server of this checkout: its own options, defaults and caps, whatever they are.
+        published = page.request.get(f"{base_url}/api/workbench").json()["capabilities"][
+            "bounded_cognition"
+        ]
+        page.goto(f"{base_url}/guide/new?lang=en")
+        page.locator("#setup-connection details > summary").first.click()
+        _choose_source(page, "remote")
+        options = page.locator("#ai-limit [role='radio']")
+        expect(options).to_have_count(len(published["funded_response_limits"]))
+        default = published["default_provider_funded_response_limit"]
+        expect(page.locator(f"#ai-limit [data-value='{default}']")).to_have_attribute(
+            "aria-checked", "true"
+        )
+
+        # A server that spreads the AI limit over the whole run.
+        page.route("**/api/workbench", spread)
+        page.goto(f"{base_url}/guide/new?lang=en")
+        page.locator("#setup-connection details > summary").first.click()
+        _choose_source(page, "remote")
+        expect(options).to_have_count(5)
+        every = page.locator("#ai-limit [data-value='1000']")
+        expect(every).to_have_attribute("data-every", "true")
+        expect(every).to_have_text(
+            _say("setup.ai.limit.all") + " " + _say("setup.ai.limit.all.note", limit="1,000")
+        )
+        expect(page.locator("#ai-limit [data-value='120']")).to_have_text(
+            _say("setup.ai.limit.option", count=120)
+        )
+        # Online AI defaults to every noticed ad; the wording says it is spread over the run.
+        expect(every).to_have_attribute("aria-checked", "true")
+        expect(page.locator("#ai-explain")).to_have_text(
+            _say("setup.ai.limit.explain.spread", per_run="1,000")
+        )
+        expect(page.locator("#ai-estimate")).to_have_text(
+            _say("setup.ai.limit.estimate.max", tokens="1,300,000")
+        )
+        # AI on this computer answers one question at a time: it defaults to 120.
+        _choose_source(page, "local")
+        expect(page.locator("#ai-limit [data-value='120']")).to_have_attribute(
+            "aria-checked", "true"
+        )
+        expect(page.locator("#ai-explain")).to_have_text(
+            _say("setup.ai.limit.explain.spread", per_run="120")
+        )
+        # A limit the presenter picked stays when the source changes.
+        page.locator("#ai-limit [data-value='250']").click()
+        _choose_source(page, "remote")
+        expect(page.locator("#ai-limit [data-value='250']")).to_have_attribute(
+            "aria-checked", "true"
+        )
+        expect(page.locator("#ai-estimate")).to_have_text(
+            _say("setup.ai.limit.estimate.max", tokens="325,000")
+        )
+
+        # The progress page names the run's own concurrency, not a fixed four.
+        page.route(f"**/api/jobs/{job_id}", lambda route: _fulfill(route, job))
+        page.goto(f"{base_url}/guide/jobs/{job_id}?lang=en")
+        expect(page.locator("#job-counter-text")).to_have_text(
+            _say("progress.answered", resolved="3", total="250"), timeout=10_000
+        )
+        expect(page.locator("#job-counter-note")).to_have_text(
+            _say("progress.parallel", parallel="8")
+        )
 
 
 # ----- 5. another simulation is running -------------------------------------------------------

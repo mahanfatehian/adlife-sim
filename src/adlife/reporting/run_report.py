@@ -89,6 +89,7 @@ class _Chip:
 @dataclass(frozen=True, slots=True)
 class _Moment:
     status: str
+    day: int
     status_key: str
     sentence: MessageRef
     ai_clause: MessageRef | None
@@ -206,6 +207,15 @@ class _Coverage:
 
 
 @dataclass(frozen=True, slots=True)
+class _Day:
+    number: int
+    shown: int
+    noticed: int
+    chosen: int
+    used: int
+
+
+@dataclass(frozen=True, slots=True)
 class _View:
     product: str
     city_key: str | None
@@ -229,6 +239,8 @@ class _View:
     spread: tuple[_Spread, ...]
     flags: tuple[_Entry, ...]
     coverage: _Coverage
+    # Day-by-day totals; a one-day run has nothing to compare, so it shows none.
+    days: tuple[_Day, ...]
     personas: tuple[_Persona, ...]
     languages: tuple[_LanguageLink, ...]
     revision_short: str | None
@@ -316,18 +328,34 @@ def _priority(moment: StoryMoment) -> int:
     return 1 if moment.noticed else 2
 
 
-def _listed_moments(person: StoryPerson) -> tuple[tuple[StoryMoment, ...], int]:
-    """Pick at most eight noticed moments in the builder's priority order, read in time.
+def _time(moment: StoryMoment) -> tuple[int, int, str]:
+    return moment.minute, moment.millisecond, moment.moment_id
 
-    Moments the person never noticed changed nothing; the summary sentence already counts
-    them, so the report leaves them out and stays a short read.
+
+def _listed_moments(person: StoryPerson, days: int) -> tuple[tuple[StoryMoment, ...], int]:
+    """Pick at most ``max(8, 2 x days)`` noticed moments, read in time.
+
+    AI-selected moments come first, then the other noticed ones; within each, the days
+    take turns (each giving its earliest moment not yet listed), so a long run lists
+    every day instead of only its first ones. Moments the person never noticed changed
+    nothing; the summary sentence already counts them, so the report leaves them out.
     """
-    noticed = [moment for moment in person.moments if moment.noticed]
-    ranked = sorted(noticed, key=lambda m: (_priority(m), m.minute, m.millisecond, m.moment_id))
-    listed = sorted(
-        ranked[:REPORT_MOMENTS_PER_PERSON],
-        key=lambda m: (m.minute, m.millisecond, m.moment_id),
-    )
+    limit = max(REPORT_MOMENTS_PER_PERSON, 2 * days)
+    noticed = sorted((moment for moment in person.moments if moment.noticed), key=_time)
+    picked: list[StoryMoment] = []
+    for priority in (0, 1):
+        per_day: dict[int, list[StoryMoment]] = {}
+        for moment in noticed:
+            if _priority(moment) == priority:
+                per_day.setdefault(moment.day_index, []).append(moment)
+        queues = [per_day[day] for day in sorted(per_day)]
+        turn = 0
+        while len(picked) < limit and any(turn < len(queue) for queue in queues):
+            for queue in queues:
+                if turn < len(queue) and len(picked) < limit:
+                    picked.append(queue[turn])
+            turn += 1
+    listed = sorted(picked, key=_time)
     return tuple(listed), len(noticed) - len(listed)
 
 
@@ -378,6 +406,7 @@ def _moment(moment: StoryMoment, *, practice: bool) -> _Moment:
         ai_tone = "none"
     return _Moment(
         status=status,
+        day=moment.day_index + 1,
         status_key=f"status.{status}",
         sentence=moment.sentence,
         # An answered or practice moment already says so in its badge and chips; the clause
@@ -421,8 +450,8 @@ def _end(person: StoryPerson) -> _End | None:
     )
 
 
-def _person(person: StoryPerson, *, practice: bool) -> _Person:
-    listed, rest = _listed_moments(person)
+def _person(person: StoryPerson, *, practice: bool, days: int) -> _Person:
+    listed, rest = _listed_moments(person, days)
     return _Person(
         agent_id=person.agent_id,
         number=person.number,
@@ -443,7 +472,12 @@ def _mark(color_index: int) -> str:
 
 
 def _persona(
-    persona: StoryPersona, people: Sequence[StoryPerson], catalog: Catalog, *, practice: bool
+    persona: StoryPersona,
+    people: Sequence[StoryPerson],
+    catalog: Catalog,
+    *,
+    practice: bool,
+    days: int,
 ) -> _Persona:
     key = persona.template_key
     interests = tuple(
@@ -463,7 +497,7 @@ def _persona(
         count=persona.count,
         trait_keys=tuple(f"trait.{chip.trait}.{chip.level}" for chip in persona.trait_chips),
         interests=interests,
-        people=tuple(_person(person, practice=practice) for person in members),
+        people=tuple(_person(person, practice=practice, days=days) for person in members),
     )
 
 
@@ -632,8 +666,22 @@ def _view(story: RunStoryV1, catalog: Catalog, links: RunReportLinks | None) -> 
             over_limit=statuses.over_limit,
             not_chosen=statuses.not_chosen,
         ),
+        days=(
+            ()
+            if run.days < 2
+            else tuple(
+                _Day(
+                    number=day.day_index + 1,
+                    shown=day.shown,
+                    noticed=day.noticed,
+                    chosen=day.chosen,
+                    used=day.used,
+                )
+                for day in story.day_totals
+            )
+        ),
         personas=tuple(
-            _persona(persona, story.people, catalog, practice=practice)
+            _persona(persona, story.people, catalog, practice=practice, days=run.days)
             for persona in story.personas
         ),
         languages=language_links,

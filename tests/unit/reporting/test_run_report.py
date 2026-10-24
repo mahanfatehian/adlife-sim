@@ -16,6 +16,10 @@ from typing import Any
 
 import pytest
 
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_SELECTION_LIMITS,
+    CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+)
 from adlife.reporting.run_story_model import RunStoryV1
 
 # --- a coherent synthetic story ------------------------------------------------------------
@@ -409,6 +413,7 @@ def story_document(
         for _minute, _ms, agent_id, moment_id, _status in sorted(selected)
     ]
     shown_total = sum(person["totals"]["shown"] for person in people)
+    used_total = statuses_all["answered"] + statuses_all["reused"] + statuses_all["practice"]
     rules_liking = (-0.075, -0.088)
     ai_liking = (-0.075, -0.083 if mode != "rules" else -0.088)
     averages = {
@@ -617,6 +622,17 @@ def story_document(
         "personas": personas,
         "people": people,
         "key_moments": key_moments,
+        # The synthetic run lasts one day, so that day holds every count of the funnel.
+        "day_totals": [
+            {
+                "day_index": 0,
+                "shown": shown_total,
+                "noticed": noticed_total,
+                "chosen": chosen_total,
+                "used": used_total,
+                "not_chosen": not_chosen,
+            }
+        ],
         "limits": {"moments_per_person": 40},
     }
 
@@ -860,6 +876,80 @@ def test_people_get_at_most_eight_noticed_moment_lines_in_builder_priority(remot
     assert {"answered", "failed", "unsure", "warning"} <= set(shown)
     assert shown == [moment.status for moment in busy.moments if moment.noticed][:8]
     assert Counter(shown)["not_chosen"] == 2
+
+
+@pytest.fixture(scope="module")
+def multiday_story(tmp_path_factory) -> RunStoryV1:
+    """Four busy days whose AI questions (selection policy 2) all fall on the first day."""
+    from adlife.city.run_story import build_run_story
+    from tests.unit.city.run_story_fixtures import saved_story_run
+
+    root = tmp_path_factory.mktemp("report-multiday") / "workspace"
+    return build_run_story(saved_story_run(root, "multiday"))
+
+
+REPORT_TERMINAL = {"answered", "reused", "practice", "unsure", "warning", "failed", "over_limit"}
+
+
+def _expected_listing(person: Any, days: int) -> list[tuple[str, int]]:
+    """AI-selected moments first, then other noticed ones; the days take turns in each."""
+    limit = max(8, 2 * days)
+    noticed = [moment for moment in person.moments if moment.noticed]
+    picked: list[Any] = []
+    for terminal in (True, False):
+        per_day: dict[int, list[Any]] = {}
+        for moment in noticed:
+            if (moment.status in REPORT_TERMINAL) is terminal:
+                per_day.setdefault(moment.day_index, []).append(moment)
+        queues = [per_day[day] for day in sorted(per_day)]
+        turn = 0
+        while len(picked) < limit and any(turn < len(queue) for queue in queues):
+            for queue in queues:
+                if turn < len(queue) and len(picked) < limit:
+                    picked.append(queue[turn])
+            turn += 1
+    picked.sort(key=lambda moment: (moment.minute, moment.millisecond, moment.moment_id))
+    return [(moment.status, moment.day_index + 1) for moment in picked]
+
+
+def test_a_long_run_lists_noticed_moments_from_every_day(multiday_story, remote_story):
+    days = multiday_story.run.days
+    blocks = person_blocks(render(multiday_story, "en").content)
+    for person in multiday_story.people:
+        lines = re.findall(
+            r'<li class="moment" data-status="([a-z_]+)" data-day="([0-9])"',
+            blocks[person.agent_id],
+        )
+        listed = [(status, int(day)) for status, day in lines]
+        assert listed == _expected_listing(person, days)
+        noticed_days = {moment.day_index + 1 for moment in person.moments if moment.noticed}
+        assert {day for _status, day in listed} == noticed_days
+    # One day: the same eight lines as before, AI moments first, then the earliest.
+    one_day = person_blocks(render(remote_story, "en").content)
+    for person in remote_story.people:
+        lines = re.findall(
+            r'<li class="moment" data-status="([a-z_]+)" data-day="([0-9])"',
+            one_day[person.agent_id],
+        )
+        assert [(status, int(day)) for status, day in lines] == _expected_listing(person, 1)
+
+
+def test_a_long_run_report_has_a_day_by_day_table(multiday_story, remote_story):
+    page = Page(render(multiday_story, "en").content)
+    assert "days-title" in page.ids()
+    html = render(multiday_story, "en").content.decode("utf-8")
+    table = re.search(r'<table class="table stack days".*?</table>', html, flags=re.S)
+    assert table is not None
+    rows = re.findall(r"<tr><th scope=\"row\">(.*?)</th>(.*?)</tr>", table.group(0), flags=re.S)
+    assert len(rows) == multiday_story.run.days
+    for (_head, cells), day in zip(rows, multiday_story.day_totals, strict=True):
+        values = [
+            int(re.sub(r"<[^>]+>|,", "", cell))
+            for cell in re.findall(r"<td[^>]*>(.*?)</td>", cells, flags=re.S)
+        ]
+        assert values == [day.shown, day.noticed, day.chosen, day.used]
+    # A one-day run has nothing to compare from day to day.
+    assert "days-title" not in Page(render(remote_story, "en").content).ids()
 
 
 def test_moment_lines_carry_sentence_ai_clause_labels_and_state_lines(remote_story):
@@ -1185,7 +1275,10 @@ def default_study_draft(templates: dict[str, Any], *, run_id: str, mode: str) ->
             "mode": mode,
             "provider_profile_id": None,
             "provider_revision_sha256": None,
-            "funded_response_limit": 60,
+            # Offline answers come for every request the server's current policy selects.
+            "funded_response_limit": CITY_COGNITION_SELECTION_LIMITS[
+                CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION
+            ].offline_funded_response_limit,
         },
     }
 

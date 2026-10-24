@@ -369,6 +369,7 @@ function render(story) {
   renderHeader();
   renderLegend();
   renderIntro();
+  renderOutro();
   renderPeople();
   renderSummary();
   byId("story-loading").hidden = true;
@@ -448,6 +449,94 @@ function introMinute() {
     return (windows[0].day - 1) * 1440 + windows[0].start_minute;
   }
   return 0;
+}
+
+// The closing step shows the end of the last simulated day: the end of that day's last
+// active window when it has one, otherwise the day's last minute; never before the last step.
+function outroMinute() {
+  const { days, phone, billboard } = state.story.run;
+  const end = days * 1440 - 1;
+  const lastDay = (days - 1) * 1440;
+  let windowEnd = -1;
+  for (const placement of [phone, billboard]) {
+    for (const active of (placement && placement.windows) || []) {
+      windowEnd = Math.max(windowEnd, (active.day - 1) * 1440 + active.end_minute);
+    }
+  }
+  const target = windowEnd >= lastDay ? Math.min(end, windowEnd) : end;
+  const last = state.steps[state.steps.length - 1];
+  return Math.max(last ? last.moment.minute : 0, target);
+}
+
+// The step after the last moment is the closing step; there is none without moments.
+function lastIndex() {
+  return state.steps.length > 0 ? state.steps.length : -1;
+}
+
+function atOutro() {
+  return state.steps.length > 0 && state.index === state.steps.length;
+}
+
+// "Moment 3 of 51 · Day 2 of 7": a run of several days names the day of the step.
+function withDay(text, dayIndex) {
+  const days = state.story.run.days;
+  if (days < 2) {
+    return text;
+  }
+  return t("story.counter.day", { counter: text, day: Math.min(days, dayIndex + 1), days });
+}
+
+function dayTotals() {
+  const rows = state.story.day_totals;
+  return Array.isArray(rows) ? rows.filter((row) => row && Number.isInteger(row.day_index)) : [];
+}
+
+// One row per simulated day: ad moments, noticed and (with AI or practice) chosen and used.
+function daysTable(className) {
+  const mode = state.story.ai.mode;
+  const columns = [
+    ["shown", t("story.summary.funnel.opportunities")],
+    ["noticed", t("story.summary.funnel.noticed")],
+  ];
+  if (mode !== "rules") {
+    columns.push(
+      ["chosen", t("story.summary.funnel.chosen")],
+      ["used", mode === "mock" ? t("story.summary.funnel.practice") : t("story.summary.funnel.used")],
+    );
+  }
+  return h(
+    "table",
+    { className: `story-days ${className}` },
+    h("caption", { className: "g-visually-hidden" }, t("story.days.title")),
+    h(
+      "thead",
+      {},
+      h(
+        "tr",
+        {},
+        h("th", { attrs: { scope: "col" } }, t("story.days.column")),
+        ...columns.map(([, label]) => h("th", { attrs: { scope: "col" } }, label)),
+      ),
+    ),
+    h(
+      "tbody",
+      {},
+      ...dayTotals().map((row) =>
+        h(
+          "tr",
+          { dataset: { day: String(row.day_index + 1) } },
+          h("th", { attrs: { scope: "row" } }, t("story.days.day", { day: row.day_index + 1 })),
+          ...columns.map(([name]) => h("td", { dataset: { cell: name } }, fmt.int(row[name] || 0))),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderOutro() {
+  const host = byId("story-outro-days");
+  clear(host);
+  host.append(daysTable("story-outro-table"));
 }
 
 function funnelCells() {
@@ -1226,6 +1315,7 @@ function renderSummary() {
   fillFunnel(funnel);
   host.append(
     block(t("story.summary.funnel.title"), funnel, ...coverageLines()),
+    block(t("story.days.title"), daysTable("story-summary-days")),
     labelsBlock(),
     averagesBlock(),
   );
@@ -1268,10 +1358,13 @@ function renderTicks() {
   for (const step of steps) {
     ticks.append(h("li", { className: "story-tick", dataset: { status: step.moment.status } }));
   }
+  // The closing step has the slider's last position, so it gets the last mark.
+  ticks.append(h("li", { className: "story-tick story-tick--end", dataset: { status: "end" } }));
 }
 
 function setFilter(name, agentId = null, { focusStep = null } = {}) {
-  const current = state.index >= 0 ? state.steps[state.index] : null;
+  const ended = atOutro();
+  const current = state.index >= 0 && !ended ? state.steps[state.index] : null;
   state.filter = name;
   state.followed = name === "person" ? agentId : state.followed;
   if (name === "key") {
@@ -1286,6 +1379,8 @@ function setFilter(name, agentId = null, { focusStep = null } = {}) {
   let index = -1;
   if (focusStep !== null) {
     index = state.steps.length ? focusStep : -1;
+  } else if (ended) {
+    index = lastIndex();
   } else if (current) {
     index = state.steps.indexOf(current);
     if (index < 0) {
@@ -1403,7 +1498,7 @@ function moveTo(target, animate) {
 }
 
 function arrived() {
-  if (state.index >= 0 && state.map && !prefersReducedMotion()) {
+  if (state.index >= 0 && !atOutro() && state.map && !prefersReducedMotion()) {
     state.map.pulse();
   }
 }
@@ -1411,21 +1506,29 @@ function arrived() {
 function updateControls() {
   const total = state.steps.length;
   const index = state.index;
-  // The opening is not a moment, so it names how many follow instead of "moment 0".
-  const counter = index < 0
-    ? tn("story.counter.intro", total)
-    : t("story.counter", { index: index + 1, total });
+  const ended = atOutro();
+  // The opening is not a moment, so it names how many follow instead of "moment 0"; the
+  // closing step names how many there were.
+  let counter;
+  if (index < 0) {
+    counter = withDay(tn("story.counter.intro", total), Math.floor(introMinute() / 1440));
+  } else if (ended) {
+    counter = withDay(tn("story.counter.outro", total), state.story.run.days - 1);
+  } else {
+    counter = withDay(t("story.counter", { index: index + 1, total }), state.steps[index].moment.day_index);
+  }
   byId("story-counter").textContent = counter;
   const slider = byId("story-slider");
-  slider.max = String(Math.max(0, total - 1));
+  slider.max = String(Math.max(0, lastIndex()));
   slider.value = String(Math.max(0, index));
   slider.disabled = total === 0;
   slider.setAttribute("aria-valuetext", counter);
   const root = byId("story-root");
   root.dataset.intro = index < 0 ? "true" : "false";
+  root.dataset.outro = ended ? "true" : "false";
   setDisabled(byId("story-prev"), index < 0);
   setDisabled(byId("story-restart"), index < 0);
-  setDisabled(byId("story-next"), index >= total - 1);
+  setDisabled(byId("story-next"), index >= lastIndex());
   setDisabled(byId("story-play"), total === 0);
   setDisabled(byId("story-intro-play"), total === 0);
   const ticks = byId("story-ticks").children;
@@ -1450,7 +1553,7 @@ function scheduleDwell(delay) {
     if (!state.playing) {
       return;
     }
-    if (state.index < state.steps.length - 1) {
+    if (state.index < lastIndex()) {
       goTo(state.index + 1, { user: false });
     } else {
       pause();
@@ -1460,13 +1563,16 @@ function scheduleDwell(delay) {
 
 function goTo(requested, { animate = true, user = false } = {}) {
   const total = state.steps.length;
-  const index = Math.max(-1, Math.min(requested, total - 1));
+  const index = Math.max(-1, Math.min(requested, lastIndex()));
   state.index = index;
-  const step = index >= 0 ? state.steps[index] : null;
+  const step = index >= 0 && index < total ? state.steps[index] : null;
+  const ended = atOutro();
   const intro = byId("story-intro");
   const card = byId("story-card");
-  intro.hidden = Boolean(step);
+  const outro = byId("story-outro");
+  intro.hidden = index >= 0;
   card.hidden = !step;
+  outro.hidden = !ended;
   const canvas = byId("story-map");
   const count = state.story.people.length;
   if (step) {
@@ -1477,24 +1583,31 @@ function goTo(requested, { animate = true, user = false } = {}) {
     canvas.setAttribute("aria-label", t("story.map.label", { count, name: label }));
   } else {
     state.map.highlight(null);
-    // Nobody is highlighted yet: the opening headline describes who is on the map.
+    // Nobody is highlighted: the opening headline describes who is on the map.
     canvas.setAttribute("aria-label", resolveText(state.story.headline[0], state.ctx));
-    restartEnter(intro);
+    restartEnter(ended ? outro : intro);
   }
   byId("story-narration").scrollTop = 0;
+  let target = introMinute();
+  if (step) {
+    target = step.moment.minute;
+  } else if (ended) {
+    target = outroMinute();
+  }
   updateControls();
-  const target = step ? step.moment.minute : introMinute();
   const duration = moveTo(target, animate);
   if (step) {
     const sentence = resolveText(step.moment.sentence, state.ctx);
     announce(sentence, { force: user });
+  } else if (ended) {
+    announce(t("story.outro.title"), { force: user });
   }
   scheduleDwell(duration);
 }
 
 function step(delta) {
   const target = state.index + delta;
-  if (target < -1 || target > state.steps.length - 1) {
+  if (target < -1 || target > lastIndex()) {
     return;
   }
   goTo(target, { user: true });
@@ -1506,7 +1619,7 @@ function play() {
   }
   state.playing = true;
   updatePlayButton();
-  if (state.index < 0 || state.index >= state.steps.length - 1) {
+  if (state.index < 0 || state.index >= lastIndex()) {
     goTo(0, { user: true });
   } else {
     scheduleDwell(0);

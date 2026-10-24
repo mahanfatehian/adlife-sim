@@ -122,7 +122,14 @@
 <li>{{ tr("story.person.compare", measure=tr("common.memory"), compare=tr("common.scale.memory", min=bdi_id(fmt_dec(0, 0)), max=bdi_id(fmt_dec(1, 0)))) }}</li>
 <li>{{ tr("story.person.compare", measure=tr("common.purchase_interest"), compare=tr("common.purchase_interest_note")) }}</li>
 </ul>
-{% if story.labels %}<h3 id="labels-title">{% if view.practice %}{{ tr("story.summary.labels.title.practice") }}{% else %}{{ tr("story.summary.labels.title") }}{% endif %}</h3>
+{% if view.days %}<h3 id="days-title">{{ tr("story.days.title") }}</h3>
+<table class="table stack days" aria-labelledby="days-title">
+<thead><tr><th scope="col">{{ tr("story.days.column") }}</th><th scope="col">{{ tr("story.summary.funnel.opportunities") }}</th><th scope="col">{{ tr("story.summary.funnel.noticed") }}</th>{% if not view.rules %}<th scope="col">{{ tr("story.summary.funnel.chosen") }}</th><th scope="col">{% if view.practice %}{{ tr("story.summary.funnel.practice") }}{% else %}{{ tr("story.summary.funnel.used") }}{% endif %}</th>{% endif %}</tr></thead>
+<tbody>
+{% for day in view.days %}<tr><th scope="row">{{ tr("story.days.day", day=day.number) }}</th><td data-label="{{ tr_text('story.summary.funnel.opportunities') }}">{{ count(day.shown) }}</td><td data-label="{{ tr_text('story.summary.funnel.noticed') }}">{{ count(day.noticed) }}</td>{% if not view.rules %}<td data-label="{{ tr_text('story.summary.funnel.chosen') }}">{{ count(day.chosen) }}</td><td data-label="{% if view.practice %}{{ tr_text('story.summary.funnel.practice') }}{% else %}{{ tr_text('story.summary.funnel.used') }}{% endif %}">{{ count(day.used) }}</td>{% endif %}</tr>
+{% endfor %}</tbody>
+</table>
+{% endif %}{% if story.labels %}<h3 id="labels-title">{% if view.practice %}{{ tr("story.summary.labels.title.practice") }}{% else %}{{ tr("story.summary.labels.title") }}{% endif %}</h3>
 <div class="spread">
 {% for dimension in view.spread %}<div class="spread-group"><h4>{{ dim_label(dimension.dimension) }}</h4><ul class="spread-list">{% for entry in dimension.entries %}<li><span class="spread-value">{{ tr(entry.key) }}</span>{{ bar(view.label_tone, entry.width, false) }}<span class="spread-count">{{ count(entry.count) }}</span></li>{% endfor %}</ul></div>
 {% endfor %}{% if view.flags %}<div class="spread-group"><h4>{{ tr("status.warning") }}</h4><ul class="spread-list">{% for entry in view.flags %}<li><span class="spread-value">{{ tr(entry.key) }}</span>{{ bar("none", entry.width, false) }}<span class="spread-count">{{ count(entry.count) }}</span></li>{% endfor %}</ul></div>
@@ -146,7 +153,7 @@
 {% if person.label_mode %}<div class="person-labels"><p class="minor">{% if view.practice %}{{ tr("story.person.labels.practice", count=person.label_answers) }}{% else %}{{ tr("story.person.labels", count=person.label_answers) }}{% endif %}</p>{{ chips(person.label_mode, view.label_tone, false) }}</div>
 {% endif %}{% if person.moments %}<h5 class="minor">{{ tr("report.person.moments") }}</h5>
 <ol class="moments">
-{% for moment in person.moments %}<li class="moment" data-status="{{ moment.status }}">
+{% for moment in person.moments %}<li class="moment" data-status="{{ moment.status }}" data-day="{{ moment.day }}">
 <div class="moment-line"><p class="sentence">{{ ref(moment.sentence) }}</p><span class="badge" data-status="{{ moment.status }}">{{ tr(moment.status_key) }}</span></div>
 {% if moment.ai_clause %}<p class="ai-clause">{{ ref(moment.ai_clause) }}</p>
 {% endif %}{% if moment.labels %}{{ chips(moment.labels, moment.label_tone, moment.set_aside) }}

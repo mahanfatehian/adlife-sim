@@ -16,8 +16,16 @@ import {
   renderActiveJob,
 } from "./guide-connection.js";
 
-// Noticed ads a person can send to the AI; the frozen V2 selection policy fixes it.
-const PER_PERSON = 4;
+// The AI limit options, defaults and selection caps come from the server's capabilities.
+// These stand in only for a server that does not publish a value (selection policy 2).
+const FALLBACK_SELECTION = Object.freeze({
+  limits: Object.freeze([10, 20, 40, 60]),
+  defaultLimit: 10,
+  perPerson: 4,
+  perRun: 60,
+  strategy: "earliest-first",
+});
+const SPREAD_STRATEGY = "spread-evenly";
 // A documented estimate: about 1.2-1.5k input plus at most 256 output tokens per question.
 const TOKENS_PER_QUESTION = 1300;
 const DEFAULT_CITY = "fictional-grid-v2";
@@ -155,7 +163,10 @@ const state = {
   interests: new Set(PRODUCTS[DEFAULT_PRODUCT].interests),
   runIdAuto: true,
   runId: "",
-  limit: 10,
+  limit: FALLBACK_SELECTION.defaultLimit,
+  // Until the presenter picks a limit, it follows the default of the chosen AI source.
+  limitPicked: false,
+  limitSource: null,
   conn: null,
   connection: null,
   runs: null,
@@ -185,6 +196,52 @@ function interestParam(value) {
 
 function validSeed(value) {
   return SEED_PATTERN.test(value) && BigInt(value) <= MAX_SEED;
+}
+
+function capability(name, valid, fallback) {
+  const value = state.capabilities?.[name];
+  return valid(value) ? value : fallback;
+}
+
+const positiveInteger = (value) => Number.isInteger(value) && value > 0;
+
+function limitOptions() {
+  const limits = capability(
+    "funded_response_limits",
+    (value) => Array.isArray(value) && value.some(positiveInteger),
+    FALLBACK_SELECTION.limits,
+  );
+  return limits.filter(positiveInteger);
+}
+
+// The option that means "every noticed ad" (up to the run's cap), when the server has one.
+function allNoticedLimit() {
+  return capability("all_noticed_funded_response_limit", positiveInteger, null);
+}
+
+function spreadSelection() {
+  return capability("selection_strategy", (value) => typeof value === "string", FALLBACK_SELECTION.strategy) === SPREAD_STRATEGY;
+}
+
+// Online AI and AI on this computer each have their own default limit; a local server
+// answers one question at a time, so its default is smaller.
+function defaultLimit(source) {
+  const options = limitOptions();
+  const fallback = options.includes(FALLBACK_SELECTION.defaultLimit) ? FALLBACK_SELECTION.defaultLimit : options[0];
+  const name = source === "local" ? "default_local_funded_response_limit" : "default_provider_funded_response_limit";
+  const value = capability(name, positiveInteger, fallback);
+  return options.includes(value) ? value : fallback;
+}
+
+// A limit the presenter picked stays; otherwise a new AI source brings its own default.
+function followDefaultLimit({ force = false } = {}) {
+  const source = state.conn?.source ?? null;
+  if (!PROVIDER_SOURCES.has(source) && !force) return;
+  const fresh = !state.limitPicked && (force || state.limitSource !== source);
+  if (fresh || !limitOptions().includes(state.limit)) {
+    state.limit = defaultLimit(source);
+  }
+  state.limitSource = source;
 }
 
 function provider() {
@@ -315,7 +372,11 @@ function buildDraft(runId) {
         mode: conn.source,
         provider_profile_id: null,
         provider_revision_sha256: null,
-        funded_response_limit: state.capabilities?.offline_funded_response_limit ?? 60,
+        funded_response_limit: capability(
+          "offline_funded_response_limit",
+          positiveInteger,
+          FALLBACK_SELECTION.perRun,
+        ),
       };
   return {
     schema_version: 4,
@@ -562,14 +623,22 @@ function renderAi() {
   byId("ai-limit-block").hidden = offline || state.conn === null;
   byId("ai-offline").hidden = !offline || state.conn === null;
   groups.limits?.set(String(state.limit));
-  byId("ai-estimate").textContent = t("setup.ai.limit.estimate", {
+  const spread = spreadSelection();
+  // With the limit spread over the run, only noticed ads are asked, so it is an upper bound.
+  byId("ai-estimate").textContent = t(spread ? "setup.ai.limit.estimate.max" : "setup.ai.limit.estimate", {
     tokens: state.limit * TOKENS_PER_QUESTION,
   });
-  byId("ai-explain").textContent = t("setup.ai.limit.explain", {
-    per_person: PER_PERSON,
-    // What is sent is bounded by the chosen limit, not only by the server's selection cap.
-    per_run: Math.min(state.limit, state.capabilities?.selected_requests_per_run ?? 60),
-  });
+  // What is sent is bounded by the chosen limit, not only by the server's selection cap.
+  const perRun = Math.min(
+    state.limit,
+    capability("selected_requests_per_run", positiveInteger, FALLBACK_SELECTION.perRun),
+  );
+  byId("ai-explain").textContent = spread
+    ? t("setup.ai.limit.explain.spread", { per_run: perRun })
+    : t("setup.ai.limit.explain", {
+        per_person: capability("selected_requests_per_agent", positiveInteger, FALLBACK_SELECTION.perPerson),
+        per_run: perRun,
+      });
   byId("ai-cache").hidden = !(provider() && !state.seedAuto && takenSeeds().has(state.seed));
 }
 
@@ -1021,22 +1090,35 @@ function buildPeople() {
 function buildLimits() {
   const group = byId("ai-limit");
   clear(group);
-  const limits = Array.isArray(state.capabilities?.funded_response_limits)
-    ? state.capabilities.funded_response_limits.filter((value) => Number.isInteger(value) && value > 0)
-    : [10];
-  if (!limits.includes(state.limit)) state.limit = limits[0] ?? 10;
+  const limits = limitOptions();
+  const everyNoticed = allNoticedLimit();
+  // The capabilities have arrived: the limit takes the server's default for the source.
+  followDefaultLimit({ force: true });
   for (const value of limits) {
-    group.append(
-      el("button", {
-        text: tn("setup.ai.limit.option", value),
-        attrs: { type: "button", role: "radio", "aria-checked": "false" },
-        dataset: { value: String(value) },
-      }),
-    );
+    // The largest option means every noticed ad, up to the run's cap.
+    const button =
+      value === everyNoticed
+        ? el(
+            "button",
+            {
+              attrs: { type: "button", role: "radio", "aria-checked": "false" },
+              dataset: { value: String(value), every: "true" },
+            },
+            t("setup.ai.limit.all"),
+            " ",
+            el("span", { className: "setup-limit-note", text: t("setup.ai.limit.all.note", { limit: value }) }),
+          )
+        : el("button", {
+            text: tn("setup.ai.limit.option", value),
+            attrs: { type: "button", role: "radio", "aria-checked": "false" },
+            dataset: { value: String(value) },
+          });
+    group.append(button);
   }
   groups.limits = radioGroup(group, {
     onSelect: (value) => {
       state.limit = Number(value);
+      state.limitPicked = true;
       refresh();
     },
   });
@@ -1207,6 +1289,7 @@ function wireCards() {
 
 function onConnection(payload) {
   state.conn = payload;
+  followDefaultLimit();
   clearMark("ai");
   showAiError([]);
   refresh();

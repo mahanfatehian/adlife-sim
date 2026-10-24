@@ -13,6 +13,10 @@ Names:
 * ``mixed`` - every applied status (answered, reused, unsure, warning, failed, over the
   limit, not chosen, not noticed), with hostile scenario, campaign and persona names;
 * ``dense`` - more than 40 ad moments per person on a phone feed and a billboard;
+* ``multiday`` - four days of a busy phone feed for three people on a remote ``.invalid``
+  profile with an AI limit of 60 (valid under selection policies 2 and 3): more than 40
+  ad moments per person, and under the earliest-first V2 policy every AI question falls
+  on the first day;
 * ``default-mock`` / ``default-provider`` - the guided default study (spec Appendix C):
   Lumo x4 and Veyra x4, Lumen Pocket, phone 07:00-21:00 at 0.01, cap 4, price 1.25;
   the provider variant uses an ``.invalid`` remote profile with model thinking turned
@@ -61,6 +65,7 @@ StoryRunName = Literal[
     "empty",
     "mixed",
     "dense",
+    "multiday",
     "default-mock",
     "default-provider",
     "hostile",
@@ -75,11 +80,13 @@ STORY_RUN_NAMES: tuple[StoryRunName, ...] = (
     "empty",
     "mixed",
     "dense",
+    "multiday",
     "default-mock",
     "default-provider",
     "hostile",
     "v9",
 )
+MULTIDAY_DAYS = 4
 
 # "Mina" in Persian script plus markup that would set window.pwned if it ever ran.
 HOSTILE_PERSONA_NAME = "\u0645\u06cc\u0646\u0627 <img src=x onerror=window.pwned=1>"
@@ -343,6 +350,18 @@ def _dense(document: dict[str, Any]) -> None:
     }
 
 
+def _multiday(document: dict[str, Any]) -> None:
+    document["settings"]["days"] = MULTIDAY_DAYS
+    _busy_phone(document)
+    document["scenario"]["phone"].update(
+        frequency_cap_per_agent_per_day=12,
+        active_windows=[
+            {"day": day, "start_minute": 480, "end_minute": 1080}
+            for day in range(1, MULTIDAY_DAYS + 1)
+        ],
+    )
+
+
 def _hostile_persona(document: dict[str, Any]) -> None:
     persona = document["population"]["personas"][0]
     persona["display_name"] = HOSTILE_PERSONA_NAME
@@ -391,6 +410,12 @@ def saved_story_run(
     if name == "dense":
         validated = _validated_v4(mode="mock", agents=2, mutation=renamed(_dense))
         return _publish(root, validated, profile=None, plan=_mock_plan)
+    if name == "multiday":
+        profile = story_provider_revision(root)
+        validated = _validated_v4(
+            mode="remote", limit=60, profile=profile, agents=3, mutation=renamed(_multiday)
+        )
+        return _publish(root, validated, profile=profile, plan=_default_provider_plan)
     if name == "default-mock":
         validated = _validated_draft(default_study_draft(run_id=identifier))
         return _publish(root, validated, profile=None, plan=_mock_plan)
@@ -415,6 +440,7 @@ __all__ = [
     "HOSTILE_CAMPAIGN",
     "HOSTILE_PERSONA_NAME",
     "HOSTILE_SCENARIO",
+    "MULTIDAY_DAYS",
     "STORY_RUN_NAMES",
     "StoryRunName",
     "default_study_draft",

@@ -15,7 +15,7 @@ from typing import get_args
 import pytest
 
 import adlife
-from adlife.core.domain.city_cognition_v2 import CityCognitionInputV2
+from adlife.core.domain.city_cognition_v2 import CityCognitionSelectionPolicyV2
 
 PACKAGE = Path(adlife.__file__).resolve().parent
 GUIDE_STATIC = PACKAGE / "city" / "static" / "guide"
@@ -253,18 +253,33 @@ def _js_constant(path: Path, name: str) -> int:
     return int(match.group(1))
 
 
-@pytest.mark.parametrize(
-    ("script", "constant", "field"),
-    [
-        ("guide-setup.js", "PER_PERSON", "selected_requests_per_agent"),
-        ("guide-progress.js", "CONCURRENCY", "concurrency_limit"),
-    ],
-)
-def test_guide_constants_match_the_cognition_contract(
-    script: str, constant: str, field: str
-) -> None:
-    path = GUIDE_STATIC / script
-    if not path.is_file():
-        pytest.skip(f"{script} is not present yet")
-    (expected,) = get_args(CityCognitionInputV2.model_fields[field].annotation)
-    assert _js_constant(path, constant) == expected
+def test_guide_pages_read_the_selection_caps_the_server_publishes() -> None:
+    # The AI limit options, defaults, caps and concurrency differ per selection policy, so
+    # the pages read them from the capabilities and the job view instead of fixing them.
+    setup = _text(GUIDE_STATIC / "guide-setup.js")
+    for name in (
+        "funded_response_limits",
+        "all_noticed_funded_response_limit",
+        "default_provider_funded_response_limit",
+        "default_local_funded_response_limit",
+        "offline_funded_response_limit",
+        "selected_requests_per_agent",
+        "selected_requests_per_run",
+        "selection_strategy",
+    ):
+        assert f'"{name}"' in setup, name
+    assert re.search(r"\b(?:PER_PERSON|CONCURRENCY)\s*=", setup) is None
+    progress = _text(GUIDE_STATIC / "guide-progress.js")
+    assert "progress.concurrency_limit" in progress
+    assert re.search(r"\bCONCURRENCY\s*=", progress) is None
+    # The fallbacks are selection policy 2's values, for a server that publishes none.
+    (per_agent,) = get_args(
+        CityCognitionSelectionPolicyV2.model_fields["selected_requests_per_agent"].annotation
+    )
+    (per_run,) = get_args(
+        CityCognitionSelectionPolicyV2.model_fields["selected_requests_per_run"].annotation
+    )
+    assert re.search(rf"\bperPerson:\s*{per_agent},", setup)
+    assert re.search(rf"\bperRun:\s*{per_run},", setup)
+    # Selection policy 2 froze four questions at a time.
+    assert _js_constant(GUIDE_STATIC / "guide-progress.js", "FALLBACK_CONCURRENCY") == 4

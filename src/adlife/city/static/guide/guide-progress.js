@@ -4,8 +4,9 @@ import { fmt, href, initI18n, t, tn } from "./guide-i18n.js";
 import { ApiError, announce, byId, clear, getJson, meta, postJson } from "./guide-core.js";
 import { message } from "./guide-connection.js";
 
-// Bounded cognition answers at most this many questions at a time (frozen V2 policy).
-const CONCURRENCY = 4;
+// How many questions the AI answers at a time is the run's frozen value, which the job
+// view publishes; a server that does not publish it ran selection policy 2, which used 4.
+const FALLBACK_CONCURRENCY = 4;
 const JOB_ID = /^job-[0-9a-f]{32}$/;
 const RUN_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const FIRST_POLL_MS = 250;
@@ -13,7 +14,8 @@ const POLL_MS = 1000;
 const RETRY_MS = Object.freeze([2000, 4000, 5000]);
 const STOP_CONFIRM_MS = 5000;
 const REMAINING_STEP_SECONDS = 5;
-const REMAINING_MAX_SECONDS = 600;
+// Up to 1,000 questions may run for many minutes; an estimate beyond an hour is not shown.
+const REMAINING_MAX_SECONDS = 3600;
 const PHASE_RANK = Object.freeze({
   queued: 0,
   evaluating: 1,
@@ -192,7 +194,10 @@ function renderCounter(job) {
       t("progress.answered", { resolved: progress.resolved, total: progress.total }),
     );
     bar.hidden = false;
-    note.textContent = t("progress.parallel", { parallel: CONCURRENCY });
+    const parallel = Number.isInteger(progress.concurrency_limit) && progress.concurrency_limit > 0
+      ? progress.concurrency_limit
+      : FALLBACK_CONCURRENCY;
+    note.textContent = t("progress.parallel", { parallel });
     note.hidden = false;
   }
 }

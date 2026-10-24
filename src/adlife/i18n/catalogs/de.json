@@ -346,8 +346,12 @@
     "setup.ad.where.phone": "Handy-Feed",
     "setup.ai.cache": "Genau diese Studie lief bereits mit dieser KI-Verbindung. Ihre gespeicherten Antworten würden daher wiederverwendet, statt die KI erneut zu fragen. Wählen Sie unter „Weitere Optionen“ einen neuen Zufallswert (Seed).",
     "setup.ai.limit": "KI-Limit",
+    "setup.ai.limit.all": "Jede bemerkte Anzeige",
+    "setup.ai.limit.all.note": "(bis zu {limit})",
     "setup.ai.limit.estimate": "Insgesamt etwa {tokens} Tokens (Schätzung)",
+    "setup.ai.limit.estimate.max": "Höchstens etwa {tokens} Tokens insgesamt (Schätzung): Nur bemerkte Anzeigen werden gefragt.",
     "setup.ai.limit.explain": "Nur bemerkte Anzeigen werden gesendet: höchstens {per_person} pro Person und {per_run} pro Lauf, die frühesten zuerst. Bemerkte Anzeigen über dem Limit erhalten keinen KI-Effekt.",
+    "setup.ai.limit.explain.spread": "Nur bemerkte Anzeigen werden gesendet: höchstens {per_run} Fragen, gleichmäßig über den ganzen Lauf verteilt. Bemerkte Anzeigen, die nicht ausgewählt werden, erhalten keinen KI-Effekt.",
     "setup.ai.limit.offline": "Jede bemerkte Anzeige wird auf diesem Computer beantwortet; es wird kein KI-Dienst kontaktiert.",
     "setup.ai.limit.option": {
       "one": "{count} Frage",
@@ -464,6 +468,7 @@
     "story.ai.answered": "Die KI hat diesen Moment bewertet.",
     "story.ai.failed": "Die KI hat nicht geantwortet ({reason}). Kein KI-Effekt.",
     "story.ai.not_chosen": "Nicht für die KI ausgewählt (nur die ersten {per_person} bemerkten Anzeigen pro Person und {per_run} pro Lauf). Kein KI-Effekt.",
+    "story.ai.not_chosen_spread": "Nicht für die KI ausgewählt: Das Limit von {limit} Fragen wurde gleichmäßig über den ganzen Lauf verteilt. Kein KI-Effekt.",
     "story.ai.over_limit": "Über dem KI-Limit von {limit} Fragen: Diese Anzeige wurde nicht an die KI gesendet. Kein KI-Effekt.",
     "story.ai.practice": "Übungsantwort (keine KI).",
     "story.ai.reused": "Eine frühere KI-Antwort auf genau diese Frage wurde wiederverwendet.",
@@ -471,10 +476,18 @@
     "story.ai.unsure": "Die Antwort war bei mindestens einem Label unsicher und wurde daher verworfen. Kein KI-Effekt.",
     "story.ai.warning": "Die Antwort enthielt eine Warnung ({flags}) und wurde daher verworfen. Kein KI-Effekt.",
     "story.counter": "Moment {index} von {total}",
+    "story.counter.day": "{counter} · Tag {day} von {days}",
     "story.counter.intro": {
       "one": "Einstieg · {count} Moment",
       "other": "Einstieg · {count} Momente"
     },
+    "story.counter.outro": {
+      "one": "Ende · {count} Moment",
+      "other": "Ende · {count} Momente"
+    },
+    "story.days.column": "Tag",
+    "story.days.day": "Tag {day}",
+    "story.days.title": "Tag für Tag",
     "story.effect.liking.fell_less": "Mit KI sank die Sympathie weniger als bei „Nur Regeln“.",
     "story.effect.liking.fell_more": "Mit KI sank die Sympathie stärker als bei „Nur Regeln“.",
     "story.effect.liking.fell_not_rose": "Mit KI sank die Sympathie, bei „Nur Regeln“ stieg sie.",
@@ -547,6 +560,8 @@
     "story.next": "Nächster Moment",
     "story.not_found": "Diesen gespeicherten Lauf gibt es in diesem Arbeitsbereich nicht.",
     "story.open_report": "Bericht öffnen",
+    "story.outro.lead": "Die Karte zeigt das Ende des letzten simulierten Tages. Was an jedem Tag geschah:",
+    "story.outro.title": "Das Ende des Laufs",
     "story.pause": "Pause",
     "story.person.compare": "{measure}: {compare}",
     "story.person.end": "Am Ende des Laufs",

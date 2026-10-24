@@ -104,6 +104,7 @@ from adlife.reporting.run_story_model import (
     StoryCoverage,
     StoryCreative,
     StoryDay,
+    StoryDayTotals,
     StoryDelta,
     StoryEffect,
     StoryFunnel,
@@ -116,6 +117,8 @@ from adlife.reporting.run_story_model import (
     StoryMath,
     StoryMoment,
     StoryNode,
+    StoryPerPerson,
+    StoryPerRun,
     StoryPerson,
     StoryPersona,
     StoryPhone,
@@ -138,8 +141,15 @@ from adlife.reporting.run_story_model import (
 
 MAX_STORY_MOMENTS_PER_PERSON: Final = 40
 MAX_STORY_BYTES: Final = 4_194_304
-PER_PERSON_REQUESTS: Final = 4
-PER_RUN_REQUESTS: Final = 60
+# Key moments are budgeted per day, so the replay covers the whole simulated period: about
+# 60 per run with AI (20 with rules only), and never fewer than three on any day.
+KEY_MOMENTS_PER_RUN: Final = 60
+RULES_KEY_MOMENTS_PER_RUN: Final = 20
+KEY_MOMENTS_PER_DAY_MINIMUM: Final = 3
+# A day's AI moments are topped up with rules-only noticed moments to at least this many.
+KEY_MOMENTS_PER_DAY_FILL: Final = 6
+# The selection policy whose not-chosen moments are "only the first 4 ... and 60 per run".
+_EARLIEST_FIRST_SELECTION_POLICY_VERSION: Final = 2
 
 # The five packaged fictional towns that have catalog names; a test pins this tuple to
 # the packaged catalog so a new town cannot ship without its translated name.
@@ -193,8 +203,16 @@ _SOURCE_STATUS: Final[Mapping[str, Status]] = {
 _AI_STATUSES: Final[frozenset[Status]] = frozenset(
     {"answered", "reused", "practice", "unsure", "warning", "failed"}
 )
-_FIRST_OF_STATUSES: Final[tuple[Status, ...]] = ("over_limit", "not_chosen", "not_noticed")
-_RULES_KEY_NOTICED: Final = 20
+# Noticed moments that only the rules decided: they fill a day the AI did not reach.
+_RULES_ONLY_NOTICED: Final[frozenset[Status]] = frozenset({"over_limit", "not_chosen"})
+_FIRST_OF_STATUSES: Final[tuple[Status, ...]] = (
+    "over_limit",
+    "not_chosen",
+    "not_noticed",
+    "failed",
+    "unsure",
+    "warning",
+)
 
 _Where: TypeAlias = str
 
@@ -237,6 +255,7 @@ def _story_keys() -> frozenset[str]:
             *(f"story.where.mobile-feed.{activity}" for activity in get_args(SpatialActivity)),
             "story.where.roadside-billboard",
             *(f"story.ai.{status}" for status in statuses),
+            "story.ai.not_chosen_spread",
             *(f"flag.{flag}" for flag in get_args(CityCognitionSafetyFlag)),
             *(f"reason.{reason}" for reason in get_args(CityCognitionRuntimeFallbackReasonV2)),
         }
@@ -288,6 +307,41 @@ class _Moment:
         if self.terminal is not None:
             return 0
         return 1 if self.noticed else 2
+
+    @property
+    def day_index(self) -> int:
+        return self.opportunity.day_index
+
+    @property
+    def changed(self) -> bool:
+        """Whether the shown effect differs from rules only, exactly as the card words it."""
+        applied = self.applied
+        if applied is None:
+            return False
+        baseline = applied.baseline
+        return (
+            _effect(_r6(applied.applied_sentiment_delta), _r6(baseline.sentiment_delta)) != "same"
+            or _effect(_r6(applied.applied_recall_delta), _r6(baseline.recall_delta)) != "same"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _Selection:
+    """The run's own frozen selection caps and AI limit, which the sentences quote."""
+
+    funded_limit: int
+    per_person: int
+    per_run: int
+    policy_version: int
+
+
+def _selection(cognition_input: CityCognitionInputV2) -> _Selection:
+    return _Selection(
+        funded_limit=cognition_input.funded_response_limit,
+        per_person=cognition_input.selected_requests_per_agent,
+        per_run=cognition_input.selected_requests_per_run,
+        policy_version=cognition_input.causal_contract.selection_policy_version,
+    )
 
 
 def _inconsistent() -> ValueError:
@@ -385,13 +439,29 @@ def _classify(evidence: _Evidence) -> list[_Moment]:
     return moments
 
 
+def _by_day(moments: Iterable[_Moment]) -> list[list[_Moment]]:
+    """The moments of each day that has any, days in order, each day in time order."""
+    days: dict[int, list[_Moment]] = defaultdict(list)
+    for moment in moments:
+        days[moment.day_index].append(moment)
+    return [sorted(days[day], key=_global_key) for day in sorted(days)]
+
+
 def _kept_moments(moments: Sequence[_Moment]) -> list[_Moment]:
-    """Keep at most 40 moments: terminal answers first, then noticed, then unnoticed."""
+    """Keep at most 40 moments: terminal answers first, then noticed, then unnoticed.
+
+    Within each priority the days take turns, each giving its earliest moment not yet
+    kept, so a busy person's kept moments reach the last day instead of stopping early.
+    """
     kept: list[_Moment] = []
     for priority in (0, 1, 2):
-        for moment in moments:
-            if moment.priority == priority and len(kept) < MAX_STORY_MOMENTS_PER_PERSON:
-                kept.append(moment)
+        days = _by_day(moment for moment in moments if moment.priority == priority)
+        turn = 0
+        while len(kept) < MAX_STORY_MOMENTS_PER_PERSON and any(turn < len(day) for day in days):
+            for day in days:
+                if turn < len(day) and len(kept) < MAX_STORY_MOMENTS_PER_PERSON:
+                    kept.append(day[turn])
+            turn += 1
     return sorted(kept, key=lambda moment: moment.time_key)
 
 
@@ -400,14 +470,53 @@ def _global_key(moment: _Moment) -> tuple[int, int, str, str]:
     return minute, millisecond, moment.agent_id, moment_id
 
 
-def _key_moments(kept: Sequence[_Moment], mode: str) -> list[_Moment]:
-    """Every AI moment plus the first of each telling non-AI kind, in time order."""
+def _spaced(moments: Sequence[_Moment], count: int) -> list[_Moment]:
+    """At most ``count`` moments evenly spaced in order, the first and last included."""
+    total = len(moments)
+    if count >= total:
+        return list(moments)
+    if count <= 0:
+        return []
+    if count == 1:
+        return [moments[0]]
+    # Integer rounding keeps this exact and deterministic; with total > count the
+    # indices strictly increase, start at 0 and end at total - 1.
+    return [
+        moments[(index * (total - 1) + (count - 1) // 2) // (count - 1)] for index in range(count)
+    ]
+
+
+def _day_key_moments(day: Sequence[_Moment], budget: int) -> list[_Moment]:
+    """One day's AI moments (changed effect first), topped up with rules-only ones."""
+    changed = [moment for moment in day if moment.status in _AI_STATUSES and moment.changed]
+    unchanged = [moment for moment in day if moment.status in _AI_STATUSES and not moment.changed]
+    picked = _spaced(changed, budget)
+    picked += _spaced(unchanged, budget - len(picked))
+    noticed = sum(moment.noticed for moment in day)
+    fill = min(KEY_MOMENTS_PER_DAY_FILL, noticed) - len(picked)
+    picked += _spaced([moment for moment in day if moment.status in _RULES_ONLY_NOTICED], fill)
+    return picked
+
+
+def _key_moments(kept: Sequence[_Moment], mode: str, days: int) -> list[_Moment]:
+    """A per-day budget of telling moments, then the first of each telling kind, in time order.
+
+    Each day with noticed moments gets its AI moments (those that changed the outcome first,
+    evenly spaced within the day), topped up with rules-only noticed moments, so a run whose
+    AI questions ran out early still replays to its last day. Rules-only runs spread their
+    noticed moments the same way.
+    """
     ordered = sorted(kept, key=_global_key)
+    selected: list[_Moment] = []
     if mode == "rules":
-        selected = [moment for moment in ordered if moment.noticed][:_RULES_KEY_NOTICED]
+        budget = max(KEY_MOMENTS_PER_DAY_MINIMUM, math.ceil(RULES_KEY_MOMENTS_PER_RUN / days))
+        for day in _by_day(ordered):
+            selected += _spaced([moment for moment in day if moment.noticed], budget)
         firsts: tuple[Status, ...] = ("not_noticed",)
     else:
-        selected = [moment for moment in ordered if moment.status in _AI_STATUSES]
+        budget = max(KEY_MOMENTS_PER_DAY_MINIMUM, math.ceil(KEY_MOMENTS_PER_RUN / days))
+        for day in _by_day(ordered):
+            selected += _day_key_moments(day, budget)
         firsts = _FIRST_OF_STATUSES
     chosen = {_global_key(moment) for moment in selected}
     for status in firsts:
@@ -868,7 +977,7 @@ def _where(moment: _Moment, activity: SpatialActivity) -> _Where:
     return f"story.where.mobile-feed.{activity}"
 
 
-def _ai_clause(moment: _Moment, flags: Sequence[str], funded_limit: int) -> MessageRef:
+def _ai_clause(moment: _Moment, flags: Sequence[str], selection: _Selection) -> MessageRef:
     status = moment.status
     if status == "warning":
         return message_ref(
@@ -880,13 +989,16 @@ def _ai_clause(moment: _Moment, flags: Sequence[str], funded_limit: int) -> Mess
             "story.ai.failed", reason=message_ref(f"reason.{moment.terminal.reason}")
         )
     if status == "over_limit":
-        return message_ref("story.ai.over_limit", limit=int_param(funded_limit))
+        return message_ref("story.ai.over_limit", limit=int_param(selection.funded_limit))
     if status == "not_chosen":
-        return message_ref(
-            "story.ai.not_chosen",
-            per_person=int_param(PER_PERSON_REQUESTS),
-            per_run=int_param(PER_RUN_REQUESTS),
-        )
+        if selection.policy_version == _EARLIEST_FIRST_SELECTION_POLICY_VERSION:
+            return message_ref(
+                "story.ai.not_chosen",
+                per_person=int_param(selection.per_person),
+                per_run=int_param(selection.per_run),
+            )
+        # Later policies spread the AI limit evenly over the whole run.
+        return message_ref("story.ai.not_chosen_spread", limit=int_param(selection.funded_limit))
     return message_ref(f"story.ai.{status}")
 
 
@@ -905,7 +1017,7 @@ def _story_moment(
     position: CityPosition,
     *,
     product: str,
-    funded_limit: int,
+    selection: _Selection,
     policy: CityCognitionInfluencePolicyV1,
 ) -> StoryMoment:
     opportunity = moment.opportunity
@@ -1010,7 +1122,7 @@ def _story_moment(
         effect=effect,
         math=math_facts,
         sentence=sentence,
-        ai_clause=_ai_clause(moment, flags, funded_limit),
+        ai_clause=_ai_clause(moment, flags, selection),
         rules_line=rules_line,
         with_ai_line=with_ai_line,
     )
@@ -1083,7 +1195,7 @@ def _people(
     provider_mode = evidence.cognition_input.mode in _PROVIDER_MODES
     product = evidence.workbench_input.creative_template.product_name
     policy = evidence.cognition_input.causal_contract.influence_policy
-    funded_limit = evidence.cognition_input.funded_response_limit
+    selection = _selection(evidence.cognition_input)
     frames: dict[int, dict[str, CityPosition]] = {}
     people: list[StoryPerson] = []
     all_kept: list[_Moment] = []
@@ -1106,7 +1218,7 @@ def _people(
                     moment,
                     frames[minute][agent_id],
                     product=product,
-                    funded_limit=funded_limit,
+                    selection=selection,
                     policy=policy,
                 )
             )
@@ -1198,6 +1310,7 @@ def _ai_facts(stored: StoredCityRun, evidence: _Evidence, moments: Sequence[_Mom
         if record.source == "fallback"
     )
     profile = evidence.cognition_input.provider_profile
+    selection = _selection(evidence.cognition_input)
     return StoryAi(
         mode=view.mode,
         model_id=view.model_id,
@@ -1205,8 +1318,9 @@ def _ai_facts(stored: StoredCityRun, evidence: _Evidence, moments: Sequence[_Mom
         provider_revision_sha256=view.provider_revision_sha256,
         thinking_off=False if profile is None else profile.disable_thinking,
         funded_limit=view.funded_response_limit,
-        per_person=PER_PERSON_REQUESTS,
-        per_run=PER_RUN_REQUESTS,
+        # The story model checks both against the caps of the known selection policies.
+        per_person=cast(StoryPerPerson, selection.per_person),
+        per_run=cast(StoryPerRun, selection.per_run),
         coverage=StoryCoverage(
             noticed=sum(moment.noticed for moment in moments),
             chosen=coverage.selected_request_count,
@@ -1309,6 +1423,31 @@ def _headline(
     return tuple(headline)
 
 
+def _day_totals(moments: Sequence[_Moment], days: int) -> tuple[StoryDayTotals, ...]:
+    """Exact per-day counts over every classified moment, kept or omitted."""
+    rows = {day: Counter[str]() for day in range(days)}
+    for moment in moments:
+        row = rows.get(moment.day_index)
+        if row is None:
+            raise _inconsistent()
+        row["shown"] += 1
+        row["noticed"] += moment.noticed
+        row["chosen"] += moment.terminal is not None
+        row["used"] += moment.status in {"answered", "reused", "practice"}
+        row["not_chosen"] += moment.status == "not_chosen"
+    return tuple(
+        StoryDayTotals(
+            day_index=day,
+            shown=row["shown"],
+            noticed=row["noticed"],
+            chosen=row["chosen"],
+            used=row["used"],
+            not_chosen=row["not_chosen"],
+        )
+        for day, row in sorted(rows.items())
+    )
+
+
 def story_json_bytes(story: RunStoryV1) -> bytes:
     """The story's canonical UTF-8 JSON bytes, exactly as the story API serves them."""
     return canonical_json(story).encode("utf-8")
@@ -1350,8 +1489,9 @@ def build_run_story(stored: StoredCityRun) -> RunStoryV1:
         people=people,
         key_moments=tuple(
             StoryKeyMoment(agent_id=moment.agent_id, moment_id=moment.moment_id)
-            for moment in _key_moments(kept, evidence.cognition_input.mode)
+            for moment in _key_moments(kept, evidence.cognition_input.mode, run.days)
         ),
+        day_totals=_day_totals(moments, run.days),
         limits=StoryLimits(moments_per_person=MAX_STORY_MOMENTS_PER_PERSON),
     )
     if len(story_json_bytes(story)) > MAX_STORY_BYTES:
@@ -1360,9 +1500,13 @@ def build_run_story(stored: StoredCityRun) -> RunStoryV1:
 
 
 __all__ = [
+    "KEY_MOMENTS_PER_DAY_FILL",
+    "KEY_MOMENTS_PER_DAY_MINIMUM",
+    "KEY_MOMENTS_PER_RUN",
     "MAX_STORY_BYTES",
     "MAX_STORY_MOMENTS_PER_PERSON",
     "PACKAGED_CITY_IDS",
+    "RULES_KEY_MOMENTS_PER_RUN",
     "STORY_MESSAGE_KEYS",
     "RunStoryTooLarge",
     "RunStoryUnavailable",

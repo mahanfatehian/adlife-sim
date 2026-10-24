@@ -37,6 +37,13 @@ from adlife.i18n.refs import MessageRef, PersonLabel, RefContext
 
 RUN_STORY_FORMAT: Final = "adlife-run-story-v1"
 STORY_MOMENTS_PER_PERSON: Final = 40
+# The largest request count of any selection policy: version 2 selects at most 60 per run
+# (4 per person), version 3 spreads up to 1,000 over the whole run with no per-person cap.
+STORY_MAX_REQUESTS: Final = 1_000
+# At most six attempts per request (selection policy 3); version 2 allows four.
+STORY_MAX_ATTEMPTS: Final = 6 * STORY_MAX_REQUESTS
+# (per person, per run) of each selection policy version.
+STORY_SELECTION_CAPS: Final[frozenset[tuple[int, int]]] = frozenset({(4, 60), (1_000, 1_000)})
 
 Status: TypeAlias = Literal[
     "answered",
@@ -51,6 +58,10 @@ Status: TypeAlias = Literal[
     "not_noticed",
 ]
 Compare: TypeAlias = Literal["lower", "slightly_lower", "about_same", "slightly_higher", "higher"]
+# Selection caps and AI limits of selection policies 2 (4, 60) and 3 (1,000, 1,000).
+StoryPerPerson: TypeAlias = Literal[4, 1000]
+StoryPerRun: TypeAlias = Literal[60, 1000]
+StoryFundedLimit: TypeAlias = Literal[10, 20, 40, 60, 120, 250, 500, 1000]
 Effect: TypeAlias = Literal["higher", "lower", "same"]
 StoryChannel: TypeAlias = Literal["mobile-feed", "roadside-billboard"]
 TemplateKey: TypeAlias = Literal[
@@ -91,7 +102,7 @@ _ProfileId: TypeAlias = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$
 _PersonaId: TypeAlias = Annotated[str, Field(pattern=r"^persona-[0-9]{3}$")]
 _MomentId: TypeAlias = Annotated[str, Field(pattern=r"^[0-9a-f]{16}$")]
 _Count: TypeAlias = Annotated[int, Field(ge=0, le=520_800)]
-_Requests: TypeAlias = Annotated[int, Field(ge=0, le=60)]
+_Requests: TypeAlias = Annotated[int, Field(ge=0, le=STORY_MAX_REQUESTS)]
 _Name: TypeAlias = Annotated[str, Field(min_length=1, max_length=120)]
 _ShortText: TypeAlias = Annotated[str, Field(min_length=1, max_length=80)]
 _Point: TypeAlias = tuple[StoryNumber, StoryNumber]
@@ -240,7 +251,7 @@ class StoryStatuses(_StoryModel):
 
 
 class StoryUsage(_StoryModel):
-    attempts: int = Field(ge=0, le=240)
+    attempts: int = Field(ge=0, le=STORY_MAX_ATTEMPTS)
     prompt_tokens: int = Field(ge=0)
     completion_tokens: int = Field(ge=0)
 
@@ -259,12 +270,14 @@ class StoryAi(_StoryModel):
     provider_profile_id: _ProfileId | None
     provider_revision_sha256: _Hash | None
     thinking_off: bool
-    funded_limit: Literal[10, 20, 40, 60]
-    per_person: Literal[4]
-    per_run: Literal[60]
+    funded_limit: StoryFundedLimit
+    per_person: StoryPerPerson
+    per_run: StoryPerRun
     coverage: StoryCoverage
     statuses: StoryStatuses
-    fallback_reasons: dict[CityCognitionRuntimeFallbackReasonV2, Annotated[int, Field(ge=1, le=60)]]
+    fallback_reasons: dict[
+        CityCognitionRuntimeFallbackReasonV2, Annotated[int, Field(ge=1, le=STORY_MAX_REQUESTS)]
+    ]
     usage_this_run: StoryUsage
     reused_answers: _Requests
     contract: StoryContract
@@ -272,10 +285,14 @@ class StoryAi(_StoryModel):
     @model_validator(mode="after")
     def coherent_ai(self) -> Self:
         provider = (self.model_id, self.provider_profile_id, self.provider_revision_sha256)
+        if (self.per_person, self.per_run) not in STORY_SELECTION_CAPS:
+            raise ValueError("story selection caps must be those of one selection policy")
+        if self.funded_limit > self.per_run or self.coverage.chosen > self.per_run:
+            raise ValueError("story AI limit and chosen questions cannot exceed the run cap")
         if self.mode in {"rules", "mock"}:
             if any(value is not None for value in provider) or self.thinking_off:
                 raise ValueError("offline story AI facts cannot name a provider")
-            if self.coverage.sent or self.funded_limit != 60:
+            if self.coverage.sent or self.funded_limit != self.per_run:
                 raise ValueError("offline story AI facts cannot send questions")
         elif any(value is None for value in provider):
             raise ValueError("provider story AI facts must name the model and revision")
@@ -306,7 +323,7 @@ class StoryLabelCounts(_StoryModel):
     """How often each label value occurs across the run's AI (or practice) answers."""
 
     group: LabelGroup
-    answers: int = Field(ge=1, le=60)
+    answers: int = Field(ge=1, le=STORY_MAX_REQUESTS)
     affect: dict[CityCognitionAffectV2, _Requests]
     relevance: dict[CityCognitionRelevanceV2, _Requests]
     credibility: dict[CityCognitionCredibilityV2, _Requests]
@@ -442,12 +459,12 @@ class StoryDay(_StoryModel):
 class StoryTotals(_StoryModel):
     shown: _Count
     noticed: _Count
-    chosen: Annotated[int, Field(ge=0, le=4)]
-    sent: Annotated[int, Field(ge=0, le=4)]
-    used: Annotated[int, Field(ge=0, le=4)]
-    set_aside: Annotated[int, Field(ge=0, le=4)]
-    failed: Annotated[int, Field(ge=0, le=4)]
-    over_limit: Annotated[int, Field(ge=0, le=4)]
+    chosen: _Requests
+    sent: _Requests
+    used: _Requests
+    set_aside: _Requests
+    failed: _Requests
+    over_limit: _Requests
     not_chosen: _Count
 
 
@@ -562,7 +579,7 @@ class StoryPerson(_StoryModel):
     end: StoryState
     compare: StoryCompare
     label_mode: StoryLabels | None
-    label_answers: int = Field(ge=0, le=4)
+    label_answers: _Requests
     summary: MessageRef
     moments: tuple[StoryMoment, ...] = Field(max_length=STORY_MOMENTS_PER_PERSON)
     moments_omitted: _Count
@@ -588,6 +605,27 @@ class StoryKeyMoment(_StoryModel):
     moment_id: _MomentId
 
 
+class StoryDayTotals(_StoryModel):
+    """Exact counts of one simulated day, over every ad moment (kept or omitted)."""
+
+    day_index: int = Field(ge=0, le=6)
+    shown: _Count
+    noticed: _Count
+    chosen: _Requests
+    used: _Requests
+    not_chosen: _Count
+
+    @model_validator(mode="after")
+    def coherent_day(self) -> Self:
+        if (
+            self.noticed > self.shown
+            or self.chosen + self.not_chosen != self.noticed
+            or self.used > self.chosen
+        ):
+            raise ValueError("story day totals must narrow from shown to used")
+        return self
+
+
 class StoryLimits(_StoryModel):
     moments_per_person: Literal[40]
 
@@ -607,6 +645,7 @@ class RunStoryV1(_StoryModel):
     personas: tuple[StoryPersona, ...] = Field(min_length=1, max_length=30)
     people: tuple[StoryPerson, ...] = Field(min_length=1, max_length=30)
     key_moments: tuple[StoryKeyMoment, ...] = Field(max_length=1_200)
+    day_totals: tuple[StoryDayTotals, ...] = Field(min_length=1, max_length=7)
     limits: StoryLimits
 
     @model_validator(mode="after")
@@ -648,6 +687,21 @@ class RunStoryV1(_StoryModel):
             raise ValueError("story funnel, coverage and people disagree")
         if (self.labels is None) != (self.funnel.answered + self.ai.statuses.practice == 0):
             raise ValueError("story label counts exist exactly when answers exist")
+        days = self.day_totals
+        if tuple(day.day_index for day in days) != tuple(range(self.run.days)) or (
+            sum(day.shown for day in days),
+            sum(day.noticed for day in days),
+            sum(day.chosen for day in days),
+            sum(day.used for day in days),
+            sum(day.not_chosen for day in days),
+        ) != (
+            self.funnel.shown,
+            self.funnel.noticed,
+            self.funnel.chosen,
+            self.funnel.used,
+            self.ai.statuses.not_chosen,
+        ):
+            raise ValueError("story day totals must cover every day and add up to the funnel")
         return self
 
 
@@ -669,7 +723,10 @@ __all__ = [
     "LABELLED_STATUSES",
     "MATH_STATUSES",
     "RUN_STORY_FORMAT",
+    "STORY_MAX_ATTEMPTS",
+    "STORY_MAX_REQUESTS",
     "STORY_MOMENTS_PER_PERSON",
+    "STORY_SELECTION_CAPS",
     "Compare",
     "Effect",
     "LabelGroup",
@@ -690,8 +747,10 @@ __all__ = [
     "StoryCoverage",
     "StoryCreative",
     "StoryDay",
+    "StoryDayTotals",
     "StoryDelta",
     "StoryEffect",
+    "StoryFundedLimit",
     "StoryFunnel",
     "StoryHashes",
     "StoryKeyMoment",
@@ -703,6 +762,8 @@ __all__ = [
     "StoryMoment",
     "StoryNode",
     "StoryNumber",
+    "StoryPerPerson",
+    "StoryPerRun",
     "StoryPerson",
     "StoryPersona",
     "StoryPhone",

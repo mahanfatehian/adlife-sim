@@ -31,6 +31,7 @@ RUNS = {
     "mixed": "mixed",
     "rules": "rules",
     "hostile": "hostile",
+    "multiday": "multiday",
     "v9": "v9",
 }
 PERSIAN_DIGIT = f"[{chr(0x06F0)}-{chr(0x06F9)}]"
@@ -670,6 +671,92 @@ def test_autoplay_still_steps_under_reduced_motion(browser: Browser, site: _Site
         expect(page.locator("#story-play-text")).to_have_text(catalog.text("story.play"))
         page.clock.run_for(13_000)
         expect(counter).to_have_text(catalog.text("story.counter", index=3, total=total))
+        assert session.errors == []
+
+
+def test_a_multi_day_story_replays_to_the_end_of_its_last_day(
+    browser: Browser, site: _Site
+) -> None:
+    run_id = site.run_ids["multiday"]
+    catalog = load_catalog("en")
+    with _session(browser, reduced_motion="reduce") as session:
+        page = session.page
+        page.clock.install()
+        _open(page, site, run_id)
+        story = _story(page, site, run_id)
+        days = story.run.days
+        assert days == 4
+        total = len(story.key_moments)
+        moments = {
+            (person.agent_id, moment.moment_id): moment
+            for person in story.people
+            for moment in person.moments
+        }
+        keyed = [moments[(item.agent_id, item.moment_id)] for item in story.key_moments]
+        # The key moments reach the last day, not only the days the AI was asked about.
+        assert keyed[0].day_index == 0 and keyed[-1].day_index == days - 1
+
+        def on_day(text: str, day: int) -> str:
+            return catalog.text("story.counter.day", counter=text, day=day, days=days)
+
+        counter = page.locator("#story-counter")
+        expect(counter).to_have_text(on_day(catalog.text("story.counter.intro", count=total), 1))
+        page.keyboard.press("PageDown")
+        expect(counter).to_have_text(
+            on_day(catalog.text("story.counter", index=1, total=total), keyed[0].day_index + 1)
+        )
+        expect(page.locator("#story-ticks > li")).to_have_count(total + 1)
+        _slide(page, total - 1)
+        expect(counter).to_have_text(
+            on_day(catalog.text("story.counter", index=total, total=total), days)
+        )
+        expect(page.locator("#story-next")).to_have_attribute("aria-disabled", "false")
+
+        # After the last moment the closing step shows the end of the last day.
+        page.keyboard.press("PageDown")
+        outro = page.locator("#story-outro")
+        expect(outro).to_be_visible()
+        expect(page.locator("#story-card")).to_be_hidden()
+        expect(page.locator("#story-intro")).to_be_hidden()
+        expect(counter).to_have_text(on_day(catalog.text("story.counter.outro", count=total), days))
+        expect(page.locator("#story-next")).to_have_attribute("aria-disabled", "true")
+        expect(page.locator("#story-ticks > li").last).to_have_attribute("data-current", "true")
+        # The phone feed's last window ends at 18:00 on the last day.
+        expect(page.locator("#story-clock")).to_have_text(re.compile(rf"\b{days}\b.*18:00"))
+        expect(page.locator("#story-outro-title")).to_have_text(catalog.text("story.outro.title"))
+        rows = page.locator("#story-outro .story-days tbody tr")
+        expect(rows).to_have_count(days)
+        for index, day in enumerate(story.day_totals):
+            expect(rows.nth(index).locator("th")).to_have_text(
+                catalog.text("story.days.day", day=index + 1)
+            )
+            expect(rows.nth(index).locator("td")).to_have_text(
+                [str(day.shown), str(day.noticed), str(day.chosen), str(day.used)]
+            )
+        assert sum(day.shown for day in story.day_totals) == story.funnel.shown
+        page.keyboard.press("PageDown")
+        expect(outro).to_be_visible()
+        page.keyboard.press("PageUp")
+        expect(page.locator("#story-card")).to_be_visible()
+        expect(outro).to_be_hidden()
+
+        # Autoplay runs from the last moment into the closing step and stops there.
+        page.locator("#story-play").click()
+        expect(page.locator("#story-play-text")).to_have_text(catalog.text("story.pause"))
+        page.clock.run_for(6_100)
+        expect(outro).to_be_visible()
+        page.clock.run_for(6_100)
+        expect(page.locator("#story-play-text")).to_have_text(catalog.text("story.play"))
+        expect(outro).to_be_visible()
+
+        # The summary tab has the same day-by-day table.
+        page.keyboard.press("3")
+        summary_rows = page.locator("#story-summary .story-days tbody tr")
+        expect(summary_rows).to_have_count(days)
+        page.keyboard.press("1")
+        page.keyboard.press("Home")
+        expect(page.locator("#story-intro")).to_be_visible()
+        expect(outro).to_be_hidden()
         assert session.errors == []
 
 

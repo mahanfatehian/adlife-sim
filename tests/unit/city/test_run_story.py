@@ -214,11 +214,70 @@ def test_the_mixed_run_shows_every_status(saved) -> None:
             }
         if moment.status == "not_chosen":
             assert moment.ai_clause is not None
-            assert moment.ai_clause.model_dump(mode="json") == {
-                "key": "story.ai.not_chosen",
-                "params": {"per_person": {"int": 4}, "per_run": {"int": 60}},
-            }
+            assert moment.ai_clause.model_dump(mode="json") == _not_chosen_clause(saved("mixed"))
     assert story.ai.fallback_reasons == {"timeout-exhausted": story.ai.statuses.failed}
+
+
+def _not_chosen_clause(run: _Saved) -> dict[str, Any]:
+    """The not-chosen wording the run's own frozen selection policy calls for."""
+    frozen = run.stored.cognition_input
+    if frozen.causal_contract.selection_policy_version == 2:
+        return {
+            "key": "story.ai.not_chosen",
+            "params": {
+                "per_person": {"int": frozen.selected_requests_per_agent},
+                "per_run": {"int": frozen.selected_requests_per_run},
+            },
+        }
+    return {
+        "key": "story.ai.not_chosen_spread",
+        "params": {"limit": {"int": frozen.funded_response_limit}},
+    }
+
+
+@pytest.mark.parametrize("name", ["mixed", "multiday"])
+def test_caps_and_wording_come_from_the_runs_frozen_cognition_input(saved, name) -> None:
+    run = saved(name)
+    frozen = run.stored.cognition_input
+    ai = run.story.ai
+    assert (ai.funded_limit, ai.per_person, ai.per_run) == (
+        frozen.funded_response_limit,
+        frozen.selected_requests_per_agent,
+        frozen.selected_requests_per_run,
+    )
+    clauses = [
+        moment.ai_clause.model_dump(mode="json")
+        for _, moment in _moments(run.story)
+        if moment.status == "not_chosen" and moment.ai_clause is not None
+    ]
+    assert clauses and all(clause == _not_chosen_clause(run) for clause in clauses)
+
+
+def test_a_spread_selection_policy_explains_not_chosen_moments_as_spread(saved) -> None:
+    # A run frozen under the spread-evenly policy (version 3: no per-person cap, the limit
+    # spread over the whole run) words "not chosen" by its limit, never "only the first".
+    # The facts are read from the frozen cognition input, whatever version froze it.
+    spread_input = SimpleNamespace(
+        funded_response_limit=250,
+        selected_requests_per_agent=1_000,
+        selected_requests_per_run=1_000,
+        causal_contract=SimpleNamespace(selection_policy_version=3),
+    )
+    selection = run_story_module._selection(spread_input)  # type: ignore[arg-type]
+    assert (selection.funded_limit, selection.per_person, selection.per_run) == (250, 1_000, 1_000)
+    not_chosen = SimpleNamespace(status="not_chosen", terminal=None)
+    clause = run_story_module._ai_clause(not_chosen, (), selection)  # type: ignore[arg-type]
+    assert clause.model_dump(mode="json") == {
+        "key": "story.ai.not_chosen_spread",
+        "params": {"limit": {"int": 250}},
+    }
+    earliest = run_story_module._selection(saved("mixed").stored.cognition_input)
+    clause = run_story_module._ai_clause(not_chosen, (), earliest)  # type: ignore[arg-type]
+    assert clause.model_dump(mode="json")["key"] == (
+        "story.ai.not_chosen" if earliest.policy_version == 2 else "story.ai.not_chosen_spread"
+    )
+    assert "story.ai.not_chosen_spread" in STORY_MESSAGE_KEYS
+    assert "story.ai.not_chosen" in STORY_MESSAGE_KEYS
 
 
 @pytest.mark.parametrize("name", V10_NAMES)
@@ -710,32 +769,159 @@ def test_default_study_matches_the_measured_expectations(saved) -> None:
     }
 
 
-def test_key_moments_are_time_ordered_and_cover_the_story_kinds(saved) -> None:
-    for name in ("mixed", "default-mock", "rules", "fallback"):
-        story = saved(name).story
-        by_key = {(agent_id, moment.moment_id): moment for agent_id, moment in _moments(story)}
-        ordered = [by_key[(item.agent_id, item.moment_id)] for item in story.key_moments]
-        keys = [
-            (moment.minute, moment.millisecond, item.agent_id)
-            for moment, item in zip(ordered, story.key_moments, strict=True)
-        ]
-        assert keys == sorted(keys)
-        kept = list(by_key.values())
+AI_KINDS = frozenset({"answered", "reused", "practice", "unsure", "warning", "failed"})
+RUN_FIRSTS = ("over_limit", "not_chosen", "not_noticed", "failed", "unsure", "warning")
+
+
+def _key_story_moments(story: RunStoryV1) -> list[tuple[str, Any]]:
+    by_key = {(agent_id, moment.moment_id): moment for agent_id, moment in _moments(story)}
+    return [(item.agent_id, by_key[(item.agent_id, item.moment_id)]) for item in story.key_moments]
+
+
+def _per_day_budget(story: RunStoryV1) -> int:
+    run_budget = 20 if story.ai.mode == "rules" else 60
+    return max(3, math.ceil(run_budget / story.run.days))
+
+
+@pytest.mark.parametrize(
+    "name", ["mixed", "default-mock", "default-provider", "rules", "fallback", "dense", "multiday"]
+)
+def test_key_moments_cover_every_noticed_day_in_time_order(saved, name) -> None:
+    story = saved(name).story
+    kept = list(_moments(story))
+    keyed = _key_story_moments(story)
+    keys = [(moment.minute, moment.millisecond, agent_id) for agent_id, moment in keyed]
+    assert keys == sorted(keys) and len(set(keys)) == len(keys)
+    budget = _per_day_budget(story)
+    for day in range(story.run.days):
+        day_kept = [moment for _, moment in kept if moment.day_index == day]
+        day_keys = [moment for _, moment in keyed if moment.day_index == day]
+        noticed = sum(moment.noticed for moment in day_kept)
         if story.ai.mode == "rules":
-            noticed = sum(moment.noticed for moment in kept)
-            assert sum(moment.noticed for moment in ordered) == min(20, noticed)
-        else:
-            ai_kinds = {"answered", "reused", "practice", "unsure", "warning", "failed"}
-            assert sum(moment.status in ai_kinds for moment in ordered) == sum(
-                moment.status in ai_kinds for moment in kept
-            )
-            for status in ("over_limit", "not_chosen"):
-                assert sum(moment.status == status for moment in ordered) == min(
-                    1, sum(moment.status == status for moment in kept)
+            # Rules only: the day's noticed moments, evenly spread, up to the day's budget.
+            assert sum(moment.noticed for moment in day_keys) == min(budget, noticed)
+            continue
+        ai_kept = sum(moment.status in AI_KINDS for moment in day_kept)
+        # AI moments come first, up to the day's budget; then rules-only noticed moments
+        # fill the day up to six, so a day after the AI questions ran out is never empty.
+        assert sum(moment.status in AI_KINDS for moment in day_keys) >= min(budget, ai_kept)
+        assert sum(moment.noticed for moment in day_keys) >= min(6, noticed)
+    # Each telling kind still opens with its first moment of the run.
+    firsts = ("not_noticed",) if story.ai.mode == "rules" else RUN_FIRSTS
+    for status in firsts:
+        first = next(
+            (
+                (agent_id, moment)
+                for agent_id, moment in sorted(
+                    kept, key=lambda step: (step[1].minute, step[1].millisecond, step[0])
                 )
-        assert sum(moment.status == "not_noticed" for moment in ordered) == min(
-            1, sum(moment.status == "not_noticed" for moment in kept)
+                if moment.status == status
+            ),
+            None,
         )
+        if first is not None:
+            assert (first[0], first[1].moment_id) in {
+                (agent_id, moment.moment_id) for agent_id, moment in keyed
+            }
+    assert len(keyed) <= budget * story.run.days + len(RUN_FIRSTS)
+    # Unnoticed moments appear only as the first of their kind.
+    assert sum(moment.status == "not_noticed" for _, moment in keyed) == min(
+        1, sum(moment.status == "not_noticed" for _, moment in kept)
+    )
+    noticed_days = [moment.day_index for _, moment in kept if moment.noticed]
+    if noticed_days:
+        assert keyed[-1][1].day_index == max(noticed_days)
+
+
+def test_a_multi_day_story_reaches_its_last_day(saved) -> None:
+    run = saved("multiday")
+    story = run.story
+    assert story.run.days == 4
+    keyed = _key_story_moments(story)
+    noticed_days = {moment.day_index for _, moment in _moments(story) if moment.noticed}
+    assert noticed_days == set(range(4))
+    # Every day with noticed moments is in the replay, from the first day to the last.
+    assert {moment.day_index for _, moment in keyed if moment.noticed} == noticed_days
+    assert keyed[0][1].day_index == 0 and keyed[-1][1].day_index == 3
+    assert len(keyed) <= _per_day_budget(story) * 4 + len(RUN_FIRSTS)
+    assert story_json_bytes(build_run_story(run.stored)) == story_json_bytes(story)
+
+
+def test_kept_moments_go_round_robin_over_the_days(saved) -> None:
+    run = saved("multiday")
+    expected = _oracle_statuses(run.stored)
+    assert run.stored.opportunity_evaluation is not None
+    own: dict[str, list[Any]] = {}
+    for opportunity in run.stored.opportunity_evaluation.opportunities:
+        own.setdefault(opportunity.agent_id, []).append(opportunity)
+    checked = 0
+    for person in run.story.people:
+        assert person.moments_omitted > 0, "the fixture has more than 40 moments per person"
+        kept_ids = {moment.moment_id for moment in person.moments}
+        assert len(person.moments) == MAX_STORY_MOMENTS_PER_PERSON
+        for tier in ("noticed", "not_noticed"):
+            available: dict[int, list[Any]] = {}
+            for opportunity in sorted(
+                own[person.agent_id],
+                key=lambda item: (item.model_minute, item.millisecond_within_minute),
+            ):
+                noticed = expected[opportunity.opportunity_id] != "not_noticed"
+                if noticed == (tier == "noticed"):
+                    available.setdefault(opportunity.day_index, []).append(opportunity)
+            kept_per_day = {
+                day: [item for item in items if item.opportunity_id[:16] in kept_ids]
+                for day, items in available.items()
+            }
+            for day, items in available.items():
+                # Within a day the earliest moments are the ones kept.
+                count = len(kept_per_day[day])
+                assert [item.opportunity_id for item in items[:count]] == [
+                    item.opportunity_id for item in kept_per_day[day]
+                ]
+            for day, items in available.items():
+                if len(kept_per_day[day]) < len(items):
+                    # A day that still has moments left was never passed over by more
+                    # than one round: no other day kept two more moments than it did.
+                    assert all(
+                        len(other) <= len(kept_per_day[day]) + 1 for other in kept_per_day.values()
+                    )
+                    checked += 1
+    assert checked > 0
+    # Every day of the busy run keeps some of its unnoticed moments, not only the first ones.
+    for person in run.story.people:
+        assert {moment.day_index for moment in person.moments if not moment.noticed} == set(
+            range(4)
+        )
+
+
+@pytest.mark.parametrize("name", (*V10_NAMES, "multiday"))
+def test_day_totals_count_every_moment_of_every_day(saved, name) -> None:
+    run = saved(name)
+    story = run.story
+    expected = _oracle_statuses(run.stored)
+    assert run.stored.opportunity_evaluation is not None
+    rows = {day: Counter() for day in range(story.run.days)}
+    for opportunity in run.stored.opportunity_evaluation.opportunities:
+        status = expected[opportunity.opportunity_id]
+        row = rows[opportunity.day_index]
+        row["shown"] += 1
+        row["noticed"] += status != "not_noticed"
+        row["chosen"] += status not in {"not_noticed", "not_chosen"}
+        row["used"] += status in {"answered", "reused", "practice"}
+        row["not_chosen"] += status == "not_chosen"
+    assert [day.model_dump() for day in story.day_totals] == [
+        {
+            "day_index": day,
+            "shown": rows[day]["shown"],
+            "noticed": rows[day]["noticed"],
+            "chosen": rows[day]["chosen"],
+            "used": rows[day]["used"],
+            "not_chosen": rows[day]["not_chosen"],
+        }
+        for day in range(story.run.days)
+    ]
+    assert sum(day.shown for day in story.day_totals) == story.funnel.shown
+    assert sum(day.used for day in story.day_totals) == story.funnel.used
 
 
 # --- messages -----------------------------------------------------------------------------
@@ -1008,7 +1194,47 @@ _REFUSED_STORIES: dict[str, Callable[[dict[str, Any]], None]] = {
     "phone window": lambda d: d["run"]["phone"]["windows"][0].__setitem__("end_minute", 420),
     "channels": lambda d: d["run"].__setitem__("channels", ["roadside-billboard"]),
     "people count": lambda d: _bump(d["run"], "people_count"),
+    "per-person cap of another policy": lambda d: d["ai"].__setitem__("per_person", 1_000),
+    "unknown per-person cap": lambda d: d["ai"].__setitem__("per_person", 5),
+    "unknown AI limit": lambda d: d["ai"].__setitem__("funded_limit", 100),
+    "offline limit below the run cap": lambda d: d["ai"].__setitem__("funded_limit", 40),
+    "day totals": lambda d: _bump(d["day_totals"][0], "shown"),
+    "day totals noticed": lambda d: _bump(d["day_totals"][0], "noticed"),
+    "missing day totals": lambda d: d.__setitem__("day_totals", []),
+    "day totals order": lambda d: d["day_totals"][0].__setitem__("day_index", 1),
 }
+
+
+def test_the_story_contract_accepts_both_selection_policy_value_sets(saved) -> None:
+    # Selection policy 2 caps 4 per person and 60 per run; policy 3 spreads up to 1,000
+    # questions over the run with no per-person cap. Offline runs fund the whole run cap.
+    document = json.loads(story_json_bytes(saved("default-mock").story))
+    assert (document["ai"]["per_person"], document["ai"]["per_run"]) == (4, 60)
+    document["ai"].update(per_person=1_000, per_run=1_000, funded_limit=1_000)
+    assert RunStoryV1.model_validate_json(json.dumps(document)).ai.per_run == 1_000
+    provider = json.loads(story_json_bytes(saved("default-provider").story))
+    for limit in (10, 20, 40, 60):
+        provider["ai"]["funded_limit"] = limit
+        RunStoryV1.model_validate_json(json.dumps(provider))
+    provider["ai"].update(per_person=1_000, per_run=1_000)
+    for limit in (60, 120, 250, 500, 1_000):
+        provider["ai"]["funded_limit"] = limit
+        RunStoryV1.model_validate_json(json.dumps(provider))
+    # Request counts, attempts and per-person totals take the larger policy's maxima.
+    for path, value in (
+        (("ai", "usage_this_run", "attempts"), 6_000),
+        (("people", 0, "totals", "chosen"), 1_000),
+        (("ai", "reused_answers"), 1_000),
+    ):
+        changed = json.loads(json.dumps(provider))
+        target: Any = changed
+        for step in path[:-1]:
+            target = target[step]
+        target[path[-1]] = value
+        RunStoryV1.model_validate_json(json.dumps(changed))
+        target[path[-1]] = value + 1
+        with pytest.raises(ValidationError):
+            RunStoryV1.model_validate_json(json.dumps(changed))
 
 
 @pytest.mark.parametrize("mutation", sorted(_REFUSED_STORIES))

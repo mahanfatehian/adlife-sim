@@ -1004,3 +1004,11 @@
 .setup-run__meta bdi {
   white-space: nowrap;
 }
+
+/* The every-noticed-ad option names its upper bound in smaller, quieter type. */
+.setup-limit-note {
+  color: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  opacity: 0.85;
+}

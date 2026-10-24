@@ -346,8 +346,12 @@
     "setup.ad.where.phone": "Phone feed",
     "setup.ai.cache": "This exact study already ran with this AI connection, so its saved answers would be reused instead of asking the AI again. Choose a new random seed under “More options”.",
     "setup.ai.limit": "AI limit",
+    "setup.ai.limit.all": "Every noticed ad",
+    "setup.ai.limit.all.note": "(up to {limit})",
     "setup.ai.limit.estimate": "About {tokens} tokens in total (estimate)",
+    "setup.ai.limit.estimate.max": "At most about {tokens} tokens in total (estimate): only noticed ads are asked.",
     "setup.ai.limit.explain": "Only noticed ads are sent: at most {per_person} per person and {per_run} per run, earliest first. Noticed ads over the limit get no AI effect.",
+    "setup.ai.limit.explain.spread": "Only noticed ads are sent: at most {per_run} questions, spread evenly over the whole run. Noticed ads that are not chosen get no AI effect.",
     "setup.ai.limit.offline": "Every noticed ad is answered on this computer; no AI service is contacted.",
     "setup.ai.limit.option": {
       "one": "{count} question",
@@ -464,6 +468,7 @@
     "story.ai.answered": "The AI judged this moment.",
     "story.ai.failed": "The AI did not answer ({reason}). No AI effect.",
     "story.ai.not_chosen": "Not chosen for the AI (only the first {per_person} noticed ads per person and {per_run} per run). No AI effect.",
+    "story.ai.not_chosen_spread": "Not chosen for the AI: the limit of {limit} questions was spread evenly over the whole run. No AI effect.",
     "story.ai.over_limit": "Over the AI limit of {limit} questions: this ad was not sent to the AI. No AI effect.",
     "story.ai.practice": "Practice answer (not an AI).",
     "story.ai.reused": "An earlier AI answer to this exact question was reused.",
@@ -471,10 +476,18 @@
     "story.ai.unsure": "The answer was unsure about at least one label, so it was set aside. No AI effect.",
     "story.ai.warning": "The answer raised a warning ({flags}), so it was set aside. No AI effect.",
     "story.counter": "Moment {index} of {total}",
+    "story.counter.day": "{counter} · Day {day} of {days}",
     "story.counter.intro": {
       "one": "Opening · {count} moment",
       "other": "Opening · {count} moments"
     },
+    "story.counter.outro": {
+      "one": "End · {count} moment",
+      "other": "End · {count} moments"
+    },
+    "story.days.column": "Day",
+    "story.days.day": "Day {day}",
+    "story.days.title": "Day by day",
     "story.effect.liking.fell_less": "With AI, liking fell less than with rules only.",
     "story.effect.liking.fell_more": "With AI, liking fell more than with rules only.",
     "story.effect.liking.fell_not_rose": "With AI, liking fell, while with rules only it rose.",
@@ -547,6 +560,8 @@
     "story.next": "Next moment",
     "story.not_found": "This saved run does not exist in this workspace.",
     "story.open_report": "Open the report",
+    "story.outro.lead": "The map shows the end of the last simulated day. What happened on each day:",
+    "story.outro.title": "The end of the run",
     "story.pause": "Pause",
     "story.person.compare": "{measure}: {compare}",
     "story.person.end": "At the end of the run",
