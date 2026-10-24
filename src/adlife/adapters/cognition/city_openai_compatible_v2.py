@@ -13,7 +13,12 @@ from unicodedata import bidirectional
 
 import httpcore
 
-from adlife.adapters.cognition.city_credentials import ResolvedCredential, SecretBuffer
+from adlife.adapters.cognition.city_credentials import (
+    LOCAL_CREDENTIAL_SOURCES,
+    REMOTE_CREDENTIAL_SOURCES,
+    ResolvedCredential,
+    SecretBuffer,
+)
 from adlife.adapters.cognition.city_endpoint_policy import (
     BoundProviderEndpoint,
     CityEndpointBindingError,
@@ -48,25 +53,11 @@ from adlife.core.domain.person import (
 from adlife.core.domain.serialization import canonical_json
 
 _Outcome = CityProviderAttemptV2 | Literal["protocol", "internal"]
-_ENVELOPE_FIELDS = frozenset(
-    {"id", "object", "created", "model", "choices", "usage", "system_fingerprint", "service_tier"}
-)
-_CHOICE_FIELDS = frozenset({"index", "message", "finish_reason", "logprobs"})
-_MESSAGE_FIELDS = frozenset({"role", "content", "refusal"})
 # "length" means the answer reached the frozen per-attempt output cap. Its text is still
 # validated like any other answer, so it can never be accepted for less than "stop" is.
 _FINISH_REASONS = ("stop", "length")
 # A vLLM stop string is operator configuration, never model output, and stays short.
 _MAX_STOP_REASON_CHARACTERS = 256
-_USAGE_FIELDS = frozenset(
-    {
-        "prompt_tokens",
-        "completion_tokens",
-        "total_tokens",
-        "prompt_tokens_details",
-        "completion_tokens_details",
-    }
-)
 _JSON_ESCAPE = re.compile(r'\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})')
 _SIMPLE_ESCAPES = {
     '"': '"',
@@ -237,8 +228,14 @@ def _null_or_integer_tree(value: object) -> bool:
 # interpreted, or retained: reasoning text, the echoed prompt, and the stop token or stop
 # string that ended an answer (vLLM reports a generation-config end token such as Qwen's
 # as an integer ID) are inert, and every string in them has already passed the whole-body
-# credential and secret screens. Any other unknown member is still refused, and a real
-# function call, audio part, or tool call stays a protocol error.
+# credential and secret screens. A real function call, audio part, or tool call stays a
+# protocol error.
+#
+# Other gateways add their own inert members (OpenRouter's ``provider`` and
+# ``native_finish_reason``, LM Studio's ``stats``, a usage ``cost``). Members this adapter
+# does not know are ignored rather than refused: only ``content`` and the token counts are
+# ever read, the whole body has already passed the size, credential and secret screens, and
+# the admitted members above are still type-checked whenever they appear.
 _VLLM_ENVELOPE_MEMBERS: Mapping[str, Callable[[object], bool]] = MappingProxyType(
     {
         "prompt_logprobs": _null,
@@ -270,13 +267,13 @@ _VLLM_MESSAGE_MEMBERS: Mapping[str, Callable[[object], bool]] = MappingProxyType
 
 def _admit_members(
     container: Mapping[str, object],
-    fields: frozenset[str],
     vendor: Mapping[str, Callable[[object], bool]],
 ) -> None:
-    """Refuse any unknown member, and any admitted vendor member of another type."""
-    if set(container) - fields - vendor.keys() or not all(
-        admitted(container[name]) for name, admitted in vendor.items() if name in container
-    ):
+    """Refuse an admitted vendor member of another type; ignore members nobody reads.
+
+    Every standard OpenAI member is checked by the caller where it is read.
+    """
+    if not all(admitted(container[name]) for name, admitted in vendor.items() if name in container):
         raise CityProviderProtocolError
 
 
@@ -291,7 +288,7 @@ def _content_and_usage(
     truncated answer carries no text at all (a model that spent the cap thinking). Neither
     is a protocol mismatch, so the caller can return a repairable invalid result.
     """
-    _admit_members(envelope, _ENVELOPE_FIELDS, _VLLM_ENVELOPE_MEMBERS)
+    _admit_members(envelope, _VLLM_ENVELOPE_MEMBERS)
     if "object" in envelope and envelope["object"] != "chat.completion":
         raise CityProviderProtocolError
     for field in ("id", "model", "system_fingerprint", "service_tier"):
@@ -307,7 +304,7 @@ def _content_and_usage(
     choice = choices[0]
     if not isinstance(choice, dict):
         raise CityProviderProtocolError
-    _admit_members(choice, _CHOICE_FIELDS, _VLLM_CHOICE_MEMBERS)
+    _admit_members(choice, _VLLM_CHOICE_MEMBERS)
     finish_reason = choice.get("finish_reason")
     # Tuple membership compares by equality, so an unhashable value is refused, not raised.
     if finish_reason not in _FINISH_REASONS:
@@ -319,7 +316,7 @@ def _content_and_usage(
     message = choice.get("message")
     if not isinstance(message, dict):
         raise CityProviderProtocolError
-    _admit_members(message, _MESSAGE_FIELDS, _VLLM_MESSAGE_MEMBERS)
+    _admit_members(message, _VLLM_MESSAGE_MEMBERS)
     if ("role" in message and message["role"] != "assistant") or message.get("refusal") is not None:
         raise CityProviderProtocolError
     content = message.get("content")
@@ -331,7 +328,8 @@ def _content_and_usage(
     raw = envelope.get("usage")
     usage = None
     if raw is not None:
-        if not isinstance(raw, dict) or set(raw) - _USAGE_FIELDS:
+        # Gateways add their own usage members (a cost, a cache flag); only counts are read.
+        if not isinstance(raw, dict):
             raise CityProviderProtocolError
         prompt, completion, total = (
             raw.get("prompt_tokens"),
@@ -358,8 +356,11 @@ def _content_and_usage(
             details = raw.get(field)
             if details is not None and (
                 not isinstance(details, dict)
-                or set(details) - allowed
-                or any(v is not None and not _integer(v) for v in details.values())
+                or any(
+                    details[name] is not None and not _integer(details[name])
+                    for name in allowed
+                    if name in details
+                )
             ):
                 raise CityProviderProtocolError
         usage = CityProviderUsageV2(
@@ -466,10 +467,13 @@ class CityOpenAICompatibleProviderV2:
                 and credential.origin_approval_id == profile.origin_approval_id
                 and credential.credential_slot_id == profile.credential_slot_id
                 and (
-                    (endpoint.trust_class == "local" and credential.source == "local-dummy")
+                    (
+                        endpoint.trust_class == "local"
+                        and credential.source in LOCAL_CREDENTIAL_SOURCES
+                    )
                     or (
                         endpoint.trust_class == "remote"
-                        and credential.source in {"keyring", "environment"}
+                        and credential.source in REMOTE_CREDENTIAL_SOURCES
                     )
                 )
             )

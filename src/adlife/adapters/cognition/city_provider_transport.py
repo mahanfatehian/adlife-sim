@@ -13,6 +13,8 @@ from typing import Any, ClassVar, Literal, cast
 import httpcore
 
 from adlife.adapters.cognition.city_credentials import (
+    LOCAL_CREDENTIAL_SOURCES,
+    REMOTE_CREDENTIAL_SOURCES,
     CityCredentialStoreError,
     ResolvedCredential,
     SecretBuffer,
@@ -507,10 +509,13 @@ class CityProviderHttpTransport:
                 and re.fullmatch(r"[0-9a-f]{64}", credential.credential_slot_id) is not None
                 and type(credential.source) is str
                 and (
-                    (endpoint.trust_class == "local" and credential.source == "local-dummy")
+                    (
+                        endpoint.trust_class == "local"
+                        and credential.source in LOCAL_CREDENTIAL_SOURCES
+                    )
                     or (
                         endpoint.trust_class == "remote"
-                        and credential.source in {"keyring", "environment"}
+                        and credential.source in REMOTE_CREDENTIAL_SOURCES
                     )
                 )
             )

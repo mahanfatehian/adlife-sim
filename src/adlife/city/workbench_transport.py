@@ -68,6 +68,13 @@ def _credential_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return {"credential": pairs[0][1]}
 
 
+def _credential_submission_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    names = [name for name, _value in pairs]
+    if names not in (["credential"], ["credential", "remember"], ["remember", "credential"]):
+        raise WorkbenchCredentialRequestError
+    return dict(pairs)
+
+
 def _credential_constant(_value: str) -> None:
     raise WorkbenchCredentialRequestError
 
@@ -90,7 +97,10 @@ def parse_workbench_credential_request(data: bytes) -> SecretBuffer:
         )
     if type(payload) is not dict or set(payload) != {"credential"}:
         raise WorkbenchCredentialRequestError
-    value = payload["credential"]
+    return _credential_value(payload["credential"])
+
+
+def _credential_value(value: object) -> SecretBuffer:
     if (
         type(value) is not str
         or not 1 <= len(value) <= MAX_PROVIDER_CREDENTIAL_BYTES
@@ -98,6 +108,30 @@ def parse_workbench_credential_request(data: bytes) -> SecretBuffer:
     ):
         raise WorkbenchCredentialRequestError
     return SecretBuffer(value)
+
+
+def parse_workbench_credential_submission(data: bytes) -> tuple[SecretBuffer, bool]:
+    """Accept ``{"credential": "..."}`` with an optional exact boolean ``"remember"``.
+
+    ``remember`` (default false) asks for the approved OS keyring; otherwise the server
+    holds the key in memory only. The same no-echo rules as
+    :func:`parse_workbench_credential_request` apply, and nothing else is accepted.
+    """
+    if type(data) is not bytes or len(data) > MAX_WORKBENCH_CREDENTIAL_BODY_BYTES:
+        raise WorkbenchCredentialRequestError
+    payload: object = None
+    with suppress(UnicodeError, ValueError, RecursionError):
+        payload = json.loads(
+            data.decode("utf-8", errors="strict"),
+            object_pairs_hook=_credential_submission_object,
+            parse_constant=_credential_constant,
+        )
+    if type(payload) is not dict or "credential" not in payload:
+        raise WorkbenchCredentialRequestError
+    remember = payload.get("remember", False)
+    if type(remember) is not bool:
+        raise WorkbenchCredentialRequestError
+    return _credential_value(payload["credential"]), remember
 
 
 def _exact_pack_schema_version(value: object) -> object:
@@ -622,5 +656,6 @@ __all__ = [
     "build_workbench_city_detail",
     "build_workbench_run_input_view",
     "parse_workbench_credential_request",
+    "parse_workbench_credential_submission",
     "parse_workbench_http_draft",
 ]

@@ -12,6 +12,8 @@ import ipaddress
 import re
 from contextlib import suppress
 from dataclasses import dataclass
+from hashlib import sha256
+from threading import Lock
 from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -263,13 +265,170 @@ def build_provider_runtime_policy(
     )
 
 
+MAX_PROVIDER_ORIGINS = 20
+_MAX_SLUG_LENGTH = 40
+
+
+def _operator_url(raw: str) -> str:
+    """Complete the address an operator typed: a missing scheme becomes https, or http for a
+    loopback literal, and the alias ``localhost`` becomes ``127.0.0.1``. Everything else is
+    left to :func:`normalize_provider_origin`, so the startup rules apply unchanged."""
+    message = "provider origin configuration is invalid"
+    if not isinstance(raw, str):
+        raise ProviderRuntimeConfigurationError(message) from None
+    text = raw.strip()
+    if not text or len(text.encode("utf-8")) > 2_048 or not text.isascii():
+        raise ProviderRuntimeConfigurationError(message) from None
+    if "://" not in text:
+        authority = text.split("/", maxsplit=1)[0].lower()
+        loopback = authority.startswith("[::1]") or any(
+            authority == host or authority.startswith(f"{host}:")
+            for host in ("127.0.0.1", "localhost")
+        )
+        text = f"{'http' if loopback else 'https'}://{text}"
+    parsed: SplitResult | None = None
+    with suppress(ValueError):
+        parsed = urlsplit(text)
+    if parsed is None:
+        raise ProviderRuntimeConfigurationError(message) from None
+    hostname: str | None = None
+    with suppress(ValueError):
+        hostname = parsed.hostname
+    if hostname == "localhost":
+        netloc = parsed.netloc
+        port = netloc.rsplit(":", maxsplit=1)[1] if netloc.count(":") == 1 else ""
+        replaced = "127.0.0.1" + (f":{port}" if port else "")
+        text = urlunsplit((parsed.scheme, replaced, parsed.path, parsed.query, parsed.fragment))
+    return text
+
+
+def _derived_approval_id(base_url: str, trust_class: Literal["local", "remote"]) -> str:
+    """One stable, portable approval id per normalized address, e.g. ``openrouter-ai-3f2a1c``.
+
+    The id depends only on the address, so connecting the same service again after a
+    restart revives the profiles saved for it."""
+    parsed = urlsplit(base_url)
+    digest = sha256(base_url.encode("ascii")).hexdigest()[:6]
+    if trust_class == "local":
+        port = parsed.port or (80 if parsed.scheme == "http" else 443)
+        return f"local-{port}-{digest}"
+    host = (parsed.hostname or "").removeprefix("api.")
+    slug = re.sub(r"[^a-z0-9]+", "-", host).strip("-")[:_MAX_SLUG_LENGTH].strip("-") or "service"
+    return f"{slug}-{digest}"
+
+
+class ProviderOriginRegistry:
+    """The live provider allowlist of one server process.
+
+    It starts as the startup policy (the ``--provider-origin`` and ``--provider-key-env``
+    flags) and grows when the operator connects another OpenAI-compatible address from the
+    guided pages. It only ever grows: nothing is removed or changed while the process runs,
+    so a job that started against an approval keeps it. Every addition is rebuilt through
+    :func:`build_provider_runtime_policy`, so it passes exactly the startup rules, and every
+    read is one complete frozen :class:`ProviderRuntimePolicy`. Additions are not written
+    anywhere; a restart forgets them, and connecting the same address again restores its
+    approval id."""
+
+    __slots__ = ("_key_bindings", "_lock", "_origin_bindings", "_policy", "_refused_ports")
+
+    def __init__(
+        self,
+        *,
+        provider_origins: Sequence[str] = (),
+        provider_key_envs: Sequence[str] = (),
+        refused_local_ports: Sequence[int] = (),
+    ) -> None:
+        self._origin_bindings: tuple[str, ...] = tuple(provider_origins)
+        self._key_bindings: tuple[str, ...] = tuple(provider_key_envs)
+        self._policy = build_provider_runtime_policy(
+            provider_origins=self._origin_bindings, provider_key_envs=self._key_bindings
+        )
+        self._refused_ports = frozenset(refused_local_ports)
+        self._lock = Lock()
+
+    @classmethod
+    def from_policy(
+        cls, policy: ProviderRuntimePolicy, *, refused_local_ports: Sequence[int] = ()
+    ) -> ProviderOriginRegistry:
+        """Start from an already built startup policy."""
+        if type(policy) is not ProviderRuntimePolicy:
+            raise ProviderRuntimeConfigurationError("provider runtime policy is invalid")
+        return cls(
+            provider_origins=[
+                f"{origin.approval_id}={origin.base_url}"
+                for origin in policy.origins
+                if origin.approval_id != DEFAULT_LOCAL_PROVIDER_APPROVAL_ID
+            ],
+            provider_key_envs=[
+                f"{binding.origin_approval_id}={binding.environment_variable}"
+                for binding in policy.key_environments
+            ],
+            refused_local_ports=refused_local_ports,
+        )
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} origins={len(self._policy.origins)}>"
+
+    @property
+    def policy(self) -> ProviderRuntimePolicy:
+        return self._policy
+
+    def approve(self, raw: str) -> ProviderOriginApproval:
+        """Approve one operator-typed address for this process and return its approval.
+
+        The same address always returns the same approval. A local address must be a
+        loopback literal on a port other than this server's own."""
+        base_url, trust_class = normalize_provider_origin(_operator_url(raw))
+        if trust_class == "local":
+            port = urlsplit(base_url).port or 80
+            if port in self._refused_ports:
+                raise ProviderRuntimeConfigurationError(
+                    "provider origin configuration is invalid"
+                ) from None
+        with self._lock:
+            for origin in self._policy.origins:
+                if origin.base_url == base_url:
+                    return origin
+            if len(self._policy.origins) >= MAX_PROVIDER_ORIGINS:
+                raise ProviderOriginLimitReached("provider origin limit reached") from None
+            approval_id = _derived_approval_id(base_url, trust_class)
+            if any(origin.approval_id == approval_id for origin in self._policy.origins):
+                raise ProviderRuntimeConfigurationError(
+                    "provider origin configuration is invalid"
+                ) from None
+            bindings = (*self._origin_bindings, f"{approval_id}={base_url}")
+            policy = build_provider_runtime_policy(
+                provider_origins=bindings, provider_key_envs=self._key_bindings
+            )
+            self._origin_bindings = bindings
+            self._policy = policy
+            return policy.approval(approval_id)
+
+
+class ProviderOriginLimitReached(ProviderRuntimeConfigurationError):
+    """The process already holds the most provider origins it accepts."""
+
+
+def current_provider_policy(
+    source: ProviderRuntimePolicy | ProviderOriginRegistry,
+) -> ProviderRuntimePolicy:
+    """The frozen policy behind a fixed policy or a live registry."""
+    if isinstance(source, ProviderOriginRegistry):
+        return source.policy
+    return source
+
+
 __all__ = [
     "DEFAULT_LOCAL_PROVIDER_APPROVAL_ID",
     "DEFAULT_LOCAL_PROVIDER_BASE_URL",
+    "MAX_PROVIDER_ORIGINS",
     "ProviderEnvironmentBinding",
     "ProviderOriginApproval",
+    "ProviderOriginLimitReached",
+    "ProviderOriginRegistry",
     "ProviderRuntimeConfigurationError",
     "ProviderRuntimePolicy",
     "build_provider_runtime_policy",
+    "current_provider_policy",
     "normalize_provider_origin",
 ]

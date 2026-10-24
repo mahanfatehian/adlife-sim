@@ -1,10 +1,12 @@
 """Origin-bound credentials for optional city narrative providers.
 
-Credential values are resolved only for one already validated immutable profile.  Local
-loopback profiles receive a fixed non-secret dummy value.  Remote profiles first consult
-an explicitly approved OS keyring backend and then, only when startup policy names one,
-the exact bound environment variable.  Nothing in this module prompts or persists a
-plaintext fallback.
+Credential values are resolved only for one already validated immutable profile.  A key
+the operator typed into the guided pages is held in this process's memory for its approved
+origin ("session") and is consulted first; it is never written anywhere and is gone when
+the server stops.  Without one, local loopback profiles receive a fixed non-secret dummy
+value, and remote profiles consult an explicitly approved OS keyring backend and then,
+only when startup policy names one, the exact bound environment variable.  Nothing in this
+module prompts or persists a plaintext fallback.
 
 ``SecretBuffer.clear`` is best-effort memory hygiene, not a zeroization guarantee: Python,
 the OS keyring implementation, and the HTTP stack may create immutable copies.
@@ -24,13 +26,19 @@ from pydantic import ValidationError
 from adlife.city.provider_profiles import ProviderProfileRevisionV1
 from adlife.city.provider_runtime import (
     ProviderOriginApproval,
+    ProviderOriginRegistry,
     ProviderRuntimeConfigurationError,
     ProviderRuntimePolicy,
+    current_provider_policy,
 )
 
 MAX_PROVIDER_CREDENTIAL_BYTES = 4_096
 KEYRING_SERVICE_NAME = "adlife.city-provider.v1"
 LOCAL_PROVIDER_CREDENTIAL_SOURCE: Literal["local-dummy"] = "local-dummy"
+SESSION_CREDENTIAL_SOURCE: Literal["session"] = "session"
+# The sources a resolved credential may come from, by the endpoint's trust class.
+REMOTE_CREDENTIAL_SOURCES = frozenset({"session", "keyring", "environment"})
+LOCAL_CREDENTIAL_SOURCES = frozenset({"local-dummy", "session"})
 _LOCAL_DUMMY_CREDENTIAL = "adlife-local-provider"
 
 _APPROVED_OS_BACKEND_IDENTITIES = frozenset(
@@ -122,7 +130,7 @@ def _new_local_dummy_credential() -> SecretBuffer:
 class ResolvedCredential:
     """One operation-local secret plus non-secret source and binding metadata."""
 
-    source: Literal["local-dummy", "keyring", "environment"]
+    source: Literal["local-dummy", "session", "keyring", "environment"]
     secret: SecretBuffer
     origin_approval_id: str
     credential_slot_id: str
@@ -146,6 +154,12 @@ class CityCredentialStore(Protocol):
     def store(self, profile: ProviderProfileRevisionV1, credential: SecretBuffer) -> None: ...
 
 
+class SessionCredentialHolder(Protocol):
+    """A store that can also hold a key in process memory for one approved origin."""
+
+    def hold(self, profile: ProviderProfileRevisionV1, credential: SecretBuffer) -> None: ...
+
+
 def _load_default_backend() -> object:
     import keyring
 
@@ -153,26 +167,32 @@ def _load_default_backend() -> object:
 
 
 class OSKeyringCityCredentialStore:
-    """Lazy keyring/environment resolver constrained by one startup policy."""
+    """Session/keyring/environment resolver constrained by the process's provider policy."""
 
     service_name = KEYRING_SERVICE_NAME
 
     def __init__(
         self,
-        policy: ProviderRuntimePolicy,
+        policy: ProviderRuntimePolicy | ProviderOriginRegistry,
         *,
         backend: object | None = None,
         backend_loader: Callable[[], object] | None = None,
         approved_backend_types: tuple[type[object], ...] = (),
         environ: Mapping[str, str] | None = None,
     ) -> None:
-        self._policy = policy
+        self._policy_source = policy
+        # Approval id -> the key the operator typed for that origin; memory only.
+        self._session: dict[str, SecretBuffer] = {}
         self._backend = backend
         self._backend_loaded = backend is not None
         self._backend_loader = backend_loader or _load_default_backend
         self._approved_backend_types = approved_backend_types
         self._environ = environ
         self._lock = RLock()
+
+    @property
+    def _policy(self) -> ProviderRuntimePolicy:
+        return current_provider_policy(self._policy_source)
 
     def __repr__(self) -> str:
         return (
@@ -286,8 +306,23 @@ class OSKeyringCityCredentialStore:
             credential_slot_id=profile.credential_slot_id,
         )
 
+    def _from_session(self, profile: ProviderProfileRevisionV1) -> ResolvedCredential | None:
+        held = self._session.get(profile.origin_approval_id)
+        if held is None or held.cleared:
+            return None
+        return ResolvedCredential(
+            source=SESSION_CREDENTIAL_SOURCE,
+            secret=held.copy(),
+            origin_approval_id=profile.origin_approval_id,
+            credential_slot_id=profile.credential_slot_id,
+        )
+
     def resolve(self, profile: ProviderProfileRevisionV1) -> ResolvedCredential:
         profile, approval = self._validated_profile(profile)
+        with self._lock:
+            session_credential = self._from_session(profile)
+        if session_credential is not None:
+            return session_credential
         if approval.trust_class == "local":
             return ResolvedCredential(
                 source=LOCAL_PROVIDER_CREDENTIAL_SOURCE,
@@ -313,6 +348,32 @@ class OSKeyringCityCredentialStore:
             return True
         finally:
             resolved.clear()
+
+    def hold(self, profile: ProviderProfileRevisionV1, credential: SecretBuffer) -> None:
+        """Keep one key in this process's memory for the profile's approved origin.
+
+        It replaces any key held for that origin, serves every revision of it, and is never
+        written anywhere: :meth:`forget_session` or the end of the process removes it."""
+        profile, _approval = self._validated_profile(profile)
+        copied = credential.copy()
+        with self._lock:
+            previous = self._session.pop(profile.origin_approval_id, None)
+            self._session[profile.origin_approval_id] = copied
+        if previous is not None:
+            previous.clear()
+
+    def holds_session_key(self, origin_approval_id: str) -> bool:
+        with self._lock:
+            held = self._session.get(origin_approval_id)
+            return held is not None and not held.cleared
+
+    def forget_session(self) -> None:
+        """Clear every key held in memory (server shutdown)."""
+        with self._lock:
+            held = list(self._session.values())
+            self._session.clear()
+        for secret in held:
+            secret.clear()
 
     def store(self, profile: ProviderProfileRevisionV1, credential: SecretBuffer) -> None:
         profile, approval = self._validated_profile(profile)
@@ -340,8 +401,11 @@ class OSKeyringCityCredentialStore:
 
 __all__ = [
     "KEYRING_SERVICE_NAME",
+    "LOCAL_CREDENTIAL_SOURCES",
     "LOCAL_PROVIDER_CREDENTIAL_SOURCE",
     "MAX_PROVIDER_CREDENTIAL_BYTES",
+    "REMOTE_CREDENTIAL_SOURCES",
+    "SESSION_CREDENTIAL_SOURCE",
     "ApprovedKeyringUnavailable",
     "CityCredentialStore",
     "CityCredentialStoreError",
@@ -349,4 +413,5 @@ __all__ = [
     "ProviderCredentialUnavailable",
     "ResolvedCredential",
     "SecretBuffer",
+    "SessionCredentialHolder",
 ]

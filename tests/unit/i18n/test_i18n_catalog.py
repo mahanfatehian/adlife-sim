@@ -127,6 +127,12 @@ PERSONA_KEYS = {
     "persona-002": "veyra",
     "persona-003": "orilo",
     "persona-004": "nuvin",
+    "persona-005": "pimo",
+    "persona-006": "zarel",
+    "persona-007": "ketra",
+    "persona-008": "tavi",
+    "persona-009": "selun",
+    "persona-010": "halvi",
 }
 
 
@@ -186,8 +192,11 @@ def test_english_catalog_is_the_normative_appendix_a_key_set() -> None:
     # place labels (home, work, free time), and the rehearsal review's additions: six
     # direction-specific liking effects in place of "higher" and "lower", two "new values"
     # arithmetic lines, the opening counter, the practice-run note, the over-limit note and the
-    # once-each label summary.
-    assert len(english.message_keys()) == 516
+    # once-each label summary. The content extension adds six personas (name and tagline),
+    # four creatives (category and message), two towns and the four town-picker messages.
+    # Connecting any OpenAI-compatible service adds the address, remember-key and status
+    # messages, and the removed technical view and GapGPT-only setup take theirs away.
+    assert len(english.message_keys()) == 547
     assert english.text("progress.title.done") == "Simulation finished"
     assert english.text("progress.answered", resolved=3, total=10) == "3 of 10 answered"
     assert english.text("common.app") == "AdLife Lab"

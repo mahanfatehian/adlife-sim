@@ -3,19 +3,15 @@
 from __future__ import annotations
 
 import copy
-import html
 import re
-from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from importlib.resources import files
-from threading import RLock
 from typing import Any, Literal, get_args, get_origin
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -58,12 +54,14 @@ from adlife.city.provider_profiles import (
     ProviderProfileRegistry,
     ProviderProfileRegistryUnavailable,
 )
-from adlife.city.provider_runtime import ProviderRuntimePolicy, build_provider_runtime_policy
+from adlife.city.provider_runtime import (
+    ProviderOriginRegistry,
+    ProviderRuntimePolicy,
+    build_provider_runtime_policy,
+)
 from adlife.city.run_store import StoredCityRun
 from adlife.city.web import (
     CityViewContext,
-    city_dashboard_response,
-    city_static_asset_response,
     city_validation_error_response,
     create_city_view_context,
     install_city_view_routes,
@@ -106,6 +104,7 @@ from adlife.city.workbench_personas import (
     load_persona_template_catalog,
 )
 from adlife.city.workbench_providers import (
+    InvalidProviderOrigin,
     WorkbenchCheckProviderFactory,
     WorkbenchCheckProviderFactoryV2,
     WorkbenchOperationState,
@@ -114,6 +113,7 @@ from adlife.city.workbench_providers import (
     WorkbenchProviderClosed,
     WorkbenchProviderController,
     WorkbenchProviderEndpointRefused,
+    WorkbenchProviderOriginLimit,
     WorkbenchProviderRateLimited,
 )
 from adlife.city.workbench_runs import (
@@ -135,7 +135,7 @@ from adlife.city.workbench_transport import (
     WorkbenchDraftTransportError,
     build_workbench_city_catalog_row,
     build_workbench_city_detail,
-    parse_workbench_credential_request,
+    parse_workbench_credential_submission,
     parse_workbench_http_draft,
 )
 from adlife.city.workbench_validation import (
@@ -169,9 +169,8 @@ _ASSET_LIMIT_BYTES = 262_144
 _RUN_ID_IN_USE_MESSAGE = "A saved run already uses this ID. Choose a new run ID."
 _CANONICAL_UNSIGNED_INTEGER = re.compile(r"^(?:0|[1-9][0-9]*)$")
 _JOB_ID = re.compile(r"^job-[0-9a-f]{32}$")
-_INSPECTOR_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
-_INSPECTOR_TOKEN_HEADER = b"x-adlife-view-token"
-_MAX_INSPECTOR_SNAPSHOTS = 8
+# The removed saved-run inspector page sent this snapshot header; nothing issues it now.
+_VIEW_TOKEN_HEADER = b"x-adlife-view-token"
 _WORKBENCH_FIELD_COMPONENTS = frozenset(
     {
         "active_windows",
@@ -268,54 +267,6 @@ class WorkbenchInputUnavailable(ValueError):
 
 class WorkbenchCognitionUnavailable(ValueError):
     """A verified legacy run has no frozen city cognition evidence."""
-
-
-@dataclass(frozen=True, slots=True)
-class _InspectorSnapshot:
-    run_id: str
-    stored: StoredCityRun
-    view: CityViewContext
-
-
-class _InspectorSnapshots:
-    """Bounded process-local snapshots created by a fully verified inspector load."""
-
-    def __init__(self, *, limit: int = _MAX_INSPECTOR_SNAPSHOTS) -> None:
-        self._limit = limit
-        self._lock = RLock()
-        self._items: OrderedDict[str, _InspectorSnapshot] = OrderedDict()
-
-    def issue(self, snapshot: _InspectorSnapshot) -> str:
-        with self._lock:
-            shared_snapshot = next(
-                (
-                    existing
-                    for existing in reversed(self._items.values())
-                    if existing.run_id == snapshot.run_id
-                    and existing.stored.manifest == snapshot.stored.manifest
-                ),
-                snapshot,
-            )
-            token = new_csrf_token()
-            while token in self._items:
-                token = new_csrf_token()
-            self._items[token] = shared_snapshot
-            self._items.move_to_end(token)
-            while len(self._items) > self._limit:
-                self._items.popitem(last=False)
-            return token
-
-    def resolve(self, token: str, *, run_id: str) -> _InspectorSnapshot | None:
-        with self._lock:
-            snapshot = self._items.get(token)
-            if snapshot is None or snapshot.run_id != run_id:
-                return None
-            self._items.move_to_end(token)
-            return snapshot
-
-    def clear(self) -> None:
-        with self._lock:
-            self._items.clear()
 
 
 def _read_packaged_text(relative: str) -> str:
@@ -547,15 +498,26 @@ def create_city_workbench_app(
     workspace: WorkbenchWorkspace,
     *,
     csrf_token: str | None = None,
-    provider_runtime: ProviderRuntimePolicy | None = None,
+    provider_runtime: ProviderRuntimePolicy | ProviderOriginRegistry | None = None,
     credential_store: CityCredentialStore | None = None,
     provider_factory: WorkbenchCheckProviderFactory | None = None,
     provider_factory_v2: WorkbenchCheckProviderFactoryV2 | None = None,
+    server_port: int | None = None,
 ) -> FastAPI:
-    """Build one process-local control app after rechecking its pinned workspace."""
+    """Build one process-local control app after rechecking its pinned workspace.
+
+    The startup provider policy becomes a live origin registry, so the guided pages can
+    connect another OpenAI-compatible address for this process (never this server's own
+    ``server_port``)."""
     verify_workbench_workspace(workspace)
     token = new_csrf_token() if csrf_token is None else csrf_token
-    runtime = build_provider_runtime_policy() if provider_runtime is None else provider_runtime
+    if isinstance(provider_runtime, ProviderOriginRegistry):
+        runtime = provider_runtime
+    else:
+        runtime = ProviderOriginRegistry.from_policy(
+            build_provider_runtime_policy() if provider_runtime is None else provider_runtime,
+            refused_local_ports=() if server_port is None else (server_port,),
+        )
     provider_registry = ProviderProfileRegistry(workspace)
     credentials = (
         OSKeyringCityCredentialStore(runtime) if credential_store is None else credential_store
@@ -583,7 +545,6 @@ def create_city_workbench_app(
     )
     jobs = CityJobManager(repository, operations=operations)
     city_resolver = WorkbenchCityResolver(workspace)
-    inspector_snapshots = _InspectorSnapshots()
     effect_scopes = list(get_args(ProviderEffectScope))
     bounded_cognition = _bounded_cognition_capabilities()
 
@@ -660,39 +621,29 @@ def create_city_workbench_app(
     def verified_city_view(run_id: object) -> CityViewContext:
         return city_view_from_stored(verified_stored_run(run_id))
 
-    def inspector_snapshot(request: Request, run_id: object) -> _InspectorSnapshot | None:
+    def refuse_view_token(request: Request, run_id: object) -> None:
+        """Screen the run ID, then refuse the retired inspector's snapshot header.
+
+        Only the removed saved-run inspector page issued view tokens, so a request that
+        still carries one names no snapshot: it is refused, never silently re-verified.
+        """
         try:
-            portable_run_id = validate_run_id(run_id)
+            validate_run_id(run_id)
         except UnsafeRunLocation:
             raise WorkbenchRunNotFound from None
-        raw_tokens = [
-            value
-            for name, value in request.scope.get("headers", ())
-            if name.lower() == _INSPECTOR_TOKEN_HEADER
-        ]
-        if not raw_tokens:
-            return None
-        if len(raw_tokens) != 1:
+        if any(
+            name.lower() == _VIEW_TOKEN_HEADER for name, _value in request.scope.get("headers", ())
+        ):
             raise WorkbenchRunUnavailable
-        try:
-            snapshot_token = raw_tokens[0].decode("ascii", errors="strict")
-        except UnicodeDecodeError:
-            raise WorkbenchRunUnavailable from None
-        if _INSPECTOR_TOKEN.fullmatch(snapshot_token) is None:
-            raise WorkbenchRunUnavailable
-        snapshot = inspector_snapshots.resolve(snapshot_token, run_id=portable_run_id)
-        if snapshot is None:
-            raise WorkbenchRunUnavailable
-        return snapshot
 
     def resolve_city_view(request: Request) -> CityViewContext:
         run_id = request.path_params.get("run_id")
-        snapshot = inspector_snapshot(request, run_id)
-        return snapshot.view if snapshot is not None else verified_city_view(run_id)
+        refuse_view_token(request, run_id)
+        return verified_city_view(run_id)
 
     def resolve_stored_run(request: Request, run_id: object) -> StoredCityRun:
-        snapshot = inspector_snapshot(request, run_id)
-        return snapshot.stored if snapshot is not None else verified_stored_run(run_id)
+        refuse_view_token(request, run_id)
+        return verified_stored_run(run_id)
 
     def resolve_cognition_run(request: Request, run_id: str) -> StoredCityRun:
         stored = resolve_stored_run(request, run_id)
@@ -717,7 +668,10 @@ def create_city_workbench_app(
             yield
         finally:
             jobs.close()
-            inspector_snapshots.clear()
+            # Keys typed into the guided pages never outlive the server process.
+            forget = getattr(credentials, "forget_session", None)
+            if callable(forget):
+                forget()
 
     app = FastAPI(
         title="AdLife local city workbench",
@@ -726,7 +680,8 @@ def create_city_workbench_app(
         openapi_url=None,
         lifespan=lifespan,
     )
-    app.state.provider_runtime = runtime
+    app.state.provider_runtime = runtime.policy
+    app.state.provider_origins = runtime
     app.state.provider_controller = providers
     app.add_middleware(
         TrustedHostMiddleware,
@@ -1021,6 +976,28 @@ def create_city_workbench_app(
             "The provider profile is not allowed by the current startup policy.",
         )
 
+    @app.exception_handler(InvalidProviderOrigin)
+    async def invalid_provider_origin_handler(
+        _request: Request,
+        _error: InvalidProviderOrigin,
+    ) -> JSONResponse:
+        return workbench_error(
+            422,
+            "invalid-provider-origin",
+            "The provider address is not allowed.",
+        )
+
+    @app.exception_handler(WorkbenchProviderOriginLimit)
+    async def provider_origin_limit_handler(
+        _request: Request,
+        _error: WorkbenchProviderOriginLimit,
+    ) -> JSONResponse:
+        return workbench_error(
+            409,
+            "provider-origin-limit",
+            "This server already holds the most provider addresses it accepts.",
+        )
+
     @app.exception_handler(InvalidProviderProfile)
     async def invalid_provider_profile_handler(
         _request: Request,
@@ -1231,89 +1208,10 @@ def create_city_workbench_app(
             "The request could not be completed.",
         )
 
-    def render_shell(reuse_run_id: str = "") -> HTMLResponse:
-        template = _read_packaged_text("workbench.html")
-        markers = {"__ADLIFE_CSRF_TOKEN__": token, "__ADLIFE_REUSE_RUN__": reuse_run_id}
-        if any(template.count(marker) != 1 for marker in markers):
-            raise RuntimeError("workbench interface token marker is invalid")
-        rendered = template
-        for marker, value in markers.items():
-            rendered = rendered.replace(marker, html.escape(value, quote=True))
-        return HTMLResponse(rendered, headers=_SHELL_HEADERS)
-
     @app.get("/", include_in_schema=False)
-    def shell() -> HTMLResponse:
-        return render_shell()
-
-    @app.get("/runs/{run_id}/reuse", include_in_schema=False)
-    def reuse_shell(run_id: str, request: Request) -> HTMLResponse:
-        """The workbench, asked to start a new draft from one saved run's verified inputs.
-
-        Only a portable run ID reaches the page; the browser then reads the run's frozen
-        input through the same verified read-only route the inspector uses.
-        """
-        _require_empty_query(request)
-        try:
-            portable_run_id = validate_run_id(run_id)
-        except UnsafeRunLocation:
-            raise WorkbenchRunNotFound from None
-        return render_shell(portable_run_id)
-
-    @app.get("/assets/workbench.css", include_in_schema=False)
-    def stylesheet() -> Response:
-        return Response(
-            _read_packaged_text("workbench.css"),
-            media_type="text/css",
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    @app.get("/assets/workbench.js", include_in_schema=False)
-    def client_script() -> Response:
-        return Response(
-            _read_packaged_text("workbench.js"),
-            media_type="text/javascript",
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    @app.get("/assets/workbench-city-packs.js", include_in_schema=False)
-    def city_pack_script() -> Response:
-        return Response(
-            _read_packaged_text("workbench-city-packs.js"),
-            media_type="text/javascript",
-            headers=_SHELL_HEADERS,
-        )
-
-    @app.get("/assets/workbench-personas.js", include_in_schema=False)
-    def persona_script() -> Response:
-        return Response(
-            _read_packaged_text("workbench-personas.js"),
-            media_type="text/javascript",
-            headers=_SHELL_HEADERS,
-        )
-
-    @app.get("/assets/workbench-personas.css", include_in_schema=False)
-    def persona_stylesheet() -> Response:
-        return Response(
-            _read_packaged_text("workbench-personas.css"),
-            media_type="text/css",
-            headers=_SHELL_HEADERS,
-        )
-
-    @app.get("/assets/workbench-providers.js", include_in_schema=False)
-    def provider_script() -> Response:
-        return Response(
-            _read_packaged_text("workbench-providers.js"),
-            media_type="text/javascript",
-            headers=_SHELL_HEADERS,
-        )
-
-    @app.get("/assets/workbench-providers.css", include_in_schema=False)
-    def provider_stylesheet() -> Response:
-        return Response(
-            _read_packaged_text("workbench-providers.css"),
-            media_type="text/css",
-            headers=_SHELL_HEADERS,
-        )
+    def root() -> RedirectResponse:
+        """The server serves only the guided pages, so its root address opens the guide."""
+        return RedirectResponse("/guide", status_code=307, headers=_SHELL_HEADERS)
 
     @app.get("/assets/workbench-icon.svg", include_in_schema=False)
     def icon() -> Response:
@@ -1321,24 +1219,6 @@ def create_city_workbench_app(
             _read_packaged_text("workbench-icon.svg"),
             media_type="image/svg+xml",
             headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    @app.get("/static/{asset_name}", include_in_schema=False)
-    def city_static_asset(asset_name: str) -> Response:
-        return city_static_asset_response(asset_name)
-
-    @app.get("/runs/{run_id}", include_in_schema=False)
-    def inspect_run(run_id: str, request: Request) -> HTMLResponse:
-        _require_empty_query(request)
-        stored = verified_stored_run(run_id)
-        context = city_view_from_stored(stored)
-        assert context.run_id is not None
-        view_token = inspector_snapshots.issue(
-            _InspectorSnapshot(run_id=context.run_id, stored=stored, view=context)
-        )
-        return city_dashboard_response(
-            api_base=f"/api/runs/{context.run_id}",
-            view_token=view_token,
         )
 
     @app.get("/api/workbench")
@@ -1436,6 +1316,16 @@ def create_city_workbench_app(
         profile = providers.create(strict_json_object(await request.body()))
         return JSONResponse(status_code=201, content=profile.model_dump(mode="json"))
 
+    @app.post("/api/providers/origins")
+    async def approve_provider_origin(request: Request) -> JSONResponse:
+        """Approve one typed OpenAI-compatible address for this process (never a key)."""
+        _require_empty_query(request)
+        payload = strict_json_object(await request.body())
+        if set(payload) != {"base_url"}:
+            raise InvalidProviderOrigin
+        origin = providers.approve_origin(payload["base_url"])
+        return JSONResponse(content=origin.model_dump(mode="json"))
+
     @app.post("/api/providers/{profile_id}/revisions/{revision_id}/credential")
     async def store_provider_credential(
         profile_id: str,
@@ -1443,8 +1333,8 @@ def create_city_workbench_app(
         request: Request,
     ) -> JSONResponse:
         _require_empty_query(request)
-        credential = parse_workbench_credential_request(await request.body())
-        profile = providers.store_credential(profile_id, revision_id, credential)
+        credential, remember = parse_workbench_credential_submission(await request.body())
+        profile = providers.store_credential(profile_id, revision_id, credential, remember=remember)
         return JSONResponse(content=profile.model_dump(mode="json"))
 
     @app.post("/api/providers/{profile_id}/revisions/{revision_id}/check")

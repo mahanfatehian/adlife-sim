@@ -25,6 +25,7 @@ from adlife.city.provider_runtime import (
     DEFAULT_LOCAL_PROVIDER_APPROVAL_ID,
     ProviderEnvironmentBinding,
     ProviderOriginApproval,
+    ProviderOriginRegistry,
     ProviderRuntimePolicy,
     build_provider_runtime_policy,
 )
@@ -274,22 +275,42 @@ def _canonical_public_answers(raw: object) -> tuple[str, ...] | None:
 class CityEndpointPolicy:
     """Bind approved profiles and produce one fail-closed DNS snapshot per attempt."""
 
-    __slots__ = ("_resolver", "_runtime_policy")
+    __slots__ = ("_checked", "_registry", "_resolver", "_seen")
 
     _resolver: CityAddressResolver
-    _runtime_policy: ProviderRuntimePolicy
+    _checked: ProviderRuntimePolicy
+    _registry: ProviderOriginRegistry | None
+    _seen: ProviderRuntimePolicy
 
     def __init__(
         self,
-        runtime_policy: ProviderRuntimePolicy,
+        runtime_policy: ProviderRuntimePolicy | ProviderOriginRegistry,
         *,
         resolver: CityAddressResolver | None = None,
     ) -> None:
-        self._runtime_policy = _checked_runtime_policy(runtime_policy)
+        if type(runtime_policy) is ProviderOriginRegistry:
+            self._registry = runtime_policy
+            self._seen = runtime_policy.policy
+        else:
+            self._registry = None
+            self._seen = cast("ProviderRuntimePolicy", runtime_policy)
+        self._checked = _checked_runtime_policy(self._seen)
         candidate: object = SystemCityAddressResolver() if resolver is None else resolver
         if not callable(getattr(candidate, "resolve", None)):
             raise CityEndpointBindingError() from None
         self._resolver = cast("CityAddressResolver", candidate)
+
+    @property
+    def _runtime_policy(self) -> ProviderRuntimePolicy:
+        """The current allowlist: the fixed one, or the live registry's latest frozen
+        policy, rebuilt and rechecked each time the registry has grown."""
+        registry = self._registry
+        if registry is not None:
+            current = registry.policy
+            if current is not self._seen:
+                self._checked = _checked_runtime_policy(current)
+                self._seen = current
+        return self._checked
 
     def bind(self, profile: ProviderProfileRevisionV1) -> BoundProviderEndpoint:
         """Revalidate and bind one profile to its exact startup-approved origin."""

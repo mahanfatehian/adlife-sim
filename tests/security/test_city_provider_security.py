@@ -284,7 +284,8 @@ async def test_v2_protocol_exception_discards_raw_body_and_parser_frames() -> No
 
     _module()
     marker = "opaque-provider-diagnostic-sentinel"
-    request, _, provider, *_ = _provider(_completion("{}", unknown=marker))
+    # A wrong envelope type is a protocol error; members nobody reads are ignored instead.
+    request, _, provider, *_ = _provider(_completion("{}", object=marker))
     with pytest.raises(CityProviderProtocolError) as caught:
         await provider.call(request)
     assert caught.value.__cause__ is caught.value.__context__ is None

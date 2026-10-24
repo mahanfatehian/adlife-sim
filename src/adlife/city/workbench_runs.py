@@ -21,6 +21,8 @@ from pydantic import Field, field_validator, model_validator
 from adlife.adapters.cognition.city_cache import CityCognitionCache
 from adlife.adapters.cognition.city_cache_v2 import CityCognitionCacheV2
 from adlife.adapters.cognition.city_credentials import (
+    LOCAL_CREDENTIAL_SOURCES,
+    REMOTE_CREDENTIAL_SOURCES,
     CityCredentialStore,
     OSKeyringCityCredentialStore,
     ResolvedCredential,
@@ -45,7 +47,11 @@ from adlife.city.provider_profiles import (
     ProviderProfileRegistry,
     ProviderProfileRevisionV1,
 )
-from adlife.city.provider_runtime import ProviderRuntimePolicy, build_provider_runtime_policy
+from adlife.city.provider_runtime import (
+    ProviderOriginRegistry,
+    ProviderRuntimePolicy,
+    build_provider_runtime_policy,
+)
 from adlife.city.run_store import (
     CityRunStore,
     StoredCityRun,
@@ -801,7 +807,7 @@ class WorkbenchRunRepository:
         self,
         workspace: WorkbenchWorkspace,
         *,
-        provider_runtime: ProviderRuntimePolicy | None = None,
+        provider_runtime: ProviderRuntimePolicy | ProviderOriginRegistry | None = None,
         provider_registry: ProviderProfileRegistry | None = None,
         credential_store: CityCredentialStore | None = None,
         endpoint_policy: CityEndpointPolicy | None = None,
@@ -1059,10 +1065,13 @@ class WorkbenchRunRepository:
             or credential.origin_approval_id != operation.profile.origin_approval_id
             or credential.credential_slot_id != operation.profile.credential_slot_id
             or credential.secret.cleared
-            or (operation.profile.mode == "local" and credential.source != "local-dummy")
+            or (
+                operation.profile.mode == "local"
+                and credential.source not in LOCAL_CREDENTIAL_SOURCES
+            )
             or (
                 operation.profile.mode == "remote"
-                and credential.source not in {"environment", "keyring"}
+                and credential.source not in REMOTE_CREDENTIAL_SOURCES
             )
         ):
             raise ValueError("V2 cognition operation does not match the frozen provider")

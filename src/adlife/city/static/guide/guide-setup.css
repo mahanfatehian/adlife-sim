@@ -293,14 +293,41 @@
   color: var(--ink-2);
 }
 
-.setup-conn__service {
+/* Addresses used before: one tap fills the address and the model last used there. */
+.setup-conn__recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-block-start: var(--s-1);
+}
+
+.setup-conn__recent-label {
+  margin: 0;
   color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+
+.setup-conn__recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  min-inline-size: 0;
+}
+
+.setup-conn__recent-item {
+  max-inline-size: 100%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
   font-family: var(--font-mono);
   font-size: var(--fs-s);
+  cursor: pointer;
   overflow-wrap: anywhere;
 }
 
-.setup-conn__service .g-seg { font-family: var(--font-ui); }
+.setup-conn__recent-item:hover:not(:disabled) { border-color: var(--primary); }
+.setup-conn__recent-item:disabled { cursor: not-allowed; opacity: 0.6; }
 
 .setup-conn__thinking {
   margin: 0;
@@ -336,23 +363,31 @@
   font-size: var(--fs-s);
 }
 
-.setup-conn__key-needed {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
+.setup-conn__key-title {
+  padding-block: var(--s-2);
+  padding-inline: var(--s-3);
   border: 1px solid var(--practice);
   border-radius: var(--r-2);
   background: var(--practice-tint);
+  color: var(--ink);
+  font-weight: 600;
 }
 
-.setup-conn__key-needed > * { margin-block: 0; }
+.setup-conn__remember {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--ink);
+  cursor: pointer;
+}
 
-.setup-conn__key-title { color: var(--ink); font-weight: 600; }
-
-.setup-conn__key-env { color: var(--ink-2); }
-
-.setup-conn__key-save { background: var(--surface); }
+.setup-conn__remember-box {
+  flex: none;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  margin-block-start: 0.15rem;
+  accent-color: var(--primary);
+}
 
 .setup-conn__key-form {
   display: flex;
@@ -486,13 +521,73 @@
   font-size: var(--fs-xl);
 }
 
-/* One product per row in a narrow card; a row of choices when the card spans the page. */
+/* Setup page: the town picker, one compact choice per town with a street preview */
+
+/* Compact, so the three cards still start near the top of a 1280 x 720 projector. */
+.setup-towns {
+  gap: var(--s-2);
+  padding-block: var(--s-3) var(--s-4);
+}
+
+.setup-towns__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-4);
+}
+
+.setup-towns__head > * { margin: 0; }
+
+.setup-towns__title { font-size: var(--fs-l); }
+
+.setup-towns__list {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.5rem), 1fr));
+  gap: var(--s-2);
+}
+
+@media (max-width: 599px) {
+  .setup-towns__list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.setup-town {
+  gap: var(--s-1);
+  padding-block: var(--s-2);
+  padding-inline: var(--s-2);
+}
+
+.setup-town::after {
+  inset-block-start: var(--s-2);
+  inset-inline-end: var(--s-2);
+}
+
+.setup-town__name {
+  min-inline-size: 0;
+  padding-inline-end: 1.75rem;
+  overflow-wrap: anywhere;
+}
+
+.setup-town__map {
+  display: block;
+  inline-size: 100%;
+  block-size: 3.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--map-bg);
+}
+
+.setup-town__stats {
+  min-block-size: 1lh;
+  overflow-wrap: anywhere;
+}
+
+/* One product per row on a phone and in the narrow three-card layout; two or four per
+   row when the card spans the page. */
 .setup-products {
   grid-template-columns: minmax(0, 1fr);
   gap: var(--s-2);
 }
 
-@media (min-width: 700px) and (max-width: 999px) {
+@media (min-width: 480px) and (max-width: 999px) {
   .setup-products { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -501,6 +596,18 @@
 }
 
 .setup-product { gap: 2px; }
+
+@media (min-width: 1200px) {
+  .setup-product {
+    padding-block: var(--s-2);
+    padding-inline: var(--s-3) calc(var(--s-3) + 1.25rem);
+  }
+
+  .setup-product::after {
+    inset-block-start: var(--s-2);
+    inset-inline-end: var(--s-2);
+  }
+}
 
 .setup-product__head {
   display: flex;
@@ -545,6 +652,18 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* Ten personas: beside the other cards the list scrolls on its own, so the presets, the
+   total and the Run bar stay in view; a phone simply scrolls the page. */
+@media (min-width: 700px) {
+  .setup-people {
+    max-block-size: min(34rem, 72vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-inline-end: var(--s-2);
+    scrollbar-gutter: stable;
+  }
 }
 
 .setup-person {

@@ -6,15 +6,19 @@ import { ApiError, announce, bdi, clear, el, getJson, postJson } from "./guide-c
 
 export const BOUNDED_SCOPE = "bounded-signals-v1";
 
-const GAPGPT_ID = "gapgpt";
-const GAPGPT_HOST = "api.gapgpt.app";
-const GAPGPT_MODEL = "gapgpt-qwen-3.6";
-const LOCAL_ID = "local-ollama";
-const LOCAL_MODEL = "qwen2.5:7b-instruct";
-const KEY_VARIABLE_FALLBACK = "GAPGPT_API_KEY";
+// Ollama's default OpenAI-compatible address and a model it serves; LM Studio and any
+// other server on this computer just need their own address typed instead.
+const LOCAL_DEFAULT_ADDRESS = "127.0.0.1:11434/v1";
+const LOCAL_DEFAULT_MODEL = "qwen2.5:7b-instruct";
+const LM_STUDIO_ADDRESS = "127.0.0.1:1234/v1";
+const LOOPBACK = "127.0.0.1";
+// Only a placeholder: any OpenAI-compatible service works.
+const REMOTE_EXAMPLE_ADDRESS = "openrouter.ai/api/v1";
 const PROTOCOL = "openai-chat-completions-json-schema-v1";
 const MAX_CANDIDATES = 10;
 const MAX_MODEL_LENGTH = 120;
+const MAX_ADDRESS_LENGTH = 300;
+const MAX_RECENT_ADDRESSES = 4;
 const RESOLVE_DELAY_MS = 400;
 const TEST_COOLDOWN_MS = 3000;
 const CHECK_LIMIT_SECONDS = Object.freeze({ remote: 60, local: 120 });
@@ -64,6 +68,13 @@ const SOURCE_TEXT = Object.freeze({
   local: () => t("connection.source.local"),
   mock: () => t("connection.source.mock"),
   rules: () => t("connection.source.rules"),
+});
+// Why a typed address could not be used ("invalid" is rendered with its own parameter).
+const ADDRESS_ERRORS = Object.freeze({
+  required: () => t("connection.url.required"),
+  limit: () => t("connection.url.limit"),
+  "is-local": () => t("connection.url.is-local"),
+  "is-remote": () => t("connection.url.is-remote"),
 });
 const SOURCE_HINT = Object.freeze({
   remote: () => t("connection.source.remote.hint"),
@@ -233,12 +244,22 @@ export function radioGroup(group, { onSelect = () => {} } = {}) {
   };
 }
 
-function hostOf(origin) {
-  try {
-    return new URL(origin.base_url).host;
-  } catch (_error) {
-    return "";
-  }
+/**
+ * A comparable form of a typed or approved address: no scheme, no trailing slash, the
+ * default ports dropped and `localhost` read as 127.0.0.1, the way the server normalizes.
+ */
+function addressKey(text) {
+  let value = String(text ?? "").trim().toLowerCase();
+  value = value.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+  value = value.replace(/\/+$/, "");
+  value = value.replace(/^localhost(?=[:/]|$)/, "127.0.0.1");
+  value = value.replace(/^([^/]+):(?:80|443)(?=\/|$)/, "$1");
+  return value;
+}
+
+/** An address as people read it: the server's base URL without its scheme. */
+function shownAddress(baseUrl) {
+  return String(baseUrl ?? "").replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
 }
 
 function profileKey(profile) {
@@ -276,7 +297,10 @@ class Connection {
     this.profiles = [];
     this.loadError = null;
     this.source = "mock";
-    this.originIds = { remote: null, local: null };
+    // What the operator typed per source; the server approves it on the first click.
+    this.addresses = { remote: "", local: LOCAL_DEFAULT_ADDRESS };
+    this.addressError = null;
+    // Model text per source and address.
     this.models = new Map();
     this.profile = null;
     this.check = null;
@@ -344,21 +368,45 @@ class Connection {
       text: t("common.not_an_ai"),
     });
     d.sourceHintRow = el("div", { className: "setup-conn__hint-row" }, d.sourceHint, d.practiceBadge);
-    d.noRemote = el("p", {
-      className: "g-callout g-callout--warn setup-conn__no-remote",
-      text: t("connection.no_remote"),
-    });
 
-    d.service = el("div", { className: "setup-conn__service" });
+    d.address = el("input", {
+      className: "g-input",
+      attrs: {
+        id: "conn-url",
+        type: "text",
+        dir: "ltr",
+        spellcheck: "false",
+        autocomplete: "off",
+        autocapitalize: "off",
+        inputmode: "url",
+        maxlength: String(MAX_ADDRESS_LENGTH),
+        "aria-describedby": "conn-url-help conn-url-error",
+      },
+    });
+    d.addressHelp = el("p", { className: "g-help", attrs: { id: "conn-url-help" } });
+    d.addressError = el("p", { className: "g-error", attrs: { id: "conn-url-error" } });
+    d.recentLabel = el("p", {
+      className: "setup-conn__recent-label",
+      text: t("connection.recent"),
+      attrs: { id: "conn-recent-label" },
+    });
+    d.recentList = el("div", {
+      className: "setup-conn__recent-list",
+      attrs: { role: "group", "aria-labelledby": "conn-recent-label" },
+    });
+    d.recent = el("div", { className: "setup-conn__recent" }, d.recentLabel, d.recentList);
     d.serviceRow = el(
       "div",
       { className: "g-field" },
-      el("p", {
+      el("label", {
         className: "g-label",
-        text: t("connection.service"),
-        attrs: { id: "conn-service-label" },
+        text: t("connection.url"),
+        attrs: { for: "conn-url" },
       }),
-      d.service,
+      d.address,
+      d.addressHelp,
+      d.addressError,
+      d.recent,
     );
 
     d.model = el("input", {
@@ -416,42 +464,34 @@ class Connection {
       text: t("connection.key.save"),
       attrs: { type: "button", id: "conn-key-save" },
     });
+    d.keyRemember = el("input", {
+      className: "setup-conn__remember-box",
+      attrs: { id: "conn-key-remember", type: "checkbox", "aria-describedby": "conn-key-warning" },
+    });
     d.keyStatus = el("p", { className: "setup-conn__key-status", attrs: { id: "conn-key-status" } });
-    d.keyEnv = el("p", { className: "setup-conn__key-env" });
-    d.keyDetails = el(
-      "details",
-      { className: "g-details setup-conn__key-save", attrs: { id: "conn-key-details" } },
-      el("summary", { text: t("connection.key.save_title") }),
-      el("p", {
-        className: "g-help",
-        text: t("connection.key.save_warning"),
-        attrs: { id: "conn-key-warning" },
-      }),
-      el(
-        "div",
-        { className: "setup-conn__key-form" },
-        el("label", {
-          className: "g-label",
-          text: t("connection.key.label"),
-          attrs: { for: "conn-key" },
-        }),
-        d.keyInput,
-        d.keySave,
-      ),
-    );
-    d.keyNeeded = el(
-      "div",
-      { className: "setup-conn__key-needed", attrs: { id: "conn-key-needed", tabindex: "-1" } },
-      el("p", { className: "setup-conn__key-title", text: t("connection.key.needed") }),
-      d.keyEnv,
-      d.keyDetails,
-    );
+    d.keyNeeded = el("p", {
+      className: "setup-conn__key-title",
+      text: t("connection.key.needed"),
+      attrs: { id: "conn-key-needed", tabindex: "-1" },
+    });
     d.keyRow = el(
       "div",
       { className: "g-field setup-conn__key" },
-      el("p", { className: "g-label", text: t("connection.key.label") }),
+      el("label", { className: "g-label", text: t("connection.key.label"), attrs: { for: "conn-key" } }),
       d.keyAvailable,
       d.keyNeeded,
+      el("div", { className: "setup-conn__key-form" }, d.keyInput, d.keySave),
+      el(
+        "label",
+        { className: "setup-conn__remember", attrs: { for: "conn-key-remember" } },
+        d.keyRemember,
+        el("span", { text: t("connection.key.remember") }),
+      ),
+      el("p", {
+        className: "g-help",
+        text: t("connection.key.memory_note"),
+        attrs: { id: "conn-key-warning" },
+      }),
       d.keyStatus,
     );
 
@@ -493,7 +533,6 @@ class Connection {
       d.sourceLabel,
       d.sources,
       d.sourceHintRow,
-      d.noRemote,
       d.providerBlock,
     );
 
@@ -519,9 +558,14 @@ class Connection {
       );
     }
     // Until the provider listing arrives only the source choices show; update() decides the rest.
-    for (const node of [d.practiceBadge, d.noRemote, d.providerBlock, d.statusBlock]) node.hidden = true;
+    for (const node of [d.practiceBadge, d.providerBlock, d.statusBlock]) node.hidden = true;
 
     this.sourceGroup = radioGroup(d.sources, { onSelect: (value) => this.selectSource(value) });
+    d.address.addEventListener("input", () => this.onAddressInput());
+    d.recentList.addEventListener("click", (event) => {
+      const button = event.target instanceof Element ? event.target.closest("button") : null;
+      if (button !== null && d.recentList.contains(button)) this.useRecent(button.dataset.address ?? "");
+    });
     d.model.addEventListener("input", () => this.onModelInput());
     d.keySave.addEventListener("click", () => {
       void this.saveKey();
@@ -543,15 +587,24 @@ class Connection {
     return this.origins.filter((origin) => origin.trust_class === source);
   }
 
+  addressText() {
+    return PROVIDER_SOURCES.has(this.source) ? this.addresses[this.source] ?? "" : "";
+  }
+
+  /** The approved origin for the typed address, or null until the server approves it. */
   origin() {
     if (!PROVIDER_SOURCES.has(this.source)) return null;
-    const id = this.originIds[this.source];
-    return this.origins.find((origin) => origin.approval_id === id) ?? null;
+    const key = addressKey(this.addressText());
+    if (key === "") return null;
+    return this.originsOf(this.source).find((origin) => addressKey(origin.base_url) === key) ?? null;
+  }
+
+  modelSlot() {
+    return `${this.source}|${addressKey(this.addressText())}`;
   }
 
   modelText() {
-    const origin = this.origin();
-    return origin === null ? "" : this.models.get(origin.approval_id) ?? "";
+    return PROVIDER_SOURCES.has(this.source) ? this.models.get(this.modelSlot()) ?? "" : "";
   }
 
   modelValue() {
@@ -559,11 +612,33 @@ class Connection {
     return value.length >= 1 && value.length <= MAX_MODEL_LENGTH ? value : null;
   }
 
-  prefill(origin) {
-    if (origin.approval_id === GAPGPT_ID || hostOf(origin) === GAPGPT_HOST) return GAPGPT_MODEL;
-    if (origin.approval_id === LOCAL_ID) return LOCAL_MODEL;
-    const listed = this.profiles.filter((item) => item.origin_approval_id === origin.approval_id);
-    return listed.length > 0 ? listed[listed.length - 1].model_id : "";
+  /** Saved profiles of a source, newest first. */
+  profilesOf(source) {
+    return this.profiles.filter((profile) => profile.mode === source).reverse();
+  }
+
+  /** The model last used with an address, or Ollama's default model for its address. */
+  prefill(source, address) {
+    const key = addressKey(address);
+    const used = this.profilesOf(source).find((profile) => addressKey(profile.base_url) === key);
+    if (used !== undefined) return used.model_id;
+    return source === "local" && key === addressKey(LOCAL_DEFAULT_ADDRESS) ? LOCAL_DEFAULT_MODEL : "";
+  }
+
+  /** Addresses of a source used before or approved at startup, newest first. */
+  recentAddresses(source) {
+    const seen = new Set();
+    const listed = [];
+    const add = (baseUrl) => {
+      const key = addressKey(baseUrl);
+      if (key === "" || seen.has(key)) return;
+      seen.add(key);
+      listed.push(shownAddress(baseUrl));
+    };
+    for (const profile of this.profilesOf(source)) add(profile.base_url);
+    for (const origin of this.originsOf(source)) add(origin.base_url);
+    if (source === "local") add(LOCAL_DEFAULT_ADDRESS);
+    return listed.slice(0, MAX_RECENT_ADDRESSES);
   }
 
   draft() {
@@ -574,7 +649,7 @@ class Connection {
     const value = {
       schema_version: 1,
       profile_id: `guide-${origin.approval_id}`.slice(0, 64),
-      display_label: `Guided demo - ${origin.approval_id}`,
+      display_label: `Guided - ${origin.approval_id}`.slice(0, 80),
       mode: origin.trust_class,
       base_url: origin.base_url,
       model_id: model,
@@ -602,30 +677,39 @@ class Connection {
     return this.busy || this.check === "testing";
   }
 
+  /** A key typed but not sent yet; it is sent with the next test or run. */
+  typedKey() {
+    return this.source === "remote" ? this.dom.keyInput.value : "";
+  }
+
   /** Whether the API key is known to be missing (true), present (false) or unknown (null). */
   keyMissing() {
-    const origin = this.origin();
-    if (origin === null || origin.trust_class !== "remote") return false;
+    if (this.source !== "remote") return false;
+    if (this.typedKey() !== "") return false;
     if (this.profile !== null) return this.profile.credential_available !== true;
     if (this.needsKey) return true;
-    // Without a bound variable only a saved key can work, and no revision exists to hold one.
-    return origin.environment_variable === null ? true : null;
+    const origin = this.origin();
+    // A startup-bound environment variable may hold the key; otherwise one must be typed.
+    return origin !== null && typeof origin.environment_variable === "string" ? null : true;
   }
 
   payload() {
     const provider = PROVIDER_SOURCES.has(this.source);
     const missing = this.keyMissing();
+    const address = this.addressText().trim();
     return {
       source: this.source,
       mode: this.source,
       origin: provider ? this.origin() : null,
+      address: provider ? address : null,
+      addressValid: provider ? address !== "" && this.addressError === null : true,
       profile: provider ? this.profile : null,
       credentialAvailable: provider ? (missing === null ? null : !missing) : null,
       check: provider ? this.check : null,
       reasonCode: provider ? this.reason : null,
       ready: provider ? this.check === "ok" && this.profile !== null : true,
       model: provider ? this.modelValue() : null,
-      modelValid: provider ? this.origin() !== null && this.modelValue() !== null : true,
+      modelValid: provider ? this.modelValue() !== null : true,
     };
   }
 
@@ -649,10 +733,12 @@ class Connection {
     } catch (error) {
       this.loadError = error;
     }
+    // Start each source on the address used last (or approved at startup), with its model.
     for (const source of PROVIDER_SOURCES) {
-      this.originIds[source] = this.originsOf(source)[0]?.approval_id ?? null;
+      const address = this.recentAddresses(source)[0] ?? this.addresses[source];
+      this.addresses[source] = address;
+      this.models.set(`${source}|${addressKey(address)}`, this.prefill(source, address));
     }
-    for (const origin of this.origins) this.models.set(origin.approval_id, this.prefill(origin));
     await this.chooseDefault();
     const early = this.earlyChoice;
     this.earlyChoice = null;
@@ -663,6 +749,7 @@ class Connection {
       if (PROVIDER_SOURCES.has(early)) await this.resolveNow();
       else this.resetProvider();
     }
+    this.syncAddressInput();
     this.syncModelInput();
     if (this.loadError !== null) this.notice = { tone: "bad", nodes: errorNodes(this.loadError) };
     this.update();
@@ -674,15 +761,16 @@ class Connection {
       const found = await this.findRecorded(this.originsOf(source));
       if (found !== null) {
         this.source = source;
-        this.originIds[source] = found.origin_approval_id;
-        this.models.set(found.origin_approval_id, found.model_id);
+        this.addresses[source] = shownAddress(found.base_url);
+        this.models.set(`${source}|${addressKey(found.base_url)}`, found.model_id);
         this.profile = found;
         this.check = "ok";
         this.fresh = false;
         return;
       }
     }
-    if (this.originsOf("remote").length > 0) {
+    // An online service used before (or approved at startup) is the likely choice again.
+    if (this.addresses.remote !== "") {
       this.source = "remote";
       await this.resolveNow();
       return;
@@ -696,7 +784,8 @@ class Connection {
     const listed = this.profiles.filter(
       (profile) => ids.has(profile.origin_approval_id) && profile.endpoint_policy_accepted === true,
     );
-    const preferred = (profile) => profile.model_id === this.models.get(profile.origin_approval_id);
+    const preferred = (profile) =>
+      profile.model_id === this.models.get(`${profile.mode}|${addressKey(profile.base_url)}`);
     const ordered = [
       ...listed.filter(preferred).reverse(),
       ...listed.filter((profile) => !preferred(profile)).reverse(),
@@ -730,8 +819,10 @@ class Connection {
     this.needsKey = false;
     const origin = this.origin();
     const model = this.modelValue();
-    if (origin === null || model === null) return;
+    if (this.addressText().trim() === "" || model === null) return;
     this.check = "untested";
+    // An address the server has not approved yet has no usable revision until the click.
+    if (origin === null) return;
     const candidates = this.profiles.filter(
       (profile) =>
         profile.origin_approval_id === origin.approval_id &&
@@ -786,9 +877,9 @@ class Connection {
 
   // ----- user actions ----------------------------------------------------------------
 
-  /** Whether a source can be chosen: provider sources need an approved origin. */
+  /** Every source can be chosen: an AI source only needs an address typed in. */
   available(source) {
-    return SOURCES.includes(source) && (!PROVIDER_SOURCES.has(source) || this.originsOf(source).length > 0);
+    return SOURCES.includes(source);
   }
 
   /** Forget the provider state when an offline source is chosen. */
@@ -816,7 +907,9 @@ class Connection {
     this.source = source;
     this.notice = null;
     this.keyNotice = null;
+    this.addressError = null;
     this.profileRefused = false;
+    this.syncAddressInput();
     this.syncModelInput();
     if (PROVIDER_SOURCES.has(source)) this.requestResolve(0);
     else this.resetProvider();
@@ -824,27 +917,50 @@ class Connection {
     this.emit();
   }
 
-  selectOrigin(approvalId) {
-    if (!PROVIDER_SOURCES.has(this.source) || this.locked()) {
-      this.update();
-      return;
+  onAddressInput() {
+    if (!PROVIDER_SOURCES.has(this.source) || this.locked()) return;
+    const previous = this.modelSlot();
+    this.addresses[this.source] = this.dom.address.value;
+    // Keep the typed model when the address changes, unless that address has its own.
+    if (!this.models.has(this.modelSlot())) {
+      const remembered = this.prefill(this.source, this.addressText());
+      this.models.set(this.modelSlot(), remembered || this.models.get(previous) || "");
+      this.syncModelInput();
     }
-    if (this.originIds[this.source] === approvalId) return;
-    if (!this.originsOf(this.source).some((origin) => origin.approval_id === approvalId)) return;
-    this.originIds[this.source] = approvalId;
+    this.addressError = null;
+    this.profileRefused = false;
     this.notice = null;
     this.keyNotice = null;
+    this.requestResolve(RESOLVE_DELAY_MS);
+    this.update();
+    this.emit();
+  }
+
+  /** Fill in an address used before, with the model last used there. */
+  useRecent(address) {
+    if (!PROVIDER_SOURCES.has(this.source) || this.locked() || address === "") return;
+    this.addresses[this.source] = address;
+    if (!this.models.has(this.modelSlot())) {
+      this.models.set(this.modelSlot(), this.prefill(this.source, address));
+    }
+    this.addressError = null;
     this.profileRefused = false;
+    this.notice = null;
+    this.keyNotice = null;
+    this.syncAddressInput();
     this.syncModelInput();
     this.requestResolve(0);
     this.update();
     this.emit();
   }
 
+  syncAddressInput() {
+    this.dom.address.value = this.addressText();
+  }
+
   onModelInput() {
-    const origin = this.origin();
-    if (origin === null || this.locked()) return;
-    this.models.set(origin.approval_id, this.dom.model.value);
+    if (!PROVIDER_SOURCES.has(this.source) || this.locked()) return;
+    this.models.set(this.modelSlot(), this.dom.model.value);
     this.modelTouched = true;
     this.profileRefused = false;
     this.notice = null;
@@ -873,9 +989,53 @@ class Connection {
     this.profiles = (Array.isArray(listing?.profiles) ? listing.profiles : []).filter(usableProfile);
   }
 
+  /**
+   * Have the server approve the typed address for this process, only ever from a click.
+   * Returns the origin, or null with the reason shown under the address.
+   */
+  async ensureOrigin() {
+    const known = this.origin();
+    if (known !== null) return known;
+    const typed = this.addressText().trim();
+    if (typed === "") {
+      this.addressError = "required";
+      return null;
+    }
+    let view = null;
+    try {
+      view = await postJson("/api/providers/origins", { base_url: typed });
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === "invalid-provider-origin") this.addressError = "invalid";
+      else if (code === "provider-origin-limit") this.addressError = "limit";
+      else throw error;
+      return null;
+    }
+    if (
+      view === null ||
+      typeof view !== "object" ||
+      !ID_PATTERN.test(view.approval_id ?? "") ||
+      typeof view.base_url !== "string" ||
+      !PROVIDER_SOURCES.has(view.trust_class)
+    ) {
+      throw new ApiError(0, "unexpected-response");
+    }
+    if (!this.origins.some((origin) => origin.approval_id === view.approval_id)) this.origins.push(view);
+    if (view.trust_class !== this.source) {
+      // 127.0.0.1 typed under "Online AI", or a web address under "AI on this computer".
+      this.addressError = view.trust_class === "local" ? "is-local" : "is-remote";
+      return null;
+    }
+    this.addressError = null;
+    return view;
+  }
+
   /** Create the guided profile revision, only ever from a click. */
   async ensureProfile() {
     await this.settle();
+    if (this.profile !== null) return this.profile;
+    if ((await this.ensureOrigin()) === null) return null;
+    await this.resolveNow();
     if (this.profile !== null) return this.profile;
     const draft = this.draft();
     if (draft === null) return null;
@@ -903,38 +1063,60 @@ class Connection {
     return this.profile;
   }
 
+  /** The "Use this key" button; a typed key is also sent by the next test or run. */
   async saveKey() {
+    if (this.dom.keyInput.value === "") {
+      this.dom.keyInput.focus();
+      return;
+    }
+    if (this.locked()) return;
+    this.busy = true;
+    this.update();
+    try {
+      await this.sendKey();
+    } finally {
+      this.busy = false;
+      this.update();
+      this.emit();
+    }
+  }
+
+  /**
+   * Send the typed key once, for this connection, and clear the field whatever happens.
+   * Without "Remember" the server keeps it in memory only until it stops. Returns
+   * whether the key is now in place.
+   */
+  async sendKey() {
     const input = this.dom.keyInput;
     const value = input.value;
+    const remember = this.dom.keyRemember.checked === true;
+    if (value === "") return true;
+    this.keyNotice = { tone: "info", text: t("connection.key.saving") };
+    this.update();
     try {
-      if (value === "") {
-        input.focus();
-        return;
-      }
-      if (this.locked()) return;
-      this.busy = true;
-      this.keyNotice = { tone: "info", text: t("connection.key.saving") };
-      this.update();
       let profile = null;
       try {
         profile = await this.ensureProfile();
       } catch (error) {
         this.keyNotice = this.profileRefused ? null : { tone: "bad", nodes: errorNodes(error) };
-        return;
+        return false;
       }
       if (profile === null) {
         this.keyNotice = null;
-        return;
+        return false;
       }
-      const view = await postJson(revisionPath(profile, "credential"), { credential: value });
-      this.recorded.delete(profileKey(profile));
+      const view = await postJson(revisionPath(profile, "credential"), { credential: value, remember });
+      // A key in memory serves the whole service, so every earlier test of it is stale.
+      this.recorded.clear();
       this.replaceProfile(view);
       this.check = "untested";
       this.fresh = false;
       this.reason = null;
       this.needsKey = false;
-      this.keyNotice = { tone: "ok", text: t("connection.key.saved") };
-      announce(t("connection.key.saved"), { force: true });
+      const saved = remember ? t("connection.key.saved") : t("connection.key.held");
+      this.keyNotice = { tone: "ok", text: saved };
+      announce(saved, { force: true });
+      return true;
     } catch (error) {
       const code = errorCode(error);
       if (code === "credential-store-unavailable") {
@@ -946,11 +1128,9 @@ class Connection {
       } else {
         this.keyNotice = { tone: "bad", nodes: errorNodes(error) };
       }
+      return false;
     } finally {
       input.value = "";
-      this.busy = false;
-      this.update();
-      this.emit();
     }
   }
 
@@ -959,6 +1139,7 @@ class Connection {
     if (this.locked() || this.cooldown) return false;
     const profile = await this.prepare();
     if (profile === null) return false;
+    if (!(await this.sendTypedKey())) return false;
     if (this.keyMissing() === true) {
       this.promptForKey();
       return false;
@@ -984,12 +1165,28 @@ class Connection {
     }
   }
 
+  /** Send a key typed into the field before a test or run; true when nothing failed. */
+  async sendTypedKey() {
+    if (this.typedKey() === "") return true;
+    this.busy = true;
+    this.update();
+    try {
+      const sent = await this.sendKey();
+      if (!sent) this.openPanel();
+      return sent;
+    } finally {
+      this.busy = false;
+      this.update();
+      this.emit();
+    }
+  }
+
   promptForKey() {
     this.needsKey = true;
     this.openPanel();
     this.update();
     this.emit();
-    this.dom.keyNeeded.focus();
+    this.dom.keyInput.focus();
   }
 
   async runCheck(profile) {
@@ -1014,6 +1211,8 @@ class Connection {
           this.check = "ok";
           this.fresh = true;
           passed = true;
+          // "Key ready … now test the connection" has done its job.
+          if (this.keyNotice?.tone === "ok") this.keyNotice = null;
           this.recorded.set(profileKey(profile), Promise.resolve(true));
         } else {
           this.check = "failed";
@@ -1054,16 +1253,20 @@ class Connection {
   async ensureReady() {
     if (!PROVIDER_SOURCES.has(this.source)) return { ok: true, profile: null };
     await this.settle();
-    if (this.origin() === null || this.modelValue() === null) {
+    if (this.addressText().trim() === "" || this.modelValue() === null) {
       this.modelTouched = true;
+      if (this.addressText().trim() === "") this.addressError = "required";
       this.openPanel();
       this.update();
       return { ok: false, profile: null };
     }
-    if (this.check === "ok" && this.profile !== null) return { ok: true, profile: this.profile };
+    if (this.check === "ok" && this.profile !== null && this.typedKey() === "") {
+      return { ok: true, profile: this.profile };
+    }
     if (this.locked()) return { ok: false, profile: this.profile };
     const profile = await this.prepare();
     if (profile === null) return { ok: false, profile: null };
+    if (!(await this.sendTypedKey())) return { ok: false, profile };
     if (this.keyMissing() === true) {
       this.promptForKey();
       return { ok: false, profile, needsKey: true };
@@ -1103,55 +1306,65 @@ class Connection {
       const on = value === this.source;
       button.setAttribute("aria-checked", on ? "true" : "false");
       button.tabIndex = on ? 0 : -1;
-      const unavailable = PROVIDER_SOURCES.has(value) && this.originsOf(value).length === 0;
-      if (unavailable || (locked && !on)) button.setAttribute("aria-disabled", "true");
+      if (locked && !on) button.setAttribute("aria-disabled", "true");
       else button.removeAttribute("aria-disabled");
     }
     d.sourceHint.textContent = SOURCE_HINT[this.source]();
     d.practiceBadge.hidden = this.source !== "mock";
-    const origins = provider ? this.originsOf(this.source) : [];
-    d.noRemote.hidden = !(this.source === "remote" && origins.length === 0);
-    d.providerBlock.hidden = !provider || origins.length === 0;
-    if (provider && origins.length > 0) this.renderProvider(origins, locked);
+    d.providerBlock.hidden = !provider;
+    if (provider) this.renderProvider(locked);
     this.renderState();
     if (this.variant === "compact") this.renderSummary();
     this.root.dataset.source = this.source;
     this.root.dataset.check = this.check ?? "none";
   }
 
-  renderProvider(origins, locked) {
+  renderProvider(locked) {
     const d = this.dom;
-    const origin = this.origin();
-    const signature = `${this.source}|${origins.map((item) => item.approval_id).join(",")}`;
+    const source = this.source;
+    d.address.disabled = locked;
+    d.address.placeholder = source === "local" ? LOCAL_DEFAULT_ADDRESS : REMOTE_EXAMPLE_ADDRESS;
+    clear(d.addressHelp);
+    d.addressHelp.append(
+      source === "local"
+        ? message("connection.url.hint.local", {
+            ollama: { id: LOCAL_DEFAULT_ADDRESS },
+            lmstudio: { id: LM_STUDIO_ADDRESS },
+          })
+        : message("connection.url.hint.remote"),
+    );
+    clear(d.addressError);
+    if (this.addressError === "invalid") {
+      d.addressError.append(message("connection.url.invalid", { loopback: { id: LOOPBACK } }));
+    } else if (this.addressError !== null) {
+      d.addressError.append(ADDRESS_ERRORS[this.addressError]());
+    }
+    d.addressError.hidden = this.addressError === null;
+    d.address.setAttribute("aria-invalid", this.addressError === null ? "false" : "true");
+
+    const current = addressKey(this.addressText());
+    const recent = this.recentAddresses(source).filter((address) => addressKey(address) !== current);
+    const signature = `${source}|${recent.join(" ")}`;
     if (signature !== this.serviceSignature) {
       this.serviceSignature = signature;
-      clear(d.service);
-      if (origins.length === 1) {
-        d.service.append(
-          dotList("setup-conn__service-line", bdi(origins[0].approval_id, "ltr"), bdi(hostOf(origins[0]), "ltr")),
-        );
-      } else {
-        const group = el(
-          "div",
-          { className: "g-seg setup-conn__origins", attrs: { role: "radiogroup", "aria-labelledby": "conn-service-label" } },
-          ...origins.map((item) =>
-            el(
-              "button",
-              {
-                attrs: { type: "button", role: "radio", "aria-checked": "false" },
-                dataset: { value: item.approval_id },
-              },
-              dotList("", bdi(item.approval_id, "ltr"), bdi(hostOf(item), "ltr")),
-            ),
+      clear(d.recentList);
+      for (const address of recent) {
+        d.recentList.append(
+          el(
+            "button",
+            {
+              className: "g-chip setup-conn__recent-item",
+              attrs: { type: "button" },
+              dataset: { address },
+            },
+            bdi(address, "ltr"),
           ),
         );
-        d.service.append(group);
-        this.originGroup = radioGroup(group, { onSelect: (value) => this.selectOrigin(value) });
       }
     }
-    if (origins.length > 1 && this.originGroup !== undefined && origin !== null) {
-      this.originGroup.set(origin.approval_id);
-    }
+    d.recent.hidden = recent.length === 0;
+    for (const button of d.recentList.querySelectorAll("button")) button.disabled = locked;
+
     d.model.disabled = locked;
     const invalid = this.modelValue() === null && (this.modelTouched || this.modelText() !== "");
     if (this.profileRefused) d.modelError.textContent = t("connection.profile_error");
@@ -1161,26 +1374,16 @@ class Connection {
     d.model.setAttribute("aria-invalid", d.modelError.hidden ? "false" : "true");
     d.thinking.hidden = !this.thinkingOff();
 
-    const remote = origin !== null && origin.trust_class === "remote";
-    const missing = this.keyMissing();
-    d.keyRow.hidden = !remote || (missing === null && this.keyNotice === null);
-    d.keyAvailable.hidden = missing !== false;
-    d.keyNeeded.hidden = missing !== true;
-    clear(d.keyEnv);
-    if (remote && missing === true) {
-      const variable =
-        typeof origin.environment_variable === "string" && origin.environment_variable !== ""
-          ? origin.environment_variable
-          : KEY_VARIABLE_FALLBACK;
-      d.keyEnv.append(
-      message("connection.key.env_hint", {
-        script: { id: "powershell -ExecutionPolicy Bypass -File scripts\\start-guided-demo.ps1" },
-        variable: { id: variable },
-      }),
-    );
-    }
+    // Only an online service needs a key; a server on this computer gets a fixed dummy one.
+    const remote = source === "remote";
+    const ready = this.profile !== null && this.profile.credential_available === true;
+    d.keyRow.hidden = !remote;
+    d.keyAvailable.hidden = !ready;
+    d.keyNeeded.hidden = !(this.needsKey && !ready && this.typedKey() === "");
+    d.keyInput.placeholder = ready ? t("connection.key.placeholder_replace") : t("connection.key.placeholder");
     d.keySave.disabled = locked;
     d.keyInput.disabled = locked;
+    d.keyRemember.disabled = locked;
     clear(d.keyStatus);
     if (this.keyNotice !== null) {
       d.keyStatus.append(...(this.keyNotice.nodes ?? [this.keyNotice.text]));
@@ -1195,9 +1398,6 @@ class Connection {
   stateParts() {
     if (this.source === "mock") return { tone: "practice", nodes: [t("connection.source.mock.hint")] };
     if (this.source === "rules") return { tone: "neutral", nodes: [t("connection.source.rules.hint")] };
-    if (this.originsOf(this.source).length === 0) {
-      return { tone: "bad", nodes: [t(this.source === "remote" ? "connection.no_remote" : "connection.untested")] };
-    }
     if (this.notice !== null && this.check !== "testing") {
       return { tone: this.notice.tone, nodes: this.notice.nodes ?? [this.notice.text] };
     }
@@ -1219,6 +1419,9 @@ class Connection {
       };
     }
     if (this.needsKey) return { tone: "warn", nodes: [t("connection.key.needed")] };
+    if (this.addressText().trim() === "" || this.modelValue() === null) {
+      return { tone: "neutral", nodes: [t("connection.enter_details")] };
+    }
     return { tone: "neutral", nodes: [t("connection.untested")] };
   }
 
@@ -1264,6 +1467,11 @@ class Connection {
       focusModel: () => {
         this.openPanel();
         if (!this.dom.providerBlock.hidden) this.dom.model.focus();
+        else this.sourceGroup.focus();
+      },
+      focusAddress: () => {
+        this.openPanel();
+        if (!this.dom.providerBlock.hidden) this.dom.address.focus();
         else this.sourceGroup.focus();
       },
     };

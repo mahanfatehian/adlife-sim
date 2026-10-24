@@ -237,7 +237,6 @@ async def test_malformed_outer_unicode_is_rejected_in_the_strict_json_prepass() 
         "function_call",
         "none-finish",
         "stream",
-        "extra",
         "refusal",
         "tools",
         "function",
@@ -250,7 +249,6 @@ async def test_malformed_outer_unicode_is_rejected_in_the_strict_json_prepass() 
         "multiple",
         "usage-bool",
         "usage-total",
-        "usage-extra",
         "usage-details",
         "root-missing",
     ],
@@ -271,8 +269,6 @@ async def test_outer_envelope_requires_stop_or_length_and_closed_protocol(change
         choice["finish_reason"] = None
     elif change == "stream":
         envelope["object"] = "chat.completion.chunk"
-    elif change == "extra":
-        envelope["unknown"] = "opaque-diagnostic-marker"
     elif change == "refusal":
         message["refusal"] = "Refused"
     elif change in {"tools", "function", "audio", "reasoning"}:
@@ -302,8 +298,6 @@ async def test_outer_envelope_requires_stop_or_length_and_closed_protocol(change
         envelope["usage"]["prompt_tokens"] = True
     elif change == "usage-total":
         envelope["usage"]["total_tokens"] = 1
-    elif change == "usage-extra":
-        envelope["usage"]["unknown"] = 1
     elif change == "usage-details":
         envelope["usage"]["completion_tokens_details"] = {"reasoning_tokens": True}
     elif change == "root-missing":
@@ -408,6 +402,48 @@ def test_admitted_vllm_members_are_exactly_the_observed_set() -> None:
     assert module._FINISH_REASONS == ("stop", "length")
 
 
+def _gateway_completion(content, gateway) -> bytes:
+    """The extra members two other OpenAI-compatible gateways add (values fictional)."""
+    envelope = json.loads(_completion(content))
+    choice = envelope["choices"][0]
+    if gateway == "openrouter":
+        envelope.update(provider="Fictional Inference", system_fingerprint=None)
+        choice.update(native_finish_reason="stop", logprobs=None)
+        choice["message"].update(reasoning=None, reasoning_details=[], refusal=None)
+        envelope["usage"].update(
+            cost=0.000137,
+            is_byok=False,
+            prompt_tokens_details={"cached_tokens": 0, "audio_tokens": 0},
+            completion_tokens_details={"reasoning_tokens": 0, "image_tokens": 0},
+            cost_details={"upstream_inference_cost": None},
+        )
+    else:
+        envelope.update(
+            stats={"tokens_per_second": 41.5, "time_to_first_token": 0.2},
+            system_fingerprint="fictional-local-model",
+        )
+    return json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+
+
+@pytest.mark.parametrize("gateway", ["openrouter", "lm-studio"])
+async def test_other_gateways_extra_members_are_ignored_not_refused(gateway) -> None:
+    """Members nobody reads (OpenRouter's provider and cost, LM Studio's stats) are inert."""
+    _module()
+    request, _ = _provider_case()
+    body = _gateway_completion(json.dumps(_result(request.request_id)), gateway)
+    _, _, provider, credential, *_ = _provider(body)
+    attempt = await provider.call(request)
+    assert attempt.status == "valid"
+    assert attempt.result == CityCognitionResultV2.model_validate_json(
+        json.dumps(_result(request.request_id))
+    )
+    retained = attempt.model_dump_json() + repr(attempt) + repr(provider)
+    for vendor_text in ("Fictional Inference", "tokens_per_second", "is_byok"):
+        assert vendor_text not in retained
+    await provider.aclose()
+    credential.clear()
+
+
 async def test_vllm_gateway_metadata_is_admitted_but_never_parsed_or_retained() -> None:
     _module()
     request, frozen = _provider_case()
@@ -504,7 +540,6 @@ async def test_every_vllm_member_is_optional(container) -> None:
         ("envelope", "ec_transfer_params", {}),
         ("envelope", "metrics", []),
         ("envelope", "metrics", "fast"),
-        ("envelope", "vllm_debug", None),
         ("choice", "stop_reason", -1),
         ("choice", "stop_reason", True),
         ("choice", "stop_reason", 1.5),
@@ -517,7 +552,6 @@ async def test_every_vllm_member_is_optional(container) -> None:
         ("choice", "routed_experts", [[1, 2.5]]),
         ("choice", "routed_experts", [[True]]),
         ("choice", "routed_experts", {"layer": 1}),
-        ("choice", "vendor", None),
         ("message", "annotations", [{"type": "url_citation"}]),
         ("message", "annotations", {}),
         ("message", "audio", {"id": "audio-1"}),
@@ -527,12 +561,9 @@ async def test_every_vllm_member_is_optional(container) -> None:
         ("message", "reasoning", 3),
         ("message", "reasoning", ["step"]),
         ("message", "reasoning_content", {"text": "step"}),
-        ("message", "thinking", None),
     ],
 )
-async def test_vllm_members_with_another_type_and_unknown_members_are_protocol_errors(
-    container, field, value
-) -> None:
+async def test_vllm_members_with_another_type_are_protocol_errors(container, field, value) -> None:
     _module()
     request, _ = _provider_case()
     updates = {f"{container}_updates": {field: value}}

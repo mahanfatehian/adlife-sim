@@ -20,7 +20,16 @@ import {
 const PER_PERSON = 4;
 // A documented estimate: about 1.2-1.5k input plus at most 256 output tokens per question.
 const TOKENS_PER_QUESTION = 1300;
-const CITY_ID = "fictional-grid-v2";
+const DEFAULT_CITY = "fictional-grid-v2";
+// The rehearsed grid first, then the packaged towns from small to large; any other
+// packaged town follows in catalog order.
+const TOWN_ORDER = Object.freeze([
+  "fictional-grid-v2",
+  "fictional-harbor-loop-v2",
+  "fictional-river-junction-v2",
+  "fictional-old-town-v2",
+  "fictional-new-district-v2",
+]);
 const CAMPAIGN_ID = "fictional-launch";
 const DEFAULT_PRODUCT = "fictional-device-launch-v1";
 const PRODUCTS = Object.freeze({
@@ -28,18 +37,30 @@ const PRODUCTS = Object.freeze({
   "fictional-coffee-pass-v1": Object.freeze({ key: "coffee", interests: ["food", "leisure"] }),
   "fictional-crispy-meal-v1": Object.freeze({ key: "meal", interests: ["commuting", "food"] }),
   "fictional-home-delivery-v1": Object.freeze({ key: "delivery", interests: ["food", "leisure"] }),
+  "fictional-bike-share-v1": Object.freeze({ key: "bike", interests: ["commuting", "leisure"] }),
+  "fictional-book-box-v1": Object.freeze({ key: "books", interests: ["books", "leisure"] }),
+  "fictional-fitness-app-v1": Object.freeze({ key: "fitness", interests: ["cooking", "technology"] }),
+  "fictional-music-stream-v1": Object.freeze({ key: "music", interests: ["commuting", "music"] }),
 });
 const PERSONA_KEYS = Object.freeze({
   "persona-001": "lumo",
   "persona-002": "veyra",
   "persona-003": "orilo",
   "persona-004": "nuvin",
+  "persona-005": "pimo",
+  "persona-006": "zarel",
+  "persona-007": "ketra",
+  "persona-008": "tavi",
+  "persona-009": "selun",
+  "persona-010": "halvi",
 });
 const PRESETS = Object.freeze({
   contrast: Object.freeze({ "persona-001": 4, "persona-002": 4 }),
   classic: Object.freeze({ "persona-001": 4, "persona-004": 4 }),
-  all: Object.freeze({ "persona-001": 2, "persona-002": 2, "persona-003": 2, "persona-004": 2 }),
+  all: Object.freeze(Object.fromEntries(Object.keys(PERSONA_KEYS).map((id) => [id, 3]))),
 });
+// Ten persona colours; a mark's shape is its colour index % 4 (as on the story map).
+const MARK_SHAPES = ["circle", "square", "triangle", "diamond"];
 const KNOWN_INTERESTS = new Set([
   "books",
   "commuting",
@@ -51,14 +72,45 @@ const KNOWN_INTERESTS = new Set([
   "music",
   "technology",
 ]);
-const ROADSIDE = Object.freeze({
-  road_id: "middle-west",
-  travel_direction: "forward",
+// One billboard spot per packaged town: halfway along a busy two-way road, facing the
+// traffic that approaches it in the travel direction (a sign seen from more than 90
+// degrees off its facing never counts). A town without a spot offers phone ads only.
+const ROADSIDE_SPOT = Object.freeze({
   road_fraction: 0.5,
-  side: "right",
-  orientation_degrees: 90,
   max_view_distance_meters: 120,
   frequency_cap_per_agent_per_day: 2,
+});
+const ROADSIDE = Object.freeze({
+  "fictional-grid-v2": Object.freeze({
+    road_id: "middle-west",
+    travel_direction: "forward",
+    side: "right",
+    orientation_degrees: 259,
+  }),
+  "fictional-harbor-loop-v2": Object.freeze({
+    road_id: "harbor-arc-north",
+    travel_direction: "forward",
+    side: "right",
+    orientation_degrees: 270,
+  }),
+  "fictional-river-junction-v2": Object.freeze({
+    road_id: "junction-south-arm",
+    travel_direction: "forward",
+    side: "right",
+    orientation_degrees: 0,
+  }),
+  "fictional-old-town-v2": Object.freeze({
+    road_id: "old-bridge",
+    travel_direction: "forward",
+    side: "right",
+    orientation_degrees: 9,
+  }),
+  "fictional-new-district-v2": Object.freeze({
+    road_id: "street-3-de",
+    travel_direction: "backward",
+    side: "right",
+    orientation_degrees: 90,
+  }),
 });
 const ROADSIDE_START = 420;
 const ROADSIDE_END = 1140;
@@ -85,6 +137,8 @@ const state = {
   maxDays: 7,
   templates: [],
   personas: [],
+  city: DEFAULT_CITY,
+  towns: [],
   product: DEFAULT_PRODUCT,
   where: "phone",
   preset: "contrast",
@@ -137,6 +191,23 @@ function provider() {
   return state.conn !== null && PROVIDER_SOURCES.has(state.conn.source);
 }
 
+function roadside() {
+  return ROADSIDE[state.city] ?? null;
+}
+
+/** A packaged town's catalog name, or its own name for a town the catalog does not know. */
+function cityParam(cityId) {
+  if (TOWN_ORDER.includes(cityId)) return { key: `city.${cityId}` };
+  const town = state.towns.find((item) => item.cityId === cityId);
+  return { text: town?.name ?? cityId };
+}
+
+function markClass(colorIndex) {
+  const slot = colorIndex % 10;
+  const shape = colorIndex % 4 === slot % 4 ? "" : ` g-mark--${MARK_SHAPES[colorIndex % 4]}`;
+  return `g-mark--c${slot}${shape}`;
+}
+
 function template() {
   return state.templates.find((item) => item.template_id === state.product) ?? state.templates[0];
 }
@@ -174,6 +245,7 @@ function takenSeeds() {
       .filter(
         (run) =>
           run.run_schema_version === 10 &&
+          run.city_id === state.city &&
           run.scenario_id === scenario &&
           run.agent_count === people &&
           run.provider_profile_id === profile.profile_id &&
@@ -212,17 +284,18 @@ function buildDraft(runId) {
           eligible_activities: sortedText(state.activities),
           opportunity_probability_per_minute: state.frequency,
         };
-  const roadside =
-    state.where === "phone"
+  const spot = roadside();
+  const billboard =
+    state.where === "phone" || spot === null
       ? null
       : {
-          road_id: ROADSIDE.road_id,
-          travel_direction: ROADSIDE.travel_direction,
-          road_fraction: ROADSIDE.road_fraction,
-          side: ROADSIDE.side,
-          orientation_degrees: ROADSIDE.orientation_degrees,
-          max_view_distance_meters: ROADSIDE.max_view_distance_meters,
-          frequency_cap_per_agent_per_day: ROADSIDE.frequency_cap_per_agent_per_day,
+          road_id: spot.road_id,
+          travel_direction: spot.travel_direction,
+          road_fraction: ROADSIDE_SPOT.road_fraction,
+          side: spot.side,
+          orientation_degrees: spot.orientation_degrees,
+          max_view_distance_meters: ROADSIDE_SPOT.max_view_distance_meters,
+          frequency_cap_per_agent_per_day: ROADSIDE_SPOT.frequency_cap_per_agent_per_day,
           active_windows: dayWindows(ROADSIDE_START, ROADSIDE_END),
         };
   const personas = state.personas
@@ -246,7 +319,7 @@ function buildDraft(runId) {
       };
   return {
     schema_version: 4,
-    city_id: CITY_ID,
+    city_id: state.city,
     scenario: {
       scenario_id: scenarioId(),
       name: `Guided demo study - ${name}`,
@@ -258,7 +331,7 @@ function buildDraft(runId) {
         relative_price: state.price,
       },
       phone,
-      roadside,
+      roadside: billboard,
     },
     population: { personas },
     settings: {
@@ -289,6 +362,7 @@ function clientErrors() {
 }
 
 const TARGETS = Object.freeze({
+  town: { error: "town-error", more: false, focus: () => focusTown() },
   product: { error: "ad-error", more: false, focus: () => groups.products?.focus() },
   where: { error: "ad-error", more: false, focus: () => groups.where.focus() },
   people: { error: "people-error", more: false, focus: () => focusPeople() },
@@ -314,6 +388,7 @@ const TARGETS = Object.freeze({
 
 /** Map one refused field path from the server to the control that owns it. */
 function fieldTarget(field) {
+  if (field === "city_id") return "town";
   if (field.startsWith("population.") || field.startsWith("settings.agent_count")) return "people";
   if (field.startsWith("scenario.campaign.relative_price")) return "price";
   if (field.startsWith("scenario.campaign.target_interests")) return "interests";
@@ -337,6 +412,11 @@ function focusTarget(name) {
   target.focus();
 }
 
+function focusTown() {
+  if (groups.towns) groups.towns.focus();
+  else groups.products?.focus();
+}
+
 function focusPeople() {
   const button = byId("people-list").querySelector(".setup-stepper__button:not([disabled])");
   if (button !== null) button.focus();
@@ -348,8 +428,8 @@ function blockers() {
   if (totalPeople() === 0) {
     list.push({ text: t("setup.blocked.people"), target: "people" });
   }
-  if (state.conn?.source === "remote" && state.conn.origin === null) {
-    list.push({ text: t("setup.blocked.no_remote"), target: "ai" });
+  if (provider() && !state.conn.addressValid) {
+    list.push({ text: t("setup.blocked.address"), target: "address" });
   } else if (provider() && !state.conn.modelValid) {
     list.push({ text: t("setup.blocked.model"), target: "model" });
   }
@@ -385,6 +465,7 @@ function renderBlockers({ focus = false } = {}) {
       });
       fix.addEventListener("click", () => {
         if (blocker.target === "model") state.connection?.focusModel();
+        else if (blocker.target === "address") state.connection?.focusAddress();
         else focusTarget(blocker.target);
       });
       item.append(fix);
@@ -427,6 +508,15 @@ function renderErrors() {
   }
   byId("more-seed").setAttribute("aria-invalid", texts.has("more-seed-error") ? "true" : "false");
   byId("more-run-id").setAttribute("aria-invalid", texts.has("more-run-error") ? "true" : "false");
+}
+
+function renderTown() {
+  groups.towns?.set(state.city);
+  const offersBillboard = roadside() !== null;
+  for (const value of ["billboard", "both"]) {
+    byId("ad-where").querySelector(`[data-value="${value}"]`).hidden = !offersBillboard;
+  }
+  byId("ad-where-note").hidden = offersBillboard;
 }
 
 function renderAd() {
@@ -529,11 +619,11 @@ function renderSummary() {
   clear(node);
   node.append(
     message("setup.summary", {
-      city: { key: `city.${CITY_ID}` },
+      city: cityParam(state.city),
       days: { key: "common.days", count: state.days },
       from: { clock: phone ? state.from : ROADSIDE_START },
       until: { clock: phone ? state.until : ROADSIDE_END },
-      cap: { int: phone ? state.cap : ROADSIDE.frequency_cap_per_agent_per_day },
+      cap: { int: phone ? state.cap : ROADSIDE_SPOT.frequency_cap_per_agent_per_day },
       // A short number reads in the page's digits (Persian too); anything else stays an id.
       seed: /^[0-9]{1,4}$/.test(state.seed)
         ? { int: Number(state.seed) }
@@ -560,6 +650,7 @@ function refresh() {
     renderRunButton();
     return;
   }
+  renderTown();
   renderAd();
   renderPeople();
   renderAi();
@@ -625,12 +716,246 @@ function buildProducts() {
   groups.products = radioGroup(group, { onSelect: (value) => selectProduct(value) });
 }
 
-/** Template personas keep colours 0-3 (lumo, veyra, orilo, nuvin); others follow from 4. */
+// ----- the town picker -------------------------------------------------------------------
+
+const CITY_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
+const TOWN_ATTEMPTS = 2;
+const TOWN_RETRY_MS = 400;
+const MAJOR_ROADS = new Set(["motorway", "trunk", "primary"]);
+const PREVIEW_PADDING = 6;
+
+function townOrder(left, right) {
+  const rank = (town) => {
+    const index = TOWN_ORDER.indexOf(town.cityId);
+    return index < 0 ? TOWN_ORDER.length : index;
+  };
+  return rank(left) - rank(right) || left.index - right.index;
+}
+
+/** Nodes by ID and each road as a list of [longitude, latitude] points, or null. */
+function previewShape(pack) {
+  if (!Array.isArray(pack?.nodes) || !Array.isArray(pack.roads)) return null;
+  const nodes = new Map();
+  for (const node of pack.nodes) {
+    if (typeof node?.node_id === "string" && Number.isFinite(node.longitude) && Number.isFinite(node.latitude)) {
+      nodes.set(node.node_id, [node.longitude, node.latitude]);
+    }
+  }
+  const roads = [];
+  for (const road of pack.roads) {
+    const start = nodes.get(road?.source_node);
+    const end = nodes.get(road?.target_node);
+    if (start === undefined || end === undefined) continue;
+    const shape = (Array.isArray(road.shape) ? road.shape : [])
+      .filter((point) => Number.isFinite(point?.longitude) && Number.isFinite(point?.latitude))
+      .map((point) => [point.longitude, point.latitude]);
+    roads.push({ kind: road.kind, points: [start, ...shape, end] });
+  }
+  return roads.length > 0 ? { nodes: [...nodes.values()], roads } : null;
+}
+
+/** Draw one town's streets into its preview canvas: geography never mirrors. */
+function drawPreview(canvas, shape) {
+  const box = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.round(box.width));
+  const height = Math.max(1, Math.round(box.height));
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  const styles = getComputedStyle(canvas);
+  const token = (name, fallback) => styles.getPropertyValue(name).trim() || fallback;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.fillStyle = token("--map-bg", "#F8FAFC");
+  context.fillRect(0, 0, width, height);
+  const points = [...shape.nodes, ...shape.roads.flatMap((road) => road.points)];
+  const west = Math.min(...points.map((point) => point[0]));
+  const east = Math.max(...points.map((point) => point[0]));
+  const south = Math.min(...points.map((point) => point[1]));
+  const north = Math.max(...points.map((point) => point[1]));
+  const scaleX = Math.cos((((south + north) / 2) * Math.PI) / 180);
+  const worldWidth = Math.max((east - west) * scaleX, 1e-9);
+  const worldHeight = Math.max(north - south, 1e-9);
+  const usableWidth = Math.max(width - PREVIEW_PADDING * 2, 1);
+  const usableHeight = Math.max(height - PREVIEW_PADDING * 2, 1);
+  const scale = Math.min(usableWidth / worldWidth, usableHeight / worldHeight);
+  const offsetX = PREVIEW_PADDING + (usableWidth - worldWidth * scale) / 2;
+  const offsetY = PREVIEW_PADDING + (usableHeight - worldHeight * scale) / 2;
+  const project = ([longitude, latitude]) => [
+    offsetX + (longitude - west) * scaleX * scale,
+    offsetY + (north - latitude) * scale,
+  ];
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  // Minor streets first, so the main roads draw over every crossing.
+  for (const major of [false, true]) {
+    context.strokeStyle = major ? token("--ink-3", "#4B5563") : token("--map-road", "#A3AEC2");
+    context.lineWidth = major ? 2.5 : 1.5;
+    for (const road of shape.roads) {
+      if (MAJOR_ROADS.has(road.kind) !== major) continue;
+      context.setLineDash(road.kind === "path" ? [2, 3] : []);
+      context.beginPath();
+      road.points.forEach((point, index) => {
+        const [x, y] = project(point);
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
+    }
+  }
+  context.setLineDash([]);
+  context.fillStyle = token("--ink-3", "#4B5563");
+  for (const node of shape.nodes) {
+    const [x, y] = project(node);
+    context.beginPath();
+    context.arc(x, y, 1.5, 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
+function drawPreviews() {
+  for (const canvas of byId("town-list").querySelectorAll("canvas")) {
+    const town = state.towns.find((item) => item.cityId === canvas.dataset.city);
+    if (town?.shape) drawPreview(canvas, town.shape);
+  }
+}
+
+function townButton(town) {
+  const known = TOWN_ORDER.includes(town.cityId);
+  return el(
+    "button",
+    {
+      className: "g-choice setup-town",
+      attrs: { type: "button", role: "radio", "aria-checked": "false" },
+      dataset: { value: town.cityId },
+    },
+    el("canvas", {
+      className: "setup-town__map",
+      attrs: { "aria-hidden": "true", dir: "ltr" },
+      dataset: { city: town.cityId },
+    }),
+    el("span", { className: "g-choice__title setup-town__name" }, known ? t(`city.${town.cityId}`) : bdi(town.name)),
+    el("span", { className: "g-choice__meta setup-town__stats" }),
+  );
+}
+
+/** One town's street count and preview, once its graph has arrived. */
+function fillTown(town) {
+  const button = byId("town-list").querySelector(`[data-value="${town.cityId}"]`);
+  if (button === null) return;
+  const stats = button.querySelector(".setup-town__stats");
+  clear(stats);
+  if (town.nodes !== null && town.roads !== null) {
+    stats.append(message("setup.town.stats", { nodes: { int: town.nodes }, roads: { int: town.roads } }));
+  }
+  const canvas = button.querySelector("canvas");
+  if (town.shape) drawPreview(canvas, town.shape);
+}
+
+/** The rehearsed packaged towns at once, so the page never shifts; previews follow. */
+function buildTowns() {
+  state.towns = TOWN_ORDER.map((cityId, index) => ({
+    cityId,
+    name: null,
+    index,
+    shape: null,
+    nodes: null,
+    roads: null,
+  }));
+  const list = byId("town-list");
+  clear(list);
+  for (const town of state.towns) list.append(townButton(town));
+  groups.towns = radioGroup(list, { onSelect: (value) => selectTown(value) });
+  byId("setup-town").hidden = false;
+  if (typeof ResizeObserver === "function") {
+    let width = list.getBoundingClientRect().width;
+    new ResizeObserver(() => {
+      const next = list.getBoundingClientRect().width;
+      if (Math.abs(next - width) >= 1) {
+        width = next;
+        drawPreviews();
+      }
+    }).observe(list);
+  }
+}
+
+/** Without a verified town listing the picker offers nothing: the grid alone is used. */
+function dropTowns() {
+  byId("setup-town").hidden = true;
+  state.towns = [];
+  groups.towns = null;
+  if (state.city !== DEFAULT_CITY) {
+    state.city = DEFAULT_CITY;
+    clearMark("town");
+    refresh();
+  }
+}
+
+/** Keep only the towns the server lists as packaged, then draw each one's streets. */
+async function loadTowns() {
+  let listing = null;
+  for (let attempt = 1; listing === null; attempt += 1) {
+    try {
+      listing = await getJson("/api/catalog/cities");
+    } catch (_error) {
+      // One retry rides out a registry that another request held for a moment.
+      if (attempt >= TOWN_ATTEMPTS) {
+        dropTowns();
+        return;
+      }
+      await pause(TOWN_RETRY_MS);
+    }
+  }
+  const rows = (Array.isArray(listing?.cities) ? listing.cities : []).filter(
+    (row) =>
+      row?.storage_origin === "package" &&
+      typeof row.city_id === "string" &&
+      CITY_ID_PATTERN.test(row.city_id) &&
+      typeof row.display_name === "string",
+  );
+  if (!rows.some((row) => row.city_id === DEFAULT_CITY)) {
+    dropTowns();
+    return;
+  }
+  state.towns = rows
+    .map((row, index) => ({
+      cityId: row.city_id,
+      name: row.display_name,
+      index,
+      shape: null,
+      nodes: null,
+      roads: null,
+    }))
+    .sort(townOrder);
+  const list = byId("town-list");
+  const listed = new Set(state.towns.map((town) => town.cityId));
+  for (const button of [...list.querySelectorAll('[role="radio"]')]) {
+    if (!listed.has(button.dataset.value)) button.remove();
+  }
+  for (const town of state.towns) {
+    if (list.querySelector(`[data-value="${town.cityId}"]`) === null) list.append(townButton(town));
+  }
+  if (!listed.has(state.city)) selectTown(DEFAULT_CITY);
+  else groups.towns?.set(state.city);
+  // One town at a time: each read opens the workspace city registry.
+  for (const town of [...state.towns]) {
+    const detail = await getJson(`/api/catalog/cities/${town.cityId}`).catch(() => null);
+    const pack = detail?.city_id === town.cityId ? detail.pack : null;
+    town.shape = previewShape(pack);
+    town.nodes = Array.isArray(pack?.nodes) ? pack.nodes.length : null;
+    town.roads = Array.isArray(pack?.roads) ? pack.roads.length : null;
+    fillTown(town);
+  }
+}
+
+/** The ten template personas keep colours 0-9 in catalog order; others follow from 10. */
 function personaLook(persona, others) {
   const key = PERSONA_KEYS[persona.persona_id] ?? null;
+  const templates = Object.values(PERSONA_KEYS);
   const index =
-    key === null ? 4 + others.indexOf(persona.persona_id) : Object.values(PERSONA_KEYS).indexOf(key);
-  return { key, colorIndex: Math.min(index, 7) };
+    key === null ? templates.length + others.indexOf(persona.persona_id) : templates.indexOf(key);
+  return { key, colorIndex: index };
 }
 
 function buildPeople() {
@@ -676,7 +1001,7 @@ function buildPeople() {
         "li",
         { className: "setup-person", dataset: { personaId: persona.persona_id, name } },
         el("span", {
-          className: `g-mark g-mark--large g-mark--c${look.colorIndex} setup-person__mark`,
+          className: `g-mark g-mark--large ${markClass(look.colorIndex)} setup-person__mark`,
           attrs: { "aria-hidden": "true" },
         }),
         title,
@@ -721,6 +1046,14 @@ function buildLimits() {
 
 function clearMark(...names) {
   for (const name of names) state.serverMarks.delete(name);
+}
+
+function selectTown(value) {
+  if (!state.towns.some((town) => town.cityId === value)) return;
+  state.city = value;
+  if (roadside() === null) state.where = "phone";
+  clearMark("town", "where");
+  refresh();
 }
 
 function selectProduct(value) {
@@ -1028,6 +1361,7 @@ async function main() {
   await initI18n();
   wireCards();
   wireOptions();
+  buildTowns();
   refresh();
   state.runsLoading = fetchAllRuns().then(
     (runs) => {
@@ -1044,6 +1378,13 @@ async function main() {
   }).then((handle) => {
     state.connection = handle;
   });
+  // The town listing and previews never hold up the page: the grid works without them.
+  // They load after the AI connection has read its provider registry, so the two
+  // workspace registries are not opened at the same moment.
+  const towns = connected
+    .catch(() => undefined)
+    .then(() => loadTowns())
+    .catch(() => dropTowns());
   try {
     const [workbench, creatives, personas] = await Promise.all([
       followWorkbench(onActiveJob),
@@ -1073,7 +1414,7 @@ async function main() {
   } catch (error) {
     setRunNote(...errorNodes(error));
   }
-  await connected;
+  await Promise.all([connected, towns]);
   refresh();
 }
 

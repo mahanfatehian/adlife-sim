@@ -10,12 +10,18 @@ import pytest
 
 from adlife.adapters.cognition.city_credentials import (
     LOCAL_PROVIDER_CREDENTIAL_SOURCE,
+    SESSION_CREDENTIAL_SOURCE,
     CityCredentialStoreError,
     OSKeyringCityCredentialStore,
+    ProviderCredentialUnavailable,
     SecretBuffer,
 )
 from adlife.city.provider_profiles import ProviderProfileDraftV1, ProviderProfileRevisionV1
-from adlife.city.provider_runtime import ProviderRuntimePolicy, build_provider_runtime_policy
+from adlife.city.provider_runtime import (
+    ProviderOriginRegistry,
+    ProviderRuntimePolicy,
+    build_provider_runtime_policy,
+)
 from adlife.core.domain.city_cognition import (
     canonical_city_cognition_provider_profile_payload,
     city_cognition_provider_profile_revision_sha256,
@@ -485,3 +491,93 @@ def test_operation_local_copy_can_always_be_cleared_in_finally() -> None:
             copied.clear()
 
     assert copied.cleared
+
+
+# --- keys held in memory for this server process ------------------------------------------
+
+
+def test_a_held_key_comes_first_serves_every_revision_and_is_never_written() -> None:
+    backend = FakeBackend()
+    environment = TrackingEnvironment({"REMOTE_API_KEY": "environment-value"})
+    store = OSKeyringCityCredentialStore(
+        _policy(),
+        backend=backend,
+        approved_backend_types=(FakeBackend,),
+        environ=environment,
+    )
+    profile = _profile()
+    other_revision = _profile(model_id="model-v2")
+    typed = SecretBuffer(FAKE_REMOTE_SECRET)
+
+    store.hold(profile, typed)
+    typed.clear()  # The caller clears its copy; the store kept its own.
+
+    for revision in (profile, other_revision):
+        resolved = store.resolve(revision)
+        assert resolved.source == SESSION_CREDENTIAL_SOURCE
+        assert resolved.secret.reveal_text() == FAKE_REMOTE_SECRET
+        assert resolved.credential_slot_id == revision.credential_slot_id
+        assert FAKE_REMOTE_SECRET not in repr(resolved)
+        resolved.clear()
+    assert store.holds_session_key("remote")
+    assert backend.set_calls == [] and backend.get_calls == []
+    assert environment.reads == []
+    assert FAKE_REMOTE_SECRET not in repr(store)
+
+
+def test_holding_a_new_key_replaces_the_old_one_and_forgetting_clears_it() -> None:
+    store = OSKeyringCityCredentialStore(
+        _policy(bind_environment=False), backend_loader=lambda: None
+    )
+    profile = _profile()
+    store.hold(profile, SecretBuffer("sk-first-0000000000000000000000"))
+    store.hold(profile, SecretBuffer(FAKE_REMOTE_SECRET))
+    resolved = store.resolve(profile)
+    assert resolved.secret.reveal_text() == FAKE_REMOTE_SECRET
+    resolved.clear()
+
+    store.forget_session()
+
+    assert not store.holds_session_key("remote")
+    with pytest.raises(ProviderCredentialUnavailable):
+        store.resolve(profile)
+
+
+def test_a_local_server_can_use_a_held_key_and_otherwise_gets_the_dummy() -> None:
+    registry = ProviderOriginRegistry()
+    approval = registry.approve("127.0.0.1:1234/v1")
+    store = OSKeyringCityCredentialStore(registry, backend_loader=lambda: None)
+    profile = _profile(
+        mode="local", base_url=approval.base_url, origin_approval_id=approval.approval_id
+    )
+
+    dummy = store.resolve(profile)
+    assert dummy.source == LOCAL_PROVIDER_CREDENTIAL_SOURCE
+    dummy.clear()
+    store.hold(profile, SecretBuffer("lm-studio-key-000000000000"))
+    held = store.resolve(profile)
+    assert held.source == SESSION_CREDENTIAL_SOURCE
+    held.clear()
+
+
+def test_a_held_key_is_refused_for_an_origin_the_policy_does_not_approve() -> None:
+    store = OSKeyringCityCredentialStore(
+        build_provider_runtime_policy(), backend_loader=lambda: None
+    )
+    with pytest.raises(CityCredentialStoreError) as caught:
+        store.hold(_profile(), SecretBuffer(FAKE_REMOTE_SECRET))
+    assert FAKE_REMOTE_SECRET not in str(caught.value)
+    assert not store.holds_session_key("remote")
+
+
+def test_a_live_registry_lets_the_store_resolve_an_origin_added_later() -> None:
+    registry = ProviderOriginRegistry()
+    store = OSKeyringCityCredentialStore(registry, backend_loader=lambda: None)
+    approval = registry.approve("openrouter.ai/api/v1")
+    profile = _profile(base_url=approval.base_url, origin_approval_id=approval.approval_id)
+
+    store.hold(profile, SecretBuffer(FAKE_REMOTE_SECRET))
+    resolved = store.resolve(profile)
+
+    assert resolved.source == SESSION_CREDENTIAL_SOURCE
+    resolved.clear()

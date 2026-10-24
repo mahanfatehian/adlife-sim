@@ -16,17 +16,20 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from threading import RLock
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, cast
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
 from adlife.adapters.cognition.city_credentials import (
+    LOCAL_CREDENTIAL_SOURCES,
+    REMOTE_CREDENTIAL_SOURCES,
     CityCredentialStore,
     CityCredentialStoreError,
     OSKeyringCityCredentialStore,
     ProviderCredentialUnavailable,
     ResolvedCredential,
     SecretBuffer,
+    SessionCredentialHolder,
 )
 from adlife.adapters.cognition.city_endpoint_policy import (
     BoundProviderEndpoint,
@@ -52,7 +55,13 @@ from adlife.city.provider_profiles import (
     ProviderProfileRegistry,
     ProviderProfileRevisionV1,
 )
-from adlife.city.provider_runtime import ProviderRuntimePolicy
+from adlife.city.provider_runtime import (
+    ProviderOriginLimitReached,
+    ProviderOriginRegistry,
+    ProviderRuntimeConfigurationError,
+    ProviderRuntimePolicy,
+    current_provider_policy,
+)
 from adlife.core.domain.city_cognition import (
     CITY_COGNITION_DEFAULT_FALLBACK_POLICY,
     CITY_COGNITION_DEFAULT_SELECTION_POLICY,
@@ -180,6 +189,18 @@ class WorkbenchProviderRateLimited(RuntimeError):
 class WorkbenchProviderEndpointRefused(RuntimeError):
     def __init__(self) -> None:
         super().__init__("provider profile is excluded by the current endpoint policy")
+
+
+class InvalidProviderOrigin(ValueError):
+    """A value-free refusal of an operator-typed provider address."""
+
+    def __init__(self) -> None:
+        super().__init__("provider address is not allowed")
+
+
+class WorkbenchProviderOriginLimit(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("this server already holds the most provider addresses it accepts")
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -682,7 +703,7 @@ class WorkbenchProviderController:
     def __init__(
         self,
         registry: ProviderProfileRegistry,
-        runtime_policy: ProviderRuntimePolicy,
+        runtime_policy: ProviderRuntimePolicy | ProviderOriginRegistry,
         *,
         credentials: CityCredentialStore | None = None,
         operations: WorkbenchOperationState | None = None,
@@ -692,7 +713,7 @@ class WorkbenchProviderController:
     ) -> None:
         self.registry = registry
         self.operations = operations if operations is not None else WorkbenchOperationState()
-        self._policy = runtime_policy
+        self._policy_source = runtime_policy
         self._endpoint_policy = CityEndpointPolicy(runtime_policy)
         self._credentials = (
             credentials if credentials is not None else OSKeyringCityCredentialStore(runtime_policy)
@@ -707,6 +728,31 @@ class WorkbenchProviderController:
             else compatibility_registry
         )
         self._last_checks: dict[tuple[str, str], WorkbenchProviderCheckResult] = {}
+
+    @property
+    def _policy(self) -> ProviderRuntimePolicy:
+        return current_provider_policy(self._policy_source)
+
+    def approve_origin(self, raw_url: object) -> WorkbenchProviderOriginView:
+        """Approve one operator-typed OpenAI-compatible address for this server process.
+
+        Only a live registry can grow; a fixed startup policy refuses. The same address
+        always returns the same approval, so this is safe to repeat."""
+        source = self._policy_source
+        if not isinstance(source, ProviderOriginRegistry) or type(raw_url) is not str:
+            raise InvalidProviderOrigin() from None
+        try:
+            approval = source.approve(raw_url)
+        except ProviderOriginLimitReached:
+            raise WorkbenchProviderOriginLimit() from None
+        except ProviderRuntimeConfigurationError:
+            raise InvalidProviderOrigin() from None
+        return WorkbenchProviderOriginView(
+            approval_id=approval.approval_id,
+            base_url=approval.base_url,
+            trust_class=approval.trust_class,
+            environment_variable=None,
+        )
 
     def _view(self, profile: ProviderProfileRevisionV1) -> WorkbenchProviderView:
         accepted = True
@@ -763,9 +809,17 @@ class WorkbenchProviderController:
         return self._view(self.registry.create(checked))
 
     def store_credential(
-        self, profile_id: str, revision_id: str, credential: SecretBuffer
+        self,
+        profile_id: str,
+        revision_id: str,
+        credential: SecretBuffer,
+        *,
+        remember: bool = True,
     ) -> WorkbenchProviderView:
-        """Take ownership of and clear the supplied secret even when admission fails."""
+        """Take ownership of and clear the supplied secret even when admission fails.
+
+        ``remember=False`` holds the key in this process's memory for the profile's origin
+        (every revision of it); ``remember=True`` writes it to the approved OS keyring."""
         lease = None
         failed = False
         try:
@@ -775,11 +829,27 @@ class WorkbenchProviderController:
                 self._endpoint_policy.bind(profile)
             except CityEndpointBindingError:
                 raise WorkbenchProviderEndpointRefused() from None
+            holder = getattr(self._credentials, "hold", None)
+            in_memory = not remember and callable(holder)
+            # A held key serves the whole origin, so every revision's earlier check is stale.
+            stale = (
+                [
+                    (item.profile_id, item.revision_sha256)
+                    for item in self.registry.list()
+                    if item.origin_approval_id == profile.origin_approval_id
+                ]
+                if in_memory
+                else [(profile_id, revision_id)]
+            )
             with self.operations.lock:
-                self._last_checks.pop((profile_id, revision_id), None)
-                self.compatibility_registry.invalidate(profile_id, revision_id)
+                for stale_profile, stale_revision in stale:
+                    self._last_checks.pop((stale_profile, stale_revision), None)
+                    self.compatibility_registry.invalidate(stale_profile, stale_revision)
             try:
-                self._credentials.store(profile, credential)
+                if in_memory:
+                    cast("SessionCredentialHolder", self._credentials).hold(profile, credential)
+                else:
+                    self._credentials.store(profile, credential)
             except Exception:
                 failed = True
             if not failed:
@@ -824,10 +894,13 @@ class WorkbenchProviderController:
                     credential.origin_approval_id != profile.origin_approval_id
                     or credential.credential_slot_id != profile.credential_slot_id
                     or credential.secret.cleared
-                    or (profile.mode == "local" and credential.source != "local-dummy")
+                    or (
+                        profile.mode == "local"
+                        and credential.source not in LOCAL_CREDENTIAL_SOURCES
+                    )
                     or (
                         profile.mode == "remote"
-                        and credential.source not in {"environment", "keyring"}
+                        and credential.source not in REMOTE_CREDENTIAL_SOURCES
                     )
                 ):
                     raise ProviderCredentialUnavailable("provider credential is unavailable")

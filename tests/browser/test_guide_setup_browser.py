@@ -37,14 +37,12 @@ from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city_cognition import CityCognitionRuntimeFallbackReason
 from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST
-from tests.browser.test_bounded_cognition_workbench_browser import (
-    _HeldSignalProvider,
-    _SignalProvider,
-)
-from tests.browser.test_city_workbench_browser import (
+from tests.browser.browser_support import (
     _LONG_BROWSER_TEST,
+    _HeldSignalProvider,
     _installed_browser,
     _serve,
+    _SignalProvider,
     _wait_for_route_handler,
 )
 
@@ -58,7 +56,6 @@ CATALOGS: dict[str, dict[str, Any]] = {
 GAPGPT = build_provider_runtime_policy(provider_origins=("gapgpt=https://api.gapgpt.invalid/v1",))
 # A visibly fake key: never a real credential, and no common secret prefix.
 TEST_KEY = "guide-browser-test-key-abcdefghij"
-START_SCRIPT = r"powershell -ExecutionPolicy Bypass -File scripts\start-guided-demo.ps1"
 JOB_PATH = re.compile(r"/guide/jobs/(job-[0-9a-f]{32})\?lang=(en|de|fa)$")
 CHECK_REASONS = (
     *get_args(CityCognitionRuntimeFallbackReason),
@@ -191,19 +188,35 @@ def _profiles(root: Path) -> list[ProviderProfileRevisionV1]:
 
 
 class _MemoryCredentialStore:
-    """Keys kept per exact revision in memory, like the OS keyring but test-local."""
+    """Test-local keys: "remembered" ones per exact revision (like the OS keyring) and
+    held ones per origin (like the server's memory when "Remember" is off)."""
 
     def __init__(self, *, always: bool = False) -> None:
         self.always = always
         self.stored: dict[str, str] = {}
+        self.held: dict[str, str] = {}
 
     def available(self, profile: Any) -> bool:
-        return self.always or profile.revision_sha256 in self.stored
+        return (
+            self.always
+            or profile.revision_sha256 in self.stored
+            or profile.origin_approval_id in self.held
+        )
 
     def store(self, profile: Any, credential: SecretBuffer) -> None:
         self.stored[profile.revision_sha256] = credential.reveal_text()
 
+    def hold(self, profile: Any, credential: SecretBuffer) -> None:
+        self.held[profile.origin_approval_id] = credential.reveal_text()
+
     def resolve(self, profile: Any) -> ResolvedCredential:
+        if profile.origin_approval_id in self.held:
+            return ResolvedCredential(
+                source="session",
+                secret=SecretBuffer(self.held[profile.origin_approval_id]),
+                origin_approval_id=profile.origin_approval_id,
+                credential_slot_id=profile.credential_slot_id,
+            )
         value = self.stored.get(profile.revision_sha256, TEST_KEY if self.always else None)
         if value is None:
             raise ProviderCredentialUnavailable("unavailable")
@@ -404,9 +417,13 @@ def test_practice_path_submits_the_exact_default_draft_and_finishes_with_links(
         report_href = f"/guide/runs/{run_id}/report?lang=en"
         expect(watch).to_have_attribute("href", story_href)
         expect(page.locator("#job-report")).to_have_attribute("href", report_href)
-        technical = page.locator("#job-technical")
-        expect(technical).to_have_attribute("href", f"/runs/{run_id}")
-        expect(technical).to_have_attribute("target", "_blank")
+        # The guide is the only browser interface: no technical view, no new tab.
+        assert page.locator("#job-technical").count() == 0
+        assert (
+            page.locator("#job-outcome a[target='_blank'], #job-outcome a[href^='/runs/']").count()
+            == 0
+        )
+        expect(page.locator("#job-saved")).to_be_hidden()
         assert page.request.get(f"{base_url}{story_href}").status == 200
         assert page.request.get(f"{base_url}{report_href}").status == 200
         assert CityRunStore(root).load(run_id).manifest.schema_version == 10
@@ -437,6 +454,7 @@ def test_practice_path_submits_the_exact_default_draft_and_finishes_with_links(
 def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
     tmp_path: Path, browser: Browser
 ) -> None:
+    """Any OpenAI-compatible service: type its address and model, then its key."""
     permits = threading.Semaphore(0)
     providers: list[_SignalProvider] = []
 
@@ -453,47 +471,55 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
         with _guide(
             tmp_path,
             browser,
-            provider_runtime=GAPGPT,
             credential_store=store,
             provider_factory_v2=factory,
         ) as (page, base_url, root):
             checks: list[str] = []
-            page.on(
-                "request",
-                lambda request: (
+            approvals: list[str] = []
+
+            def record(request: Any) -> None:
+                if request.method != "POST":
+                    return
+                if request.url.endswith("/check"):
                     checks.append(request.post_data or "")
-                    if request.method == "POST" and request.url.endswith("/check")
-                    else None
-                ),
-            )
+                elif request.url.endswith("/api/providers/origins"):
+                    approvals.append(request.post_data or "")
+
+            page.on("request", record)
             page.goto(f"{base_url}/guide/new?lang=en")
+            page.locator("#setup-connection details > summary").first.click()
             online = page.locator("#conn-sources [role='radio'][data-value='remote']")
+            online.click()
             expect(online).to_have_attribute("aria-checked", "true")
-            expect(page.locator("#setup-connection")).to_contain_text("gapgpt-qwen-3.6")
-            expect(page.locator("#conn-status")).to_have_text(_say("connection.untested"))
+            expect(page.locator("#conn-status")).to_have_text(_say("connection.enter_details"))
             run = page.locator("#setup-run")
+            # Nothing is configured: the address is the first thing the page asks for. The
+            # button is aria-disabled while blocked, yet a click still lists what to fix.
+            run.dispatch_event("click")
+            expect(page.locator("#setup-blockers")).to_contain_text(_say("setup.blocked.address"))
+            assert approvals == []
+
+            page.locator("#conn-url").fill("api.example.invalid/v1")
+            page.locator("#conn-model").fill("qwen/qwen3-8b")
+            expect(page.locator("#conn-status")).to_have_text(_say("connection.untested"))
             expect(run).to_have_text(_say("setup.run_with_test"))
             expect(page.locator("#ai-estimate")).to_have_text(
                 _say("setup.ai.limit.estimate", tokens="13,000")
             )
 
-            # "Test the AI and run" first creates the guided profile, then stops: no key yet.
+            # "Test the AI and run" approves the address, creates the profile, then stops:
+            # no key yet, and nothing paid was asked.
             run.click()
             expect(page.locator("#conn-key-needed")).to_be_visible()
-            expect(page.locator("#conn-key-needed")).to_be_focused()
+            expect(page.locator("#conn-key")).to_be_focused()
             expect(page.locator("#setup-run-note")).to_have_text(_say("setup.blocked.key"))
-            expect(page.locator("#conn-key-needed")).to_contain_text(
-                _say(
-                    "connection.key.env_hint",
-                    script=START_SCRIPT,
-                    variable="GAPGPT_API_KEY",
-                )
-            )
+            assert approvals == ['{"base_url":"api.example.invalid/v1"}']
             assert checks == []
             assert providers == []
             (profile,) = _profiles(root)
-            assert profile.profile_id == "guide-gapgpt"
-            assert profile.model_id == "gapgpt-qwen-3.6"
+            assert profile.base_url == "https://api.example.invalid/v1"
+            assert profile.profile_id.startswith("guide-example-invalid-")
+            assert profile.model_id == "qwen/qwen3-8b"
             assert profile.disable_thinking is True
             assert profile.transient_retries == 1
             assert profile.max_output_tokens == 256
@@ -501,13 +527,19 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
                 _say("connection.thinking_off")
             )
 
-            # The key is read once, sent once and cleared from the page.
-            page.locator("#conn-key-details > summary").click()
+            # The key is read once, sent with the next click, held in memory only (no
+            # "Remember"), and cleared from the page.
+            expect(page.locator("#conn-key-remember")).not_to_be_checked()
             page.locator("#conn-key").fill(TEST_KEY)
-            page.locator("#conn-key-save").click()
-            expect(page.locator("#conn-key-status")).to_have_text(_say("connection.key.saved"))
-            expect(page.locator("#conn-key")).to_have_value("")
-            assert store.stored == {profile.revision_sha256: TEST_KEY}
+            run.click()
+            page.wait_for_url(JOB_PATH, timeout=20_000)
+            assert store.held == {profile.origin_approval_id: TEST_KEY}
+            assert store.stored == {}
+            assert checks == ['{"effect_scope":"bounded-signals-v1"}']
+            counter = page.locator("#job-counter-text")
+            expect(counter).to_have_text(
+                _say("progress.answered", resolved="0", total="10"), timeout=20_000
+            )
             attributes = page.evaluate(
                 "() => [...document.querySelectorAll('*')]"
                 ".flatMap(node => [...node.attributes].map(item => item.value)).join(' ')"
@@ -515,14 +547,6 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             assert TEST_KEY not in page.content()
             assert TEST_KEY not in attributes
             assert TEST_KEY not in page.url
-
-            run.click()
-            page.wait_for_url(JOB_PATH, timeout=20_000)
-            assert checks == ['{"effect_scope":"bounded-signals-v1"}']
-            counter = page.locator("#job-counter-text")
-            expect(counter).to_have_text(
-                _say("progress.answered", resolved="0", total="10"), timeout=20_000
-            )
             bar = page.locator("#job-bar")
             expect(bar).to_be_visible()
             expect(page.locator("#job-counter-note")).to_have_text(
@@ -548,10 +572,15 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             expect(page.locator("#job-stop")).to_be_hidden()
             assert sum(provider.calls for provider in providers[1:]) == 10
 
-            # D9: the same study with the same connection gets a fresh seed next time.
+            # D9: the same study with the same connection gets a fresh seed next time, and
+            # the service comes back with its address and model already filled in.
             page.goto(f"{base_url}/guide/new?lang=en")
             expect(page.locator("#conn-status")).to_have_text(_say("connection.ok_earlier"))
             expect(run).to_have_text(_say("setup.run"))
+            page.locator("#setup-connection details > summary").first.click()
+            expect(page.locator("#conn-url")).to_have_value("api.example.invalid/v1")
+            expect(page.locator("#conn-model")).to_have_value("qwen/qwen3-8b")
+            expect(page.locator("#conn-key-needed")).to_be_hidden()
             page.locator("#setup-more-summary").click()
             expect(page.locator("#more-seed")).to_have_value("43")
             # A manual seed that repeats the saved run warns that answers would be reused.
@@ -566,10 +595,42 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             expect(page.locator("#preflight-ai")).to_have_attribute("data-state", "ok")
             expect(page.locator("#preflight-ai")).to_have_text(_say("start.preflight.ai.ok"))
             expect(page.locator("#conn-status")).to_have_text(_say("connection.ok_earlier"))
-            expect(page.locator("#conn-key-needed")).to_be_hidden()
             assert len(checks) == 1
+            assert len(approvals) == 1
     finally:
         permits.release(64)
+
+
+def test_an_unsafe_address_or_a_local_one_under_online_ai_is_explained(
+    tmp_path: Path, browser: Browser
+) -> None:
+    with _guide(tmp_path, browser, server_port=50050) as (page, base_url, _root):
+        page.goto(f"{base_url}/guide?lang=en")
+        page.locator("#conn-sources [role='radio'][data-value='remote']").click()
+        address = page.locator("#conn-url")
+        error = page.locator("#conn-url-error")
+        page.locator("#conn-model").fill("some-model")
+        for typed, key in (
+            ("http://api.example.invalid/v1", "connection.url.invalid"),
+            ("127.0.0.1:1234/v1", "connection.url.is-local"),
+        ):
+            address.fill(typed)
+            expect(error).to_be_hidden()
+            page.locator("#conn-test").click()
+            if key == "connection.url.invalid":
+                expect(error).to_have_text(_say(key, loopback="127.0.0.1"))
+            else:
+                expect(error).to_have_text(_say(key))
+            expect(address).to_have_attribute("aria-invalid", "true")
+
+        # A server on this computer: the address is a loopback literal on any other port.
+        page.locator("#conn-sources [role='radio'][data-value='local']").click()
+        expect(address).to_have_value("127.0.0.1:11434/v1")
+        expect(page.locator("#conn-url-help")).to_contain_text("127.0.0.1:1234/v1")
+        expect(page.locator(".setup-conn__key")).to_be_hidden()
+        address.fill("127.0.0.1:50050/v1")
+        page.locator("#conn-test").click()
+        expect(error).to_have_text(_say("connection.url.invalid", loopback="127.0.0.1"))
 
 
 # ----- 3. plain failure wording ---------------------------------------------------------------
@@ -600,6 +661,8 @@ def test_failed_checks_explain_every_reason_and_rate_and_busy_refusals(
             state = "unavailable" if reason in UNAVAILABLE_REASONS else "incompatible"
             answers.append((200, {"status": state, "reason_code": reason}))
             page.goto(f"{base_url}/guide?lang=en")
+            # The startup-approved address is filled in; the model is the operator's to type.
+            page.locator("#conn-model").fill("qwen/qwen3-8b")
             expect(status).to_have_text(_say("connection.untested"))
             test.click()
             expect(status).to_have_text(
@@ -618,6 +681,7 @@ def test_failed_checks_explain_every_reason_and_rate_and_busy_refusals(
         ):
             answers.append((code_status, document))
             page.goto(f"{base_url}/guide?lang=en")
+            page.locator("#conn-model").fill("qwen/qwen3-8b")
             expect(status).to_have_text(_say("connection.untested"))
             test.click()
             expect(status).to_have_text(_say(key), timeout=10_000)
@@ -725,7 +789,7 @@ def test_an_active_job_shows_a_banner_and_names_the_run_blocker(
         # With nobody in the audience the first blocker names the people and fixes focus.
         page.unroute("**/api/workbench")
         page.goto(f"{base_url}/guide/new?lang=en")
-        expect(page.locator("#people-list > li")).to_have_count(4)
+        expect(page.locator("#people-list > li")).to_have_count(10)
         expect(page.locator("#people-total")).to_have_text(_say("setup.people.total", count=8))
         for row in page.locator("#people-list > li").all():
             down = row.locator("[data-step='down']")

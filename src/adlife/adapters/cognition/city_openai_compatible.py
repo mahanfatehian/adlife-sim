@@ -20,6 +20,8 @@ import httpcore
 from pydantic import ValidationError
 
 from adlife.adapters.cognition.city_credentials import (
+    LOCAL_CREDENTIAL_SOURCES,
+    REMOTE_CREDENTIAL_SOURCES,
     ResolvedCredential,
     SecretBuffer,
 )
@@ -439,10 +441,13 @@ class CityOpenAICompatibleProvider:
                 and credential.origin_approval_id == profile.origin_approval_id
                 and credential.credential_slot_id == profile.credential_slot_id
                 and (
-                    (endpoint.trust_class == "local" and credential.source == "local-dummy")
+                    (
+                        endpoint.trust_class == "local"
+                        and credential.source in LOCAL_CREDENTIAL_SOURCES
+                    )
                     or (
                         endpoint.trust_class == "remote"
-                        and credential.source in {"keyring", "environment"}
+                        and credential.source in REMOTE_CREDENTIAL_SOURCES
                     )
                 )
             ):
