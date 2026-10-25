@@ -1898,6 +1898,9 @@ def test_bounded_cognition_public_contract_is_documented() -> None:
         "separate synthetic cognition state",
         "purchase-intention proxy stay rule-owned",
         "name, age, occupation, background, and mbti",
+        "`city-cognition-persona-prompt-v3`",
+        "`city-cognition-signal-prompt-v2`",
+        "answers as the person",
         "input tokens and vendor charges",
         "live provider signals are nondeterministic",
         "frozen schema-v10 replay",
@@ -1910,6 +1913,33 @@ def test_bounded_cognition_public_contract_is_documented() -> None:
         "not a campaign effect",
     ):
         assert clause in public, clause
+
+
+def test_documented_prompt_contracts_are_the_frozen_current_and_earlier_ones() -> None:
+    """New runs answer as the person under prompt v3; runs saved earlier keep prompt v2."""
+    # Imported here so the rest of this module never depends on the newest contract name.
+    from adlife.core.domain.city_cognition_v2 import (
+        CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3,
+        CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V4,
+        CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    )
+
+    current = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V4
+    earlier = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V3
+    assert current == CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
+    assert (current.prompt_contract_id, current.prompt_contract_version) == (
+        "city-cognition-persona-prompt-v3",
+        3,
+    )
+    assert (earlier.prompt_contract_id, earlier.prompt_contract_version) == (
+        "city-cognition-signal-prompt-v2",
+        2,
+    )
+    assert current.result_schema_id == earlier.result_schema_id == "city-cognition-signal-result-v2"
+    documents = _public_documents()
+    for name in ("README.md", "CHANGELOG.md", "docs/methodology/model-card.md"):
+        for contract in (current, earlier):
+            assert f"`{contract.prompt_contract_id}`" in documents[name], (name, contract)
 
 
 def test_bounded_output_budget_figures_match_the_runtime_contract() -> None:
@@ -2069,9 +2099,16 @@ def test_architecture_documents_the_v10_data_flow_and_adapter_boundary() -> None
         "none imports a provider",
         "adapters/cognition",
     )
+    # New runs answer as the person; the descriptive exclusion now describes runs saved earlier.
     _assert_terms_share_paragraph(
         section,
-        "name, age, occupation, background, mbti, and purchase intention are excluded",
+        "under prompt contract `city-cognition-persona-prompt-v3`, which every new run",
+        "frozen workbench persona copy and the deterministic rules baseline",
+        "answer as that person",
+        "excluded from the bytes of, every earlier",
+        "under prompt contract `city-cognition-signal-prompt-v2` (runs saved earlier) name, "
+        "age, occupation, background, mbti, and purchase intention are excluded",
+        "no request reads an earlier provider answer or a cognition-track value",
         "completion order cannot change",
         "finish_reason",
     )
@@ -2122,11 +2159,25 @@ def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
     )
     assert "affect=neutral, relevance=medium, credibility=medium, salience=medium" in section
 
+    # The descriptive exclusion is scoped to runs saved earlier under prompt contract v2 ...
     _assert_terms_share_paragraph(
         section,
+        "in runs saved earlier, under prompt contract `city-cognition-signal-prompt-v2`",
         "name, age, occupation, background, and mbti",
         "omitted from the causal prompt",
         "purchase intention is never sent",
+    )
+    # ... while new runs answer as the person, from frozen inputs and the rule baseline only.
+    _assert_terms_share_paragraph(
+        section,
+        "new runs use prompt contract `city-cognition-persona-prompt-v3`",
+        "the model answers as the person",
+        "persona card (name, age, occupation, background, mbti, interests, and the six traits",
+        "rule-track sentiment, recall, and purchase intention just before the notice",
+        "up to the last five",
+        "rules' baseline deltas",
+        "never contains an earlier ai answer or a cognition-track value",
+        "changes a v3 request's causal id",
     )
     _assert_terms_share_paragraph(
         section,
@@ -2215,8 +2266,13 @@ def test_reproducibility_separates_live_v10_signals_from_frozen_offline_replay()
         section,
         "completion order",
         "pythonhashseed",
-        "name, age, occupation, background, or mbti",
-        "causal request ids",
+        "in runs saved earlier (prompt contract `city-cognition-signal-prompt-v2`), changing a "
+        "persona's name, age, occupation, background, or mbti",
+        "but not the causal request ids",
+        "new runs (prompt contract `city-cognition-persona-prompt-v3`) ask the ai to answer as "
+        "the person",
+        "changes the causal request ids and the cache identity, never the rule baseline",
+        "never from an earlier answer",
         "source `cache`",
     )
     _assert_terms_share_paragraph(
@@ -2244,7 +2300,17 @@ def test_model_card_states_the_v10_llm_role_and_its_limits() -> None:
     )
     _assert_terms_share_paragraph(
         section,
-        "name, age, occupation, background, and mbti are excluded",
+        "in new runs (prompt contract `city-cognition-persona-prompt-v3`) the model answers as "
+        "the person",
+        "persona card (name, age, job, background, mbti personality type, interests, and the six "
+        "temperament traits",
+        "it carries no earlier ai answer or cognition-track value",
+        "none of the rules engine's own numbers for that notice",
+        "in runs saved earlier (prompt contract `city-cognition-signal-prompt-v2`)",
+        "name, age, occupation, background, and mbti were excluded",
+    )
+    _assert_terms_share_paragraph(
+        section,
         "uncertain",
         "stereotype-risk",
         "budget-skipped",
@@ -2261,12 +2327,19 @@ def test_model_card_states_the_v10_llm_role_and_its_limits() -> None:
         "frozen schema-v10 replay",
         "no provider call",
     )
+    # Sending the persona card is deliberate and raises the stereotype risk; the earlier
+    # exclusion is now history scoped to runs saved under prompt contract v2.
     _assert_terms_share_paragraph(
         _section(model_card, "## Stereotype risks"),
-        "descriptive persona fields never reach the model",
+        "send the descriptive persona fields to the model on purpose",
+        "raises the stereotype risk",
         "stereotype-risk",
+        "fully neutralized",
         "not a guarantee",
+        "in runs saved earlier (prompt contract `city-cognition-signal-prompt-v2`) the "
+        "descriptive persona fields never reached the model",
     )
+    assert "has not been rehearsed the same way yet" in _squash(section)
     _assert_terms_share_paragraph(
         _section(model_card, "## Prompt-injection boundary"),
         "schema-v10",
@@ -2290,6 +2363,12 @@ def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
         "live provider signals are nondeterministic",
         "frozen schema-v10 replay",
         "no provider call",
+        "new runs ask the model to answer as the person",
+        "`city-cognition-persona-prompt-v3`",
+        "stereotype risk",
+        "a flagged answer is neutralized, an unflagged one may still be biased",
+        "prompt contract `city-cognition-signal-prompt-v2`, which excluded the descriptive "
+        "persona fields",
     )
     _assert_terms_share_paragraph(
         limitations,
@@ -2393,12 +2472,22 @@ def test_readme_presents_the_three_mode_matrix_and_the_live_demo() -> None:
         "budget-skipped",
         "input tokens and vendor charges are not included",
     )
+    _assert_terms_share_paragraph(readme, "uncertain", "safety flag", "exact neutral vector")
+    # New runs answer as the person; the descriptive exclusion is scoped to earlier runs.
     _assert_terms_share_paragraph(
         readme,
-        "uncertain",
-        "safety flag",
-        "exact neutral vector",
-        "name, age, occupation, background, and mbti never reach the causal prompt",
+        "**the ai answers as the person.** in new runs (prompt contract "
+        "`city-cognition-persona-prompt-v3`)",
+        "role-play that one fictional person",
+        "name, age, job, background, mbti personality type, interests, and the six temperament "
+        "traits",
+        "it never carries an earlier ai answer",
+        "no feedback loop",
+        "rules engine's own numbers for this notice",
+        "stereotype-risk",
+        "neutralized",
+        "runs saved earlier used prompt contract `city-cognition-signal-prompt-v2`: in them name, "
+        "age, occupation, background, and mbti never reached the causal prompt",
     )
     _assert_terms_share_paragraph(
         readme,
@@ -2428,6 +2517,21 @@ def test_changelog_records_bounded_cognition_without_overclaiming() -> None:
         "separate synthetic cognition state",
         "purchase-intention proxy stay rule-owned",
         "excluded from the causal prompt",
+    )
+    _assert_terms_share_paragraph(
+        unreleased,
+        "the ai answers as the person (prompt contract v3)",
+        "`city-cognition-persona-prompt-v3`",
+        "`city_cognition_default_causal_contract_v4`",
+        "name, age, job, background, mbti personality type, interests, and the six temperament "
+        "traits",
+        "it never sends an earlier ai answer",
+        "no feedback loop",
+        "no longer sends the advertiser's internals",
+        "rules engine's own numbers for that notice",
+        "stereotype-risk",
+        "runs saved earlier keep prompt contract `city-cognition-signal-prompt-v2`",
+        "still load, verify, replay and open unchanged",
     )
     _assert_terms_share_paragraph(
         unreleased,

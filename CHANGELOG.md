@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The AI answers as the person (prompt contract v3) (2026-10-25)** — new bounded-cognition
+  runs use prompt contract `city-cognition-persona-prompt-v3` (causal contract
+  `CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V4`: selection policy V3 with the same result schema
+  V2, fallback, mock and influence policies). Instead of judging the ad from outside, the model
+  role-plays the one fictional person who noticed it. Each question now sends that person's
+  profile (name, age, job, background, MBTI personality type, interests, and the six
+  temperament traits, each as a number with fixed words), how they feel about the brand on the
+  rules track just before this ad (liking, ad memory and purchase interest), the ads of this
+  campaign they noticed earlier (how many, and up to the last five with day, time, channel,
+  activity and what the rules made of each), their situation (day, time, what they are doing,
+  phone feed or roadside billboard), and the ad with its price in words. It never sends an
+  earlier AI answer or a "with AI" value, so there is no feedback loop and every question is
+  still built from frozen inputs and the rule baseline before any AI call. It no longer sends
+  the advertiser's internals (target interests, frequency cap) or the rules engine's own
+  numbers for that notice (interest, affordability, value and fatigue factors and the rules'
+  sentiment and recall deltas). The answer is still the four closed categories and safety
+  flags, mapped by `city-cognition-influence-v1`; movement, attention, the rules track and the
+  purchase-intention proxy stay rule-owned. Sending age, job and personality type adds a
+  stereotype risk: the prompt asks for `stereotype-risk` when an answer would rest on a
+  stereotype, and a flagged answer is neutralized. The ten packaged persona templates now tell
+  a short invented life each (daily life and hobbies, one dream or goal, one current worry or
+  circumstance). Runs saved earlier keep prompt contract `city-cognition-signal-prompt-v2`,
+  which excluded name, age, occupation, background and MBTI, and their own frozen persona
+  copies, so they still load, verify, replay and open unchanged.
 - **AI coverage of the whole run: selection policy V3 and retries (2026-10-24)** — new
   bounded-cognition runs use `city-cognition-selection-v3` (`spread-evenly`): the AI limit of
   60, 120 (local default), 250, 500, or 1000 (remote default) requests is spread evenly over the

@@ -387,9 +387,17 @@ credential store, or framework. Provider transport stays in `adapters/cognition`
 Each request binds a canonical causal identity: the response-input, scenario, and city
 hashes, the baseline proposal and its bindings, the channel and time, the pre-minute rule
 state, and a minimized causal profile of interests, response traits, and initial sentiment
-and recall. Name, age, occupation, background, MBTI, and purchase intention are excluded.
-Because every request and reservation exists before provider work starts and no request reads
-an earlier provider answer, completion order cannot change prompts, identifiers, ordering,
+and recall. Under prompt contract `city-cognition-persona-prompt-v3`, which every new run
+uses, the identity also binds a persona context that the core builds from the run's frozen
+workbench persona copy and the deterministic rules baseline: the descriptive persona card
+(name, age, occupation, background, MBTI, interests, and the six traits with fixed words), the
+rule-track sentiment, recall, and purchase intention before the notice, the agent's earlier
+noticed responses for the campaign, and the situation; the model is asked to answer as that
+person. The persona context is absent from, and excluded from the bytes of, every earlier
+contract. Under prompt contract `city-cognition-signal-prompt-v2` (runs saved earlier) name,
+age, occupation, background, MBTI, and purchase intention are excluded. Because every request
+and reservation exists before provider work starts and no request reads an earlier provider
+answer or a cognition-track value, completion order cannot change prompts, identifiers, ordering,
 floating-point folding, or artifacts. The adapter sends only a minimized wire projection with
 campaign creative delimited as untrusted data, keeps every schema-v9 transport control
 (approved origins, loopback-only plain HTTP, HTTPS remotes, pinned peers, no redirects,
@@ -546,7 +554,9 @@ application layer
 materializes canonical persona-ID order into contiguous person-NNN assignments and compiles
 only explicit interests, six response traits and initial campaign state into SpatialResponseInput.
 Name, age, occupation, background and MBTI are noncausal descriptive metadata, excluded from
-scientific response inputs and mobility. IDs/counts/assignments are structural provenance.
+scientific response inputs and mobility; new schema-v10 runs pass them only to the bounded
+cognition request, as the persona card of prompt contract `city-cognition-persona-prompt-v3`.
+IDs/counts/assignments are structural provenance.
 
 V8 load independently cross-binds every assignment/profile/state as well as canonical
 inputs/workbench.json and its hash. Frozen persona records make replay independent of the

@@ -164,14 +164,30 @@ There is no provider prose and no provider-authored number, identifier, state, e
 probability, or purchase field; unknown fields, duplicate keys or safety flags, a wrong request
 ID, an answer the output cap cut short, and refusal are invalid results. An answer that reached
 the cap with a complete valid object (for example followed by runaway whitespace) is still
-accepted. The causal request carries only interests, price sensitivity,
-novelty seeking, advertising skepticism, impulsivity, the recall encoding of the response's
-channel, the initial rule sentiment and recall, the campaign's target interests and relative
-price, the creative (delimited as untrusted data), and the channel, time, frequency, and rule
-factors. Name, age, occupation, background, and MBTI stay descriptive and are omitted from the
-causal prompt, and purchase intention is never sent. A descriptive-only edit changes the
-provenance hashes but not the causal request ID, the mock signal, the cache identity, or the
-V10 numeric cognition.
+accepted.
+
+New runs use prompt contract `city-cognition-persona-prompt-v3`: the model answers as the
+person, role-playing that one fictional agent at the moment of the notice. The request carries
+the persona card (name, age, occupation, background, MBTI, interests, and the six traits, each
+as a number with fixed words), the agent's rule-track sentiment, recall, and purchase
+intention just before the notice, its earlier noticed responses for the campaign (counts for
+the whole run so far and for today, and up to the last five with day, time, channel, activity,
+and the rules' effect in words), the situation (day, time, activity, and channel), and the
+creative (delimited as untrusted data) with its relative price in words. It drops the target
+interests, the frequency cap, the interest, affordability, value, and fatigue factors, and the
+rules' baseline deltas, and it never contains an earlier AI answer or a cognition-track value,
+so every request is still built from frozen inputs and the rule baseline before any provider
+call. A descriptive edit therefore changes a v3 request's causal ID and cache identity, while
+the rule baseline stays unchanged.
+
+In runs saved earlier, under prompt contract `city-cognition-signal-prompt-v2`, the causal
+request carries only interests, price sensitivity, novelty seeking, advertising skepticism,
+impulsivity, the recall encoding of the response's channel, the initial rule sentiment and
+recall, the campaign's target interests and relative price, the creative (delimited as
+untrusted data), and the channel, time, frequency, and rule factors. Name, age, occupation,
+background, and MBTI stay descriptive and are omitted from the causal prompt, and purchase
+intention is never sent. A descriptive-only edit changes the provenance hashes but not the
+causal request ID, the mock signal, the cache identity, or the V10 numeric cognition.
 
 AdLife, not the model, applies the frozen `city-cognition-influence-v1` policy. The neutral
 vector `affect=neutral, relevance=medium, credibility=medium, salience=medium` is an exact
@@ -825,9 +841,10 @@ freeze workbench inputs. Schema-v9 adds explanation artifacts but no causal cogn
 memory, social, or purchase events. Schema-v10 keeps the same rule evidence as a baseline and
 adds bounded cognition signals that change only a separate synthetic cognition state, still
 without memory, social, budget, or purchase events. None is a
-validated geographic advertising-outcome study. Descriptive, noncausal MBTI labels are
-allowed as optional fictional context. Using MBTI as a causal or predictive input is
-not implemented and is not scientifically validated by this simulator.
+validated geographic advertising-outcome study. Descriptive MBTI labels are allowed as
+optional fictional context and stay noncausal for the rules; new schema-v10 runs also show
+the label to the AI as part of the persona card it answers as. Using MBTI as a numeric or
+predictive input is not implemented and is not scientifically validated by this simulator.
 
 Workspace CityPack V2 uploads broaden the selectable geometry, not the validity claim:
 they are operator-supplied, unreviewed for rights, and cannot turn synthetic agents or
@@ -835,14 +852,15 @@ uncalibrated response equations into observations of a real population.
 
 ## Audience authoring and saved identities
 
-The guided setup page's audience is backed by GET /api/persona-templates: four wholly
+The guided setup page's audience is backed by GET /api/persona-templates: ten wholly
 fictional starting points with explicit causal values, each with a count. Count totals must
 match the run's 1–30 agents, and runs stay within 1–7 days. API clients may author their own
 fictional personas. IDs cannot be renamed. The `adlife city-view` inspector of a saved
 schema-v10 run shows names beside immutable agent IDs from verified assignments, with
 biography/MBTI collapsed and labeled noncausal.
 
-Name, age, occupation, background and MBTI never infer numeric traits or mobility. Explicit
+Name, age, occupation, background and MBTI never infer numeric traits or mobility; new
+schema-v10 runs send them to the AI only, as the persona card it answers as. Explicit
 interests, six response traits and initial campaign state are the causal response inputs;
 IDs/counts/assignments determine structure. Templates are not demographic samples. Screening
 refuses recognized personal data/secrets and unsafe text but cannot prove fictional identity.

@@ -323,13 +323,19 @@ geometry, validation, run-ID collisions, artifact integrity, and all scientific 
 
 The guided setup page chooses an audience from the ten bundled fictional persona templates
 and their counts. Counts must total 1–30 agents over 1–7 days. Persona IDs are structural and
-immutable. The `adlife city-view` inspector of a saved schema-v10 run shows verified
-fictional names beside stable agent IDs; biography and MBTI stay collapsed with a noncausal
-label.
+immutable. Each template's background is a short invented life: daily life and hobbies, one
+dream or goal, and one current worry or circumstance. The `adlife city-view` inspector of a
+saved schema-v10 run shows verified fictional names beside stable agent IDs; biography and
+MBTI stay collapsed.
 
-Name, age, occupation, background and MBTI are descriptive, noncausal context. They do not
-infer response values or mobility. Only explicit interests, six response traits and initial
-campaign state affect response equations. Persona IDs/counts/assignments are structural.
+Name, age, occupation, background and MBTI are descriptive context and noncausal for the
+rules: they do not infer response values, traits or mobility, and only explicit interests,
+six response traits and initial campaign state affect response equations. In new bounded AI
+cognition runs the AI also reads them, as the profile of the person it answers as, so they
+can change the separate "with AI" track (see below); runs saved earlier used prompt contract
+`city-cognition-signal-prompt-v2`, which kept them out of the AI's question. A run copies its
+personas into its frozen inputs, so a later template text never changes a saved run's
+evidence or replay. Persona IDs/counts/assignments are structural.
 Purchase intention is an uncalibrated proxy, not a transaction or real purchase probability.
 Screening refuses recognized personal identifiers, credentials and unsafe text; it cannot
 prove the absence of personal information. Supply wholly fictional data only.
@@ -432,7 +438,29 @@ frozen `city-cognition-influence-v1` tables into bounded deltas on a separate sy
 cognition sentiment/recall track. Movement, attention, the baseline responses and rule state,
 budgets, and the purchase-intention proxy never read that track. An `uncertain` category or
 any safety flag keeps the answer auditable but applies the exact neutral vector to the whole
-result. Name, age, occupation, background, and MBTI never reach the causal prompt.
+result.
+
+**The AI answers as the person.** In new runs (prompt contract
+`city-cognition-persona-prompt-v3`) each question asks the model to role-play that one
+fictional person and react the way they would at that moment, not to judge the ad as an
+analyst. The question carries the person's profile (name, age, job, background, MBTI
+personality type, interests, and the six temperament traits, each as a number with plain
+words), how they feel about the brand on the rules track just before this ad (liking, ad
+memory, and purchase interest), the ads of this campaign they noticed earlier (how many, and
+up to the last five with day, time, channel, activity, and what the rules made of each), their
+situation (day, time, what they are doing, and whether the ad is in their phone feed or on a
+billboard by the road), and the ad with its price in words. It never carries an earlier AI
+answer or a "with AI" value, so there is no feedback loop and every question is still built
+before any AI call. It no longer carries the advertiser's internals (target interests and
+frequency cap) or the rules engine's own numbers for this notice (match scores, fatigue, and
+the rules' sentiment and recall deltas), so the model is not anchored to the rules' answer.
+Giving a model an age, a job, and a personality type can pull it toward stereotypes about
+groups: the prompt tells it to answer from this individual's own description and to add
+`stereotype-risk` when an answer would rest on a stereotype, and a flagged answer is
+neutralized, but that depends on the model flagging itself. Runs saved earlier used prompt
+contract `city-cognition-signal-prompt-v2`: in them name, age, occupation, background, and
+MBTI never reached the causal prompt, which sent the start-of-run state and the rules' factors
+instead, and they still verify, replay, and open unchanged.
 
 Local and remote sources choose an AI limit of 60, 120 (local default), 250, 500, or 1000
 (remote default) requests, where 1000 means every noticed ad, up to 1,000; every selected

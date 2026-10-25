@@ -115,3 +115,23 @@ def test_user_guide_leaves_runtime_derived_sentences_to_the_reference_documents(
     squashed = re.sub(r"\s+", " ", _guide()).strip().lower()
     for pattern in _RUNTIME_DERIVED:
         assert pattern.search(squashed) is None, pattern.pattern
+
+
+def test_user_guide_says_the_ai_answers_as_the_person_and_names_its_limits() -> None:
+    squashed = re.sub(r"\s+", " ", _guide()).strip().lower()
+    for claim in (
+        # What the AI reads, and that the rules never read the descriptive profile.
+        "names and life stories never change the rules-only results",
+        "the ai reads the whole profile (name, age, job, life story, personality type, "
+        "interests, and traits) and answers as that person",
+        # What a question carries, and what it never carries.
+        "the ads of this campaign they noticed before",
+        "it never shows the ai its own earlier answers",
+        # The stereotype risk, honestly scoped.
+        "can fall back on stereotypes",
+        "it may not notice every one",
+        # Runs saved before prompt contract v3.
+        "runs saved by an earlier version never sent names or life stories to the ai",
+    ):
+        assert claim in squashed, claim
+    assert "names are decoration" not in squashed

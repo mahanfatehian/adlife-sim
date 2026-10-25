@@ -126,11 +126,24 @@ explicit synthetic assumptions, not calibrated psychological effects, and the ca
 not an agent's private thoughts, observed behavior, validated psychology, or a prediction
 about any person.
 
-The request contains only causal facts: interests, response traits, the initial rule
-sentiment and recall, the campaign's target interests and relative price, the creative as
-delimited untrusted data, and the channel, time, frequency, and rule factors. Name, age,
-occupation, background, and MBTI are excluded, so these descriptive labels cannot steer the
-model. An `uncertain` category or any safety flag (`stereotype-risk`,
+In new runs (prompt contract `city-cognition-persona-prompt-v3`) the model answers as the
+person: it is asked to role-play one fictional person and react the way they would at that
+moment, not to appraise the ad as an analyst. Each request carries the persona card (name,
+age, job, background, MBTI personality type, interests, and the six temperament traits, each
+as a number with fixed words), that person's rule-track liking, ad memory, and purchase
+interest just before the notice, the campaign's ads they noticed earlier (how many, and up to
+the last five with day, time, channel, activity, and what the rules made of each), the
+situation (day, time, activity, and channel), and the creative as delimited untrusted data
+with its relative price. It carries no earlier AI answer or cognition-track value, no other
+agent's data, no advertiser internals (target interests, frequency cap), and none of the rules
+engine's own numbers for that notice (match scores, fatigue, and baseline deltas), so every
+request is still built before any provider call. In runs saved earlier (prompt contract
+`city-cognition-signal-prompt-v2`) the request contained only causal facts: interests,
+response traits, the initial rule sentiment and recall, the campaign's target interests and
+relative price, the creative, and the channel, time, frequency, and rule factors; name, age,
+occupation, background, and MBTI were excluded.
+
+An `uncertain` category or any safety flag (`stereotype-risk`,
 `unsupported-inference`, `unsafe-content`) neutralizes the whole answer; unavailable,
 timed-out, or invalid answers become typed neutral fallbacks; every selected request of a new
 run is funded (60, 120, 250, 500, or 1000), while runs saved earlier recorded selected
@@ -146,16 +159,19 @@ A general-purpose model brings its own tendencies. In rehearsal a local `qwen2.5
 flagged about 95% of ordinary answers until the prompt stated when each safety flag applies,
 and it then gave nearly the same vector (neutral affect, high relevance and credibility) to
 almost every response: changing one causal input moved the targeted category in 3% of
-counterfactual pairs. The prompt contract now asks for a separate judgment per category from
-the agent's point of view, with qualitative anchors that name the supplied inputs and no
-numeric cutoffs. On 73 varied requests the same model then gave 17 distinct vectors;
+counterfactual pairs. Prompt contract `city-cognition-signal-prompt-v2` then asked for a
+separate judgment per category from the agent's point of view, with qualitative anchors that
+name the supplied inputs and no numeric cutoffs. On 73 varied requests the same model then
+gave 17 distinct vectors;
 relevance followed interest overlap (Spearman 0.82) and credibility followed advertising
 skepticism (-0.70); in held-out one-input pairs 62% of targeted categories moved the expected
 way and 1.5% moved the wrong way. It still largely ignores initial brand sentiment, price
 moves affect in only about half of the pairs, credibility is rarely `high`, and 1-3% of
 answers mis-copy the request ID and go through the single repair attempt. Safety flags are
 kept: a stereotype-inviting or harmful creative is still flagged and neutralized. These
-measurements describe one model on this machine, not a validated psychological instrument.
+measurements describe one model on this machine, not a validated psychological instrument,
+and they were taken with prompt contract v2; the in-character prompt v3 that new runs use has
+not been rehearsed the same way yet.
 The resulting cognition evidence is therefore provider-dependent and
 exploratory: `city-metrics` reports it beside, never inside, the rule baseline, and it is not a
 campaign effect. `city-compare --layer response`, `city-study`, and `city-report` refuse V10
@@ -308,11 +324,19 @@ not evidence about corresponding real-world groups; names come from fictional li
 Consumers of results should not
 read agent archetypes as claims about real populations.
 
-In schema-v10 runs the descriptive persona fields never reach the model, but a
-general-purpose model can still bring stereotyped associations to interests, creative copy,
-or channel. The bounded result offers a `stereotype-risk` safety flag, and any flagged answer
-is recorded but fully neutralized; that relies on the model flagging itself and is not a
-guarantee that unflagged categories are free of bias.
+New schema-v10 runs (prompt contract `city-cognition-persona-prompt-v3`) send the descriptive
+persona fields to the model on purpose, so that it can answer as the person. That raises the
+stereotype risk: a general-purpose model can read an age, an occupation, or an MBTI type as a
+group and answer from a stereotype about that group instead of from this individual, and it
+can still bring stereotyped associations to interests, creative copy, or channel. The prompt
+tells the model to react from this person's own description and to add `stereotype-risk` only
+when an answer would rely on a stereotype about a group of people; any flagged answer is
+recorded but fully neutralized, so the rules' deltas apply exactly. That relies on the model
+flagging itself and is not a guarantee that unflagged categories are free of bias. The
+packaged backgrounds name no gender and describe one specific invented life each, to give the
+model an individual rather than a group to answer from. MBTI is a popular label with no
+predictive power claimed here. In runs saved earlier (prompt contract
+`city-cognition-signal-prompt-v2`) the descriptive persona fields never reached the model.
 
 ## Prompt-injection boundary
 
@@ -364,12 +388,14 @@ inside the synthetic world, not absolute prediction.
 Default schema-3 authoring creates schema-v9, schema-4 bounded AI cognition authoring creates
 schema-v10, and schema-2/schema-v8 persona and schema-1/schema-v7 homogeneous compatibility
 remain.
-Four fictional templates are editable starting assumptions, not real residents or population
-samples. Name, age, occupation, background and MBTI are noncausal descriptive context;
-no personality predictive power, demographic calibration or real-person validity is claimed.
-Only explicit interests, six response traits and initial campaign state enter response equations.
-IDs/counts/assignments are structural; identity does not derive movement or provider prompts.
-The saved inspector shows verified identities with collapsed noncausal biography/MBTI.
+Ten fictional templates are editable starting assumptions, not real residents or population
+samples. Name, age, occupation, background and MBTI are descriptive context, noncausal for the
+rules; no personality predictive power, demographic calibration or real-person validity is
+claimed. Only explicit interests, six response traits and initial campaign state enter
+response equations. In new schema-v10 runs the same descriptive context is also the persona
+card the AI answers as, so it can move the separate cognition track; runs saved earlier kept it
+out of the provider prompt. IDs/counts/assignments are structural; identity does not derive
+movement. The saved inspector shows verified identities with collapsed biography/MBTI.
 
 Studies remain bounded to 1–30 agents and 1–7 days. Purchase intention is an uncalibrated proxy,
 not a purchase probability or transaction. Screening refuses recognized identifier/secret

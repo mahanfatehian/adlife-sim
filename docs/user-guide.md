@@ -164,8 +164,12 @@ decide where people live, work, and spend their free time:
 **2 · The people**. Choose up to 30 people from ten fictional profiles. **Audience** offers
 ready mixes: **Two contrasting groups** (four Lumo, who love new things, and four Veyra, who
 watch prices and distrust ads), **Two tech-fan groups**, and **All personas** (three of each
-profile). Names are decoration: they never reach the AI and do not change results; interests
-and traits do.
+profile). The rules use only each profile's interests and traits: names and life stories never
+change the rules-only results. The AI reads the whole profile (name, age, job, life story,
+personality type, interests, and traits) and answers as that person, so in a new run these can
+change the "with AI" results. Each life story is short and invented: daily life and hobbies,
+one dream, and one current worry. Runs saved by an earlier version never sent names or life
+stories to the AI, and they still open unchanged.
 
 | Profile | In short |
 | --- | --- |
@@ -263,7 +267,12 @@ uv run adlife city-replay ./adlife-workspace <run-name>
 - Every person, place, and product is fictional, and the results are simulated.
 - The AI only picks labels from fixed lists; AdLife's fixed formula turns them into the
   separate "with AI" score, and the rules-only score always stays next to it. The labels are
-  an AI's ratings of an ad for a fictional profile, not anyone's thoughts or feelings.
+  an AI playing a fictional person, not anyone's real thoughts or feelings.
+- In a new run each question tells the AI who the person is, how they feel about the brand
+  right now (from the rules only), the ads of this campaign they noticed before, and where
+  they are and what they are doing. It never shows the AI its own earlier answers.
+- An AI told a person's age, job, and personality type can fall back on stereotypes. An answer
+  the AI marks as a stereotype gets no AI effect, but it may not notice every one.
 - The purchase-interest score comes from the rules only. It is not a purchase probability
   or a forecast: purchases are not simulated.
 - A new run with the same settings repeats the rules exactly, but an online AI can answer

@@ -133,8 +133,18 @@ What this model cannot support. Read alongside the
   responses, and AdLife's frozen `city-cognition-influence-v1` tables turn them into bounded
   deltas on a separate synthetic cognition state. The categories are not validated psychology,
   the tables are not calibrated effects, and a general-purpose model brings its own
-  tendencies: in rehearsal a local model gave nearly the same answer to most responses, and
-  before its prompt defined the safety flags it flagged almost every ordinary answer.
+  tendencies: in rehearsal with the earlier prompts a local model gave nearly the same answer
+  to most responses, and before its prompt defined the safety flags it flagged almost every
+  ordinary answer. New runs ask the model to answer as the person (prompt contract
+  `city-cognition-persona-prompt-v3`), from the persona card (name, age, job, background,
+  MBTI, interests, and temperament), their current rule-track feelings, the campaign ads they
+  noticed before, and their situation. An in-character answer is still a general-purpose
+  model's guess about a fictional person, not a real reaction, and that prompt has not been
+  rehearsed like the earlier one. Giving the model an age, a job, and an MBTI type adds a
+  stereotype risk that the `stereotype-risk` flag catches only when the model flags itself; a
+  flagged answer is neutralized, an unflagged one may still be biased. Runs saved earlier used
+  prompt contract `city-cognition-signal-prompt-v2`, which excluded the descriptive persona
+  fields.
   Movement, attention, baseline responses, budgets, and the purchase-intention proxy stay
   rule-owned, so V10 adds no memory, social propagation, budget mutation, or purchase event.
   No paired-cognition protocol exists yet: `city-compare --layer response`, `city-study`, and
@@ -199,8 +209,10 @@ as release blockers.
 
 Default schema-3 personas produce schema-v9 and schema-4 bounded AI cognition produces
 schema-v10; schema-2/schema-v8 and schema-1/schema-v7 remain
-compatible. Names, ages, occupations, backgrounds and MBTI are noncausal descriptive
-metadata, with no real-person validity, demographic calibration or MBTI predictive power.
+compatible. Names, ages, occupations, backgrounds and MBTI are descriptive metadata,
+noncausal for the rules, with no real-person validity, demographic calibration or MBTI
+predictive power; new schema-v10 runs send them to the AI as the profile it answers as, where
+they can move only the separate cognition track.
 Explicit interests, six traits and initial campaign state are causal response assumptions;
 IDs/counts/assignments are structural. Reordering definitions preserves assignments, while
 changing IDs may remap agents. No identity-derived mobility or provider-generated personas

@@ -397,7 +397,7 @@
     "setup.people.count": "{name}: {count}",
     "setup.people.likes": "علاقه‌مند به {interests}",
     "setup.people.max": "حداکثر {max} نفر.",
-    "setup.people.note": "نام‌ها فقط جنبهٔ نمایشی دارند: هرگز به هوش مصنوعی نمی‌رسند و نتایج را تغییر نمی‌دهند. اما علایق و ویژگی‌ها اثر دارند.",
+    "setup.people.note": "قواعد فقط از علایق و ویژگی‌ها استفاده می‌کنند. هوش مصنوعی کل نمایه، از جمله نام و داستان زندگی، را می‌خواند و از زبان همان شخص پاسخ می‌دهد.",
     "setup.people.preset": "مخاطبان",
     "setup.people.preset.all": "همهٔ پرسوناها",
     "setup.people.preset.classic": "دو گروه علاقه‌مند به فناوری",

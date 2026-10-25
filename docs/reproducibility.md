@@ -191,9 +191,15 @@ The core builds every request and reservation before provider work starts, and a
 of one agent and campaign in the same minute read one immutable pre-minute state and commit
 one atomic update, so network completion order, input permutations, and `PYTHONHASHSEED`
 cannot change a run whose terminal records are identical. A causal request ID addresses only
-causal inputs: changing a persona's name, age, occupation, background, or MBTI changes the
-workbench and run provenance hashes but not the causal request IDs, the deterministic mock
-signals, the cache identity, or V10 numeric cognition. Rules and mock runs are offline and
+causal inputs. In runs saved earlier (prompt contract `city-cognition-signal-prompt-v2`),
+changing a persona's name, age, occupation, background, or MBTI changes the workbench and run
+provenance hashes but not the causal request IDs, the deterministic mock signals, the cache
+identity, or V10 numeric cognition. New runs (prompt contract
+`city-cognition-persona-prompt-v3`) ask the AI to answer as the person, so those fields are
+causal for the cognition track: the same edit changes the causal request IDs and the cache
+identity, never the rule baseline. Every v3 request is rebuilt from the frozen persona copy in
+`inputs/workbench.json` and the deterministic rule baseline, never from an earlier answer, so
+verification and replay rebuild identical requests. Rules and mock runs are offline and
 reproduce exactly. Within one workspace, a validated V2 cache entry for the same causal
 request, profile revision, effective settings, and contract hashes is reused with source
 `cache` and bound to the new run's own terminal record; a terminal record itself is never
@@ -423,9 +429,12 @@ Schema-v8 binds schema-2 canonical inputs/workbench.json with the same scientifi
 as direct V6 and schema-1/schema-v7 compatibility. Reordering persona definitions preserves
 canonical population hashes and assignments. A persona ID is structural: changing it changes
 provenance and may change canonical assignment order. Counts determine contiguous person-NNN
-assignments. Name, age, occupation, background and MBTI are noncausal descriptive metadata:
-a descriptive edit changes workbench provenance but leaves mobility, scientific response-input
-fingerprints, normalized evidence and metrics unchanged. Explicit interests, six response
+assignments. Name, age, occupation, background and MBTI are noncausal descriptive metadata for
+the rules: a descriptive edit changes workbench provenance but leaves mobility, scientific
+response-input fingerprints, normalized evidence and rule metrics unchanged (in a new
+schema-v10 run it can still change the separate cognition track, as described above). Each run
+keeps its own frozen persona copies, so a later change to the packaged template text never
+changes a saved run's load, verification, or replay. Explicit interests, six response
 traits and initial campaign state are causal assumptions and may change response evidence.
 
 Replay reads frozen persona records, creative snapshots and scientific inputs; changing or

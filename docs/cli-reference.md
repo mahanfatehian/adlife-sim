@@ -748,11 +748,16 @@ The guided setup page loads GET /api/persona-templates and submits schema-4
 population.personas plus cognition settings to `POST /api/jobs`; API clients may also submit
 schema 3, and schema-1/schema-2 requests remain compatible. The exact pairs are (1,7), (2,8), (3,9), and (4,10), with
 schema-v9 used for schema-3 and schema-v10 for schema 4. Future versions, booleans, floats,
-and other pairs are refused. Schema 4 uses the same persona contract; its causal
-bounded-signal request carries only interests, the response traits (with the recall encoding
-of the response's channel), and initial sentiment and recall, never name, age, occupation,
-background, MBTI, or purchase intention. The template GET is
-read-only and returns exactly four validated fictional records (catalog ceiling 32,768
+and other pairs are refused. Schema 4 uses the same persona contract. In new runs (prompt
+contract `city-cognition-persona-prompt-v3`) its bounded-signal request asks the AI to answer
+as the person and carries the persona card (name, age, occupation, background, MBTI,
+interests, and the six traits), the rule-track sentiment, recall, and purchase intention just
+before the notice, the agent's earlier noticed responses for the campaign, the situation, and
+the creative, but never an earlier AI answer. Runs saved earlier (prompt contract
+`city-cognition-signal-prompt-v2`) carry only interests, the response traits (with the recall
+encoding of the response's channel), and initial sentiment and recall, never name, age,
+occupation, background, MBTI, or purchase intention. The template GET is
+read-only and returns exactly ten validated fictional records (catalog ceiling 32,768
 canonical UTF-8 bytes). Requests allow 1–30 agents and 1–7 days. Persona records are capped
 at 3,072 canonical UTF-8 bytes, populations at 98,304 and workbench inputs/HTTP bodies at
 131,072. Counts, versions and seeds are exact bounded integers after seed-string transport;
@@ -764,7 +769,8 @@ Persona IDs are `persona-001` through `persona-999`; each count is 1–30 and th
 equal `settings.agent_count`. Names/occupation labels are bounded to 80 characters,
 background to 800, and interests to 1–12 unique 1–80-character strings. Optional MBTI
 is null or one of the 16 uppercase labels; it is never converted into numeric assumptions.
-Name, age, occupation, background and MBTI are noncausal. The six causal traits are
+Name, age, occupation, background and MBTI are noncausal for the rules; new schema-v10 runs
+send them to the AI as the persona card it answers as. The six causal traits are
 price_sensitivity, novelty_seeking, advertising_skepticism, mobile_recall_encoding,
 roadside_recall_encoding and impulsivity; initial_state contains brand_sentiment,
 recall_strength and purchase_intention. All six traits and recall/intention are finite values

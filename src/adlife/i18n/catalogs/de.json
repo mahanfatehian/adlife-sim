@@ -397,7 +397,7 @@
     "setup.people.count": "{name}: {count}",
     "setup.people.likes": "Mag {interests}",
     "setup.people.max": "Höchstens {max} Personen.",
-    "setup.people.note": "Namen sind nur Dekoration: Die KI erhält sie nie, und sie ändern keine Ergebnisse. Interessen und Eigenschaften dagegen schon.",
+    "setup.people.note": "Die Regeln nutzen nur Interessen und Eigenschaften. Die KI liest das ganze Profil, auch Namen und Lebensgeschichten, und antwortet als diese Person.",
     "setup.people.preset": "Zielgruppe",
     "setup.people.preset.all": "Alle Personas",
     "setup.people.preset.classic": "Zwei Technikfan-Gruppen",

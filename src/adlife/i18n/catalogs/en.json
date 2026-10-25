@@ -397,7 +397,7 @@
     "setup.people.count": "{name}: {count}",
     "setup.people.likes": "Likes {interests}",
     "setup.people.max": "At most {max} people.",
-    "setup.people.note": "Names are decoration: they never reach the AI and do not change results. Interests and traits do.",
+    "setup.people.note": "The rules use only interests and traits. The AI reads the whole profile, names and life stories too, and answers as that person.",
     "setup.people.preset": "Audience",
     "setup.people.preset.all": "All personas",
     "setup.people.preset.classic": "Two tech-fan groups",
