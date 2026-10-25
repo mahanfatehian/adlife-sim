@@ -65,7 +65,8 @@ def measured_seconds(reports: list[Path], files: list[str]) -> dict[str, float]:
     seconds: dict[str, float] = defaultdict(float)
     for report in reports:
         for case in ElementTree.parse(report).iter("testcase"):
-            parts = case.get("classname", "").split(".")
+            # A module skipped at collection has no class name; its name is the module.
+            parts = (case.get("classname") or case.get("name", "")).split(".")
             # A class inside the module adds trailing parts; the longest file prefix wins.
             for end in range(len(parts), 0, -1):
                 name = "/".join(parts[:end]) + ".py"

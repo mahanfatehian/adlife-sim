@@ -156,11 +156,18 @@ def test_the_shard_timings_come_from_junit_reports(tmp_path: Path) -> None:
         '<testcase classname="tests.packaging.test_quick_ci" name="b" time="0.5"/>'
         '<testcase classname="tests.unit.city.test_run_story.TestStory" name="c" time="2"/>'
         '<testcase classname="tests.nowhere.test_gone" name="d" time="9"/>'
+        '<testcase classname="" name="tests.integration.test_maximum_run" time="0.000"/>'
         "</testsuite></testsuites>",
         encoding="utf-8",
     )
-    files = ["tests/packaging/test_quick_ci.py", "tests/unit/city/test_run_story.py"]
+    files = [
+        "tests/integration/test_maximum_run.py",
+        "tests/packaging/test_quick_ci.py",
+        "tests/unit/city/test_run_story.py",
+    ]
+    # A module skipped at collection is measured too, at no time.
     assert module.measured_seconds([report], files) == {
+        "tests/integration/test_maximum_run.py": 0.0,
         "tests/packaging/test_quick_ci.py": 1.8,
         "tests/unit/city/test_run_story.py": 2.0,
     }
