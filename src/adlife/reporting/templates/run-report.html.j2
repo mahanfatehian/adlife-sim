@@ -92,12 +92,12 @@
 <ol class="how">
 <li class="how-box how-box--rules"><span class="tag tag--rules">{{ tr("common.rules_only") }}</span><p>{{ tr("start.how.rules") }}</p></li>
 <li class="how-arrow" aria-hidden="true"><span class="dir">&#8594;</span></li>
-<li class="how-box how-box--ai"><span class="tag tag--{{ view.label_tone }}">{% if view.practice %}{{ tr("story.labels.title.practice") }}{% else %}{{ tr("story.labels.title") }}{% endif %}</span><p>{{ tr("start.how.ai") }}</p></li>
+<li class="how-box how-box--ai"><span class="tag tag--{{ view.label_tone }}">{% if view.practice %}{{ tr("story.labels.title.practice") }}{% else %}{{ tr("story.labels.title") }}{% endif %}</span><p>{% if view.in_character %}{{ tr("start.how.ai.persona") }}{% else %}{{ tr("start.how.ai") }}{% endif %}</p></li>
 <li class="how-arrow" aria-hidden="true"><span class="dir">&#8594;</span></li>
 <li class="how-box how-box--formula"><span class="tag tag--{{ view.label_tone }}">{{ tr("common.with_ai") }}</span><p>{{ tr("start.how.formula") }}</p></li>
 </ol>
 <ul class="glossary">
-<li>{{ tr("report.how.affect") }}</li>
+<li>{% if view.in_character %}{{ tr("report.how.affect.persona") }}{% else %}{{ tr("report.how.affect") }}{% endif %}</li>
 <li>{{ tr("report.how.relevance") }}</li>
 <li>{{ tr("report.how.credibility") }}</li>
 <li>{{ tr("report.how.salience") }}</li>
@@ -199,8 +199,11 @@
 <li>{{ tr("limits.fictional") }}</li>
 <li>{{ tr("limits.not_forecast") }}</li>
 <li>{{ tr("limits.ai_scope") }}</li>
-<li>{{ tr("limits.names") }}</li>
+{% if view.in_character %}<li>{{ tr("limits.names.persona") }}</li>
+<li>{{ tr("limits.not_feelings.persona") }}</li>
+{% else %}<li>{{ tr("limits.names") }}</li>
 <li>{{ tr("limits.not_feelings") }}</li>
+{% endif %}
 <li>{{ tr("limits.replay") }}</li>
 </ul>
 </section>

@@ -182,7 +182,9 @@
     "limits.ai_scope": "Die KI wählt nur Labels aus festen Listen. Sie schreibt keinen Text, liefert keine Zahlen und kann weder Personen bewegen noch entscheiden, wer eine Anzeige bemerkt.",
     "limits.fictional": "Alle Personen, Orte und Produkte sind fiktiv.",
     "limits.names": "Namen und Beschreibungen der Personen werden nie an die KI gesendet.",
+    "limits.names.persona": "Die KI liest das ganze Profil jeder fiktiven Person, auch Namen und Lebensgeschichte, um als sie zu antworten. Die Regeln nutzen nur Interessen und Eigenschaften.",
     "limits.not_feelings": "Die Labels sind Bewertungen der KI zu einer Anzeige für ein fiktives Profil, nicht die Gedanken oder Gefühle eines Menschen.",
+    "limits.not_feelings.persona": "Die Labels sind die Vermutung der KI, wie diese fiktive Person reagieren würde, nicht die echten Gedanken oder Gefühle eines Menschen.",
     "limits.not_forecast": "Dies ist keine Prognose und keine validierte Psychologie. Käufe werden nicht simuliert; der Kaufinteresse-Wert ist eine unkalibrierte, rein regelbasierte Zahl.",
     "limits.replay": "Ein neuer Live-Lauf kann andere KI-Antworten erhalten. Dieser gespeicherte Lauf wird immer gleich wiedergegeben, ohne die KI aufzurufen.",
     "limits.title": "Was das ist – und was nicht",
@@ -293,6 +295,7 @@
     "report.download": "Diesen Bericht herunterladen",
     "report.footer": "Erstellt von AdLife Lab aus dem gespeicherten Lauf {run_id}. Synthetische Simulation, kein beobachtetes Verhalten.",
     "report.how.affect": "Reaktion: wie die KI die Aufnahme der Anzeige bei diesem fiktiven Profil einschätzt (genervt, skeptisch, neutral, neugierig oder positiv).",
+    "report.how.affect.persona": "Reaktion: wie diese fiktive Person, gespielt von der KI, die Anzeige aufgenommen hat (genervt, skeptisch, neutral, neugierig oder positiv).",
     "report.how.credibility": "Glaubwürdigkeit: wie glaubwürdig die Anzeige ist, gemessen am Vertrauen der Person in Werbung (gering bis hoch).",
     "report.how.feedback": "Die KI hat Labels aus festen Listen gewählt. Die Sätze in diesem Bericht schreibt AdLife auf Grundlage dieser Labels; die KI hat keinen Text geschrieben.",
     "report.how.relevance": "Relevanz: wie gut das Produkt zu den Interessen der Person passt (keine bis hoch).",
@@ -422,6 +425,7 @@
     "start.active_job": "Eine Simulation läuft.",
     "start.active_job.open": "Fortschritt anzeigen",
     "start.how.ai": "Die KI vergibt für jede bemerkte Anzeige vier Labels: Reaktion, Relevanz, Glaubwürdigkeit und Auffälligkeit.",
+    "start.how.ai.persona": "Die KI antwortet als jede Person, die die Anzeige bemerkt hat, mit vier Labels: Reaktion, Relevanz, Glaubwürdigkeit und Auffälligkeit.",
     "start.how.formula": "Eine feste Formel macht aus den Labels einen eigenen Wert „Mit KI“. Der Wert „Nur Regeln“ steht immer daneben.",
     "start.how.rules": "Regeln entscheiden, wer die Anzeige sieht und wer sie bemerkt.",
     "start.how.title": "So funktioniert es",
@@ -466,6 +470,7 @@
     "status.unsure": "Unsicher: verworfen",
     "status.warning": "Warnung: verworfen",
     "story.ai.answered": "Die KI hat diesen Moment bewertet.",
+    "story.ai.answered_as": "Die KI hat als {name} geantwortet.",
     "story.ai.failed": "Die KI hat nicht geantwortet ({reason}). Kein KI-Effekt.",
     "story.ai.not_chosen": "Nicht für die KI ausgewählt (nur die ersten {per_person} bemerkten Anzeigen pro Person und {per_run} pro Lauf). Kein KI-Effekt.",
     "story.ai.not_chosen_spread": "Nicht für die KI ausgewählt: Das Limit von {limit} Fragen wurde gleichmäßig über den ganzen Lauf verteilt. Kein KI-Effekt.",
@@ -507,6 +512,10 @@
     "story.headline.ai": {
       "one": "Die KI ({model}) hat {count} dieser Momente bewertet.",
       "other": "Die KI ({model}) hat {count} dieser Momente bewertet."
+    },
+    "story.headline.ai_as_person": {
+      "one": "Die KI ({model}) hat {count} dieser Momente als die Person beantwortet, die die Anzeige bemerkt hat.",
+      "other": "Die KI ({model}) hat {count} dieser Momente beantwortet, jedes Mal als die Person, die die Anzeige bemerkt hat."
     },
     "story.headline.compare.liking.about_same": "Mit KI lag die Sympathie am Ende etwa gleich hoch wie bei „Nur Regeln“.",
     "story.headline.compare.liking.higher": "Mit KI lag die Sympathie am Ende höher als bei „Nur Regeln“.",

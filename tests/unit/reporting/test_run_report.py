@@ -121,7 +121,9 @@ def _state_line(key: str, before: tuple[float, float], after: tuple[float, float
     }
 
 
-def _ai_clause(status: str, limit: int) -> dict[str, Any]:
+def _ai_clause(status: str, limit: int, *, agent_id: str, in_character: bool) -> dict[str, Any]:
+    if status == "answered" and in_character:
+        return {"key": "story.ai.answered_as", "params": {"name": {"person": agent_id}}}
     if status == "warning":
         return {
             "key": "story.ai.warning",
@@ -158,9 +160,12 @@ def story_document(
     scenario_name: str = "Guided demo study - Lumen Pocket",
     campaign_name: str = "Lumen Pocket campaign",
     product: str = "Lumen Pocket",
+    prompt_contract_id: str = "city-cognition-signal-prompt-v2",
 ) -> dict[str, Any]:
     """A complete, internally coherent ``RunStoryV1`` document (spec 8.3 shapes)."""
     provider_mode = mode in {"local", "remote"}
+    # Prompt v3 asked the AI to answer as the person who noticed the ad.
+    in_character = provider_mode and prompt_contract_id == "city-cognition-persona-prompt-v3"
     limit = 10 if provider_mode else 60
     plan = _plan_for_mode(mode)
     owners = {f"person-00{n}": "persona-001" for n in range(1, 5)}
@@ -259,7 +264,9 @@ def story_document(
                     rule_delta={"liking": rule_delta[0], "memory": rule_delta[1]},
                     applied_delta={"liking": _r6(applied[0]), "memory": _r6(applied[1])},
                     effect=effect,
-                    ai_clause=_ai_clause(status, limit),
+                    ai_clause=_ai_clause(
+                        status, limit, agent_id=agent_id, in_character=in_character
+                    ),
                     rules_line=_state_line(
                         "story.moment.rules_line",
                         (before["rules"]["liking"], before["rules"]["memory"]),
@@ -455,7 +462,7 @@ def story_document(
         else:
             headline.append(
                 {
-                    "key": "story.headline.ai",
+                    "key": "story.headline.ai_as_person" if in_character else "story.headline.ai",
                     "count": answered_records,
                     "params": {"model": _model_param(model_id)},
                 }
@@ -590,7 +597,7 @@ def story_document(
             },
             "reused_answers": statuses_all["reused"],
             "contract": {
-                "prompt_contract_id": "city-cognition-signal-prompt-v2",
+                "prompt_contract_id": prompt_contract_id,
                 "prompt_contract_sha256": _hex("prompt"),
                 "result_schema_id": "city-cognition-signal-result-v2",
                 "influence_policy_id": "city-cognition-influence-v1",
@@ -1064,6 +1071,33 @@ def test_offline_and_local_modes_render_their_own_wording(mode):
     else:
         assert "Labels from an AI on this computer" in text
         assert english["limits.vendor"] in text
+
+
+@pytest.mark.parametrize("language", ["en", "de", "fa"])
+def test_a_prompt_v3_report_says_the_ai_answered_as_the_person(language):
+    catalog = json.loads(
+        resources.files("adlife.i18n")
+        .joinpath("catalogs", f"{language}.json")
+        .read_text(encoding="utf-8")
+    )["messages"]
+    persona = Page(
+        render(make_story(prompt_contract_id="city-cognition-persona-prompt-v3"), language).content
+    ).all_text()
+    earlier = Page(render(make_story(), language).content).all_text()
+    for key in ("start.how.ai", "report.how.affect", "limits.names", "limits.not_feelings"):
+        assert catalog[f"{key}.persona"] in persona, key
+        assert catalog[key] not in persona, key
+        assert catalog[key] in earlier, key
+        assert catalog[f"{key}.persona"] not in earlier, key
+    # Practice answers and rules-only runs asked no AI, so they keep the general wording.
+    for mode in ("mock", "rules"):
+        offline = Page(
+            render(
+                make_story(mode=mode, prompt_contract_id="city-cognition-persona-prompt-v3"),
+                language,
+            ).content
+        ).all_text()
+        assert catalog["limits.names"] in offline and catalog["limits.names.persona"] not in offline
 
 
 def test_about_the_ai_and_technical_details_show_provenance(remote_story):

@@ -182,7 +182,9 @@
     "limits.ai_scope": "The AI only picks labels from fixed lists. It writes no text, gives no numbers, and cannot move people or decide who notices an ad.",
     "limits.fictional": "All people, places and products are fictional.",
     "limits.names": "Names and descriptions of the people are never sent to the AI.",
+    "limits.names.persona": "The AI reads each fictional person's whole profile, name and life story included, so it can answer as them. The rules use only interests and traits.",
     "limits.not_feelings": "The labels are the AI's ratings of an ad for a fictional profile, not anyone's thoughts or feelings.",
+    "limits.not_feelings.persona": "The labels are the AI's guess at how this fictional person would react, not anyone's real thoughts or feelings.",
     "limits.not_forecast": "This is not a forecast and not validated psychology. Purchases are not simulated; the purchase-interest score is an uncalibrated rules-only number.",
     "limits.replay": "A new live run can get different AI answers. This saved run always replays the same, without calling the AI.",
     "limits.title": "What this is, and what it is not",
@@ -293,6 +295,7 @@
     "report.download": "Download this report",
     "report.footer": "Made by AdLife Lab from saved run {run_id}. Synthetic simulation; not observed behaviour.",
     "report.how.affect": "Reaction: how the AI rates the ad's reception for this fictional profile (annoyed, skeptical, neutral, curious or positive).",
+    "report.how.affect.persona": "Reaction: how this fictional person, played by the AI, took the ad (annoyed, skeptical, neutral, curious or positive).",
     "report.how.credibility": "Believability: how believable the ad is, given the person's trust in ads (low to high).",
     "report.how.feedback": "The AI chose labels from fixed lists. The sentences in this report are written by AdLife from those labels; the AI wrote no text.",
     "report.how.relevance": "Relevance: how well the product fits the person's interests (none to high).",
@@ -422,6 +425,7 @@
     "start.active_job": "A simulation is running.",
     "start.active_job.open": "Show its progress",
     "start.how.ai": "The AI labels each noticed ad: reaction, relevance, believability and how much it stood out.",
+    "start.how.ai.persona": "The AI answers as each person who noticed the ad, with four labels: reaction, relevance, believability and how much it stood out.",
     "start.how.formula": "A fixed formula turns the labels into a separate “with AI” score. The rules-only score stays next to it.",
     "start.how.rules": "Rules decide who sees the ad and who notices it.",
     "start.how.title": "How it works",
@@ -466,6 +470,7 @@
     "status.unsure": "Unsure: set aside",
     "status.warning": "Warning: set aside",
     "story.ai.answered": "The AI judged this moment.",
+    "story.ai.answered_as": "The AI answered as {name}.",
     "story.ai.failed": "The AI did not answer ({reason}). No AI effect.",
     "story.ai.not_chosen": "Not chosen for the AI (only the first {per_person} noticed ads per person and {per_run} per run). No AI effect.",
     "story.ai.not_chosen_spread": "Not chosen for the AI: the limit of {limit} questions was spread evenly over the whole run. No AI effect.",
@@ -507,6 +512,10 @@
     "story.headline.ai": {
       "one": "The AI ({model}) judged {count} of those moments.",
       "other": "The AI ({model}) judged {count} of those moments."
+    },
+    "story.headline.ai_as_person": {
+      "one": "The AI ({model}) answered {count} of those moments as the person who noticed the ad.",
+      "other": "The AI ({model}) answered {count} of those moments, each time as the person who noticed the ad."
     },
     "story.headline.compare.liking.about_same": "With AI, liking ended about the same as with rules only.",
     "story.headline.compare.liking.higher": "With AI, liking ended higher than with rules only.",

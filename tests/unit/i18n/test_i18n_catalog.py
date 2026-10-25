@@ -199,8 +199,10 @@ def test_english_catalog_is_the_normative_appendix_a_key_set() -> None:
     # Covering the whole simulated period adds twelve: the spread not-chosen clause, the
     # day counter, the closing step (counter, title, lead), the day-by-day table (title,
     # column, row) and the setup's every-noticed-ad option, its note, the spread wording
-    # and the upper-bound token estimate.
-    assert len(english.message_keys()) == 559
+    # and the upper-bound token estimate. The AI answering as the person (prompt v3) adds
+    # six: the headline and moment line, and in-character versions of the how-it-works
+    # box, the reaction glossary line and the names and feelings limits.
+    assert len(english.message_keys()) == 565
     assert english.text("progress.title.done") == "Simulation finished"
     assert english.text("progress.answered", resolved=3, total=10) == "3 of 10 answered"
     assert english.text("common.app") == "AdLife Lab"
@@ -211,7 +213,7 @@ def test_english_catalog_is_the_normative_appendix_a_key_set() -> None:
     assert {"common.people", "common.days", "story.headline.shown", "report.person.more"} <= (
         plural_keys
     )
-    assert len(plural_keys) == 24
+    assert len(plural_keys) == 25
 
 
 @pytest.mark.parametrize("language", ["de", "fa"])

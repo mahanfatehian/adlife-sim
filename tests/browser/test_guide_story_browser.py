@@ -32,6 +32,7 @@ RUNS = {
     "rules": "rules",
     "hostile": "hostile",
     "multiday": "multiday",
+    "persona": "persona-provider",
     "v9": "v9",
 }
 PERSIAN_DIGIT = f"[{chr(0x06F0)}-{chr(0x06F9)}]"
@@ -648,6 +649,41 @@ def test_a_rules_run_shows_two_funnel_steps_and_no_ai_labels(browser: Browser, s
             catalog.text("story.summary.labels.none")
         )
         expect(page.locator(".story-coverage")).to_have_count(0)
+        assert session.errors == []
+
+
+def test_a_prompt_v3_story_says_the_ai_answered_as_the_person(
+    browser: Browser, site: _Site
+) -> None:
+    catalog = load_catalog("en")
+    variants = (
+        ("story-how-ai", "start.how.ai"),
+        ("story-limits-names", "limits.names"),
+        ("story-limits-feelings", "limits.not_feelings"),
+    )
+    with _session(browser) as session:
+        page = session.page
+        # The mixed run asked a local AI under prompt contract v2; the persona run is new.
+        for short, in_character in (("persona", True), ("mixed", False)):
+            run_id = site.run_ids[short]
+            _open(page, site, run_id)
+            story = _story(page, site, run_id)
+            context = story_ref_context(story)
+            expect(page.locator("#story-headline > li")).to_have_text(
+                [catalog.plain(ref, context) for ref in story.headline]
+            )
+            assert ("story.headline.ai_as_person" in [ref.key for ref in story.headline]) is (
+                in_character
+            )
+            page.keyboard.press("3")
+            expect(page.locator("#story-pane-summary")).to_be_visible()
+            for element_id, key in variants:
+                plain = page.locator(f"#{element_id}")
+                persona = page.locator(f"#{element_id}-persona")
+                expect(plain).to_have_text(catalog.text(key))
+                expect(persona).to_have_text(catalog.text(f"{key}.persona"))
+                expect(persona if in_character else plain).to_be_visible()
+                expect(plain if in_character else persona).to_be_hidden()
         assert session.errors == []
 
 

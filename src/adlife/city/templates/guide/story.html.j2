@@ -110,7 +110,7 @@
 <ol class="g-how story-how">
 <li class="g-how__box g-how__box--rules"><p>{{ tr("start.how.rules") }}</p></li>
 <li class="g-how__arrow" aria-hidden="true"><span class="g-dir">&#8594;</span></li>
-<li class="g-how__box g-how__box--ai"><p>{{ tr("start.how.ai") }}</p></li>
+<li class="g-how__box g-how__box--ai"><p id="story-how-ai">{{ tr("start.how.ai") }}</p><p id="story-how-ai-persona" hidden>{{ tr("start.how.ai.persona") }}</p></li>
 <li class="g-how__arrow" aria-hidden="true"><span class="g-dir">&#8594;</span></li>
 <li class="g-how__box g-how__box--formula"><p>{{ tr("start.how.formula") }}</p></li>
 </ol>
@@ -121,8 +121,10 @@
 <li>{{ tr("limits.fictional") }}</li>
 <li>{{ tr("limits.not_forecast") }}</li>
 <li>{{ tr("limits.ai_scope") }}</li>
-<li>{{ tr("limits.names") }}</li>
-<li>{{ tr("limits.not_feelings") }}</li>
+<li id="story-limits-names">{{ tr("limits.names") }}</li>
+<li id="story-limits-names-persona" hidden>{{ tr("limits.names.persona") }}</li>
+<li id="story-limits-feelings">{{ tr("limits.not_feelings") }}</li>
+<li id="story-limits-feelings-persona" hidden>{{ tr("limits.not_feelings.persona") }}</li>
 <li>{{ tr("limits.replay") }}</li>
 <li id="story-limits-vendor" hidden>{{ tr("limits.vendor") }}</li>
 </ul>

@@ -45,13 +45,14 @@ from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
     CITY_COGNITION_PROMPT_CONTRACT_V2_TEXT,
+    CITY_COGNITION_PROMPT_CONTRACT_V3_TEXT,
 )
 from adlife.core.simulation.spatial_attention import SpatialImpression
 from adlife.core.simulation.spatial_response_v2 import (
     SpatialAppliedResponseV2,
     SpatialDualStateUpdatedV2,
 )
-from adlife.i18n.refs import RefContext
+from adlife.i18n.refs import RefContext, person_param
 from adlife.reporting.run_story_model import RunStoryV1, StoryLabels, story_ref_context
 from tests.unit.city.run_story_fixtures import (
     DEFAULT_PROVIDER_BASE_URL,
@@ -73,6 +74,7 @@ V10_NAMES: tuple[StoryRunName, ...] = (
     "dense",
     "default-mock",
     "default-provider",
+    "persona-provider",
     "hostile",
 )
 SOURCE_STATUS = {
@@ -266,13 +268,23 @@ def test_a_spread_selection_policy_explains_not_chosen_moments_as_spread(saved) 
     selection = run_story_module._selection(spread_input)  # type: ignore[arg-type]
     assert (selection.funded_limit, selection.per_person, selection.per_run) == (250, 1_000, 1_000)
     not_chosen = SimpleNamespace(status="not_chosen", terminal=None)
-    clause = run_story_module._ai_clause(not_chosen, (), selection)  # type: ignore[arg-type]
+    clause = run_story_module._ai_clause(
+        not_chosen,  # type: ignore[arg-type]
+        (),
+        selection,
+        in_character=False,
+    )
     assert clause.model_dump(mode="json") == {
         "key": "story.ai.not_chosen_spread",
         "params": {"limit": {"int": 250}},
     }
     earliest = run_story_module._selection(saved("mixed").stored.cognition_input)
-    clause = run_story_module._ai_clause(not_chosen, (), earliest)  # type: ignore[arg-type]
+    clause = run_story_module._ai_clause(
+        not_chosen,  # type: ignore[arg-type]
+        (),
+        earliest,
+        in_character=False,
+    )
     assert clause.model_dump(mode="json")["key"] == (
         "story.ai.not_chosen" if earliest.policy_version == 2 else "story.ai.not_chosen_spread"
     )
@@ -974,6 +986,39 @@ def test_headlines_tell_the_run_without_repeating_themselves(saved) -> None:
     assert len(memory) == (provider.averages.compare.memory != "about_same")
 
 
+def test_a_prompt_v3_run_says_the_ai_answered_as_the_person(saved) -> None:
+    story = saved("persona-provider").story
+    assert story.ai.contract.prompt_contract_id == "city-cognition-persona-prompt-v3"
+    assert story.headline[3].model_dump(mode="json") == {
+        "key": "story.headline.ai_as_person",
+        "count": story.funnel.answered,
+        "params": {"model": {"id": DEFAULT_PROVIDER_MODEL}},
+    }
+    answered = [
+        (person.agent_id, moment)
+        for person in story.people
+        for moment in person.moments
+        if moment.status == "answered"
+    ]
+    assert answered
+    for agent_id, moment in answered:
+        assert moment.ai_clause is not None
+        assert moment.ai_clause.key == "story.ai.answered_as"
+        assert moment.ai_clause.params == {"name": person_param(agent_id)}
+
+    # A run saved under prompt contract v2 keeps its wording: the AI judged the moment.
+    earlier = saved("default-provider").story
+    assert earlier.ai.contract.prompt_contract_id == "city-cognition-signal-prompt-v2"
+    assert earlier.headline[3].key == "story.headline.ai"
+    clauses = {
+        moment.ai_clause.key
+        for person in earlier.people
+        for moment in person.moments
+        if moment.status == "answered" and moment.ai_clause is not None
+    }
+    assert clauses == {"story.ai.answered"}
+
+
 def test_a_non_ascii_model_name_is_text_not_an_identifier(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1049,6 +1094,8 @@ def test_story_json_excludes_transport_secrets_paths_and_descriptive_context(sav
         "Bound provider",
         "Guided demo - gapgpt",
         CITY_COGNITION_PROMPT_CONTRACT_V2_TEXT[:60],
+        CITY_COGNITION_PROMPT_CONTRACT_V3_TEXT[:60],
+        *(template.background[:40] for template in load_persona_template_catalog().templates),
         "example.org",
         str(run.root),
         run.root.as_posix(),

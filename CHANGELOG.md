@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The story and report say when the AI answered as the person (2026-10-25)** — for a run
+  made with prompt contract v3 and a real AI, the story headline now says the AI answered
+  those moments as the person who noticed the ad, each answered moment says "The AI answered
+  as {name}", and the how-it-works box, the reaction glossary line and the limits describe
+  the in-character answers: the AI reads each fictional person's whole profile, name and life
+  story included, and its labels are a guess at how that person would react. Runs saved
+  under prompt contract v2, practice runs and rules-only runs keep their wording, including
+  "Names and descriptions of the people are never sent to the AI", which was true for them
+  and is not for v3 runs. The start page describes the in-character AI that new runs use.
+  English, German and Persian. The model card and limitations record the first live
+  rehearsal of prompt v3 (GapGPT `gapgpt-qwen-3.6`): 304 of 304 questions answered, 22
+  distinct answer vectors, relevance following interest overlap (Spearman 0.69) and
+  credibility following advertising skepticism (-0.70), one run without held-out pairs.
 - **The AI answers as the person (prompt contract v3) (2026-10-25)** — new bounded-cognition
   runs use prompt contract `city-cognition-persona-prompt-v3` (causal contract
   `CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V4`: selection policy V3 with the same result schema

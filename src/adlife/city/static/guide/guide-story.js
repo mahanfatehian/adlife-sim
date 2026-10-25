@@ -23,6 +23,10 @@ const INTERESTS = new Set([
   "books", "commuting", "cooking", "crafts", "food", "gardening", "leisure", "music", "technology",
 ]);
 const PROVIDER_MODES = new Set(["local", "remote"]);
+// Prompt contract v3 asked the AI to answer as the person who noticed the ad.
+const PERSONA_PROMPT = "city-cognition-persona-prompt-v3";
+// Summary lines with an in-character version ("-persona") for prompt v3 runs.
+const PERSONA_VARIANTS = ["story-how-ai", "story-limits-names", "story-limits-feelings"];
 const STATUSES = new Set([
   "answered", "reused", "practice", "rules", "unsure", "warning", "failed", "over_limit",
   "not_chosen", "not_noticed",
@@ -1319,7 +1323,13 @@ function renderSummary() {
     labelsBlock(),
     averagesBlock(),
   );
-  byId("story-limits-vendor").hidden = !PROVIDER_MODES.has(state.story.ai.mode);
+  const ai = state.story.ai;
+  byId("story-limits-vendor").hidden = !PROVIDER_MODES.has(ai.mode);
+  const inCharacter = PROVIDER_MODES.has(ai.mode) && ai.contract.prompt_contract_id === PERSONA_PROMPT;
+  for (const id of PERSONA_VARIANTS) {
+    byId(id).hidden = inCharacter;
+    byId(`${id}-persona`).hidden = !inCharacter;
+  }
 }
 
 // ---------------------------------------------------------------- steps, filter and ticks

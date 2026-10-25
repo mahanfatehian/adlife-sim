@@ -139,12 +139,14 @@ What this model cannot support. Read alongside the
   `city-cognition-persona-prompt-v3`), from the persona card (name, age, job, background,
   MBTI, interests, and temperament), their current rule-track feelings, the campaign ads they
   noticed before, and their situation. An in-character answer is still a general-purpose
-  model's guess about a fictional person, not a real reaction, and that prompt has not been
-  rehearsed like the earlier one. Giving the model an age, a job, and an MBTI type adds a
-  stereotype risk that the `stereotype-risk` flag catches only when the model flags itself; a
-  flagged answer is neutralized, an unflagged one may still be biased. Runs saved earlier used
-  prompt contract `city-cognition-signal-prompt-v2`, which excluded the descriptive persona
-  fields.
+  model's guess about a fictional person, not a real reaction. One live rehearsal answered all
+  304 questions of a seven-day run, and the answers followed each person's interests and
+  advertising skepticism, but that run had no held-out one-input pairs like the earlier
+  prompt's rehearsal, so it shows variety, not validity. Giving the model an age, a job, and
+  an MBTI type adds a stereotype risk that the `stereotype-risk` flag catches only when the
+  model flags itself; a flagged answer is neutralized, an unflagged one may still be biased.
+  Runs saved earlier used prompt contract `city-cognition-signal-prompt-v2`, which excluded
+  the descriptive persona fields.
   Movement, attention, baseline responses, budgets, and the purchase-intention proxy stay
   rule-owned, so V10 adds no memory, social propagation, budget mutation, or purchase event.
   No paired-cognition protocol exists yet: `city-compare --layer response`, `city-study`, and

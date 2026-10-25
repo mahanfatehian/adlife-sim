@@ -21,6 +21,9 @@ Names:
   Lumo x4 and Veyra x4, Lumen Pocket, phone 07:00-21:00 at 0.01, cap 4, price 1.25;
   the provider variant uses an ``.invalid`` remote profile with model thinking turned
   off and an AI limit of 10;
+* ``persona-provider`` - the same study as a run made now: the current causal contract,
+  so the AI answers as the person (prompt contract v3), with an AI limit of 60; the other
+  provider runs keep the V2 contract and prompt contract v2;
 * ``hostile`` - hostile persona name and background text on a mock run;
 * ``v9`` - a schema-v9 run, which has no story.
 
@@ -45,6 +48,11 @@ from adlife.city.workbench_input import WorkbenchRunDraftV4
 from adlife.city.workbench_personas import load_persona_template_catalog
 from adlife.city.workbench_validation import ValidatedWorkbenchRun, construct_workbench_run
 from adlife.city.workbench_workspace import prepare_workbench_workspace
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    CityCognitionCausalContractV2,
+)
 from adlife.core.simulation.city_cognition_v2 import (
     build_city_budget_skipped_result_v2,
     build_city_cognition_terminal_record_v2,
@@ -68,6 +76,7 @@ StoryRunName = Literal[
     "multiday",
     "default-mock",
     "default-provider",
+    "persona-provider",
     "hostile",
     "v9",
 ]
@@ -83,6 +92,7 @@ STORY_RUN_NAMES: tuple[StoryRunName, ...] = (
     "multiday",
     "default-mock",
     "default-provider",
+    "persona-provider",
     "hostile",
     "v9",
 )
@@ -249,6 +259,14 @@ def story_provider_revision(
     }
     if disable_thinking:
         document["disable_thinking"] = True
+    # Story runs saved into one workspace share one identical revision.
+    for revision in registry.list():
+        if (revision.profile_id, revision.model_id, revision.disable_thinking) == (
+            document["profile_id"],
+            model_id,
+            disable_thinking,
+        ):
+            return revision
     return registry.create(ProviderProfileDraftV1.model_validate(document))
 
 
@@ -310,8 +328,15 @@ def default_study_draft(
     }
 
 
-def _validated_draft(document: dict[str, Any]) -> ValidatedWorkbenchRun:
-    return construct_workbench_run(WorkbenchRunDraftV4.model_validate_json(json.dumps(document)))
+def _validated_draft(
+    document: dict[str, Any],
+    *,
+    causal_contract: CityCognitionCausalContractV2 = CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+) -> ValidatedWorkbenchRun:
+    return construct_workbench_run(
+        WorkbenchRunDraftV4.model_validate_json(json.dumps(document)),
+        causal_contract=causal_contract,
+    )
 
 
 def _hostile_names(document: dict[str, Any]) -> None:
@@ -423,6 +448,16 @@ def saved_story_run(
         profile = story_provider_revision(root)
         validated = _validated_draft(
             default_study_draft(run_id=identifier, mode="remote", profile=profile)
+        )
+        return _publish(root, validated, profile=profile, plan=_default_provider_plan)
+    if name == "persona-provider":
+        # A run made now: the AI answers as the person (prompt contract v3).
+        profile = story_provider_revision(root)
+        validated = _validated_draft(
+            default_study_draft(
+                run_id=identifier, mode="remote", profile=profile, funded_response_limit=60
+            ),
+            causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
         )
         return _publish(root, validated, profile=profile, plan=_default_provider_plan)
     if name == "v9":

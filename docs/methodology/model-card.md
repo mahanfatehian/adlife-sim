@@ -170,8 +170,20 @@ moves affect in only about half of the pairs, credibility is rarely `high`, and 
 answers mis-copy the request ID and go through the single repair attempt. Safety flags are
 kept: a stereotype-inviting or harmful creative is still flagged and neutralized. These
 measurements describe one model on this machine, not a validated psychological instrument,
-and they were taken with prompt contract v2; the in-character prompt v3 that new runs use has
-not been rehearsed the same way yet.
+and they were taken with prompt contract v2.
+
+The in-character prompt v3 that new runs use was rehearsed once, with a remote model (GapGPT
+`gapgpt-qwen-3.6`, 2026-10-25). A seven-day run of 30 people drawn from the ten template
+personas, with one device campaign, asked 304 questions and got 304 valid answers in about
+four minutes: one needed a second attempt, none fell back, and none was neutralized. The
+answers differed by person, with 22 distinct vectors. Relevance followed interest overlap
+(Spearman 0.69) and credibility followed advertising skepticism (-0.70). The most skeptical
+people, whose interests missed the campaign (Selun, Veyra), were annoyed or skeptical with low
+credibility in every answer, while trusting people whose interests matched (Halvi, Lumo) were
+almost always positive or curious. Credibility was never `high`, and no answer carried a safety
+flag, so the stereotype-risk screen never fired. That was one run with one campaign and no
+held-out one-input pairs, so it shows that answers differ by person, not that they are right.
+
 The resulting cognition evidence is therefore provider-dependent and
 exploratory: `city-metrics` reports it beside, never inside, the rule baseline, and it is not a
 campaign effect. `city-compare --layer response`, `city-study`, and `city-report` refuse V10

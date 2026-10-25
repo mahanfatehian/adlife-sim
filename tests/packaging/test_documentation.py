@@ -2339,7 +2339,20 @@ def test_model_card_states_the_v10_llm_role_and_its_limits() -> None:
         "in runs saved earlier (prompt contract `city-cognition-signal-prompt-v2`) the "
         "descriptive persona fields never reached the model",
     )
-    assert "has not been rehearsed the same way yet" in _squash(section)
+    # The in-character prompt has one live rehearsal; it shows variety, not validity.
+    _assert_terms_share_paragraph(
+        section,
+        "prompt v3 that new runs use was rehearsed once",
+        "`gapgpt-qwen-3.6`",
+        "304 valid answers",
+        "22 distinct vectors",
+        "spearman 0.69",
+        "-0.70",
+        "the stereotype-risk screen never fired",
+        "no held-out one-input pairs",
+        "not that they are right",
+    )
+    assert "has not been rehearsed the same way yet" not in _squash(section)
     _assert_terms_share_paragraph(
         _section(model_card, "## Prompt-injection boundary"),
         "schema-v10",
@@ -2369,6 +2382,8 @@ def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
         "a flagged answer is neutralized, an unflagged one may still be biased",
         "prompt contract `city-cognition-signal-prompt-v2`, which excluded the descriptive "
         "persona fields",
+        "one live rehearsal answered all 304 questions",
+        "shows variety, not validity",
     )
     _assert_terms_share_paragraph(
         limitations,

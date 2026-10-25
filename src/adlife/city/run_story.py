@@ -39,6 +39,7 @@ from adlife.city.workbench_personas import load_persona_template_catalog
 from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.city_cognition import CityCognitionSafetyFlag
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_PROMPT_CONTRACT_V3_ID,
     CityCognitionAffectV2,
     CityCognitionCredibilityV2,
     CityCognitionEvaluationV2,
@@ -233,6 +234,7 @@ def _story_keys() -> frozenset[str]:
             "common.people",
             *(f"city.{city_id}" for city_id in PACKAGED_CITY_IDS),
             "story.headline.ai",
+            "story.headline.ai_as_person",
             "story.headline.nobody_noticed",
             "story.headline.noticed",
             "story.headline.people",
@@ -255,6 +257,7 @@ def _story_keys() -> frozenset[str]:
             *(f"story.where.mobile-feed.{activity}" for activity in get_args(SpatialActivity)),
             "story.where.roadside-billboard",
             *(f"story.ai.{status}" for status in statuses),
+            "story.ai.answered_as",
             "story.ai.not_chosen_spread",
             *(f"flag.{flag}" for flag in get_args(CityCognitionSafetyFlag)),
             *(f"reason.{reason}" for reason in get_args(CityCognitionRuntimeFallbackReasonV2)),
@@ -980,8 +983,17 @@ def _where(moment: _Moment, activity: SpatialActivity) -> _Where:
     return f"story.where.mobile-feed.{activity}"
 
 
-def _ai_clause(moment: _Moment, flags: Sequence[str], selection: _Selection) -> MessageRef:
+def _in_character(mode: str, prompt_contract_id: str) -> bool:
+    """Prompt contract v3 asked a real AI, not practice answers, to answer as the person."""
+    return mode in _PROVIDER_MODES and prompt_contract_id == CITY_COGNITION_PROMPT_CONTRACT_V3_ID
+
+
+def _ai_clause(
+    moment: _Moment, flags: Sequence[str], selection: _Selection, *, in_character: bool
+) -> MessageRef:
     status = moment.status
+    if status == "answered" and in_character:
+        return message_ref("story.ai.answered_as", name=person_param(moment.agent_id))
     if status == "warning":
         return message_ref(
             "story.ai.warning", flags=list_param([message_ref(f"flag.{flag}") for flag in flags])
@@ -1022,6 +1034,7 @@ def _story_moment(
     product: str,
     selection: _Selection,
     policy: CityCognitionInfluencePolicyV1,
+    in_character: bool,
 ) -> StoryMoment:
     opportunity = moment.opportunity
     activity: SpatialActivity = position.activity
@@ -1125,7 +1138,7 @@ def _story_moment(
         effect=effect,
         math=math_facts,
         sentence=sentence,
-        ai_clause=_ai_clause(moment, flags, selection),
+        ai_clause=_ai_clause(moment, flags, selection, in_character=in_character),
         rules_line=rules_line,
         with_ai_line=with_ai_line,
     )
@@ -1199,6 +1212,10 @@ def _people(
     product = evidence.workbench_input.creative_template.product_name
     policy = evidence.cognition_input.causal_contract.influence_policy
     selection = _selection(evidence.cognition_input)
+    in_character = _in_character(
+        evidence.cognition_input.mode,
+        evidence.cognition_input.causal_contract.prompt_contract_id,
+    )
     frames: dict[int, dict[str, CityPosition]] = {}
     people: list[StoryPerson] = []
     all_kept: list[_Moment] = []
@@ -1223,6 +1240,7 @@ def _people(
                     product=product,
                     selection=selection,
                     policy=policy,
+                    in_character=in_character,
                 )
             )
         answers = [
@@ -1416,9 +1434,12 @@ def _headline(
         headline.append(message_ref("story.headline.practice", count=ai.statuses.practice))
     else:
         assert ai.model_id is not None
-        headline.append(
-            message_ref("story.headline.ai", count=funnel.answered, model=_model_param(ai.model_id))
+        key = (
+            "story.headline.ai_as_person"
+            if _in_character(ai.mode, ai.contract.prompt_contract_id)
+            else "story.headline.ai"
         )
+        headline.append(message_ref(key, count=funnel.answered, model=_model_param(ai.model_id)))
     compare = averages.compare
     headline.append(message_ref(f"story.headline.compare.liking.{compare.liking}"))
     if compare.memory != "about_same":

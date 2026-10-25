@@ -54,7 +54,11 @@ _ORDERS: Final[dict[str, tuple[str, ...]]] = {
     "salience": ("none", "low", "medium", "high", "uncertain"),
 }
 _FLAGS: Final = ("stereotype-risk", "unsupported-inference", "unsafe-content")
-_AI_HEADLINES: Final = frozenset({"story.headline.ai", "story.headline.practice"})
+_AI_HEADLINES: Final = frozenset(
+    {"story.headline.ai", "story.headline.ai_as_person", "story.headline.practice"}
+)
+# Prompt contract v3 asked the AI to answer as the person who noticed the ad.
+_PERSONA_PROMPT: Final = "city-cognition-persona-prompt-v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +233,8 @@ class _View:
     provider: bool
     practice: bool
     rules: bool
+    # A real AI answered as the person (prompt v3), so the in-character wording applies.
+    in_character: bool
     tone: Tone
     label_tone: Tone
     headline: tuple[_Headline, ...]
@@ -646,6 +652,9 @@ def _view(story: RunStoryV1, catalog: Catalog, links: RunReportLinks | None) -> 
         provider=mode in _PROVIDER_MODES,
         practice=practice,
         rules=mode == "rules",
+        in_character=(
+            mode in _PROVIDER_MODES and story.ai.contract.prompt_contract_id == _PERSONA_PROMPT
+        ),
         tone=ai_tone,
         label_tone="practice" if practice else "ai",
         headline=_headline(story, ai_tone),
