@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from adlife.city.workbench_input import (
+    CreativeTemplate,
     WorkbenchCohortDraft,
+    WorkbenchPersonaDraftV2,
     WorkbenchRunInputDocument,
     WorkbenchRunInputV2,
     WorkbenchRunInputV3,
@@ -187,6 +189,102 @@ def validate_workbench_execution_binding(
     return workbench_input
 
 
+# The cognition context models of one frozen input. Planning builds them only after the
+# whole simulation; a new draft's acceptance builds the same ones before any job is
+# reserved, so it refuses exactly the text that planning would refuse.
+
+
+def _creative_snapshot(creative: CreativeTemplate) -> CityCognitionCreativeSnapshotV1:
+    return CityCognitionCreativeSnapshotV1(
+        template_id=creative.template_id,
+        template_version=creative.template_version,
+        product_name=creative.product_name,
+        product_category=creative.product_category,
+        message=creative.message,
+        call_to_action=creative.call_to_action,
+        disclosure=creative.disclosure,
+    )
+
+
+def city_cognition_agent_context_v1(
+    agent_id: str, persona: WorkbenchPersonaDraftV2
+) -> CityCognitionAgentContextV1:
+    """One agent's schema-3 narrative context, copied from its frozen persona draft."""
+    return CityCognitionAgentContextV1(
+        schema_version=1,
+        agent_id=agent_id,
+        persona_id=persona.persona_id,
+        fictional=True,
+        display_name=persona.display_name,
+        age=persona.age,
+        occupation=persona.occupation,
+        background=persona.background,
+        mbti=persona.mbti,
+        interests=tuple(sorted(persona.interests)),
+        traits=persona.traits,
+    )
+
+
+def city_cognition_campaign_context_v1(
+    workbench_input: WorkbenchRunInputV3,
+) -> CityCognitionCampaignContextV1:
+    """The schema-3 campaign context: the campaign and its exact creative snapshot."""
+    campaign = workbench_input.draft.scenario.campaign
+    creative = workbench_input.creative_template
+    return CityCognitionCampaignContextV1(
+        schema_version=1,
+        campaign_id=campaign.campaign_id,
+        name=campaign.name,
+        creative_sha256=creative.fingerprint,
+        creative=_creative_snapshot(creative),
+        target_interests=tuple(sorted(campaign.target_interests)),
+        relative_price=campaign.relative_price,
+    )
+
+
+def city_cognition_causal_agent_v2(
+    agent_id: str, persona: WorkbenchPersonaDraftV2
+) -> CityCognitionCausalAgentV2:
+    """One agent's causal V2 facts: its persona's interests and traits."""
+    return CityCognitionCausalAgentV2(
+        schema_version=2,
+        agent_id=agent_id,
+        interests=tuple(sorted(persona.interests)),
+        traits=persona.traits,
+    )
+
+
+def city_cognition_person_profile_v1(
+    agent_id: str, persona: WorkbenchPersonaDraftV2
+) -> CityCognitionPersonProfileV1:
+    """One agent's prompt-v3 persona card, copied from its frozen persona draft."""
+    return CityCognitionPersonProfileV1(
+        schema_version=1,
+        agent_id=agent_id,
+        name=persona.display_name,
+        age=persona.age,
+        occupation=persona.occupation,
+        background=persona.background,
+        personality_type=persona.mbti,
+    )
+
+
+def city_cognition_causal_campaign_v2(
+    workbench_input: WorkbenchRunInputV4,
+) -> CityCognitionCausalCampaignV2:
+    """The causal V2 campaign: its target interests, price and exact creative snapshot."""
+    campaign = workbench_input.draft.scenario.campaign
+    creative = workbench_input.creative_template
+    return CityCognitionCausalCampaignV2(
+        schema_version=2,
+        campaign_id=campaign.campaign_id,
+        creative_sha256=creative.fingerprint,
+        creative=_creative_snapshot(creative),
+        target_interests=tuple(sorted(campaign.target_interests)),
+        relative_price=campaign.relative_price,
+    )
+
+
 def build_city_cognition_run_context(
     workbench_input: WorkbenchRunInputV3,
     *,
@@ -334,41 +432,10 @@ def build_city_cognition_run_context(
             )
 
     agents = tuple(
-        CityCognitionAgentContextV1(
-            schema_version=1,
-            agent_id=assignment.agent_id,
-            persona_id=assignment.persona_id,
-            fictional=True,
-            display_name=personas[assignment.persona_id].display_name,
-            age=personas[assignment.persona_id].age,
-            occupation=personas[assignment.persona_id].occupation,
-            background=personas[assignment.persona_id].background,
-            mbti=personas[assignment.persona_id].mbti,
-            interests=tuple(sorted(personas[assignment.persona_id].interests)),
-            traits=personas[assignment.persona_id].traits,
-        )
+        city_cognition_agent_context_v1(assignment.agent_id, personas[assignment.persona_id])
         for assignment in population.assignments
     )
-    creative_snapshot = CityCognitionCreativeSnapshotV1(
-        template_id=creative.template_id,
-        template_version=creative.template_version,
-        product_name=creative.product_name,
-        product_category=creative.product_category,
-        message=creative.message,
-        call_to_action=creative.call_to_action,
-        disclosure=creative.disclosure,
-    )
-    campaigns = (
-        CityCognitionCampaignContextV1(
-            schema_version=1,
-            campaign_id=campaign_draft.campaign_id,
-            name=campaign_draft.name,
-            creative_sha256=creative.fingerprint,
-            creative=creative_snapshot,
-            target_interests=tuple(sorted(campaign_draft.target_interests)),
-            relative_price=campaign_draft.relative_price,
-        ),
-    )
+    campaigns = (city_cognition_campaign_context_v1(checked_input),)
     return CityCognitionRunContextV1(
         schema_version=1,
         run_input_sha256=checked_input.fingerprint,
@@ -503,15 +570,7 @@ def build_city_cognition_run_context_v2(
     profiles = (
         {
             "profiles": tuple(
-                CityCognitionPersonProfileV1(
-                    schema_version=1,
-                    agent_id=agent_id,
-                    name=persona.display_name,
-                    age=persona.age,
-                    occupation=persona.occupation,
-                    background=persona.background,
-                    personality_type=persona.mbti,
-                )
+                city_cognition_person_profile_v1(agent_id, persona)
                 for agent_id, persona in assumptions.items()
             )
         }
@@ -524,33 +583,12 @@ def build_city_cognition_run_context_v2(
         response_input_sha256=checked_response.fingerprint,
         scenario_sha256=checked_scenario.fingerprint,
         city_sha256=checked_pack.fingerprint,
+        # The reconstructed response profiles equal these personas' interests and traits.
         agents=tuple(
-            CityCognitionCausalAgentV2(
-                schema_version=2,
-                agent_id=profile.agent_id,
-                interests=tuple(sorted(profile.interests)),
-                traits=profile.traits,
-            )
-            for profile in reconstructed.profiles
+            city_cognition_causal_agent_v2(agent_id, persona)
+            for agent_id, persona in assumptions.items()
         ),
-        campaigns=(
-            CityCognitionCausalCampaignV2(
-                schema_version=2,
-                campaign_id=campaign_draft.campaign_id,
-                creative_sha256=creative.fingerprint,
-                creative=CityCognitionCreativeSnapshotV1(
-                    template_id=creative.template_id,
-                    template_version=creative.template_version,
-                    product_name=creative.product_name,
-                    product_category=creative.product_category,
-                    message=creative.message,
-                    call_to_action=creative.call_to_action,
-                    disclosure=creative.disclosure,
-                ),
-                target_interests=tuple(sorted(campaign_draft.target_interests)),
-                relative_price=campaign_draft.relative_price,
-            ),
-        ),
+        campaigns=(city_cognition_causal_campaign_v2(checked_input),),
         initial_states=tuple(
             CityCognitionInitialRuleStateV2(
                 schema_version=2,
@@ -568,5 +606,10 @@ def build_city_cognition_run_context_v2(
 __all__ = [
     "build_city_cognition_run_context",
     "build_city_cognition_run_context_v2",
+    "city_cognition_agent_context_v1",
+    "city_cognition_campaign_context_v1",
+    "city_cognition_causal_agent_v2",
+    "city_cognition_causal_campaign_v2",
+    "city_cognition_person_profile_v1",
     "validate_workbench_execution_binding",
 ]

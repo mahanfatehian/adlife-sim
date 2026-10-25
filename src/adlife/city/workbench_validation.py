@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Final
+
+from pydantic import ValidationError
 
 from adlife.city.catalog import CityCatalogError, UnknownCatalogCity, select_catalog_city
+from adlife.city.workbench_binding import (
+    city_cognition_agent_context_v1,
+    city_cognition_campaign_context_v1,
+    city_cognition_causal_agent_v2,
+    city_cognition_causal_campaign_v2,
+    city_cognition_person_profile_v1,
+)
 from adlife.city.workbench_creatives import (
     CreativeTemplateCatalogError,
     UnknownCreativeTemplate,
@@ -23,6 +34,7 @@ from adlife.city.workbench_input import (
     NormalizedWorkbenchScenarioDraft,
     WorkbenchCohortDraft,
     WorkbenchDailyWindow,
+    WorkbenchPersonaDraftV2,
     WorkbenchRunDraft,
     WorkbenchRunDraftDocument,
     WorkbenchRunDraftV2,
@@ -34,15 +46,21 @@ from adlife.city.workbench_input import (
     WorkbenchRunInputV3,
     WorkbenchRunInputV4,
     materialize_workbench_population,
+    parse_workbench_run_input_json,
     workbench_selection_limit_refusal,
 )
 from adlife.core.domain.city import CityPackV2
+from adlife.core.domain.city_cognition import _reject_user_labelled_secret_sequence
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_PROMPT_CONTRACTS,
     CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CityCognitionCausalContractV2,
+)
+from adlife.core.domain.person import (
+    contains_labelled_secret_member,
+    contains_written_identifier_text,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
@@ -62,7 +80,35 @@ from adlife.core.domain.spatial_response import (
     SpatialResponseProfile,
     validate_spatial_response_input,
 )
+from adlife.core.simulation.city_cognition_v2 import build_city_cognition_persona_person_v1
 from adlife.core.simulation.city_mobility import CityMobility
+
+_PERSONA_TEXT_REFUSAL: Final = (
+    "Rewrite this persona text without path-like slashes or credential labels."
+)
+_CAMPAIGN_TEXT_REFUSAL: Final = (
+    "Rewrite this campaign text without path-like slashes, credential labels or line breaks."
+)
+_PERSONA_IDENTIFIER_REFUSAL: Final = "Rewrite this persona text without phone or identity numbers."
+# The draft field that each cognition context model field is copied from.
+_PERSONA_TEXT_FIELDS: Final[Mapping[str, str]] = {
+    "display_name": "display_name",
+    "name": "display_name",
+    "age": "age",
+    "occupation": "occupation",
+    "background": "background",
+    "mbti": "mbti",
+    "personality_type": "mbti",
+    "interests": "interests",
+    "hobbies_and_interests": "interests",
+    "traits": "traits",
+}
+_CAMPAIGN_TEXT_FIELDS: Final[Mapping[str, str]] = {
+    "campaign_id": "campaign_id",
+    "name": "name",
+    "target_interests": "target_interests",
+    "relative_price": "relative_price",
+}
 
 
 class WorkbenchValidationError(ValueError):
@@ -331,6 +377,175 @@ def _roadside_coordinate(
         ) from None
 
 
+def _is_credential_label(value: str) -> bool:
+    # The cross-field screen refuses a whole credential label beside any other text.
+    try:
+        _reject_user_labelled_secret_sequence((value, "text"))
+    except ValueError:
+        return True
+    return False
+
+
+def _refused_field(
+    error: ValueError,
+    fields: Mapping[str, str],
+    labelled: tuple[tuple[str, tuple[str, ...]], ...],
+) -> str | None:
+    """The draft field whose copy a context model refused, when one field explains it."""
+    if isinstance(error, ValidationError):
+        for detail in error.errors(include_url=False, include_context=False, include_input=False):
+            if detail["loc"]:
+                return fields.get(str(detail["loc"][0]))
+    # A refusal without a field is a cross-field credential-label screen.
+    for field, values in labelled:
+        if any(_is_credential_label(value) for value in values):
+            return field
+    return None
+
+
+def _persona_refusal(
+    index: int, persona: WorkbenchPersonaDraftV2, error: ValueError
+) -> WorkbenchValidationError:
+    field = _refused_field(
+        error,
+        _PERSONA_TEXT_FIELDS,
+        (
+            ("display_name", (persona.display_name,)),
+            ("occupation", () if persona.occupation is None else (persona.occupation,)),
+            ("background", () if persona.background is None else (persona.background,)),
+            ("interests", tuple(sorted(persona.interests))),
+        ),
+    )
+    path = f"population.personas.{index}"
+    return WorkbenchValidationError(
+        "invalid-persona-text",
+        path if field is None else f"{path}.{field}",
+        _PERSONA_TEXT_REFUSAL,
+    )
+
+
+def _campaign_refusal(
+    error: ValueError, labelled: tuple[tuple[str, tuple[str, ...]], ...]
+) -> WorkbenchValidationError:
+    field = _refused_field(error, _CAMPAIGN_TEXT_FIELDS, labelled)
+    return WorkbenchValidationError(
+        "invalid-campaign-text",
+        "scenario.campaign" if field is None else f"scenario.campaign.{field}",
+        _CAMPAIGN_TEXT_REFUSAL,
+    )
+
+
+def _screen_cognition_context_v1(workbench_input: WorkbenchRunInputV3) -> None:
+    population = workbench_input.draft.population
+    indexes = {persona.persona_id: index for index, persona in enumerate(population.personas)}
+    for assignment in population.assignments:
+        index = indexes[assignment.persona_id]
+        persona = population.personas[index]
+        try:
+            city_cognition_agent_context_v1(assignment.agent_id, persona)
+        except ValueError as error:
+            raise _persona_refusal(index, persona, error) from None
+    campaign = workbench_input.draft.scenario.campaign
+    try:
+        city_cognition_campaign_context_v1(workbench_input)
+    except ValueError as error:
+        raise _campaign_refusal(
+            error,
+            (
+                ("campaign_id", (campaign.campaign_id,)),
+                ("name", (campaign.name,)),
+                ("target_interests", tuple(sorted(campaign.target_interests))),
+            ),
+        ) from None
+
+
+def _screen_cognition_context_v2(workbench_input: WorkbenchRunInputV4) -> None:
+    draft = workbench_input.draft
+    persona_card = CITY_COGNITION_PROMPT_CONTRACTS[
+        draft.cognition.causal_contract.prompt_contract_version
+    ].persona_context
+    population = draft.population
+    indexes = {persona.persona_id: index for index, persona in enumerate(population.personas)}
+    for assignment in population.assignments:
+        index = indexes[assignment.persona_id]
+        persona = population.personas[index]
+        try:
+            agent = city_cognition_causal_agent_v2(assignment.agent_id, persona)
+            if persona_card:
+                # Planning builds every agent's request person from its persona card too.
+                build_city_cognition_persona_person_v1(
+                    city_cognition_person_profile_v1(assignment.agent_id, persona), agent
+                )
+        except ValueError as error:
+            raise _persona_refusal(index, persona, error) from None
+    campaign = draft.scenario.campaign
+    try:
+        city_cognition_causal_campaign_v2(workbench_input)
+    except ValueError as error:
+        raise _campaign_refusal(
+            error,
+            (
+                ("campaign_id", (campaign.campaign_id,)),
+                ("target_interests", tuple(sorted(campaign.target_interests))),
+            ),
+        ) from None
+
+
+def _canonical_input(workbench_input: WorkbenchRunInputDocument) -> WorkbenchRunInputDocument:
+    """The frozen input exactly as the job re-parses it."""
+    try:
+        return parse_workbench_run_input_json(canonical_json(workbench_input))
+    except ValueError:
+        # Interest sets freeze sorted, so the job's structural walk can find a credential
+        # label before a member that the submitted order never put after it.
+        targets = workbench_input.draft.scenario.campaign.target_interests
+        if contains_labelled_secret_member(tuple(sorted(targets))):
+            raise WorkbenchValidationError(
+                "invalid-campaign-text",
+                "scenario.campaign.target_interests",
+                _CAMPAIGN_TEXT_REFUSAL,
+            ) from None
+        raise
+
+
+def _screen_written_identifiers(workbench_input: WorkbenchRunInputDocument) -> None:
+    """Refuse phone and identity numbers in the shapes recognized since saved runs were made.
+
+    Stored inputs re-run the older shapes whenever a saved run loads, so the newer ones are
+    met only here, where a draft is accepted, and a saved run holding one still opens.
+    """
+    population = getattr(workbench_input.draft, "population", None)
+    for index, persona in enumerate(() if population is None else population.personas):
+        for field, values in (
+            ("display_name", (persona.display_name,)),
+            ("occupation", () if persona.occupation is None else (persona.occupation,)),
+            ("background", () if persona.background is None else (persona.background,)),
+            ("interests", tuple(sorted(persona.interests))),
+        ):
+            if any(contains_written_identifier_text(value) for value in values):
+                raise WorkbenchValidationError(
+                    "invalid-persona-text",
+                    f"population.personas.{index}.{field}",
+                    _PERSONA_IDENTIFIER_REFUSAL,
+                )
+
+
+def _screen_new_input(workbench_input: WorkbenchRunInputDocument) -> None:
+    """Refuse now, by field, what the job would refuse only after the whole simulation.
+
+    The job re-parses the canonical frozen input, and planning then builds the cognition
+    context models from it with these same projections. Saved runs never pass through
+    here, so their stored inputs load, verify and replay exactly as before. A new draft
+    also meets the phone and identity number shapes recognized since saved runs were made.
+    """
+    checked = _canonical_input(workbench_input)
+    _screen_written_identifiers(checked)
+    if isinstance(checked, WorkbenchRunInputV4):
+        _screen_cognition_context_v2(checked)
+    elif isinstance(checked, WorkbenchRunInputV3):
+        _screen_cognition_context_v1(checked)
+
+
 def construct_workbench_run(
     draft: WorkbenchRunDraftDocument,
     *,
@@ -343,6 +558,10 @@ def construct_workbench_run(
     contract's selection-policy version. The workbench server always passes
     ``CURRENT_CITY_COGNITION_CAUSAL_CONTRACT``, so every new run uses the current
     version; the V2 default keeps direct callers of the historical contract unchanged.
+
+    The frozen input must also survive the job's canonical re-parse and, for schema 3
+    and 4, the cognition context models its planning builds; a refusal names the persona
+    (``population.personas.<index>``, in canonical ID order) or campaign field.
     """
     if not isinstance(causal_contract, CityCognitionCausalContractV2):
         raise TypeError("causal_contract must be a CityCognitionCausalContractV2")
@@ -393,6 +612,7 @@ def construct_workbench_run(
             f"person-{index:03d}": normalized.cohort
             for index in range(1, normalized.settings.agent_count + 1)
         }
+    _screen_new_input(workbench_input)
     mobility = CityMobility(
         pack,
         seed=normalized.settings.seed,

@@ -89,6 +89,9 @@ from adlife.city.workbench_creatives import load_creative_template_catalog
 from adlife.city.workbench_input import (
     NormalizedWorkbenchCognitionV4,
     WorkbenchCognitionDraftV4,
+    WorkbenchRunDraftDocument,
+    WorkbenchRunDraftV2,
+    WorkbenchRunDraftV3,
     WorkbenchRunDraftV4,
 )
 from adlife.city.workbench_jobs import (
@@ -175,6 +178,7 @@ _ASSET_LIMIT_BYTES = 262_144
 _RUN_ID_IN_USE_MESSAGE = "A saved run already uses this ID. Choose a new run ID."
 _CANONICAL_UNSIGNED_INTEGER = re.compile(r"^(?:0|[1-9][0-9]*)$")
 _JOB_ID = re.compile(r"^job-[0-9a-f]{32}$")
+_CANONICAL_PERSONA_FIELD = re.compile(r"population\.personas\.(0|[1-9][0-9]?)(\.[a-z_]+)?")
 # The removed saved-run inspector page sent this snapshot header; nothing issues it now.
 _VIEW_TOKEN_HEADER = b"x-adlife-view-token"
 _WORKBENCH_FIELD_COMPONENTS = frozenset(
@@ -382,6 +386,33 @@ def _validation_summary(result: ValidatedWorkbenchRun) -> dict[str, object]:
     }
 
 
+def _request_persona_field(
+    error: WorkbenchValidationError,
+    draft: WorkbenchRunDraftDocument,
+    payload: Mapping[str, object],
+) -> WorkbenchValidationError:
+    """Name a persona refusal by its position in the request, as field diagnostics do.
+
+    A parsed draft holds its personas in canonical ID order, which the request need not.
+    """
+    match = _CANONICAL_PERSONA_FIELD.fullmatch(error.field)
+    population = payload.get("population")
+    if (
+        match is None
+        or not isinstance(draft, (WorkbenchRunDraftV2, WorkbenchRunDraftV3, WorkbenchRunDraftV4))
+        or not isinstance(population, Mapping)
+    ):
+        return error
+    persona_id = draft.population.personas[int(match.group(1))].persona_id
+    submitted = population.get("personas")
+    for index, item in enumerate(submitted if isinstance(submitted, list) else ()):
+        if isinstance(item, Mapping) and item.get("persona_id") == persona_id:
+            return WorkbenchValidationError(
+                error.code, f"population.personas.{index}{match.group(2) or ''}", error.safe_message
+            )
+    return error
+
+
 def _construct_validated_run(
     payload: dict[str, object],
     resolver: WorkbenchCityResolver,
@@ -396,11 +427,14 @@ def _construct_validated_run(
             "The selected city is unavailable.",
         ) from None
     # Every new run freezes the current causal contract and its selection policy.
-    return construct_workbench_run(
-        draft,
-        selected_pack=selected.pack,
-        causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
-    )
+    try:
+        return construct_workbench_run(
+            draft,
+            selected_pack=selected.pack,
+            causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+        )
+    except WorkbenchValidationError as error:
+        raise _request_persona_field(error, draft, payload) from None
 
 
 def _pagination(request: Request) -> tuple[int, int]:
@@ -1434,7 +1468,7 @@ def create_city_workbench_app(
     @app.post("/api/scenarios/validate")
     async def validate_scenario(request: Request) -> dict[str, object]:
         _require_empty_query(request)
-        payload = strict_json_object(await request.body())
+        payload = strict_json_object(await request.body(), user_draft=True)
         result = _construct_validated_run(payload, city_resolver)
         return _validation_summary(result)
 
@@ -1456,7 +1490,7 @@ def create_city_workbench_app(
     @app.post("/api/jobs")
     async def submit_job(request: Request) -> JSONResponse:
         _require_empty_query(request)
-        payload = strict_json_object(await request.body())
+        payload = strict_json_object(await request.body(), user_draft=True)
         validated = _construct_validated_run(payload, city_resolver)
         job = jobs.submit(validated)
         return JSONResponse(

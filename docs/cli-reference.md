@@ -339,8 +339,12 @@ one strict JSON result. The bounded-signal result schema uses only keywords that
 structured outputs and vLLM grammar decoding both accept (no `uniqueItems`; the result model
 refuses duplicate safety flags itself). A vLLM server's own metadata members, such as
 `prompt_token_ids`, `prompt_text`, `metrics`, `stop_reason`, `reasoning`, and an empty
-`tool_calls`, are admitted only as null or their observed type and are never parsed or kept;
-any other unknown member is refused. An answer cut at the output cap (`finish_reason`
+`tool_calls`, are admitted only as null or their observed type and are never parsed or kept
+(the reasoning, echoed prompt, and metrics text in them is screened for the provider's own
+key, an email, a vendor key shape, or a credential label or header name followed at once by
+`:` or `=`, rather than the raw-body prose heuristics, so reasoning such as "basic
+groceries" no longer discards an answer, while "Password: ..." still does); any other
+unknown member is refused. An answer cut at the output cap (`finish_reason`
 `length`) is accepted only when its text is a complete valid result; one that never closed,
 or has no text, is an `invalid-json` result that the one schema repair may recover. A
 profile revision may set `disable_thinking` (the guided connection card sets it for a remote
@@ -778,6 +782,16 @@ from 0 through 1; sentiment is from -1 through 1. IDs/counts/assignments are str
 client-supplied mobility agent IDs, coordinates or hashes. Security screening refuses
 recognized identifiers, credentials, structural secret labels and unsafe display text;
 it does not prove absence of personal information. Supply fictional data only.
+Before job reservation, validation and job submission also apply what the job applies
+later: its re-parse of the frozen input (interest sets sorted) and the screens of the
+cognition context that schema-3 and schema-4 planning builds. Persona or campaign text
+refused there, such as path-like slashes (`Node.js/React`, `B.Sc./M.Sc.`, `/r/name`,
+`4.5/5`) or a bare credential label, returns `400` `invalid-persona-text` or
+`invalid-campaign-text` naming the field (a persona by its position in the request).
+A new persona's text is also refused there for a phone or identity number in the shapes
+recognized since saved runs were made (`555.123.4567`, `01.23.45.67.89`, `0151/2345678`, or
+digits separated by no-break spaces). Saved runs are never re-screened, so a saved run
+holding such text still opens.
 
 The guided setup page chooses templates and their counts; the server validates every
 request and IDs cannot be renamed. V8 verified input DTOs expose normalized

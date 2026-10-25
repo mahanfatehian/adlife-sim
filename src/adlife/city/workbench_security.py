@@ -14,7 +14,11 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from adlife.core.domain.json_values import freeze_json_mapping, thaw_json_mapping
-from adlife.core.domain.person import contains_labelled_secret_member, contains_provider_secret_text
+from adlife.core.domain.person import (
+    contains_labelled_secret_member,
+    contains_provider_secret_text,
+    contains_user_labelled_secret_member,
+)
 from adlife.core.ports.cognition import redact_provider_body
 
 MAX_WORKBENCH_BODY_BYTES = 131_072
@@ -127,8 +131,15 @@ def strict_json_object(
     data: bytes,
     *,
     max_body_bytes: int = MAX_WORKBENCH_BODY_BYTES,
+    user_draft: bool = False,
 ) -> dict[str, object]:
-    """Decode one bounded, duplicate-free, finite JSON object with bounded depth."""
+    """Decode one bounded, duplicate-free, finite JSON object with bounded depth.
+
+    ``user_draft`` marks a run draft a person wrote. Its keys keep the whole credential
+    label table, but its string values are judged by the credential labels alone, as
+    every later walk of the same draft judges them, so the interest ``cookies`` is not
+    read as a transport header. Provider and city documents keep the default.
+    """
     if not isinstance(data, bytes):
         raise TypeError("JSON request body must be bytes")
     if type(max_body_bytes) is not int or max_body_bytes < 1:
@@ -146,7 +157,10 @@ def strict_json_object(
             raise WorkbenchJsonError("JSON request must be an object")
         frozen = freeze_json_mapping(payload)
         thawed = thaw_json_mapping(frozen)
-        if contains_labelled_secret_member(thawed):
+        labelled = (
+            contains_user_labelled_secret_member if user_draft else contains_labelled_secret_member
+        )
+        if labelled(thawed):
             raise WorkbenchJsonContentError("JSON request contains a labelled secret member")
     except WorkbenchJsonError:
         raise

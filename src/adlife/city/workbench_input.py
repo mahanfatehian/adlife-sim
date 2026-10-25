@@ -37,9 +37,10 @@ from adlife.core.domain.identifiers import (
 from adlife.core.domain.json_values import MAX_JSON_DEPTH
 from adlife.core.domain.person import (
     DomainModel,
-    contains_labelled_secret_member,
     contains_provider_secret_text,
     contains_sensitive_text,
+    contains_user_labelled_secret_member,
+    contains_user_secret_text,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_campaign import (
@@ -81,7 +82,9 @@ MbtiLabel = Literal[
 
 def _safe_public_text(value: str) -> str:
     checked = _validate_public_metadata(value)
-    if contains_provider_secret_text(checked):
+    # A person wrote this text: refuse credential shapes, not the raw-provider-body
+    # heuristics that read "basic training" or "secret dream: ..." as a credential.
+    if contains_user_secret_text(checked):
         raise ValueError("workbench text contains credential-shaped content")
     return checked
 
@@ -311,7 +314,9 @@ def _reject_structural_secrets(value: object) -> object:
         if depth >= MAX_JSON_DEPTH:
             raise ValueError("workbench input exceeds its nesting limit")
         pending.extend((child, depth + 1) for child in children)
-    if contains_labelled_secret_member(value):
+    # Every caller walks a draft a person wrote, or its stored canonical form: keys keep
+    # the whole label table, while the interest "cookies" is not a transport header.
+    if contains_user_labelled_secret_member(value):
         raise ValueError("workbench input contains a labelled secret member")
     return value
 
@@ -350,8 +355,8 @@ class WorkbenchPersonaDraftV2(WorkbenchCohortDraft):
     def safe_persona_interests(cls, value: frozenset[str]) -> frozenset[str]:
         for interest in value:
             _safe_persona_text(interest)
-            # Sets have no adjacency: check each possible label with every companion.
-            _reject_structural_secrets({interest: tuple(value - {interest})})
+            # Sets have no adjacency: try each member as a label its companions follow.
+            _reject_structural_secrets((interest, *(value - {interest})))
         return value
 
     @model_validator(mode="after")

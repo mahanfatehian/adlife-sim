@@ -144,7 +144,7 @@ No UI control may imply that occupation or MBTI creates a commute, that these pe
 
 - Only fictional identities are accepted; `fictional` cannot be set false.
 - No real addresses, contact details, government identifiers, photos, trajectories, personal-data imports, or observed profiles are accepted.
-- Public-text, sensitive-persona, provider-secret, and structural secret-member screening applies to every persona string and nested value before persistence.
+- Public-text, sensitive-persona, user-text credential (`contains_user_secret_text`), and structural secret-member (`contains_user_labelled_secret_member`) screening applies to every persona string and nested value before persistence. Persona text is refused for credential shapes, not for the raw-provider-body screen's prose heuristics, so an ordinary life story ("She has only basic computer skills", "Bakes cookies every Sunday; favourite: oatmeal") is accepted. A new draft's persona text also meets the phone and identity number shapes recognized since (`contains_written_identifier_text`); stored inputs keep `contains_sensitive_text`, so a saved run holding such text still opens.
 - Validation errors are bounded and never echo full submitted biographies or secret-like text.
 - The current loopback-only bind, same-origin write checks, restrictive CSP, no CORS, safe DOM text insertion, bidi isolation, and no external browser assets remain unchanged.
 - The 3,072-byte per-persona, 98,304-byte population, and 131,072-byte complete workbench ceilings are enforced independently with bounded value-free errors.

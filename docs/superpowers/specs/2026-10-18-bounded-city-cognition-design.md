@@ -212,6 +212,17 @@ reasoning. It is a recorded profile fact, part of the frozen provider snapshot a
 effective settings (and therefore of the check, cache, and terminal bindings), omitted from
 canonical bytes while false so earlier profiles and runs keep their exact hashes.
 
+Revision 2026-10-26 (reasoning prose). The free-text members nobody parses or keeps
+(`prompt_text`, `metrics`, and the message's `reasoning`, `reasoning_content`, and
+OpenRouter's unadmitted `reasoning_details`) no longer get the raw-provider-body screen,
+whose prose heuristics refused ordinary in-character reasoning such as "I only buy basic
+groceries now" and so discarded a valid answer the provider had already charged for. Their
+strings get the bound-credential check and the credential-assignment screen
+(`contains_credential_assignment_text`), which still refuses an email, a credential label or
+header name followed at once by an assignment, and every vendor key shape. Every other member, the structural member walk, and a body
+that is not JSON keep the unchanged whole-body screens. No contract, hash, or fallback or
+repair reason changes.
+
 If any category is `uncertain`, or if `safety_flags` is nonempty, the record remains
 auditable but the complete applied vector becomes the neutral vector. The provider cannot
 partially apply a result.

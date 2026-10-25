@@ -34,6 +34,7 @@ from adlife.core.domain.person import (
     contains_labelled_secret_member,
     contains_provider_secret_text,
     contains_sensitive_text,
+    contains_user_secret_text,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_response import SpatialResponseTraits
@@ -201,7 +202,11 @@ def _safe_text(
         for character in value
     ):
         raise ValueError("city cognition text contains a display control character")
-    if contains_provider_secret_text(value) or (persona and contains_sensitive_text(value)):
+    # Provider text keeps the raw-provider-body screen. Everything else here was written by
+    # a person (persona and campaign text, creative copy, profile labels) and gets the
+    # user-text screen the workbench admits persona and campaign text with, so both agree.
+    screen = contains_provider_secret_text if provider_text else contains_user_secret_text
+    if screen(value) or (persona and contains_sensitive_text(value)):
         raise ValueError("city cognition text contains screened private or credential text")
     if (provider_text or path_free) and _contains_filesystem_path(
         value,

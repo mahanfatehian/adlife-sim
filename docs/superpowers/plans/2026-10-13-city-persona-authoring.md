@@ -17,7 +17,7 @@
 - Accept 1-30 agents, 1-7 days, strict integer versions/seeds/counts, finite numeric values, and exact `persona-NNN` IDs.
 - Enforce 3,072 canonical UTF-8 bytes per persona, 98,304 bytes per population, and 131,072 bytes per workbench request.
 - Treat name, age, occupation, background, and MBTI as noncausal metadata. Never infer numeric traits, purchase-intention state, mobility, or events from those fields; the simulator has no purchase-transaction model.
-- Apply public-text, sensitive-persona, provider-secret, and structural-secret-member refusal before persistence.
+- Apply public-text, sensitive-persona, user-text credential, and structural-secret-member refusal before persistence.
 - Use test-first red/green cycles, exact assertions, `uv` commands, focused commits, and push accepted commits to `origin/main` under the configured repository identity.
 
 ## Review Focus
@@ -60,7 +60,7 @@ def parse_workbench_run_input_json(
 
 Add `WorkbenchPersonaDraftV2`, `WorkbenchPopulationDraftV2`, `WorkbenchPersonaAssignmentV2`, `NormalizedWorkbenchPopulationV2`, `WorkbenchRunDraftV2`, `NormalizedWorkbenchRunDraftV2`, and `WorkbenchRunInputV2`.
 
-- [ ] **Step 1: Write failing strict-model tests** for exact versions/types, all 16 MBTI literals, fictional-only identities, ID/count uniqueness, count totals, canonical interest/persona ordering, explicit assignments, non-finite values, bool-as-int refusal, and 1/30-agent boundaries. Parameterize every persona text field through `_validate_public_metadata`, `contains_sensitive_text`, and `contains_provider_secret_text`; test nested `contains_labelled_secret_member` refusal before persistence.
+- [ ] **Step 1: Write failing strict-model tests** for exact versions/types, all 16 MBTI literals, fictional-only identities, ID/count uniqueness, count totals, canonical interest/persona ordering, explicit assignments, non-finite values, bool-as-int refusal, and 1/30-agent boundaries. Parameterize every persona text field through `_validate_public_metadata`, `contains_sensitive_text`, and `contains_user_secret_text`; test nested `contains_user_labelled_secret_member` refusal before persistence.
 - [ ] **Step 2: Write failing byte/property tests** for 3,072/98,304/131,072-byte boundaries, four-byte Unicode, raw-array permutation preserving the normalized hash and assignments, persona-ID changes altering provenance and any order-dependent assignments, contiguous assignments, and deterministic `{agent_id, persona_id}` materialization.
 - [ ] **Step 3: Run the narrow tests and record the expected missing-interface failures.**
 

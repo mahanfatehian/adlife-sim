@@ -46,6 +46,7 @@ from adlife.core.domain.city_cognition_v2 import (
     CityProviderUsageV2,
 )
 from adlife.core.domain.person import (
+    contains_credential_assignment_text,
     contains_labelled_secret_member,
     contains_provider_secret_text,
     contains_sensitive_text,
@@ -128,11 +129,15 @@ def _decode_escapes(text: str) -> str:
     return _JSON_ESCAPE.sub(replace, text)
 
 
-def _unsafe(text: str, credential_present: Callable[[str | bytes], bool]) -> bool:
+def _unsafe(
+    text: str,
+    credential_present: Callable[[str | bytes], bool],
+    secret_text: Callable[[str], bool] = contains_provider_secret_text,
+) -> bool:
     for _ in range(4):
         # Raw JSON and opaque protocol metadata may contain legitimate numbers.
         # This screen is exclusively for credentials and labelled/provider secrets.
-        if credential_present(text) or contains_provider_secret_text(text):
+        if credential_present(text) or secret_text(text):
             return True
         decoded = _decode_escapes(text)
         if decoded == text:
@@ -230,9 +235,10 @@ def _null_or_integer_tree(value: object) -> bool:
 # OpenAI shape. Each is admitted only as null or the type vLLM sends. None is parsed,
 # interpreted, or retained: reasoning text, the echoed prompt, and the stop token or stop
 # string that ended an answer (vLLM reports a generation-config end token such as Qwen's
-# as an integer ID) are inert, and every string in them has already passed the whole-body
-# credential and secret screens. A real function call, audio part, or tool call stays a
-# protocol error.
+# as an integer ID) are inert, and every string in them has already passed a credential and
+# secret screen: the whole-body one, or for the free text of _INERT_ENVELOPE_MEMBERS and
+# _INERT_MESSAGE_MEMBERS the credential-assignment one. A real function call, audio part, or
+# tool call stays a protocol error.
 #
 # Other gateways add their own inert members (OpenRouter's ``provider`` and
 # ``native_finish_reason``, LM Studio's ``stats``, a usage ``cost``). Members this adapter
@@ -266,6 +272,41 @@ _VLLM_MESSAGE_MEMBERS: Mapping[str, Callable[[object], bool]] = MappingProxyType
         "reasoning_content": _null_or_text,
     }
 )
+
+
+# The free-text members nobody parses or keeps: the echoed prompt, server metrics, and the
+# model's reasoning (OpenRouter's unadmitted ``reasoning_details`` carries the same text).
+# An in-character model reasons in everyday words ("I only buy basic groceries now"), and
+# the raw-body screen's prose heuristics would throw away a valid answer the provider has
+# already charged for. Their strings get the bound-credential check and the
+# credential-assignment screen instead, which still refuse the provider's own key, an email,
+# a labelled or header assignment, and every key shape.
+_INERT_ENVELOPE_MEMBERS = ("prompt_text", "metrics")
+_INERT_MESSAGE_MEMBERS = ("reasoning", "reasoning_content", "reasoning_details")
+
+
+def _without_inert_members(
+    envelope: Mapping[str, object],
+) -> tuple[dict[str, object], list[object]]:
+    """Split a parsed envelope into the members that are read and the inert free text."""
+    screened = {key: value for key, value in envelope.items() if key not in _INERT_ENVELOPE_MEMBERS}
+    inert = [envelope[key] for key in _INERT_ENVELOPE_MEMBERS if key in envelope]
+    choices = screened.get("choices")
+    if isinstance(choices, list):
+        kept: list[object] = []
+        for choice in choices:
+            message = choice.get("message") if isinstance(choice, dict) else None
+            if isinstance(message, dict):
+                inert.extend(message[key] for key in _INERT_MESSAGE_MEMBERS if key in message)
+                message = {
+                    key: value
+                    for key, value in message.items()
+                    if key not in _INERT_MESSAGE_MEMBERS
+                }
+                choice = {**choice, "message": message}
+            kept.append(choice)
+        screened["choices"] = kept
+    return screened, inert
 
 
 def _admit_members(
@@ -581,18 +622,27 @@ class CityOpenAICompatibleProviderV2:
             text = body.decode("utf-8", errors="strict")
         except UnicodeDecodeError:
             return _invalid("invalid-json")
-        if _unsafe(text, present):
-            return _invalid("unsafe-content")
         try:
             envelope = _strict_json(text)
         except _InvalidJson:
-            return _invalid("invalid-json")
+            # No members to set apart: the whole raw text keeps the raw-body screen.
+            return _invalid("unsafe-content" if _unsafe(text, present) else "invalid-json")
         if not isinstance(envelope, dict):
             return _invalid("invalid-json")
-        if contains_labelled_secret_member(envelope) or any(
-            _unsafe(s, present) for s in _strings(envelope)
+        screened, inert = _without_inert_members(envelope)
+        # The members that are read keep the whole-body screen, re-serialized in their
+        # original order, so a label and a value in sibling members are still seen.
+        remainder = json.dumps(screened, ensure_ascii=False, separators=(",", ":"))
+        if (
+            _unsafe(remainder, present)
+            or contains_labelled_secret_member(envelope)
+            or any(_unsafe(s, present) for s in _strings(screened))
+            or any(
+                _unsafe(s, present, contains_credential_assignment_text) for s in _strings(inert)
+            )
         ):
             return _invalid("unsafe-content")
+        # Vendor-member type admission still sees the whole envelope.
         content, usage = _content_and_usage(envelope)
         if content is None:
             # A length-truncated answer with no text at all; the schema repair may recover.

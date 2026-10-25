@@ -187,13 +187,23 @@ def parse_workbench_http_draft(payload: Mapping[str, object]) -> WorkbenchRunDra
         allow_nan=False,
         separators=(",", ":"),
     )
+    draft: WorkbenchRunDraftDocument
     if version == 2:
-        return WorkbenchRunDraftV2.model_validate_json(encoded)
-    if version == 3:
-        return WorkbenchRunDraftV3.model_validate_json(encoded)
-    if version == 4:
-        return WorkbenchRunDraftV4.model_validate_json(encoded)
-    return WorkbenchRunDraft.model_validate_json(encoded)
+        draft = WorkbenchRunDraftV2.model_validate_json(encoded)
+    elif version == 3:
+        draft = WorkbenchRunDraftV3.model_validate_json(encoded)
+    elif version == 4:
+        draft = WorkbenchRunDraftV4.model_validate_json(encoded)
+    else:
+        return WorkbenchRunDraft.model_validate_json(encoded)
+    # The job re-reads the canonical input, whose interest sets are sorted. Refuse here the
+    # pair that re-read refuses, whatever order the client sent the members in.
+    canonical = draft.model_dump(mode="json")
+    try:
+        _reject_structural_secrets(canonical)
+    except ValueError:
+        raise WorkbenchDraftTransportError("request") from None
+    return draft
 
 
 class WorkbenchCityCatalogRow(DomainModel):

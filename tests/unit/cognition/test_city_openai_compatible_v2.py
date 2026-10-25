@@ -628,6 +628,136 @@ async def test_vllm_member_text_keeps_every_whole_body_secret_screen(
     await provider.aclose()
 
 
+# Ordinary words an in-character model writes while it reasons. The raw-provider-body screen
+# refuses each one ("basic <long word>", a label up to 120 characters before a colon, a
+# label beside the next JSON key), which threw away a valid answer the provider charged for.
+_REASONING_PROSE = (
+    "Rent went up, so I only buy basic groceries now.",
+    "I only need the basic version.",
+    "my secret rule: compare specs before buying anything.",
+    "I would not trust them with my password",
+    "These cookies look tasty... Verdict: low relevance.",
+    "The brand has no credentials... Overall: medium.",
+    "She has only basic computer skills and a basic smartphone.",
+    "I'd only take the basic 12-month plan.",
+    "I just have basic PowerPoint skills, so this laptop is overkill.",
+    "A basic 2-bedroom flat already eats my budget.",
+    # Not prose, but text nobody keeps: a bare token without an assignment is not refused
+    # here, and the provider's own key is caught by the bound-credential check.
+    "I will send Basic dXNlcjpwYXNzd29yZA== along.",
+)
+
+
+def _inert_member_updates(member: str, text: object) -> dict[str, dict[str, object]]:
+    """Put ``text`` into one never-parsed, never-kept member of a vLLM or OpenRouter body."""
+    return {
+        "reasoning": {"message_updates": {"reasoning": text}},
+        "reasoning_content": {"message_updates": {"reasoning_content": text}},
+        # OpenRouter's reasoning text; not an admitted vLLM member, so it is only ignored.
+        "reasoning_details": {
+            "message_updates": {
+                "reasoning_details": [
+                    {"type": "reasoning.text", "text": text, "format": "unknown", "index": 0}
+                ]
+            }
+        },
+        "prompt_text": {"envelope_updates": {"prompt_text": text}},
+        "metrics": {"envelope_updates": {"metrics": {"note": text}}},
+    }[member]
+
+
+@pytest.mark.parametrize(
+    "member", ["reasoning", "reasoning_content", "reasoning_details", "prompt_text", "metrics"]
+)
+@pytest.mark.parametrize("prose", _REASONING_PROSE)
+async def test_inert_member_prose_never_discards_a_valid_answer(member, prose) -> None:
+    _module()
+    request, _ = _provider_case()
+    body = _vllm_completion(
+        json.dumps(_result(request.request_id)), **_inert_member_updates(member, prose)
+    )
+    _, _, provider, credential, *_ = _provider(body)
+    attempt = await provider.call(request)
+    assert attempt.status == "valid"
+    assert (attempt.usage.prompt_tokens, attempt.usage.completion_tokens) == (992, 137)
+    assert prose not in attempt.model_dump_json() + repr(attempt) + repr(provider)
+    await provider.aclose()
+    credential.clear()
+
+
+@pytest.mark.parametrize(
+    "member", ["reasoning", "reasoning_content", "reasoning_details", "prompt_text", "metrics"]
+)
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "FAKE",
+        "Contact fictional.person@example.org for details.",
+        "Authorization: Bearer abcdefghijklmnop",
+        # Built at run time, so the source holds no credential-shaped literal.
+        "Password: " + "hunter2-but-longer",
+        "x-api-key: " + "0" * 20,
+        "Cookie: session=0000abcdef1234567890",
+        "sk-live-0000abcdefghijklmnopqrstuvwxyz",
+    ],
+)
+async def test_inert_member_credentials_are_still_unsafe_content(member, secret) -> None:
+    _module()
+    request, _ = _provider_case()
+    if secret == "FAKE":
+        secret = f"The key {FAKE_CREDENTIAL} is in my context."
+    body = _vllm_completion(
+        json.dumps(_result(request.request_id)), **_inert_member_updates(member, secret)
+    )
+    _, _, provider, credential, *_ = _provider(body)
+    attempt = await provider.call(request)
+    assert attempt.status == "invalid-result"
+    assert attempt.repair_context.reason_code == "unsafe-content"
+    assert secret not in attempt.model_dump_json() + repr(attempt) + repr(provider)
+    await provider.aclose()
+    credential.clear()
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"envelope_updates": {"model": "Bearer abcdefghij"}},
+        {"envelope_updates": {"id": "basic groceries-for-everyone"}},
+        {"choice_updates": {"stop_reason": "my secret rule: stop"}},
+    ],
+)
+async def test_every_other_member_keeps_the_whole_body_screen(updates) -> None:
+    # Only the members nobody reads get the narrow screen; prose anywhere else, including
+    # the identifiers and stop string the adapter does check, is screened as before.
+    _module()
+    request, _ = _provider_case()
+    body = _vllm_completion(json.dumps(_result(request.request_id)), **updates)
+    _, _, provider, credential, *_ = _provider(body)
+    attempt = await provider.call(request)
+    assert attempt.status == "invalid-result"
+    assert attempt.repair_context.reason_code == "unsafe-content"
+    await provider.aclose()
+    credential.clear()
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        (b'{"choices":[{"message":{"reasoning":"I only buy basic groceries now"', "unsafe-content"),
+        (b'{"choices":[{"message":{"reasoning":"I only buy the essentials now"', "invalid-json"),
+    ],
+)
+async def test_a_body_that_is_not_json_keeps_the_whole_raw_text_screen(body, reason) -> None:
+    # Without a parsed envelope there are no members to set apart.
+    _module()
+    request, _, provider, credential, *_ = _provider(body)
+    attempt = await provider.call(request)
+    assert attempt.status == "invalid-result"
+    assert attempt.repair_context.reason_code == reason
+    await provider.aclose()
+    credential.clear()
+
+
 _RUNAWAY = "\n  " + "\t" * 240
 
 

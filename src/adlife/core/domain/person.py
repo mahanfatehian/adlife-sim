@@ -15,27 +15,38 @@ Everything claimed is driven from the three named tables below and pinned by
 ``tests/security/test_redaction_corpus.py``, which a later task extends by adding one
 row. Nothing outside those tables is claimed.
 
-Three screens are published, from narrowest to broadest:
+Six text screens are published, and each of the others includes the first:
 
 * :func:`contains_secret_or_email_text` - an email address, a labelled secret
   assignment, or a known vendor credential shape. This is the rule untrusted campaign
   copy and provider-authored paraphrase are screened with, so it deliberately omits the
   digit-run heuristics and the transport header names that occur in ordinary
   advertising copy.
-* :func:`contains_sensitive_text` - the above plus the phone, national-identifier and
-  labelled-identifier heuristics specification section 19 scopes to persona fields.
+* :func:`contains_credential_assignment_text` - the above plus a transport header name
+  immediately followed by an assignment. This is the rule for the provider members nobody
+  reads (reasoning, an echoed prompt, metrics).
+* :func:`contains_user_secret_text` - that plus a credential-shaped ``Bearer``/``Basic``
+  value. This is the rule for text a person wrote (persona and campaign fields): every
+  credential shape, none of the raw-body heuristics that match prose.
+* :func:`contains_sensitive_text` - the narrow screen plus the phone, national-identifier
+  and labelled-identifier heuristics specification section 19 scopes to persona fields,
+  in the shapes every saved run was accepted under.
+* :func:`contains_written_identifier_text` - that plus the phone and identifier shapes
+  recognized since, for persona text in a draft being accepted now.
 * :func:`contains_provider_secret_text` - the narrow screen minus nothing and plus the
   transport header names, bearer values and label/value adjacency. This is the
   fail-closed re-check for a raw provider body, where over-redaction costs a diagnostic
   and under-redaction costs a credential.
 
-:func:`contains_labelled_secret_member` is a fourth, structural screen: it walks JSON
-data rather than text, because a credential label in a mapping KEY with the secret in
-the sibling VALUE is invisible to every per-string matcher above.
+:func:`contains_labelled_secret_member` is a structural screen: it walks JSON data rather
+than text, because a credential label in a mapping KEY with the secret in the sibling
+VALUE is invisible to every per-string matcher above.
+:func:`contains_user_labelled_secret_member` is the same walk for a draft a person wrote,
+whose string values are judged by the credential labels alone.
 """
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -212,7 +223,45 @@ The tail of the openai-style row admits ``-``, ``_``, ``.``, ``~``, ``+``, ``/``
 # --- identifier heuristics, which are persona-only by design -------------------------
 
 _EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_NO_BREAK_SPACES = "\N{NO-BREAK SPACE}\N{FIGURE SPACE}\N{NARROW NO-BREAK SPACE}"
+_DIGIT_RUN_CHARACTER = r"[\d ()" + _NO_BREAK_SPACES + "-]"
+"""A digit, a space, a no-break space (U+00A0, U+2007, U+202F), a parenthesis or a hyphen.
+
+A no-break space looks exactly like a space, and copy-pasted or French-typeset numbers carry
+one, so a number written with it is the same number.
+"""
 _PHONE_PATTERN = re.compile(r"(?<![\w-])\+?\d[\d ()-]{7,}\d(?![\w-])")
+"""A run of at least nine digits, spaces, parentheses and hyphens, optionally after ``+``.
+
+Stored inputs re-run :func:`contains_sensitive_text` whenever a saved run loads, verifies or
+replays, so this stays exactly the shape every saved run was accepted under. The shapes
+recognized since are in :data:`_WRITTEN_PHONE_PATTERN`, which only new drafts meet.
+"""
+_WRITTEN_PHONE_PATTERN = re.compile(
+    r"(?<![\w-])\+?\d" + _DIGIT_RUN_CHARACTER + r"{7,}\d(?![\w-])"
+    r"|(?<![\w./-])\d{3}\.\d{3}\.\d{4}(?![\w/-]|\.\d)"
+    r"|(?<![\w./-])0\d(?:\.\d{2}){4}(?![\w/-]|\.\d)"
+    r"|(?<![\w./-])0\d{2,4}/\d{5,8}(?![\w/-]|\.\d)"
+)
+"""A phone number in the shapes people write one, best effort, for persona text written now.
+
+Prompt v3 sends a persona's background verbatim to the configured provider, so the shapes
+recognized are stated here:
+
+* a run of at least nine digits and :data:`_DIGIT_RUN_CHARACTER` characters, with an
+  optional leading ``+`` - ``+1 415 555 0134``, ``(555) 123-4567``, ``555 123 4567``;
+* the dotted 3-3-4 grouping, ``555.123.4567``;
+* French dotted pairs, ``01.23.45.67.89``;
+* a trunk prefix and a slash, ``0151/2345678`` and ``030/1234567``.
+
+The dotted and slash rows are fixed groupings rather than free separators, so a date
+(``12.03.1990``, ``2026.10.25``, ``2015/2016``, ``01/2026``), an amount (``12.500.000``),
+``24/7``, a version or an address (``192.168.100.10``) is not a number. A number may end a
+sentence: only a digit after a final dot continues it. A seven-digit local number
+(``555-0134``) is not recognized: it has the shape of a postal code (``123-4567``). A
+hyphenated year range (``2015-2019``) has the shape of the first row and is refused in
+persona fields.
+"""
 _NATIONAL_ID_PATTERN = re.compile(r"(?<![\w-])\d{10}(?![\w-])")
 _IDENTIFIER_LABEL = (
     r"(?:national[_ -]?id|social[_ -]?security(?:[_ -]?number)?|ssn"
@@ -232,6 +281,15 @@ coverage that narrowing gives up is restored here explicitly: ``national-id-1234
 is still refused, because a national-identifier label introduces the digits. A bare
 ``1234567890``, or ``+1 415 555 0134``, is unchanged and still refused.
 """
+_WRITTEN_LABELLED_IDENTIFIER_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])"
+    + _IDENTIFIER_LABEL
+    + r"[_ -]*[:=]?[_ -]*\+?\d"
+    + _DIGIT_RUN_CHARACTER
+    + r"{4,}\d",
+    re.IGNORECASE,
+)
+""":data:`_LABELLED_IDENTIFIER_PATTERN` with no-break spaces too, for persona text written now."""
 
 # --- label anchors, windows and the composed patterns --------------------------------
 
@@ -301,6 +359,20 @@ _HEADER_SECRET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _BEARER_PATTERN = re.compile(r"\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
+_CREDENTIAL_BEARER_PATTERN = re.compile(
+    r"\b(?i:bearer|basic)\s+"
+    r"(?=[A-Za-z0-9._~+/=-]*(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9._~+/=-]{8,}"
+)
+"""A ``Bearer`` or ``Basic`` value that LOOKS like a credential, for text a person wrote.
+
+:data:`_BEARER_PATTERN` takes any eight token characters after either word, which is right
+for a raw provider body and wrong for prose: "basic computer skills", "basic training" and
+"basic necessities" are not credentials. Here the token must also carry something an
+opaque token or base64 carries and an ordinary word does not: a digit, a ``+``, ``/`` or
+``=``, or a lower-case letter followed by an upper-case one. Only the scheme word ignores
+case, so that change of case is real. The cost is documented: a camel-case brand or a word
+with a digit after "basic" ("a basic 2-bedroom flat") still looks like a credential.
+"""
 
 _SECRET_VALUE_PATTERN = re.compile(
     _SECRET_LABEL_START
@@ -346,6 +418,13 @@ _SECRET_OR_EMAIL_PATTERNS = (
     _SECRET_PATTERN,
     *(pattern for _, pattern in VENDOR_SECRET_SHAPES),
 )
+_USER_SECRET_PATTERNS = (
+    *_SECRET_OR_EMAIL_PATTERNS,
+    _HEADER_SECRET_PATTERN,
+    _CREDENTIAL_BEARER_PATTERN,
+)
+"""Every match is also a match of :data:`_PROVIDER_SECRET_PATTERNS`, so text the raw-body
+screen admitted, such as every input stored before this screen existed, passes it too."""
 _PROVIDER_SECRET_PATTERNS = (
     _EMAIL_PATTERN,
     _HEADER_SECRET_PATTERN,
@@ -384,6 +463,15 @@ _WHOLE_SECRET_LABEL_PATTERN = re.compile(
 ``api_key_usage_notes`` is not, because the pattern has to consume the entire key.
 """
 
+_WHOLE_USER_SECRET_LABEL_PATTERN = re.compile(
+    r"[A-Za-z0-9_-]{0,40}?" + _SECRET_LABEL + r"s?",
+    re.IGNORECASE,
+)
+"""A string a PERSON wrote is a label only when a credential label is the whole of it.
+
+The transport header names are left out: as a value in a draft, ``cookies`` is a hobby.
+"""
+
 
 def _is_secret_label_text(value: str) -> bool:
     """True when a whole string is nothing but a credential label.
@@ -392,6 +480,11 @@ def _is_secret_label_text(value: str) -> bool:
     the key and the credential in the sibling value, which no per-string matcher can see.
     """
     return _WHOLE_SECRET_LABEL_PATTERN.fullmatch(value.strip()) is not None
+
+
+def _is_user_secret_label_text(value: str) -> bool:
+    """True when a whole person-written string is nothing but a credential label."""
+    return _WHOLE_USER_SECRET_LABEL_PATTERN.fullmatch(value.strip()) is not None
 
 
 def _carries_text(value: object) -> bool:
@@ -440,6 +533,55 @@ def contains_secret_or_email_text(value: str) -> bool:
     return any(pattern.search(value) for pattern in _SECRET_OR_EMAIL_PATTERNS)
 
 
+def contains_user_secret_text(value: str) -> bool:
+    """True when text a PERSON wrote carries a credential, judged by its shape alone.
+
+    This is the screen for persona and campaign text, which with prompt v3 is the life
+    story the AI answers from. On top of :func:`contains_secret_or_email_text` it knows a
+    credential label or transport header name IMMEDIATELY followed by an assignment
+    (``Authorization: Bearer ...``, ``Cookie: session=...``, ``x-api-key: ...``) and a
+    credential-shaped ``Bearer`` or ``Basic`` value (:data:`_CREDENTIAL_BEARER_PATTERN`).
+
+    It deliberately leaves out the raw-body heuristics that match prose: ``basic`` before
+    any long word, a label up to :data:`SECRET_LABEL_GAP` characters before a colon ("Her
+    secret dream: ...", "cookies every Sunday; favourite: ..."), and a long quoted value
+    near a label. A value written beside a label without an assignment is therefore not
+    refused here, exactly as in campaign copy.
+
+    It is best effort, and it is a screen rather than a proof.
+    """
+    return any(pattern.search(value) for pattern in _USER_SECRET_PATTERNS)
+
+
+def contains_credential_assignment_text(value: str) -> bool:
+    """True when text carries an email, a key shape, or a label with an assignment at once.
+
+    This is the screen for the provider members nobody parses or keeps: the reasoning, an
+    echoed prompt, metrics. It is :func:`contains_user_secret_text` without the
+    credential-shaped ``Bearer``/``Basic`` rule, which still reads in-character reasoning
+    such as "the basic 12-month plan" or "basic PowerPoint skills" as a credential. That
+    text is discarded unread, and the provider's own key is caught there by the separate
+    bound-credential check, so refusing it would only throw away an answer already paid for.
+    """
+    return contains_secret_or_email_text(value) or _HEADER_SECRET_PATTERN.search(value) is not None
+
+
+def contains_written_identifier_text(value: str) -> bool:
+    """True when persona text written NOW carries a phone number or identity number.
+
+    It is :func:`contains_sensitive_text` plus the shapes recognized since saved runs were
+    accepted: the dotted, slash and no-break-space phone numbers of
+    :data:`_WRITTEN_PHONE_PATTERN` and no-break spaces in a labelled identifier. Stored
+    inputs re-run :func:`contains_sensitive_text` whenever a saved run loads, so the newer
+    shapes are refused only where a new draft is accepted, and a saved run holding one still
+    opens.
+    """
+    return contains_sensitive_text(value) or any(
+        pattern.search(value)
+        for pattern in (_WRITTEN_PHONE_PATTERN, _WRITTEN_LABELLED_IDENTIFIER_PATTERN)
+    )
+
+
 def contains_provider_secret_text(value: str) -> bool:
     """True when a RAW PROVIDER BODY still looks like it carries a credential.
 
@@ -472,11 +614,28 @@ def contains_labelled_secret_member(value: object) -> bool:
     name one - and an array element that is nothing but a credential label is refused
     when a non-empty string follows it.
     """
+    return _labelled_member(value, value_is_label=_is_secret_label_text)
+
+
+def contains_user_labelled_secret_member(value: object) -> bool:
+    """:func:`contains_labelled_secret_member` for a draft a PERSON wrote.
+
+    A mapping KEY keeps the whole label table, transport header names included: the keys
+    of a draft are fixed schema names, so ``{"Authorization": ...}`` or ``{"Cookie": ...}``
+    anywhere in one is never ordinary data. A string VALUE is the person's own words, so
+    only a credential label of :data:`SECRET_LABEL_WORDS` counts there: the interests
+    ``["cookies", "music"]`` are two hobbies, while ``["api_key", "..."]`` is still refused.
+    """
+    return _labelled_member(value, value_is_label=_is_user_secret_label_text)
+
+
+def _labelled_member(value: object, *, value_is_label: Callable[[str], bool]) -> bool:
+    """The walk both structural screens share; ``value_is_label`` judges string values."""
     if isinstance(value, Mapping):
         for key, item in value.items():
             if isinstance(key, str) and _is_secret_label_text(key) and _carries_text(item):
                 return True
-            if contains_labelled_secret_member(item):
+            if _labelled_member(item, value_is_label=value_is_label):
                 return True
         return False
     if isinstance(value, (list, tuple)):
@@ -484,8 +643,8 @@ def contains_labelled_secret_member(value: object) -> bool:
         for item in value:
             if previous_is_label and isinstance(item, str) and item.strip():
                 return True
-            previous_is_label = isinstance(item, str) and _is_secret_label_text(item)
-            if contains_labelled_secret_member(item):
+            previous_is_label = isinstance(item, str) and value_is_label(item)
+            if _labelled_member(item, value_is_label=value_is_label):
                 return True
     return False
 
@@ -614,9 +773,13 @@ __all__ = [
     "ConsumerTraits",
     "DomainModel",
     "PersonProfile",
+    "contains_credential_assignment_text",
     "contains_labelled_secret_member",
     "contains_provider_secret_text",
     "contains_secret_or_email_text",
     "contains_sensitive_text",
+    "contains_user_labelled_secret_member",
+    "contains_user_secret_text",
+    "contains_written_identifier_text",
     "redact_secret_text",
 ]
