@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import re
 from copy import deepcopy
 from importlib.resources import files
 from pathlib import Path
@@ -107,6 +108,52 @@ def test_packaged_catalog_contains_ten_flat_validated_fictional_starting_points(
         assert template == WorkbenchPersonaDraftV2.model_validate_json(json.dumps(item))
     assert len({item.display_name for item in catalog.templates}) == 10
     assert len({canonical_json(item.traits) for item in catalog.templates}) == 10
+
+
+# Prompt contract v3 sends a template's background to the AI as the life the person
+# answers from, so the packaged text tells a short, whole fictional life (daily life and
+# hobbies, one dream or goal, one current worry or circumstance) and carries no note
+# meant for the editor. The character bound keeps every request small.
+MAX_TEMPLATE_BACKGROUND_CHARACTERS = 600
+_GOAL_WORDS = ("dream", "hope", "goal")
+_CIRCUMSTANCE_WORDS = ("lately", "right now", "this year", "this month", "this season", "soon")
+_EDITOR_NOTES = (
+    "assumption",
+    "causal",
+    "response value",
+    "mobility",
+    "personality label",
+    "mbti",
+    "below",
+    "scenario",
+    "descriptive",
+)
+
+
+def test_packaged_backgrounds_tell_a_short_whole_fictional_life() -> None:
+    catalog = _personas().load_persona_template_catalog()
+    names = {
+        item.persona_id: item.display_name.removeprefix("Fictional ") for item in catalog.templates
+    }
+    for template in catalog.templates:
+        background = template.background
+        assert background is not None, template.persona_id
+        assert 300 <= len(background) <= MAX_TEMPLATE_BACKGROUND_CHARACTERS, template.persona_id
+        # The fictional disclosure opens every life story, as it did before enrichment.
+        assert background.startswith("A wholly invented character who "), template.persona_id
+        assert background.count(". ") >= 3 and background.endswith("."), template.persona_id
+        lowered = background.lower()
+        assert any(word in lowered for word in _GOAL_WORDS), template.persona_id
+        assert any(word in lowered for word in _CIRCUMSTANCE_WORDS), template.persona_id
+        assert not [note for note in _EDITOR_NOTES if note in lowered], template.persona_id
+        # A story names only its own person, never another template's.
+        assert names[template.persona_id] in background, template.persona_id
+        others = [name for key, name in names.items() if key != template.persona_id]
+        assert not [name for name in others if name in background], template.persona_id
+        assert not any(character.isdigit() for character in background), template.persona_id
+        # Gender is never part of a template, so no story assumes one.
+        words = set(re.findall(r"[a-z]+", lowered))
+        assert not words & {"he", "she", "him", "his", "her", "hers"}, template.persona_id
 
 
 def test_loader_orders_templates_by_fixed_id_and_preserves_explicit_assumptions(tmp_path: Path):

@@ -8,7 +8,7 @@
       "display_name": "Fictional Lumo",
       "age": 22,
       "occupation": "Invented puzzle maker",
-      "background": "A wholly invented character who collects puzzle ideas and enjoys trying small craft projects. This story and MBTI label are descriptive scenario context only; numeric assumptions are supplied explicitly below.",
+      "background": "A wholly invented character who collects puzzle ideas and enjoys trying small craft projects. Lumo shares a small flat with two friends, spends evenings folding paper puzzles and watches maker videos on their phone between tasks. They dream of opening a tiny puzzle shop of their own one day. Right now money is tight because they are saving for a laser cutter, so every purchase gets a second look, even when something new and clever is tempting.",
       "mbti": "ENFP",
       "interests": ["crafts", "technology"],
       "traits": {
@@ -32,7 +32,7 @@
       "display_name": "Fictional Veyra",
       "age": 39,
       "occupation": "Invented story archivist",
-      "background": "A wholly invented character who keeps imagined folktales and likes patient revision. Neither this biography nor the optional personality label determines response values or a mobility schedule.",
+      "background": "A wholly invented character who keeps imagined folktales and likes patient revision. Veyra follows a steady weekly routine, reads on the bus to the archive and cooks the same trusted recipes every weekend. They hope to finish a book of the folktales they have gathered over many years. Rent went up this year, so Veyra writes down every expense in a notebook and has little patience for ads that promise more than they deliver.",
       "mbti": "ISTJ",
       "interests": ["books", "cooking"],
       "traits": {
@@ -56,7 +56,7 @@
       "display_name": "Fictional Orilo",
       "age": 57,
       "occupation": "Invented miniature builder",
-      "background": "A wholly invented character who assembles miniature objects and shares imagined workshop tales. The explicit response assumptions below are editable scenario choices, independent of age and occupation.",
+      "background": "A wholly invented character who assembles miniature objects and shares imagined workshop tales. Orilo spends mornings in a shed at the end of the garden, grows herbs between the workbenches and drives across town to craft fairs, reading every roadside sign on the way. Their goal is to build a complete miniature model of the street where they grew up. Lately a leak in the shed roof has eaten into their savings, so they think carefully before paying for any new tool.",
       "mbti": null,
       "interests": ["crafts", "gardening"],
       "traits": {
@@ -80,7 +80,7 @@
       "display_name": "Fictional Nuvin",
       "age": null,
       "occupation": null,
-      "background": "A wholly invented character who enjoys composing playful rhythms and sketching imagined gadgets. Descriptive details are optional and do not generate the explicit causal assumptions.",
+      "background": "A wholly invented character who enjoys composing playful rhythms and sketching imagined gadgets. Nuvin keeps irregular hours, wears headphones most of the day and follows music and gadget channels on their phone. They dream of recording a short album entirely on instruments they designed themselves. Money is not much of a worry, but a creative block has left them restless lately, and they scroll their phone far more than they would like.",
       "mbti": "INFP",
       "interests": ["music", "technology"],
       "traits": {
@@ -104,7 +104,7 @@
       "display_name": "Fictional Pimo",
       "age": 31,
       "occupation": "Invented night courier",
-      "background": "A wholly invented character who rides imagined delivery loops and hums along to street music. This story and MBTI label are descriptive scenario context only; numeric assumptions are supplied explicitly below.",
+      "background": "A wholly invented character who rides imagined delivery loops and hums along to street music. Pimo works night shifts by bike, checks the phone for new orders at every stop and grabs late snacks from whatever stall is still open. They dream of saving enough to open a small late-night snack bar. Lately the shifts have been unpredictable and income changes from week to week, yet a good deal or a catchy tune is still hard for Pimo to resist.",
       "mbti": "ESTP",
       "interests": ["commuting", "food", "music"],
       "traits": {
@@ -128,7 +128,7 @@
       "display_name": "Fictional Zarel",
       "age": 46,
       "occupation": "Invented clockwork repairer",
-      "background": "A wholly invented character who restores imagined clocks and reads technical manuals for fun. Neither this biography nor the optional personality label determines response values or a mobility schedule.",
+      "background": "A wholly invented character who restores imagined clocks and reads technical manuals for fun. Zarel works at a quiet repair bench, compares specifications for weeks before buying anything and rarely looks at the phone while working. They hope to bring a long-silent tower clock back to life. This year a cheap gadget that broke within a month left Zarel annoyed, and they now assume that most ads exaggerate.",
       "mbti": "INTJ",
       "interests": ["books", "technology"],
       "traits": {
@@ -152,7 +152,7 @@
       "display_name": "Fictional Ketra",
       "age": 27,
       "occupation": "Invented garden organiser",
-      "background": "A wholly invented character who runs an imagined shared garden and cooks with whatever it grows. The explicit response assumptions below are editable scenario choices, independent of age and occupation.",
+      "background": "A wholly invented character who runs an imagined shared garden and cooks with whatever it grows. Ketra cycles between the garden and neighbours' kitchens, organises weekend harvest meals and notices every poster along the route. They hope to turn the garden into a small community kitchen for the whole street. The garden's small grant runs out soon, so Ketra counts every coin right now and compares prices twice before buying.",
       "mbti": "ESFJ",
       "interests": ["cooking", "food", "gardening"],
       "traits": {
@@ -176,7 +176,7 @@
       "display_name": "Fictional Tavi",
       "age": 19,
       "occupation": "Invented student radio host",
-      "background": "A wholly invented character who hosts an imagined campus radio show and collects new gadgets. Descriptive details are optional and do not generate the explicit causal assumptions.",
+      "background": "A wholly invented character who hosts an imagined campus radio show and collects new gadgets. Tavi juggles lectures, a part-time job at a cafe and evenings out with friends, and is always the first to try a new app. They dream of hosting a popular radio show of their own after graduating. Money is very tight on a student budget right now, so Tavi loves new things but usually waits for a discount.",
       "mbti": "ENFJ",
       "interests": ["leisure", "music", "technology"],
       "traits": {
@@ -200,7 +200,7 @@
       "display_name": "Fictional Selun",
       "age": 63,
       "occupation": "Invented retired ferry pilot",
-      "background": "A wholly invented character who tells imagined river stories and tends a small balcony garden. This story and MBTI label are descriptive scenario context only; numeric assumptions are supplied explicitly below.",
+      "background": "A wholly invented character who tells imagined river stories and tends a small balcony garden. Selun walks along the river road every morning, reads in the afternoon and keeps the phone for calls rather than browsing. They hope to write down their river stories so the family can keep them. Living on a fixed pension this year, Selun sticks with familiar shops and takes a long time to decide on anything new.",
       "mbti": "ISFP",
       "interests": ["books", "gardening", "leisure"],
       "traits": {
@@ -224,7 +224,7 @@
       "display_name": "Fictional Halvi",
       "age": 35,
       "occupation": "Invented food-truck cook",
-      "background": "A wholly invented character who drives an imagined food truck and builds its signs by hand. The explicit response assumptions below are editable scenario choices, independent of age and occupation.",
+      "background": "A wholly invented character who drives an imagined food truck and builds its signs by hand. Halvi drives to a different market every day, tries a new recipe each week and chats with customers about whatever is new in town. They dream of running a second truck and teaching a young cook the trade. Business is good this season, but the long drives between markets leave Halvi tired, and anything that saves time on the road catches their eye.",
       "mbti": null,
       "interests": ["commuting", "crafts", "food"],
       "traits": {

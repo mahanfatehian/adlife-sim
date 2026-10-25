@@ -862,9 +862,12 @@ def _story_days(
 def _template_key(
     persona: WorkbenchPersonaDraftV2, templates: Sequence[WorkbenchPersonaDraftV2]
 ) -> TemplateKey | None:
-    facts = persona.model_dump(mode="json", exclude={"persona_id", "count"})
+    # The background is left out: template stories are revised over time, and a run saved
+    # with an earlier text must still be recognized as the same template person.
+    excluded = {"persona_id", "count", "background"}
+    facts = persona.model_dump(mode="json", exclude=excluded)
     for template in templates:
-        if template.model_dump(mode="json", exclude={"persona_id", "count"}) == facts:
+        if template.model_dump(mode="json", exclude=excluded) == facts:
             return _TEMPLATE_KEYS.get(template.persona_id)
     return None
 
