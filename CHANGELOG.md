@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The wheel release smoke check covers schema-v10 runs (2026-10-25)** — the clean-room
+  smoke of the built wheel (`scripts/smoke_release.py`) now also submits schema-4 drafts
+  through the installed workbench API:
+  - a rules run and a practice run that answer every noticed ad offline;
+  - a run whose local AI is a loopback stand-in that checks each question is prompt
+    contract v3 (the persona block with the person card, and no advertiser internals),
+    then answers in character, coolly for a person who distrusts ads and warmly otherwise.
+
+  For each run the smoke reads the guided story and report: the provider run's story says
+  the AI answered as the person, and its report shows the in-character limits. It then
+  replays the run offline with no further AI request. This closes the roadmap item "add a
+  V10 run to the wheel release smoke check".
 - **Quick checks on every push, the full CI for pull requests and releases (2026-10-25)** —
   a push to `main` now runs `.github/workflows/quick.yml`: lint, types, the wheel smoke, the
   dependency and secret scans, and the whole test suite (without coverage, with the browser

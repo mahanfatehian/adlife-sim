@@ -1845,6 +1845,39 @@ def test_smoke_viewer_probe_certifies_exact_provider_wire_job_and_replay() -> No
         assert required in source
 
 
+def test_smoke_viewer_probe_certifies_schema_v10_runs_in_character_story_and_replay() -> None:
+    """The installed wheel must run bounded cognition, answer as the person and replay."""
+    source = smoke_release._VIEWER_PROBE_SOURCE
+
+    for required in (
+        '"""Verify installed V6-V10 behavior with external network denied."""',
+        'bounded_draft["schema_version"] = 4',
+        '"effect_scope": "bounded-signals-v1",',
+        '"funded_response_limit": 1000,',
+        '"funded_response_limit": 60,',
+        'f"/api/runs/{bounded_run_id}/story"',
+        'f"/guide/runs/{bounded_run_id}/report"',
+        "RunStoryV1.model_validate_json(",
+        "CITY_COGNITION_PROMPT_CONTRACT_V3_TEXT",
+        "CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT",
+        "CITY_COGNITION_JSON_SCHEMA_NAME_V2",
+        '("no-advertiser-internals", "target_interests" not in user_content),',
+        '("person-card-keys", set(person) == _PERSON_CARD_KEYS),',
+        'json={"effect_scope": "bounded-signals-v1"},',
+        "assert story.ai.contract.prompt_contract_id == CITY_COGNITION_PROMPT_CONTRACT_V3_ID",
+        '"story.headline.ai_as_person"',
+        '("limits.names.persona", "limits.not_feelings.persona")',
+        "assert record.result.affect == expected, record.agent_id",
+        "replay_city_run(bounded_stored)",
+        "requests_before_replay = _LoopbackBoundedHandler.request_count",
+        "assert _LoopbackBoundedHandler.request_count == requests_before_replay",
+        "await _verify_loopback_bounded_cognition(root)",
+        '"bounded_cognition_run_schema_version": 10,',
+        '"bounded_cognition_in_character_provider_verified": True,',
+    ):
+        assert required in source, required
+
+
 def _embedded_provider_fixture() -> tuple[
     type[BaseHTTPRequestHandler], type[socketserver.TCPServer]
 ]:
@@ -2049,6 +2082,12 @@ def test_wheel_provider_fixture_rejects_malformed_contract_payloads() -> None:
         ("cognition_rules_verified", False),
         ("cognition_mock_verified", False),
         ("loopback_compatible_provider_verified", False),
+        ("bounded_cognition_run_schema_version", 9),
+        ("bounded_cognition_run_schema_version", None),
+        ("bounded_cognition_rules_verified", False),
+        ("bounded_cognition_mock_verified", False),
+        ("bounded_cognition_in_character_provider_verified", False),
+        ("bounded_cognition_story_and_report_verified", False),
     ],
 )
 def test_parent_refuses_incomplete_persona_wheel_certification(tmp_path, monkeypatch, field, bad):
@@ -2088,6 +2127,11 @@ def test_parent_refuses_incomplete_persona_wheel_certification(tmp_path, monkeyp
         "cognition_rules_verified": True,
         "cognition_mock_verified": True,
         "loopback_compatible_provider_verified": True,
+        "bounded_cognition_run_schema_version": 10,
+        "bounded_cognition_rules_verified": True,
+        "bounded_cognition_mock_verified": True,
+        "bounded_cognition_in_character_provider_verified": True,
+        "bounded_cognition_story_and_report_verified": True,
     }
     if field is not None:
         if bad is None:
@@ -2571,6 +2615,11 @@ def test_smoke_exercises_verified_catalog_run_and_replay(
                 "cognition_rules_verified": True,
                 "cognition_mock_verified": True,
                 "loopback_compatible_provider_verified": True,
+                "bounded_cognition_run_schema_version": 10,
+                "bounded_cognition_rules_verified": True,
+                "bounded_cognition_mock_verified": True,
+                "bounded_cognition_in_character_provider_verified": True,
+                "bounded_cognition_story_and_report_verified": True,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
                 "workbench_guide_verified": True,

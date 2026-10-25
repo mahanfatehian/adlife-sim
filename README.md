@@ -259,7 +259,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Optional OpenAI-compatible noncausal explanations with approved origins, protected credentials, deterministic fallback, and frozen replay | Complete for the local workbench; authentication and OAuth are not implemented |
 | Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, guided story and report, verified `city-view` saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented; outside the scope of this local research app |
-| Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
+| Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`), including V10 rules, practice and loopback-AI runs with their story, report and offline replay | Complete |
 | Continuous integration: quick checks on every push to `main` (`.github/workflows/quick.yml`: lint, types, wheel smoke, dependency and secret scans, and the whole test suite in six parallel Linux shards), and the full Linux, macOS, and Windows matrix with the coverage floor and performance gates (`.github/workflows/ci.yml`) | Complete; the full matrix runs for pull requests, every release, weekly, and on demand (**Actions → CI → Run workflow**) |
 | Tag-triggered release workflow (wheel, sdist, checksums, SBOM, PyPI Trusted Publishing) and `uv`-based install scripts | Implemented; not yet run, because no release has been tagged |
 | Package-index publication (PyPI) and public tagged releases | Not done yet: needs the owner's PyPI setup and a signed release tag ([docs/releasing.md](docs/releasing.md)) |
@@ -501,7 +501,6 @@ Not yet done for schema-v10 runs:
   only with another V10 run.
 - No paired-cognition protocol freezes compatible signals across study arms, so
   provider-dependent cognition is never reported as a campaign effect.
-- The wheel release smoke checks do not yet exercise V10 runs.
 - V10 is an unreleased artifact schema: runs written by earlier development builds are
   refused and must be created again.
 
@@ -766,12 +765,12 @@ software produces.
 1. **First public release** — publish `adlife-sim` to PyPI and tag the first release, so the
    `uv tool install adlife-sim` command above and the one-line install scripts work without
    cloning. The release workflow is in place, quick checks run on every push, and the full
-   CI matrix runs for every release; what remains is the owner's PyPI Trusted Publishing setup, a release signing key the
-   workflow trusts, and a signed tag ([docs/releasing.md](docs/releasing.md)).
+   CI matrix runs for every release; what remains is the owner's PyPI Trusted Publishing
+   setup, a release signing key the workflow trusts, and a signed tag
+   ([docs/releasing.md](docs/releasing.md)).
 2. **Schema-v10 analysis** — let `city-compare --layer response`, `city-study`, and
    `city-report` read V10 runs, with a paired-cognition protocol so provider-dependent
-   cognition is never reported as a campaign effect, and add a V10 run to the wheel release
-   smoke check.
+   cognition is never reported as a campaign effect.
 3. **Production-track city product on `main`** — mature the current opt-in pilot with
    licensed city ingestion, geography-aware campaign events, persisted replayable traces,
    authenticated administration and protected provider configuration. The

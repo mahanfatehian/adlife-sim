@@ -169,8 +169,9 @@ What this model cannot support. Read alongside the
 - **V10 artifacts are unsigned and unreleased.** Canonical hashes detect damaged, partial,
   isolated, or rebound files but cannot attest who produced a provider answer or resist
   someone who rewrites every file and recomputes the hash chain. V10 runs written by earlier
-  development builds no longer validate, and the wheel release smoke checks do not yet
-  exercise V10 runs.
+  development builds no longer validate. The wheel release smoke check runs V10 rules,
+  practice and loopback-AI runs (a local stand-in that answers in character) and replays
+  them, but no real model takes part in it.
 - **Geographic evidence omits important mechanisms.** Road proximity and the half-plane
   orientation heuristic omit occlusion, lanes, buildings, traffic, speed variation and
   measured viewability. Phone probability is an analyst assumption, not an observed usage

@@ -2398,8 +2398,9 @@ def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
         "v10 artifacts are unsigned and unreleased",
         "recomputes the hash chain",
         "earlier development builds",
-        "smoke checks do not yet exercise v10",
+        "the wheel release smoke check runs v10 rules, practice and loopback-ai runs",
     )
+    assert "do not yet exercise v10" not in _squash(limitations)
 
 
 def test_experiment_protocol_registers_v10_cognition_as_exploratory() -> None:

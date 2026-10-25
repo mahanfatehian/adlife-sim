@@ -8,8 +8,11 @@ validated fictional place, campaign, and response inputs, a schema-v6 spatial op
 attention, and rules-only response run, its replay, its read-only ASGI viewer, and a complete
 schema-v8 persona submit/poll/discover/inspect lifecycle with explicit V7 compatibility,
 schema-v9 rules/mock explanations, and a funded loopback provider run whose persisted
-evidence replays offline without another provider call, validating the JSON output
-contract along the way. Every temporary artifact is cleaned up on success and on failure.
+evidence replays offline without another provider call, and schema-v10 bounded cognition:
+rules and practice runs plus a loopback local AI that answers prompt-contract-v3 questions
+as the person, each with its guided story and report and an offline replay, validating the
+JSON output contract along the way. Every temporary artifact is cleaned up on success and
+on failure.
 """
 
 from __future__ import annotations
@@ -196,11 +199,12 @@ with Path(__file__).with_name("adlife-smoke-network-guard.log").open(
 ) as _guard_log:
     _guard_log.write(f"{_guard_token}\\t{sys.argv[0]}\\n")
 '''
-_VIEWER_PROBE_SOURCE = '''"""Verify installed V6-V9 behavior with external network denied."""
+_VIEWER_PROBE_SOURCE = '''"""Verify installed V6-V10 behavior with external network denied."""
 from __future__ import annotations
 
 import asyncio
 import builtins
+import html
 import inspect
 import json
 import socketserver
@@ -244,6 +248,7 @@ _verify_guard()
 import adlife
 import httpx
 
+from adlife.adapters.cognition.city_prompts_v2 import CITY_COGNITION_JSON_SCHEMA_NAME_V2
 from adlife.city.analysis import metrics_for_stored_city_run
 from adlife.city.catalog import select_catalog_city
 from adlife.city.run_store import CityRunStore
@@ -259,12 +264,19 @@ from adlife.core.domain.city_cognition import (
     CITY_COGNITION_RESULT_SCHEMA_DOCUMENT,
     CityCognitionRequestV1,
 )
+from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_PROMPT_CONTRACT_V3_ID,
+    CITY_COGNITION_PROMPT_CONTRACT_V3_TEXT,
+    CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT,
+)
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.simulation.spatial_response import (
     SpatialRuleResponse,
     spatial_response_state_document,
     summarize_spatial_response_artifact,
 )
+from adlife.i18n import load_catalog
+from adlife.reporting.run_story_model import RunStoryV1
 
 
 async def _json(client: httpx.AsyncClient, path: str) -> dict[str, object]:
@@ -419,6 +431,126 @@ class _LoopbackCompatibleHandler(BaseHTTPRequestHandler):
 class _LoopbackCompatibleServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = False
     daemon_threads = True
+
+
+_PERSONA_BLOCK_KEYS = {"request_id", "disclosure", "person", "feelings_now", "history",
+                       "situation", "ad"}
+_PERSON_CARD_KEYS = {"name", "age", "occupation", "background", "personality_type",
+                     "hobbies_and_interests", "temperament"}
+
+
+class _LoopbackBoundedHandler(BaseHTTPRequestHandler):
+    """A loopback Chat Completions fake that answers prompt-v3 questions as the person."""
+
+    protocol_version = "HTTP/1.1"
+    request_count = 0
+    protocol_verified = True
+    failure_reason: str | None = None
+    names: set[str] = set()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return None
+
+    def _reply(self, status: int, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
+
+    def do_POST(self) -> None:
+        type(self).request_count += 1
+        valid = self.path == "/v1/chat/completions"
+        raw_length = self.headers.get("Content-Length", "")
+        length = int(raw_length) if raw_length.isdigit() else -1
+        valid = valid and 0 < length <= 131_072
+        body = self.rfile.read(length) if valid else b""
+        validation_stage = "body-json"
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            validation_stage = "message-envelope"
+            system, user = payload["messages"]
+            user_content = user["content"]
+            prefix = _CITY_USER_PREFIX + "BEGIN_UNTRUSTED_CITY_COGNITION_DATA\\n"
+            suffix = "\\nEND_UNTRUSTED_CITY_COGNITION_DATA"
+            validation_stage = "prompt-delimiters"
+            if not user_content.startswith(prefix) or not user_content.endswith(suffix):
+                raise ValueError("invalid cognition prompt delimiters")
+            validation_stage = "persona-block"
+            block = json.loads(user_content[len(prefix):-len(suffix)])
+            person = block["person"]
+            skepticism = person["temperament"]["advertising_skepticism"]["value"]
+            validation_stage = "response-format"
+            response_format = payload["response_format"]
+            json_schema = response_format["json_schema"]
+            checks = (
+                ("authorization", self.headers.get("Authorization") == _LOCAL_HEADER_VALUE),
+                ("canonical-body", body == canonical_json(payload).encode("utf-8")),
+                ("system-prompt", system == {
+                    "role": "system",
+                    "content": CITY_COGNITION_PROMPT_CONTRACT_V3_TEXT,
+                }),
+                ("user-role", user["role"] == "user"),
+                ("persona-block-keys", set(block) == _PERSONA_BLOCK_KEYS),
+                ("person-card-keys", set(person) == _PERSON_CARD_KEYS),
+                ("no-advertiser-internals", "target_interests" not in user_content),
+                ("response-format-type", response_format["type"] == "json_schema"),
+                ("json-schema-name", json_schema["name"] == CITY_COGNITION_JSON_SCHEMA_NAME_V2),
+                ("json-schema-strict", json_schema["strict"] is True),
+                ("json-schema-body", json_schema["schema"] == json.loads(
+                    CITY_COGNITION_RESULT_SCHEMA_V2_DOCUMENT
+                )),
+            )
+            failed_check = next((name for name, passed in checks if not passed), None)
+            if not valid and failed_check is None:
+                failed_check = "request-envelope"
+            valid = valid and failed_check is None
+            if failed_check is not None and type(self).failure_reason is None:
+                type(self).failure_reason = failed_check
+            type(self).names.add(str(person["name"]))
+            # In character: a person who distrusts ads answers coolly, anyone else warmly.
+            labels = (
+                ("skeptical", "low", "low", "low")
+                if skepticism >= 0.5
+                else ("curious", "medium", "medium", "medium")
+            )
+            result = {
+                "affect": labels[0],
+                "relevance": labels[1],
+                "credibility": labels[2],
+                "salience": labels[3],
+                "safety_flags": [],
+                "request_id": block["request_id"],
+                "disclosure": "synthetic-bounded-cognition-not-observed-behavior",
+                "schema_version": 2,
+            }
+            envelope = {
+                "id": "chatcmpl-wheel-bounded",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "wheel-compatible-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(result, separators=(",", ":")),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 16, "total_tokens": 56},
+            }
+            response = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+        except (IndexError, KeyError, TypeError, UnicodeError, ValueError):
+            valid = False
+            if type(self).failure_reason is None:
+                type(self).failure_reason = validation_stage
+            response = b'{"error":"invalid bounded cognition request"}'
+        type(self).protocol_verified = type(self).protocol_verified and valid
+        self._reply(200 if valid else 400, response)
 
 
 async def _verify_loopback_compatible_provider(root: Path) -> None:
@@ -644,6 +776,218 @@ async def _verify_loopback_compatible_provider(root: Path) -> None:
                 assert replay.cognition_evaluation == provider_stored.cognition_evaluation
                 assert _LoopbackCompatibleHandler.request_count == requests_before_replay
         assert _LoopbackCompatibleHandler.protocol_verified is True
+    finally:
+        if started:
+            server.shutdown()
+        server.server_close()
+        if started:
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+
+
+async def _verify_loopback_bounded_cognition(root: Path) -> None:
+    """A schema-v10 run whose local AI answers as the person, its story, report and replay."""
+    _LoopbackBoundedHandler.request_count = 0
+    _LoopbackBoundedHandler.protocol_verified = True
+    _LoopbackBoundedHandler.failure_reason = None
+    _LoopbackBoundedHandler.names = set()
+    server = _LoopbackCompatibleServer(("127.0.0.1", 0), _LoopbackBoundedHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    started = False
+    try:
+        thread.start()
+        started = True
+        port = int(server.server_address[1])
+        base_url = f"http://127.0.0.1:{port}/v1"
+        runtime = build_provider_runtime_policy(
+            provider_origins=(f"wheel-bounded={base_url}",),
+        )
+        bounded_root = root / "bounded-provider-check-workspace"
+        application = create_city_workbench_app(
+            prepare_workbench_workspace(bounded_root),
+            csrf_token="installed-wheel-bounded-token",
+            provider_runtime=runtime,
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "http://127.0.0.1",
+            "X-AdLife-CSRF": "installed-wheel-bounded-token",
+        }
+        profile = {
+            "schema_version": 1,
+            "profile_id": "wheel-bounded",
+            "display_label": "Wheel local bounded cognition fixture",
+            "mode": "local",
+            "base_url": base_url,
+            "model_id": "wheel-compatible-model",
+            "protocol": "openai-chat-completions-json-schema-v1",
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "seed_policy": "fixed",
+            "seed": 42,
+            "max_output_tokens": 256,
+            "attempt_timeout_seconds": 10,
+            "transient_retries": 0,
+            "repair_attempts": 0,
+            "origin_approval_id": "wheel-bounded",
+        }
+        bounded_run_id = "wheel-local-v10"
+        async with application.router.lifespan_context(application):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application),
+                base_url="http://127.0.0.1",
+            ) as client:
+                created = await client.post("/api/providers", headers=headers, json=profile)
+                assert created.status_code == 201, created.text
+                revision = created.json()["revision_sha256"]
+                checked = await client.post(
+                    f"/api/providers/wheel-bounded/revisions/{revision}/check",
+                    headers=headers,
+                    json={"effect_scope": "bounded-signals-v1"},
+                )
+                assert checked.status_code == 200, checked.text
+                assert checked.json()["status"] == "compatible", (
+                    checked.json(),
+                    _LoopbackBoundedHandler.failure_reason,
+                )
+                probe_requests = _LoopbackBoundedHandler.request_count
+                assert probe_requests >= 1
+
+                template_response = await client.get("/api/persona-templates")
+                assert template_response.status_code == 200, template_response.text
+                templates = PersonaTemplateCatalog.model_validate_json(
+                    template_response.content
+                )
+                # Two people who trust ads differently, so in-character answers differ.
+                personas = [
+                    item.model_dump(mode="json")
+                    for item in sorted(
+                        templates.templates,
+                        key=lambda item: item.traits.advertising_skepticism,
+                    )
+                ]
+                personas = [personas[0], personas[-1]]
+                for persona in personas:
+                    persona["count"] = 1
+                bounded_draft = {
+                    "schema_version": 4,
+                    "city_id": "fictional-grid-v2",
+                    "scenario": {
+                        "scenario_id": "wheel-bounded-study",
+                        "name": "Installed wheel bounded cognition study",
+                        "campaign": {
+                            "campaign_id": "wheel-bounded-campaign",
+                            "name": "Installed wheel fictional bounded campaign",
+                            "creative_template_id": "fictional-device-launch-v1",
+                            "target_interests": ["commuting", "technology"],
+                            "relative_price": 1.25,
+                        },
+                        "phone": {
+                            "active_windows": [
+                                {"day": 1, "start_minute": 480, "end_minute": 540}
+                            ],
+                            "frequency_cap_per_agent_per_day": 3,
+                            "eligible_activities": ["commute", "leisure"],
+                            "opportunity_probability_per_minute": 1.0,
+                        },
+                        "roadside": None,
+                    },
+                    "population": {"personas": personas},
+                    "settings": {
+                        "run_id": bounded_run_id,
+                        "agent_count": 2,
+                        "days": 1,
+                        "seed": "17",
+                        "response_mode": "deterministic-rules",
+                    },
+                    "cognition": {
+                        "effect_scope": "bounded-signals-v1",
+                        "mode": "local",
+                        "provider_profile_id": "wheel-bounded",
+                        "provider_revision_sha256": revision,
+                        "funded_response_limit": 60,
+                    },
+                }
+                accepted = await client.post("/api/jobs", headers=headers, json=bounded_draft)
+                assert accepted.status_code == 202, accepted.text
+                accepted_document = accepted.json()
+                accepted_settings = accepted_document["job"]["accepted_settings"]
+                assert (
+                    accepted_settings["workbench_input_schema_version"],
+                    accepted_settings["run_schema_version"],
+                    accepted_settings["effect_scope"],
+                    accepted_settings["cognition_mode"],
+                    accepted_settings["provider_profile_id"],
+                    accepted_settings["provider_revision_sha256"],
+                    accepted_settings["funded_response_limit"],
+                ) == (4, 10, "bounded-signals-v1", "local", "wheel-bounded", revision, 60)
+                deadline = asyncio.get_running_loop().time() + 60.0
+                while True:
+                    job_response = await client.get(accepted_document["status_url"])
+                    assert job_response.status_code == 200, job_response.text
+                    bounded_job = job_response.json()
+                    if bounded_job["phase"] in {"completed", "failed", "cancelled"}:
+                        break
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise AssertionError("installed bounded cognition job did not terminate")
+                    await asyncio.sleep(0.01)
+                assert bounded_job["phase"] == "completed", (
+                    bounded_job,
+                    _LoopbackBoundedHandler.failure_reason,
+                )
+                result = bounded_job["result"]
+                assert result["run_schema_version"] == 10
+                assert result["eligible_response_count"] > 0
+                assert result["provider_count"] == result["funded_request_count"] > 0
+                assert result["budget_skipped_count"] == 0
+
+                story_response = await client.get(f"/api/runs/{bounded_run_id}/story")
+                report_response = await client.get(f"/guide/runs/{bounded_run_id}/report")
+                assert story_response.status_code == report_response.status_code == 200
+                story = RunStoryV1.model_validate_json(story_response.content)
+                assert story.ai.mode == "local"
+                assert story.ai.contract.prompt_contract_id == CITY_COGNITION_PROMPT_CONTRACT_V3_ID
+                assert "story.headline.ai_as_person" in [ref.key for ref in story.headline]
+                english = load_catalog("en")
+                report_text = html.unescape(report_response.text)
+                for key in ("limits.names.persona", "limits.not_feelings.persona"):
+                    assert english.text(key) in report_text, key
+                assert english.text("limits.names") not in report_text
+
+                bounded_stored = CityRunStore(bounded_root).load(bounded_run_id)
+                assert bounded_stored.manifest.schema_version == 10
+                assert bounded_stored.workbench_input.schema_version == 4
+                assert bounded_stored.cognition_evaluation is not None
+                records = bounded_stored.cognition_evaluation.records
+                assert records and all(record.source == "provider" for record in records)
+                # Each answer follows the person the question named.
+                population = bounded_stored.workbench_input.model_dump(mode="json")["draft"][
+                    "population"
+                ]
+                skeptic_of = {
+                    persona["persona_id"]: persona["traits"]["advertising_skepticism"] >= 0.5
+                    for persona in population["personas"]
+                }
+                persona_of = {
+                    item["agent_id"]: item["persona_id"] for item in population["assignments"]
+                }
+                for record in records:
+                    expected = "skeptical" if skeptic_of[persona_of[record.agent_id]] else "curious"
+                    assert record.result.affect == expected, record.agent_id
+                asked = {persona["display_name"] for persona in personas} | {"Fictional Sam"}
+                assert "Fictional Sam" in _LoopbackBoundedHandler.names
+                assert _LoopbackBoundedHandler.names - {"Fictional Sam"}
+                assert _LoopbackBoundedHandler.names <= asked
+                assert _LoopbackBoundedHandler.request_count == probe_requests + len(records)
+
+                requests_before_replay = _LoopbackBoundedHandler.request_count
+                replay = replay_city_run(bounded_stored)
+                assert replay.identical is True
+                assert replay.cognition_evaluation == bounded_stored.cognition_evaluation
+                assert _LoopbackBoundedHandler.request_count == requests_before_replay
+        assert _LoopbackBoundedHandler.protocol_verified is True, (
+            _LoopbackBoundedHandler.failure_reason
+        )
     finally:
         if started:
             server.shutdown()
@@ -1161,7 +1505,69 @@ async def _main() -> None:
                 assert cognition_summary.json()["run_schema_version"] == 9
                 assert cognition_records.json()["run_schema_version"] == 9
 
+            # Schema-v10 bounded cognition offline: the rules and practice sources answer
+            # every noticed ad, and the guided story and report read the saved run.
+            for cognition_mode in ("rules", "mock"):
+                bounded_draft = json.loads(json.dumps(workbench_draft))
+                bounded_run_id = f"wheel-{cognition_mode}-v10"
+                bounded_draft["schema_version"] = 4
+                bounded_draft["settings"]["run_id"] = bounded_run_id
+                bounded_draft["cognition"] = {
+                    "effect_scope": "bounded-signals-v1",
+                    "mode": cognition_mode,
+                    "provider_profile_id": None,
+                    "provider_revision_sha256": None,
+                    "funded_response_limit": 1000,
+                }
+                bounded_accepted = await workbench_client.post(
+                    "/api/jobs", headers=secure_headers, json=bounded_draft,
+                )
+                assert bounded_accepted.status_code == 202, bounded_accepted.text
+                bounded_settings = bounded_accepted.json()["job"]["accepted_settings"]
+                assert (
+                    bounded_settings["workbench_input_schema_version"],
+                    bounded_settings["run_schema_version"],
+                    bounded_settings["effect_scope"],
+                    bounded_settings["cognition_mode"],
+                    bounded_settings["funded_response_limit"],
+                ) == (4, 10, "bounded-signals-v1", cognition_mode, 1000)
+                deadline = asyncio.get_running_loop().time() + 30.0
+                while True:
+                    bounded_status = await workbench_client.get(
+                        bounded_accepted.json()["status_url"]
+                    )
+                    bounded_job = bounded_status.json()
+                    if bounded_job["phase"] in {"completed", "failed", "cancelled"}:
+                        break
+                    assert asyncio.get_running_loop().time() < deadline
+                    await asyncio.sleep(0.01)
+                assert bounded_job["phase"] == "completed", bounded_job
+                assert bounded_job["result"]["run_schema_version"] == 10
+                assert bounded_job["result"]["cognition_mode"] == cognition_mode
+                bounded_summary = await workbench_client.get(
+                    f"/api/runs/{bounded_run_id}/cognition-summary"
+                )
+                bounded_story = await workbench_client.get(f"/api/runs/{bounded_run_id}/story")
+                bounded_page = await workbench_client.get(f"/guide/runs/{bounded_run_id}")
+                bounded_report = await workbench_client.get(
+                    f"/guide/runs/{bounded_run_id}/report"
+                )
+                assert (
+                    bounded_summary.status_code
+                    == bounded_story.status_code
+                    == bounded_page.status_code
+                    == bounded_report.status_code
+                    == 200
+                )
+                assert bounded_summary.json()["mode"] == cognition_mode
+                bounded_story_document = RunStoryV1.model_validate_json(bounded_story.content)
+                assert bounded_story_document.run.run_id == bounded_run_id
+                assert bounded_story_document.ai.mode == cognition_mode
+                assert 'id="story-root"' in bounded_page.text
+                assert bounded_report.text.lstrip().lower().startswith("<!doctype html>")
+
     await _verify_loopback_compatible_provider(root)
+    await _verify_loopback_bounded_cognition(root)
 
     workbench_stored = CityRunStore(root).load("wheel-workbench")
     assert workbench_stored.manifest.schema_version == 8
@@ -1294,6 +1700,13 @@ async def _main() -> None:
         assert cognition_stored.cognition_input.mode == cognition_mode
         assert cognition_stored.cognition_evaluation is not None
         assert replay_city_run(cognition_stored).identical is True
+    for cognition_mode in ("rules", "mock"):
+        bounded_stored = CityRunStore(root).load(f"wheel-{cognition_mode}-v10")
+        assert bounded_stored.manifest.schema_version == 10
+        assert bounded_stored.workbench_input.schema_version == 4
+        assert bounded_stored.cognition_input.mode == cognition_mode
+        assert bounded_stored.cognition_evaluation is not None
+        assert replay_city_run(bounded_stored).identical is True
 
     print(
         json.dumps(
@@ -1326,6 +1739,11 @@ async def _main() -> None:
                 "cognition_rules_verified": True,
                 "cognition_mock_verified": True,
                 "loopback_compatible_provider_verified": True,
+                "bounded_cognition_run_schema_version": 10,
+                "bounded_cognition_rules_verified": True,
+                "bounded_cognition_mock_verified": True,
+                "bounded_cognition_in_character_provider_verified": True,
+                "bounded_cognition_story_and_report_verified": True,
                 "workbench_sidecar_verified": True,
                 "workbench_discovery_verified": True,
                 "workbench_guide_verified": True,
@@ -4803,6 +5221,11 @@ def _verify_installed_viewer(
         ("cognition_rules_verified", True),
         ("cognition_mock_verified", True),
         ("loopback_compatible_provider_verified", True),
+        ("bounded_cognition_run_schema_version", 10),
+        ("bounded_cognition_rules_verified", True),
+        ("bounded_cognition_mock_verified", True),
+        ("bounded_cognition_in_character_provider_verified", True),
+        ("bounded_cognition_story_and_report_verified", True),
         ("workbench_sidecar_verified", True),
         ("workbench_discovery_verified", True),
         ("workbench_guide_verified", True),
