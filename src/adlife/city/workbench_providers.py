@@ -85,19 +85,26 @@ from adlife.core.domain.city_cognition import (
     city_cognition_provider_profile_revision_sha256,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_PROMPT_CONTRACTS,
     CITY_COGNITION_V2_DISCLOSURE,
     CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    CityCognitionAdV1,
     CityCognitionBaselineProposalV2,
     CityCognitionCausalAgentV2,
     CityCognitionCausalCampaignV2,
     CityCognitionCausalContractV2,
     CityCognitionCausalRequestIdentityV2,
+    CityCognitionFeelingsNowV1,
+    CityCognitionHistoryV1,
     CityCognitionInitialRuleStateV2,
     CityCognitionInputV2,
+    CityCognitionPersonaContextV1,
+    CityCognitionPersonProfileV1,
     CityCognitionRequestV2,
     CityCognitionResultV2,
     CityCognitionRuleFactorsV2,
     CityCognitionRunContextV2,
+    CityCognitionSituationV1,
     CityProviderAttemptV2,
 )
 from adlife.core.domain.person import DomainModel
@@ -108,6 +115,7 @@ from adlife.core.simulation.city_cognition import allocate_city_cognition_reserv
 from adlife.core.simulation.city_cognition_v2 import (
     build_city_cognition_initial_state_document_v2,
     build_city_cognition_input_v2,
+    build_city_cognition_persona_person_v1,
 )
 from adlife.core.simulation.spatial_attention import spatial_attention_event_id
 from adlife.core.simulation.spatial_opportunity import spatial_opportunity_id
@@ -381,6 +389,7 @@ def _compatibility_probe_v2(
     contract = CityCognitionCausalContractV2.model_validate(
         CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.model_dump(mode="python")
     )
+    persona_prompt = CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version]
     agent = CityCognitionCausalAgentV2(
         schema_version=2,
         agent_id="person-000",
@@ -389,12 +398,24 @@ def _compatibility_probe_v2(
             {name: 0.5 for name in SpatialResponseTraits.model_fields}
         ),
     )
-    creative = CityCognitionCreativeSnapshotV1(
-        template_id=probe_id,
-        product_name="Fictional item",
-        product_category="Fictional category",
-        message="Return the required JSON object for this synthetic compatibility probe.",
-        call_to_action="Consider the fictional offer.",
+    # A persona (prompt v3) check asks an ordinary in-character question: an empty person
+    # reading an instruction as an "ad" made role-playing models answer off the labels.
+    creative = (
+        CityCognitionCreativeSnapshotV1(
+            template_id=probe_id,
+            product_name="Fictional walking shoes",
+            product_category="Fictional footwear",
+            message="Light fictional shoes for long everyday walks.",
+            call_to_action="Try the fictional pair.",
+        )
+        if persona_prompt.persona_context
+        else CityCognitionCreativeSnapshotV1(
+            template_id=probe_id,
+            product_name="Fictional item",
+            product_category="Fictional category",
+            message="Return the required JSON object for this synthetic compatibility probe.",
+            call_to_action="Consider the fictional offer.",
+        )
     )
     campaign = CityCognitionCausalCampaignV2(
         schema_version=2,
@@ -411,6 +432,20 @@ def _compatibility_probe_v2(
         brand_sentiment=0.0,
         recall_strength=0.0,
     )
+    # A persona (prompt v3) contract probes with one complete fictional persona card, so
+    # the check sends exactly the request shape a run of the current contract sends.
+    persona_card = CityCognitionPersonProfileV1(
+        schema_version=1,
+        agent_id=agent.agent_id,
+        name="Fictional Sam",
+        age=34,
+        occupation="Invented library assistant",
+        background=(
+            "A wholly invented character who walks to work, reads in the evenings and "
+            "saves carefully for a short trip next spring."
+        ),
+        personality_type="ISFJ",
+    )
     context = CityCognitionRunContextV2(
         schema_version=2,
         run_input_sha256=opaque("run_input_sha256"),
@@ -420,6 +455,7 @@ def _compatibility_probe_v2(
         agents=(agent,),
         campaigns=(campaign,),
         initial_states=(initial,),
+        **({"profiles": (persona_card,)} if persona_prompt.persona_context else {}),
     )
     opportunity_id = spatial_opportunity_id(
         scenario_sha256=context.scenario_sha256,
@@ -500,6 +536,40 @@ def _compatibility_probe_v2(
         campaign=campaign,
         initial_rule_state=initial,
         disclosure=CITY_COGNITION_V2_DISCLOSURE,
+        **(
+            {
+                "persona": CityCognitionPersonaContextV1(
+                    person=build_city_cognition_persona_person_v1(persona_card, agent),
+                    feelings_now=CityCognitionFeelingsNowV1.model_validate(
+                        {
+                            "brand_liking": {"value": 0.0, "words": "neutral"},
+                            "ad_memory": {"value": 0.0, "words": "barely remember the brand"},
+                            "purchase_interest": {
+                                "value": 0.0,
+                                "words": "no real interest in buying",
+                            },
+                        }
+                    ),
+                    history=CityCognitionHistoryV1(
+                        noticed_this_campaign_before=0, noticed_today_before=0, recent=()
+                    ),
+                    situation=CityCognitionSituationV1(
+                        day=1, time="00:00", doing="at home", seen_on="their phone feed"
+                    ),
+                    ad=CityCognitionAdV1(
+                        product_name=creative.product_name,
+                        product_category=creative.product_category,
+                        message=creative.message,
+                        call_to_action=creative.call_to_action,
+                        disclosure=creative.disclosure,
+                        relative_price=campaign.relative_price,
+                        price_words="a normal price",
+                    ),
+                )
+            }
+            if persona_prompt.persona_context
+            else {}
+        ),
     )
     facts = {
         "schema_version": 2,

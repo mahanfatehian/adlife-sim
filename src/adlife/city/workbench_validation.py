@@ -39,6 +39,7 @@ from adlife.city.workbench_input import (
 from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
+    CITY_COGNITION_PROMPT_CONTRACTS,
     CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CityCognitionCausalContractV2,
@@ -195,7 +196,9 @@ def _normalize_draft(
                     selected_requests_per_agent=limits.selected_requests_per_agent,
                     selected_requests_per_run=limits.selected_requests_per_run,
                     concurrency_limit=limits.concurrency_limit(selection.mode),
-                    max_request_bytes=8192,
+                    max_request_bytes=CITY_COGNITION_PROMPT_CONTRACTS[
+                        contract.prompt_contract_version
+                    ].max_request_bytes,
                     max_terminal_record_bytes=8192,
                     max_wire_response_bytes=1_048_576,
                     max_output_tokens_per_attempt=CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,

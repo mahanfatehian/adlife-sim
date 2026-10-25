@@ -18,9 +18,11 @@ from adlife.core.domain.city_cognition import (
     CityCognitionRunContextV1,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_PROMPT_CONTRACTS,
     CityCognitionCausalAgentV2,
     CityCognitionCausalCampaignV2,
     CityCognitionInitialRuleStateV2,
+    CityCognitionPersonProfileV1,
     CityCognitionRunContextV2,
 )
 from adlife.core.domain.city_places import CityPlaceSet
@@ -493,6 +495,29 @@ def build_city_cognition_run_context_v2(
         if observed != expected:
             raise ValueError("city cognition initial baseline state does not match schema-4 input")
 
+    # Only a persona (prompt v3) contract receives the descriptive persona cards, copied
+    # from this run's own frozen persona drafts; prompt-v2 runs never carry them.
+    persona_prompt = CITY_COGNITION_PROMPT_CONTRACTS[
+        draft.cognition.causal_contract.prompt_contract_version
+    ].persona_context
+    profiles = (
+        {
+            "profiles": tuple(
+                CityCognitionPersonProfileV1(
+                    schema_version=1,
+                    agent_id=agent_id,
+                    name=persona.display_name,
+                    age=persona.age,
+                    occupation=persona.occupation,
+                    background=persona.background,
+                    personality_type=persona.mbti,
+                )
+                for agent_id, persona in assumptions.items()
+            )
+        }
+        if persona_prompt
+        else {}
+    )
     return CityCognitionRunContextV2(
         schema_version=2,
         run_input_sha256=bound_input.fingerprint,
@@ -536,6 +561,7 @@ def build_city_cognition_run_context_v2(
             )
             for state in reconstructed.initial_states
         ),
+        **profiles,
     )
 
 

@@ -190,9 +190,18 @@ async def test_v2_check_uses_exact_fixed_causal_probe_and_original_profile(tmp_p
     assert baseline.rule_factors.frequency_fatigue == 0
     assert identity.campaign.relative_price == 1
     assert identity.campaign.creative.template_id == "city-cognition-compatibility-probe-v2"
-    assert (
-        identity.campaign.creative.message
-        == "Return the required JSON object for this synthetic compatibility probe."
+    # The current (persona, prompt v3) contract asks an ordinary in-character question of one
+    # complete fictional person, the shape every run of that contract sends.
+    assert identity.campaign.creative.message == "Light fictional shoes for long everyday walks."
+    person = identity.persona.person
+    assert (person.name, person.age, person.occupation, person.personality_type) == (
+        "Fictional Sam",
+        34,
+        "Invented library assistant",
+        "ISFJ",
+    )
+    assert person.background is not None and person.background.startswith(
+        "A wholly invented character"
     )
     from hashlib import sha256
 

@@ -21,10 +21,12 @@ from pydantic import (
 from adlife.core.domain.city import TravelDirection, _validate_public_metadata
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_MAX_AGGREGATE_OUTPUT_TOKENS,
+    CITY_COGNITION_PROMPT_CONTRACTS,
     CITY_COGNITION_SELECTION_LIMITS,
     CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
     CityCognitionCausalContractV2,
     CityCognitionFundedResponseLimit,
+    CityCognitionMaxRequestBytes,
     CityCognitionOutputTokensPerAttemptV2,
     CityCognitionReservationTokensPerRequest,
 )
@@ -700,7 +702,8 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
     selected_requests_per_agent: Literal[4, 1000]
     selected_requests_per_run: Literal[60, 1000]
     concurrency_limit: Literal[4, 8]
-    max_request_bytes: Literal[8192]
+    # Checked against the contract's prompt-contract version row (8192 for prompt v2).
+    max_request_bytes: CityCognitionMaxRequestBytes
     max_terminal_record_bytes: Literal[8192]
     max_wire_response_bytes: Literal[1048576]
     max_output_tokens_per_attempt: CityCognitionOutputTokensPerAttemptV2
@@ -792,6 +795,9 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
             or self.aggregate_deadline_seconds != limits.aggregate_deadline_seconds
         ):
             raise ValueError("frozen cognition ceilings do not match the selection policy version")
+        prompt = CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version]
+        if self.max_request_bytes != prompt.max_request_bytes:
+            raise ValueError("frozen request ceiling does not match the prompt contract version")
         ceiling = limits.aggregate_output_token_ceiling(self.mode, self.funded_response_limit)
         if self.aggregate_output_token_ceiling != ceiling:
             raise ValueError("aggregate output ceiling does not match the funded response limit")

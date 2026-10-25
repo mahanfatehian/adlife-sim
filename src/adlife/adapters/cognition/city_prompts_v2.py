@@ -13,6 +13,7 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionInputV2,
     CityCognitionRequestV2,
     CityProviderRepairContextV2,
+    city_cognition_contract_prompt_version,
 )
 from adlife.core.domain.json_values import FrozenJsonMapping, freeze_json_mapping
 from adlife.core.domain.serialization import canonical_json
@@ -21,6 +22,7 @@ BEGIN_UNTRUSTED_CITY_COGNITION_DATA: Final = "BEGIN_UNTRUSTED_CITY_COGNITION_DAT
 END_UNTRUSTED_CITY_COGNITION_DATA: Final = "END_UNTRUSTED_CITY_COGNITION_DATA"
 CITY_COGNITION_JSON_SCHEMA_NAME_V2: Final = "city-cognition-signal-result-v2"
 CITY_COGNITION_PROMPT_CONTRACT_LABEL_V2: Final = "city-cognition-signal-prompt-v2"
+CITY_COGNITION_PROMPT_CONTRACT_LABEL_V3: Final = "city-cognition-persona-prompt-v3"
 # vLLM's request extension for chat-template arguments. Qwen's template reads
 # enable_thinking; OpenAI refuses unknown members, so it is sent only when the frozen
 # effective settings turn thinking off.
@@ -82,12 +84,44 @@ def _contracts(
     return request, cognition_input
 
 
+def _persona_projection_v3(request: CityCognitionRequestV2) -> FrozenJsonMapping:
+    """The prompt-v3 data block: the persona context plus the request ID and disclosure.
+
+    The persona context is itself an explicit allowlist, built before any provider work
+    from frozen inputs and the rules baseline. Advertiser internals (target interests,
+    frequency cap, match scores) and the rules' answer for this notice never reach it.
+    """
+    identity = request.causal_identity
+    persona = identity.persona
+    if persona is None:
+        raise ValueError("persona prompt requests require a persona context")
+    document = persona.model_dump(mode="json")
+    return freeze_json_mapping(
+        {
+            "request_id": request.request_id,
+            "disclosure": identity.disclosure,
+            "person": document["person"],
+            "feelings_now": document["feelings_now"],
+            "history": document["history"],
+            "situation": document["situation"],
+            "ad": document["ad"],
+        }
+    )
+
+
 @_value_free_boundary
 def build_city_cognition_provider_projection_v2(
     request: CityCognitionRequestV2,
 ) -> FrozenJsonMapping:
-    """Project an explicit allowlist; internal identities never reach the provider."""
-    identity = _request(request).causal_identity
+    """Project an explicit allowlist; internal identities never reach the provider.
+
+    The projection follows the prompt-contract version the request's causal contract
+    binds: prompt v3 sends the persona data block, every other request the v2 block.
+    """
+    request = _request(request)
+    identity = request.causal_identity
+    if city_cognition_contract_prompt_version(identity.causal_contract_sha256) == 3:
+        return _persona_projection_v3(request)
     agent, campaign, baseline = identity.agent, identity.campaign, identity.baseline
     factors = baseline.rule_factors
     return freeze_json_mapping(
@@ -241,6 +275,7 @@ __all__ = [
     "CHAT_TEMPLATE_THINKING_OFF",
     "CITY_COGNITION_JSON_SCHEMA_NAME_V2",
     "CITY_COGNITION_PROMPT_CONTRACT_LABEL_V2",
+    "CITY_COGNITION_PROMPT_CONTRACT_LABEL_V3",
     "build_city_cognition_messages_v2",
     "build_city_cognition_payload_v2",
     "build_city_cognition_provider_projection_v2",

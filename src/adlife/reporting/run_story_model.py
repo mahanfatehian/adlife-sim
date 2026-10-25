@@ -257,7 +257,10 @@ class StoryUsage(_StoryModel):
 
 
 class StoryContract(_StoryModel):
-    prompt_contract_id: Literal["city-cognition-signal-prompt-v2"]
+    # Prompt v3 runs answered in character, from the persona data block.
+    prompt_contract_id: Literal[
+        "city-cognition-signal-prompt-v2", "city-cognition-persona-prompt-v3"
+    ]
     prompt_contract_sha256: _Hash
     result_schema_id: Literal["city-cognition-signal-result-v2"]
     influence_policy_id: Literal["city-cognition-influence-v1"]

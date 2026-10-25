@@ -27,11 +27,10 @@ from adlife.adapters.cognition.city_prompts_v2 import (
 from adlife.city.workbench_workspace import WorkbenchWorkspace
 from adlife.core.domain.city_cognition import MAX_CITY_COGNITION_USAGE_INTEGER, Hash, RequestId
 from adlife.core.domain.city_cognition_v2 import (
-    _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION,
     CityCognitionInputV2,
     CityCognitionRequestV2,
     CityCognitionResultV2,
-    city_cognition_contract_selection_version,
+    city_cognition_contract_policy_hashes,
 )
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
@@ -185,13 +184,10 @@ class CityCognitionCacheRecordV2(DomainModel):
         )
         if result.request_id != self.request_id:
             raise ValueError("city cognition V2 cache result answers another request")
-        # A record keeps the frozen contract of the run that answered it: V2 and V3
+        # A record keeps the frozen contract of the run that answered it: V2, V3 and V4
         # request IDs differ, so a cached answer is only ever reused by its own version.
-        version = city_cognition_contract_selection_version(self.causal_contract_sha256)
-        if version is None or any(
-            getattr(self, field) != expected
-            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION[version]
-        ):
+        hashes = city_cognition_contract_policy_hashes(self.causal_contract_sha256)
+        if hashes is None or any(getattr(self, field) != expected for field, expected in hashes):
             raise ValueError("city cognition V2 cache policies differ from the frozen contract")
         if self.key != _key({field: getattr(self, field) for field in _IDENTITY_FIELDS}):
             raise ValueError("city cognition V2 cache key does not address its evidence")

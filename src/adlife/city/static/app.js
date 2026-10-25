@@ -5079,6 +5079,18 @@ const boundedSelectionLimits = Object.freeze({
   }),
 });
 
+// Frozen prompt-contract generations, keyed by id: v2 judged the ad from outside; the
+// persona prompt v3 answers as the person, so its request ceiling is larger and it exists
+// only with selection policy V3. A saved input is checked against its own contract.
+const boundedPromptContracts = Object.freeze({
+  "city-cognition-signal-prompt-v2": Object.freeze({
+    version: 2, maxRequestBytes: 8192, selectionVersions: Object.freeze([2, 3]),
+  }),
+  "city-cognition-persona-prompt-v3": Object.freeze({
+    version: 3, maxRequestBytes: 16384, selectionVersions: Object.freeze([3]),
+  }),
+});
+
 function validateBoundedWorkbenchCognition(value) {
   const cognition = requireRecord(value, "Frozen workbench input");
   const contractValue = cognition.causal_contract;
@@ -5086,10 +5098,15 @@ function validateBoundedWorkbenchCognition(value) {
     ? contractValue.selection_policy_version
     : null;
   if (version !== 2 && version !== 3) invalidWorkbenchInput();
+  const promptId = contractValue.prompt_contract_id;
+  const prompt = typeof promptId === "string" && Object.hasOwn(boundedPromptContracts, promptId)
+    ? boundedPromptContracts[promptId]
+    : null;
+  if (prompt === null || !prompt.selectionVersions.includes(version)) invalidWorkbenchInput();
   const limits = boundedSelectionLimits[version];
   const fixedIntegers = {
     request_schema_version: 2,
-    max_request_bytes: 8192,
+    max_request_bytes: prompt.maxRequestBytes,
     max_terminal_record_bytes: 8192,
     max_wire_response_bytes: 1048576,
     initial_attempts: 1,
@@ -5135,8 +5152,8 @@ function validateBoundedWorkbenchCognition(value) {
     !hasExactKeys(contract, boundedCausalContractKeys)
     || contract.schema_version !== 2
     || contract.disclosure !== boundedClaimScope
-    || contract.prompt_contract_id !== "city-cognition-signal-prompt-v2"
-    || contract.prompt_contract_version !== 2
+    || contract.prompt_contract_id !== promptId
+    || contract.prompt_contract_version !== prompt.version
     || contract.result_schema_id !== "city-cognition-signal-result-v2"
     || contract.result_schema_version !== 2
     || contract.selection_policy_version !== version
@@ -5452,7 +5469,7 @@ function renderWorkbenchAssumptions(input) {
       `PURCHASE INTENTION ${cohort.initial_state.purchase_intention}`,
     ].join(" · ");
   } else {
-    byId("assumptions-disclosure").textContent = "Fictional personas have explicit response assumptions. Names and descriptive context do not affect simulation. This audience is not a sample of real residents.";
+    byId("assumptions-disclosure").textContent = "Fictional personas have explicit response assumptions. Names and life stories never change the rules; in runs made with prompt contract v3 the AI reads them to answer as the person. This audience is not a sample of real residents.";
   }
   byId("assumptions-seed").textContent = settings.seed;
   byId("assumptions-population").textContent = `${settings.agent_count} SYNTHETIC ${settings.agent_count === 1 ? "AGENT" : "AGENTS"}`;

@@ -228,9 +228,30 @@ def _mixed_v10(root: Path, *, run_id: str) -> None:
     _save_prepared(root, prepared)
 
 
+def _persona_v10(root: Path, *, run_id: str) -> None:
+    """A mock run frozen with contract V4: the persona prompt v3 and selection V3."""
+    from adlife.city.workbench_input import WorkbenchRunDraftV4
+    from adlife.city.workbench_validation import construct_workbench_run
+    from adlife.core.domain.city_cognition_v2 import CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V4
+    from tests.unit.city.test_workbench_transport_v4 import draft_v4_data
+
+    document = draft_v4_data(mode="mock", limit=1000)
+    document["settings"].update(run_id=run_id, days=2, agent_count=3)
+    document["population"]["personas"][0]["count"] = 3
+    _busy_phone(document)
+    validated = construct_workbench_run(
+        WorkbenchRunDraftV4.model_validate_json(json.dumps(document)),
+        causal_contract=CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V4,
+    )
+    _saved_v10(root, run_id=run_id, mode="mock", validated=validated)
+
+
 def _build_run(name: str, root: Path, run_id: str) -> None:
     if name == "mixed":
         _mixed_v10(root, run_id=run_id)
+        return
+    if name == "persona":
+        _persona_v10(root, run_id=run_id)
         return
     options: dict[str, Any] = {
         "rules": {"mode": "rules"},
@@ -800,7 +821,9 @@ EVALUATE_PIPELINE = """([summary, records, applied, forgeIndex]) => {
 }"""
 
 
-@pytest.mark.parametrize("name", ["rules", "mock", "provider", "cache", "fallback", "mixed"])
+@pytest.mark.parametrize(
+    "name", ["rules", "mock", "provider", "cache", "fallback", "mixed", "persona"]
+)
 def test_pure_v2_helpers_validate_and_freeze_evidence(
     helper_page: Page, saved_runs: Callable[[str], SavedRun], name: str
 ) -> None:
@@ -1591,6 +1614,8 @@ def test_v10_purchase_intention_stays_on_rule_cards(
         ("cache", "Bounded AI cognition signals", "bounded AI cognition signals"),
         ("fallback", "Bounded AI cognition · neutral outcomes", "neutral outcomes"),
         ("mixed", "Bounded AI cognition signals", "bounded AI cognition signals"),
+        # A run frozen with the persona prompt v3 (contract V4) opens like any other.
+        ("persona", "Bounded cognition · mock signals", "deterministic mock cognition signals"),
     ],
 )
 def test_v10_panel_shows_exact_provenance_coverage_and_offline_replay(
@@ -2423,7 +2448,7 @@ def _fetch_documents(run: SavedRun, minute: int, agent: str) -> dict[str, dict[s
     return documents
 
 
-@pytest.mark.parametrize("name", ["rules", "mock", "provider", "mixed"])
+@pytest.mark.parametrize("name", ["rules", "mock", "provider", "mixed", "persona"])
 def test_real_v10_projections_match_the_inspector_oracle(
     saved_runs: Callable[[str], SavedRun], name: str
 ) -> None:

@@ -35,15 +35,18 @@ from adlife.core.domain.city_cognition import (
     Hash,
 )
 from adlife.core.domain.city_cognition_v2 import (
-    _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION,
     CITY_COGNITION_MAX_SELECTED_REQUESTS,
+    CITY_COGNITION_PROMPT_CONTRACTS,
     CITY_COGNITION_SELECTION_LIMITS,
     CityCognitionEvaluationV2,
     CityCognitionFundedResponseLimit,
     CityCognitionInputV2,
     CityCognitionModeV2,
+    CityCognitionPromptContractId,
     CityCognitionSummaryV2,
     CityCognitionTerminalRecordV2,
+    city_cognition_contract_policy_hashes,
+    city_cognition_contract_prompt_version,
     city_cognition_contract_selection_version,
 )
 from adlife.core.domain.city_run import (
@@ -133,7 +136,7 @@ class WorkbenchCognitionSummaryViewV2(_CognitionView):
     model_id: _ModelId | None
     funded_response_limit: CityCognitionFundedResponseLimit
     causal_contract_sha256: Hash
-    prompt_contract_id: Literal["city-cognition-signal-prompt-v2"]
+    prompt_contract_id: CityCognitionPromptContractId
     prompt_contract_sha256: Hash
     result_schema_id: Literal["city-cognition-signal-result-v2"]
     result_schema_contract_sha256: Hash
@@ -148,9 +151,15 @@ class WorkbenchCognitionSummaryViewV2(_CognitionView):
     def bound_summary(self) -> Self:
         summary = self.summary
         version = city_cognition_contract_selection_version(self.causal_contract_sha256)
-        if version is None or any(
-            getattr(self, field) != expected
-            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION[version]
+        hashes = city_cognition_contract_policy_hashes(self.causal_contract_sha256)
+        prompt_version = city_cognition_contract_prompt_version(self.causal_contract_sha256)
+        if (
+            version is None
+            or hashes is None
+            or prompt_version is None
+            or CITY_COGNITION_PROMPT_CONTRACTS[prompt_version].prompt_contract_id
+            != self.prompt_contract_id
+            or any(getattr(self, field) != expected for field, expected in hashes)
         ):
             raise ValueError("cognition summary view does not bind the frozen V2 contract")
         limits = CITY_COGNITION_SELECTION_LIMITS[version]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from collections.abc import Iterator, Sequence
 from hashlib import sha256
@@ -13,12 +14,15 @@ from adlife.core.domain.city_cognition_v2 import (
     _CITY_COGNITION_INFLUENCE_POLICY_V1_SHA256,
     _CITY_COGNITION_MOCK_POLICY_V1_SHA256,
     _CITY_COGNITION_MOCK_VECTOR_V1,
+    _CITY_COGNITION_PROMPT_CONTRACTS,
     _CITY_COGNITION_SELECTION_LIMITS,
     _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     _MAX_SELECTED_REQUESTS_ANY_VERSION,
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
     CITY_COGNITION_DEFAULT_MOCK_POLICY_V1,
+    CITY_COGNITION_PERSONA_RECENT_ADS_V1,
+    CityCognitionAdV1,
     CityCognitionAppliedSourceV2,
     CityCognitionAppliedVectorV2,
     CityCognitionBaselineProposalV2,
@@ -29,6 +33,8 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionEffectiveSettingsV2,
     CityCognitionEvaluationV2,
     CityCognitionFallbackReasonV2,
+    CityCognitionFeelingsNowV1,
+    CityCognitionHistoryV1,
     CityCognitionInfluencePolicyV1,
     CityCognitionInitialRuleStateV2,
     CityCognitionInitialStateDocumentV2,
@@ -36,17 +42,28 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionMockPolicyV1,
     CityCognitionModeV2,
     CityCognitionNeutralizationStatusV2,
+    CityCognitionNoticedAdV1,
+    CityCognitionPersonaContextV1,
+    CityCognitionPersonProfileV1,
+    CityCognitionPersonV1,
     CityCognitionRequestV2,
     CityCognitionReservationV2,
     CityCognitionResultV2,
     CityCognitionRuleFactorsV2,
     CityCognitionRunContextV2,
     CityCognitionRuntimeFallbackReasonV2,
+    CityCognitionSituationV1,
     CityCognitionSourceV2,
     CityCognitionSummaryV2,
     CityCognitionTerminalRecordV2,
     CitySelectionLimits,
     city_cognition_contract_selection_version,
+    city_cognition_persona_clock_v1,
+    city_cognition_persona_effect_words_v1,
+    city_cognition_persona_situation_words_v1,
+    city_cognition_persona_temperament_v1,
+    city_cognition_persona_value_v1,
+    city_cognition_persona_words_v1,
 )
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.domain.spatial_response import (
@@ -291,6 +308,147 @@ def build_city_cognition_initial_state_document_v2(
     )
 
 
+def build_city_cognition_persona_person_v1(
+    profile: CityCognitionPersonProfileV1, agent: CityCognitionCausalAgentV2
+) -> CityCognitionPersonV1:
+    """Who the person is: the frozen persona card plus the causal interests and traits."""
+    if profile.agent_id != agent.agent_id:
+        raise ValueError("persona profile does not match its causal agent")
+    return CityCognitionPersonV1(
+        name=profile.name,
+        age=profile.age,
+        occupation=profile.occupation,
+        background=profile.background,
+        personality_type=profile.personality_type,
+        hobbies_and_interests=agent.interests,
+        temperament=city_cognition_persona_temperament_v1(agent.traits),
+    )
+
+
+def _persona_feelings_v1(state: SpatialResponseState) -> CityCognitionFeelingsNowV1:
+    """The RULE-track state, as printed values and frozen words; never the AI track."""
+    return CityCognitionFeelingsNowV1.model_validate(
+        {
+            key: {
+                "value": city_cognition_persona_value_v1(getattr(state, field)),
+                "words": city_cognition_persona_words_v1(key, getattr(state, field)),
+            }
+            for key, field in (
+                ("brand_liking", "brand_sentiment"),
+                ("ad_memory", "recall_strength"),
+                ("purchase_interest", "purchase_intention"),
+            )
+        }
+    )
+
+
+def _persona_noticed_ad_v1(
+    response: SpatialRuleResponse, activity: str
+) -> CityCognitionNoticedAdV1:
+    return CityCognitionNoticedAdV1.model_validate(
+        {
+            "day": response.day_index + 1,
+            "time": city_cognition_persona_clock_v1(response.model_minute),
+            "seen_on": city_cognition_persona_situation_words_v1("seen_on", response.channel),
+            "doing": city_cognition_persona_situation_words_v1("doing", activity),
+            "effect": city_cognition_persona_effect_words_v1(
+                response.sentiment_delta, response.recall_delta
+            ),
+        }
+    )
+
+
+def _persona_history_v1(
+    response: SpatialRuleResponse,
+    earlier: Sequence[tuple[SpatialRuleResponse, str]],
+) -> CityCognitionHistoryV1:
+    """This agent's earlier noticed ads of this campaign, before the notice's minute."""
+    if any(
+        item.agent_id != response.agent_id
+        or item.campaign_id != response.campaign_id
+        or item.model_minute >= response.model_minute
+        for item, _activity in earlier
+    ):
+        raise ValueError("persona history may hold only this agent's earlier campaign notices")
+    return CityCognitionHistoryV1(
+        noticed_this_campaign_before=len(earlier),
+        noticed_today_before=sum(item.day_index == response.day_index for item, _ in earlier),
+        recent=tuple(
+            _persona_noticed_ad_v1(item, activity)
+            for item, activity in tuple(earlier)[-CITY_COGNITION_PERSONA_RECENT_ADS_V1:]
+        ),
+    )
+
+
+def build_city_cognition_persona_context_v1(
+    *,
+    person: CityCognitionPersonV1,
+    campaign: CityCognitionCausalCampaignV2,
+    response: SpatialRuleResponse,
+    state_before: SpatialResponseState,
+    activity: str,
+    earlier: Sequence[tuple[SpatialRuleResponse, str]],
+) -> CityCognitionPersonaContextV1:
+    """The complete prompt-v3 data block of one notice, from frozen inputs and rules only.
+
+    ``state_before`` is the RULE-track state before the notice's minute, ``earlier`` this
+    agent's own earlier noticed responses of the same campaign (oldest first, with the
+    mobility activity of each), and ``activity`` the agent's activity at the notice.
+    """
+    if (state_before.agent_id, state_before.campaign_id) != (
+        response.agent_id,
+        response.campaign_id,
+    ) or campaign.campaign_id != response.campaign_id:
+        raise ValueError("persona context facts belong to another agent or campaign")
+    creative = campaign.creative
+    return CityCognitionPersonaContextV1(
+        person=person,
+        feelings_now=_persona_feelings_v1(state_before),
+        history=_persona_history_v1(response, earlier),
+        situation=CityCognitionSituationV1.model_validate(
+            {
+                "day": response.day_index + 1,
+                "time": city_cognition_persona_clock_v1(response.model_minute),
+                "doing": city_cognition_persona_situation_words_v1("doing", activity),
+                "seen_on": city_cognition_persona_situation_words_v1("seen_on", response.channel),
+            }
+        ),
+        ad=CityCognitionAdV1.model_validate(
+            {
+                "product_name": creative.product_name,
+                "product_category": creative.product_category,
+                "message": creative.message,
+                "call_to_action": creative.call_to_action,
+                "disclosure": creative.disclosure,
+                "relative_price": campaign.relative_price,
+                "price_words": city_cognition_persona_words_v1("price", campaign.relative_price),
+            }
+        ),
+    )
+
+
+def _persona_profiles(
+    context: CityCognitionRunContextV2, contract: CityCognitionCausalContractV2
+) -> dict[str, CityCognitionPersonProfileV1] | None:
+    """The persona cards of a persona prompt contract; prompt v2 never receives them."""
+    persona = _CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version].persona_context
+    if not persona:
+        if context.profiles is not None:
+            raise ValueError("persona profiles reach only persona prompt contracts")
+        return None
+    if context.profiles is None:
+        raise ValueError("persona prompt contracts require persona profiles")
+    return {profile.agent_id: profile for profile in context.profiles}
+
+
+def _earlier_notices(
+    items: Sequence[tuple[SpatialRuleResponse, str]], response: SpatialRuleResponse
+) -> Sequence[tuple[SpatialRuleResponse, str]]:
+    """Notices of one agent and campaign at minutes before ``response``'s minute."""
+    minutes = [item.model_minute for item, _activity in items]
+    return items[: bisect_left(minutes, response.model_minute)]
+
+
 def build_city_cognition_requests_v2(
     context: CityCognitionRunContextV2,
     mobility: CityMobility,
@@ -304,6 +462,11 @@ def build_city_cognition_requests_v2(
     Selection follows the contract's own selection-policy version. V2 takes the earliest
     responses under its per-person and per-run caps and ignores the funded limit; V3
     spreads ``min(E, funded_response_limit)`` selections over the whole run.
+
+    A persona (prompt v3) contract also binds each request's persona context. It is
+    computed here, before any provider work, from the frozen persona cards and the
+    deterministic baseline only: the rule state before the notice's minute, the same
+    agent's earlier noticed responses of the same campaign, and its mobility activity.
     """
     context = revalidate_model(context, CityCognitionRunContextV2, label="city cognition context")
     contract = revalidate_model(
@@ -315,6 +478,7 @@ def build_city_cognition_requests_v2(
     if not isinstance(mobility, CityMobility):
         raise TypeError("mobility must be CityMobility")
     _validate_context_against_science(context, mobility, evaluation)
+    profiles = _persona_profiles(context, contract)
     agents = {item.agent_id: item for item in context.agents}
     campaigns = {item.campaign_id: item for item in context.campaigns}
     initial_states = {(s.agent_id, s.campaign_id): s for s in context.initial_states}
@@ -338,6 +502,8 @@ def build_city_cognition_requests_v2(
     frame_minute = -1
     positions: dict[str, CityPosition] = {}
     selected: list[tuple[SpatialRuleResponse, SpatialStateUpdated, Activity]] = []
+    # Every validated notice of each agent and campaign, in time order, for persona history.
+    notices: dict[tuple[str, str], list[tuple[SpatialRuleResponse, str]]] = defaultdict(list)
     for position_index, response in enumerate(responses):
         updates = updates_by_cause[response.event_id]
         if len(updates) != 1:
@@ -367,8 +533,26 @@ def build_city_cognition_requests_v2(
         _validate_response_assumptions(
             response, agents[response.agent_id], campaigns[response.campaign_id]
         )
+        if profiles is not None:
+            notices[response.agent_id, response.campaign_id].append((response, position.activity))
         if position_index in chosen:
             selected.append((response, update, position.activity))
+    for items in notices.values():
+        items.sort(
+            key=lambda item: (
+                item[0].model_minute,
+                item[0].millisecond_within_minute,
+                item[0].event_id,
+            )
+        )
+    persons = (
+        None
+        if profiles is None
+        else {
+            agent_id: build_city_cognition_persona_person_v1(profiles[agent_id], agent)
+            for agent_id, agent in agents.items()
+        }
+    )
     requests: list[CityCognitionRequestV2] = []
     for response, update, activity in selected:
         factors = {
@@ -399,6 +583,22 @@ def build_city_cognition_requests_v2(
                 **factors,
             ),
         )
+        persona = (
+            {}
+            if persons is None
+            else {
+                "persona": build_city_cognition_persona_context_v1(
+                    person=persons[response.agent_id],
+                    campaign=campaigns[response.campaign_id],
+                    response=response,
+                    state_before=update.previous_state,
+                    activity=activity,
+                    earlier=_earlier_notices(
+                        notices[response.agent_id, response.campaign_id], response
+                    ),
+                )
+            }
+        )
         identity = CityCognitionCausalRequestIdentityV2(
             schema_version=2,
             causal_contract_sha256=contract.fingerprint,
@@ -412,6 +612,7 @@ def build_city_cognition_requests_v2(
             campaign=campaigns[response.campaign_id],
             initial_rule_state=initial_states[response.agent_id, response.campaign_id],
             disclosure=contract.disclosure,
+            **persona,
         )
         facts = dict(
             schema_version=2,
@@ -490,10 +691,16 @@ def _checked_requests(
     for identity in identities:
         _validate_rule_assumptions(identity)
         baseline = identity.baseline
+        persons = (
+            ()
+            if identity.persona is None
+            else ((("person", baseline.agent_id), identity.persona.person),)
+        )
         for key, snapshot in (
             (("agent", baseline.agent_id), identity.agent),
             (("campaign", baseline.campaign_id), identity.campaign),
             (("initial", baseline.agent_id, baseline.campaign_id), identity.initial_rule_state),
+            *persons,
         ):
             if snapshots.setdefault(key, snapshot.fingerprint) != snapshot.fingerprint:
                 raise ValueError("city cognition requests contain inconsistent causal snapshots")
@@ -600,12 +807,27 @@ def build_city_cognition_input_v2(
     agents = {a.agent_id: a for a in context.agents}
     campaigns = {c.campaign_id: c for c in context.campaigns}
     initials = {(s.agent_id, s.campaign_id): s for s in context.initial_states}
+    profiles = _persona_profiles(context, contract)
+    persons = (
+        None
+        if profiles is None
+        else {
+            agent_id: build_city_cognition_persona_person_v1(profiles[agent_id], agent).fingerprint
+            for agent_id, agent in agents.items()
+        }
+    )
+    prompt = _CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version]
     for request in checked:
         identity = request.causal_identity
         baseline = identity.baseline
         agent = agents.get(baseline.agent_id)
         campaign = campaigns.get(baseline.campaign_id)
         initial = initials.get((baseline.agent_id, baseline.campaign_id))
+        if persons is not None and (
+            identity.persona is None
+            or identity.persona.person.fingerprint != persons.get(baseline.agent_id)
+        ):
+            raise ValueError("city cognition request disagrees with its frozen persona card")
         if (
             request.run_input_sha256 != context.run_input_sha256
             or identity.causal_contract_sha256 != contract.fingerprint
@@ -654,7 +876,7 @@ def build_city_cognition_input_v2(
             "selected_requests_per_agent": limits.selected_requests_per_agent,
             "selected_requests_per_run": limits.selected_requests_per_run,
             "concurrency_limit": limits.concurrency_limit(mode),
-            "max_request_bytes": 8192,
+            "max_request_bytes": prompt.max_request_bytes,
             "max_terminal_record_bytes": 8192,
             "max_wire_response_bytes": 1_048_576,
             "max_output_tokens_per_attempt": _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
@@ -909,6 +1131,15 @@ def build_city_cognition_terminal_record_v2(
     return CityCognitionTerminalRecordV2.model_validate(facts)
 
 
+def _history_moments(history: CityCognitionHistoryV1) -> tuple[object, ...]:
+    """The baseline-derivable facts of a persona history (all but the doing words)."""
+    return (
+        history.noticed_this_campaign_before,
+        history.noticed_today_before,
+        tuple((item.day, item.time, item.seen_on, item.effect) for item in history.recent),
+    )
+
+
 def _bind_requests_to_baseline(
     requests: tuple[CityCognitionRequestV2, ...],
     evaluation: SpatialResponseEvaluation,
@@ -956,10 +1187,33 @@ def _bind_requests_to_baseline(
     ):
         raise ValueError("requests do not match exact canonical baseline selection")
     initial_by_key = {(s.agent_id, s.campaign_id): s for s in document.states}
+    # Persona contexts are rebound to the same baseline: the rule state before the
+    # notice's minute and this agent's own earlier notices of the campaign. Each earlier
+    # notice's activity was validated against mobility when the request was built.
+    notices: dict[tuple[str, str], list[SpatialRuleResponse]] = defaultdict(list)
+    if any(request.causal_identity.persona is not None for request in requests):
+        for response in sorted(
+            responses,
+            key=lambda r: (r.model_minute, r.millisecond_within_minute, r.event_id),
+        ):
+            notices[response.agent_id, response.campaign_id].append(response)
     for request, response in zip(requests, selected, strict=True):
         identity = request.causal_identity
         baseline = identity.baseline
         update = updates[response.event_id]
+        persona = identity.persona
+        if persona is not None:
+            items = notices[response.agent_id, response.campaign_id]
+            minutes = [item.model_minute for item in items]
+            # Doing words are bound to mobility at build time; every other fact is rebound.
+            expected_history = _persona_history_v1(
+                response,
+                [(item, "home") for item in items[: bisect_left(minutes, response.model_minute)]],
+            )
+            if persona.feelings_now != _persona_feelings_v1(
+                update.previous_state
+            ) or _history_moments(persona.history) != _history_moments(expected_history):
+                raise ValueError("request persona context does not match the baseline")
         if any(
             getattr(identity, f) != getattr(evaluation, f)
             for f in ("response_input_sha256", "scenario_sha256", "city_sha256")

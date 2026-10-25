@@ -64,7 +64,10 @@ def test_v2_documents_stay_byte_identical_and_v3_is_a_new_version() -> None:
     assert v2.fingerprint == V2_CONTRACT_SHA256
     assert v2.selection_policy_sha256 == V2_SELECTION_SHA256
     assert domain.CITY_COGNITION_DEFAULT_SELECTION_POLICY_V2.fingerprint == V2_SELECTION_SHA256
-    assert domain.CURRENT_CITY_COGNITION_CAUSAL_CONTRACT is v3
+    # New runs use contract V4: selection V3 with the persona prompt contract v3.
+    current = domain.CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
+    assert current is domain.CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V4
+    assert current.selection_policy_sha256 == v3.selection_policy_sha256
     assert domain.CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION == 3
     assert (v3.selection_policy_version, v3.selection_policy.policy_id) == (
         3,

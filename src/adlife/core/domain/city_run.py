@@ -20,8 +20,10 @@ from adlife.core.domain.city_cognition import (
     Hash,
 )
 from adlife.core.domain.city_cognition_v2 import (
+    _CITY_COGNITION_PROMPT_VERSION_BY_CONTRACT_SHA256,
     _CITY_COGNITION_SELECTION_LIMITS,
-    _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION,
+    _CITY_COGNITION_SELECTION_VERSION_BY_CONTRACT_SHA256,
+    _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_CONTRACT_SHA256,
     _MAX_COGNITION_INPUT_BYTES_ANY_VERSION,
     _MAX_SELECTED_REQUESTS_ANY_VERSION,
     _MAX_SUMMARY_ATTEMPTS_ANY_VERSION,
@@ -769,7 +771,8 @@ class CityCognitionManifestReceiptV2(DomainModel):
     result_schema_version: Literal[2]
     effect_scope: Literal["bounded-signals-v1"]
     mode: CityCognitionModeV2
-    prompt_contract_version: Literal[2]
+    # Checked against the receipt's own frozen causal contract.
+    prompt_contract_version: Literal[2, 3]
     prompt_contract_sha256: Hash
     result_schema_contract_version: Literal[2]
     result_schema_contract_sha256: Hash
@@ -805,7 +808,6 @@ class CityCognitionManifestReceiptV2(DomainModel):
     @field_validator(
         "request_schema_version",
         "result_schema_version",
-        "prompt_contract_version",
         "result_schema_contract_version",
         "fallback_policy_version",
         mode="before",
@@ -814,6 +816,13 @@ class CityCognitionManifestReceiptV2(DomainModel):
     def exact_v2_versions(cls, value: object) -> object:
         if type(value) is not int or value != 2:
             raise ValueError("city cognition V2 receipt versions must be integer 2")
+        return value
+
+    @field_validator("prompt_contract_version", mode="before")
+    @classmethod
+    def exact_prompt_contract_version(cls, value: object) -> object:
+        if type(value) is not int or value not in {2, 3}:
+            raise ValueError("city cognition receipt prompt contract version must be 2 or 3")
         return value
 
     @field_validator("selection_policy_version", mode="before")
@@ -843,11 +852,15 @@ class CityCognitionManifestReceiptV2(DomainModel):
     @model_validator(mode="after")
     def complete_receipt(self) -> Self:
         limits = _CITY_COGNITION_SELECTION_LIMITS[self.selection_policy_version]
-        if any(
-            getattr(self, field) != expected
-            for field, expected in _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_VERSION[
-                self.selection_policy_version
-            ]
+        contract = self.causal_contract_sha256
+        hashes = _CITY_COGNITION_TERMINAL_POLICY_HASHES_BY_CONTRACT_SHA256.get(contract)
+        if (
+            hashes is None
+            or _CITY_COGNITION_SELECTION_VERSION_BY_CONTRACT_SHA256[contract]
+            != self.selection_policy_version
+            or _CITY_COGNITION_PROMPT_VERSION_BY_CONTRACT_SHA256[contract]
+            != self.prompt_contract_version
+            or any(getattr(self, field) != expected for field, expected in hashes)
         ):
             raise ValueError("city cognition receipt policies do not match the frozen V2 contract")
         if (
