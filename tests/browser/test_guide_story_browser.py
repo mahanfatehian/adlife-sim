@@ -33,6 +33,8 @@ RUNS = {
     "hostile": "hostile",
     "multiday": "multiday",
     "persona": "persona-provider",
+    "persona-mock": "persona-mock",
+    "persona-rules": "persona-rules",
     "v9": "v9",
 }
 PERSIAN_DIGIT = f"[{chr(0x06F0)}-{chr(0x06F9)}]"
@@ -663,11 +665,21 @@ def test_a_prompt_v3_story_says_the_ai_answered_as_the_person(
     )
     with _session(browser) as session:
         page = session.page
-        # The mixed run asked a local AI under prompt contract v2; the persona run is new.
-        for short, in_character in (("persona", True), ("mixed", False)):
+        # The mixed run asked a local AI under prompt contract v2; the persona runs are new.
+        # New practice and rules-only runs carry prompt contract v3 too but asked no AI, so
+        # only the mode keeps them on the general wording.
+        for short, in_character in (
+            ("persona", True),
+            ("mixed", False),
+            ("persona-mock", False),
+            ("persona-rules", False),
+        ):
             run_id = site.run_ids[short]
             _open(page, site, run_id)
             story = _story(page, site, run_id)
+            if short.startswith("persona"):
+                # A fixture that fell back to prompt v2 would pass without testing the mode.
+                assert story.ai.contract.prompt_contract_id == "city-cognition-persona-prompt-v3"
             context = story_ref_context(story)
             expect(page.locator("#story-headline > li")).to_have_text(
                 [catalog.plain(ref, context) for ref in story.headline]
@@ -684,6 +696,11 @@ def test_a_prompt_v3_story_says_the_ai_answered_as_the_person(
                 expect(persona).to_have_text(catalog.text(f"{key}.persona"))
                 expect(persona if in_character else plain).to_be_visible()
                 expect(plain if in_character else persona).to_be_hidden()
+        # The start page tells how a new run works, and a new run's AI answers in character.
+        page.goto(f"{site.base_url}/guide?lang=en")
+        expect(page.locator(".setup-hero__how .g-how__box--ai")).to_have_text(
+            catalog.text("start.how.ai.persona")
+        )
         assert session.errors == []
 
 

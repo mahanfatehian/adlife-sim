@@ -447,6 +447,8 @@ class _LoopbackBoundedHandler(BaseHTTPRequestHandler):
     protocol_verified = True
     failure_reason: str | None = None
     names: set[str] = set()
+    # The name on the person card of each question, by request ID.
+    cards: dict[str, str] = {}
 
     def log_message(self, _format: str, *_args: object) -> None:
         return None
@@ -510,6 +512,7 @@ class _LoopbackBoundedHandler(BaseHTTPRequestHandler):
             if failed_check is not None and type(self).failure_reason is None:
                 type(self).failure_reason = failed_check
             type(self).names.add(str(person["name"]))
+            type(self).cards[str(block["request_id"])] = str(person["name"])
             # In character: a person who distrusts ads answers coolly, anyone else warmly.
             labels = (
                 ("skeptical", "low", "low", "low")
@@ -791,6 +794,7 @@ async def _verify_loopback_bounded_cognition(root: Path) -> None:
     _LoopbackBoundedHandler.protocol_verified = True
     _LoopbackBoundedHandler.failure_reason = None
     _LoopbackBoundedHandler.names = set()
+    _LoopbackBoundedHandler.cards = {}
     server = _LoopbackCompatibleServer(("127.0.0.1", 0), _LoopbackBoundedHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     started = False
@@ -960,7 +964,8 @@ async def _verify_loopback_bounded_cognition(root: Path) -> None:
                 assert bounded_stored.cognition_evaluation is not None
                 records = bounded_stored.cognition_evaluation.records
                 assert records and all(record.source == "provider" for record in records)
-                # Each answer follows the person the question named.
+                # Each answer follows the person the question named, and the card the AI was
+                # shown belongs to the person whose answer was saved.
                 population = bounded_stored.workbench_input.model_dump(mode="json")["draft"][
                     "population"
                 ]
@@ -971,9 +976,21 @@ async def _verify_loopback_bounded_cognition(root: Path) -> None:
                 persona_of = {
                     item["agent_id"]: item["persona_id"] for item in population["assignments"]
                 }
+                display_name_of = {
+                    persona["persona_id"]: persona["display_name"]
+                    for persona in population["personas"]
+                }
                 for record in records:
                     expected = "skeptical" if skeptic_of[persona_of[record.agent_id]] else "curious"
                     assert record.result.affect == expected, record.agent_id
+                    card_name = _LoopbackBoundedHandler.cards.get(record.request_id)
+                    assert card_name == display_name_of[persona_of[record.agent_id]], (
+                        record.agent_id,
+                        card_name,
+                    )
+                # Both people answered, one coolly and one warmly.
+                assert {record.agent_id for record in records} == set(persona_of)
+                assert {record.result.affect for record in records} == {"skeptical", "curious"}
                 asked = {persona["display_name"] for persona in personas} | {"Fictional Sam"}
                 assert "Fictional Sam" in _LoopbackBoundedHandler.names
                 assert _LoopbackBoundedHandler.names - {"Fictional Sam"}
@@ -1449,6 +1466,9 @@ async def _main() -> None:
 
             for cognition_mode in ("rules", "mock"):
                 cognition_draft = json.loads(json.dumps(workbench_draft))
+                # An ad on every phone minute: at the shared draft's 0.05 nobody notices one
+                # with seed 17, which would leave nothing to explain.
+                cognition_draft["scenario"]["phone"]["opportunity_probability_per_minute"] = 1.0
                 cognition_run_id = f"wheel-{cognition_mode}-v9"
                 cognition_draft["schema_version"] = 3
                 cognition_draft["settings"]["run_id"] = cognition_run_id
@@ -1482,6 +1502,7 @@ async def _main() -> None:
                 assert cognition_job["phase"] == "completed", cognition_job
                 assert cognition_job["result"]["run_schema_version"] == 9
                 assert cognition_job["result"]["cognition_mode"] == cognition_mode
+                assert cognition_job["result"]["noticed_count"] > 0
                 cognition_input = await workbench_client.get(
                     f"/api/runs/{cognition_run_id}/workbench-input"
                 )
@@ -1507,8 +1528,13 @@ async def _main() -> None:
 
             # Schema-v10 bounded cognition offline: the rules and practice sources answer
             # every noticed ad, and the guided story and report read the saved run.
-            for cognition_mode in ("rules", "mock"):
+            for cognition_mode, expected_headline in (
+                ("rules", "story.headline.rules"),
+                ("mock", "story.headline.practice"),
+            ):
                 bounded_draft = json.loads(json.dumps(workbench_draft))
+                # An ad on every phone minute, as for V9, so there are noticed ads to answer.
+                bounded_draft["scenario"]["phone"]["opportunity_probability_per_minute"] = 1.0
                 bounded_run_id = f"wheel-{cognition_mode}-v10"
                 bounded_draft["schema_version"] = 4
                 bounded_draft["settings"]["run_id"] = bounded_run_id
@@ -1544,6 +1570,12 @@ async def _main() -> None:
                 assert bounded_job["phase"] == "completed", bounded_job
                 assert bounded_job["result"]["run_schema_version"] == 10
                 assert bounded_job["result"]["cognition_mode"] == cognition_mode
+                # Every noticed ad was selected and answered by this mode's own source.
+                counts = bounded_job["result"]
+                assert counts["noticed_count"] == counts["eligible_response_count"] > 0
+                assert counts["selected_request_count"] == counts["eligible_response_count"]
+                assert counts["unselected_response_count"] == 0
+                assert counts[f"{cognition_mode}_count"] == counts["selected_request_count"]
                 bounded_summary = await workbench_client.get(
                     f"/api/runs/{bounded_run_id}/cognition-summary"
                 )
@@ -1563,6 +1595,9 @@ async def _main() -> None:
                 bounded_story_document = RunStoryV1.model_validate_json(bounded_story.content)
                 assert bounded_story_document.run.run_id == bounded_run_id
                 assert bounded_story_document.ai.mode == cognition_mode
+                bounded_headline = [ref.key for ref in bounded_story_document.headline]
+                assert expected_headline in bounded_headline
+                assert "story.headline.nobody_noticed" not in bounded_headline
                 assert 'id="story-root"' in bounded_page.text
                 assert bounded_report.text.lstrip().lower().startswith("<!doctype html>")
 
@@ -1699,14 +1734,22 @@ async def _main() -> None:
         assert cognition_stored.workbench_input.schema_version == 3
         assert cognition_stored.cognition_input.mode == cognition_mode
         assert cognition_stored.cognition_evaluation is not None
-        assert replay_city_run(cognition_stored).identical is True
+        explanations = cognition_stored.cognition_evaluation.records
+        assert explanations and all(record.source == cognition_mode for record in explanations)
+        cognition_replay = replay_city_run(cognition_stored)
+        assert cognition_replay.identical is True
+        assert cognition_replay.cognition_evaluation == cognition_stored.cognition_evaluation
     for cognition_mode in ("rules", "mock"):
         bounded_stored = CityRunStore(root).load(f"wheel-{cognition_mode}-v10")
         assert bounded_stored.manifest.schema_version == 10
         assert bounded_stored.workbench_input.schema_version == 4
         assert bounded_stored.cognition_input.mode == cognition_mode
         assert bounded_stored.cognition_evaluation is not None
-        assert replay_city_run(bounded_stored).identical is True
+        answers = bounded_stored.cognition_evaluation.records
+        assert answers and all(record.source == cognition_mode for record in answers)
+        bounded_replay = replay_city_run(bounded_stored)
+        assert bounded_replay.identical is True
+        assert bounded_replay.cognition_evaluation == bounded_stored.cognition_evaluation
 
     print(
         json.dumps(
@@ -6061,6 +6104,9 @@ def smoke(wheel: Path, *, reuse_locked_dependencies: bool = False) -> None:
             "schema-v6 response API/UI, schema-v7 compatibility and "
             "schema-v8 persona lifecycle plus schema-v9 rules/mock explanations "
             "and a local compatible provider verified under the network guard; "
+            "schema-v10 rules and practice runs that answer every noticed ad and a loopback "
+            "local AI that answers as each person, with their stories, reports and replays, "
+            "verified under the same guard; "
             "catalog fictional-grid-v2 metrics, A/A comparison, and replay verified; "
             f"two-seed response study and {spatial_report_bytes}-byte static report verified"
         )

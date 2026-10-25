@@ -62,12 +62,15 @@ def test_server_path_runs_freeze_contract_v4_and_rebuild_identical_persona_reque
     staged, prepared = _prepared_v10(tmp_path, mode="mock", validated=validated)
     requests = staged.cognition_requests
     assert requests
-    personas = validated.workbench_input.draft.population.personas
-    names = {persona.display_name for persona in personas}
+    population = validated.workbench_input.draft.population
+    display_name_of = {persona.persona_id: persona.display_name for persona in population.personas}
+    persona_of = {item.agent_id: item.persona_id for item in population.assignments}
     for request in requests:
         persona = request.causal_identity.persona
         assert persona is not None
-        assert persona.person.name in names
+        # The card is the persona of the request's own agent, not just any persona in the run.
+        agent_id = request.causal_identity.agent.agent_id
+        assert persona.person.name == display_name_of[persona_of[agent_id]], agent_id
         assert persona.person.background is not None
     # Verification and replay rebuild the identical requests from the saved run.
     _save_prepared(tmp_path, prepared)

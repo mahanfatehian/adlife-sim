@@ -52,6 +52,7 @@ from adlife.core.simulation.spatial_response_v2 import (
     SpatialAppliedResponseV2,
     SpatialDualStateUpdatedV2,
 )
+from adlife.i18n import load_catalog
 from adlife.i18n.refs import RefContext, person_param
 from adlife.reporting.run_story_model import RunStoryV1, StoryLabels, story_ref_context
 from tests.unit.city.run_story_fixtures import (
@@ -75,6 +76,9 @@ V10_NAMES: tuple[StoryRunName, ...] = (
     "default-mock",
     "default-provider",
     "persona-provider",
+    "persona-fallback",
+    "persona-mock",
+    "persona-rules",
     "hostile",
 )
 SOURCE_STATUS = {
@@ -1017,6 +1021,46 @@ def test_a_prompt_v3_run_says_the_ai_answered_as_the_person(saved) -> None:
         if moment.status == "answered" and moment.ai_clause is not None
     }
     assert clauses == {"story.ai.answered"}
+
+
+def test_a_prompt_v3_run_whose_ai_never_answered_reads_right_at_zero(saved) -> None:
+    # Every funded request failed, as when the key is refused or a slow model times out:
+    # the headline counts zero answers, so it must not add that each one was in character.
+    story = saved("persona-fallback").story
+    assert story.ai.contract.prompt_contract_id == "city-cognition-persona-prompt-v3"
+    assert story.ai.statuses.failed == story.funnel.sent > 0
+    assert story.funnel.answered == 0
+    assert story.headline[3].model_dump(mode="json") == {
+        "key": "story.headline.ai_as_person",
+        "count": 0,
+        "params": {"model": {"id": DEFAULT_PROVIDER_MODEL}},
+    }
+    context = story_ref_context(story)
+    for language, each_time in (("en", "each time"), ("de", "jedes Mal")):
+        catalog = load_catalog(language)
+        lines = [catalog.plain(ref, context) for ref in story.headline]
+        assert DEFAULT_PROVIDER_MODEL in lines[3]
+        assert not [line for line in lines if each_time in line], lines
+
+
+@pytest.mark.parametrize(
+    ("name", "status"), [("persona-mock", "practice"), ("persona-rules", "rules")]
+)
+def test_practice_and_rules_runs_made_now_keep_the_general_wording(saved, name, status) -> None:
+    # New runs freeze prompt contract v3 in every mode, but practice answers and rules
+    # are no AI answering as the person, so these stories keep the general wording.
+    story = saved(name).story
+    assert story.ai.mode == ("mock" if status == "practice" else "rules")
+    assert story.ai.contract.prompt_contract_id == "city-cognition-persona-prompt-v3"
+    # Offline runs answer every noticed ad.
+    assert story.ai.statuses.model_dump()[status] == story.funnel.noticed > 0
+    keys = [ref.key for ref in story.headline]
+    assert keys[3] == f"story.headline.{status}"
+    assert not {"story.headline.ai", "story.headline.ai_as_person"} & set(keys)
+    clauses = {
+        moment.ai_clause.key for _, moment in _moments(story) if moment.ai_clause is not None
+    }
+    assert clauses == {f"story.ai.{status}"}
 
 
 def test_a_non_ascii_model_name_is_text_not_an_identifier(

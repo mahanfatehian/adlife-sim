@@ -515,7 +515,7 @@
     },
     "story.headline.ai_as_person": {
       "one": "Die KI ({model}) hat {count} dieser Momente als die Person beantwortet, die die Anzeige bemerkt hat.",
-      "other": "Die KI ({model}) hat {count} dieser Momente beantwortet, jedes Mal als die Person, die die Anzeige bemerkt hat."
+      "other": "Die KI ({model}) hat {count} dieser Momente als die Person beantwortet, die die Anzeige bemerkt hat."
     },
     "story.headline.compare.liking.about_same": "Mit KI lag die Sympathie am Ende etwa gleich hoch wie bei „Nur Regeln“.",
     "story.headline.compare.liking.higher": "Mit KI lag die Sympathie am Ende höher als bei „Nur Regeln“.",

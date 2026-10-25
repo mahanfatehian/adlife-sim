@@ -446,6 +446,11 @@ def test_wheel_smoke_installs_and_runs_offline(built_wheel: Path, tmp_path: Path
         "schema-v8 persona lifecycle plus schema-v9 rules/mock explanations and "
         "a local compatible provider verified under the network guard" in completed.stdout
     )
+    assert (
+        "schema-v10 rules and practice runs that answer every noticed ad and a loopback "
+        "local AI that answers as each person, with their stories, reports and replays, "
+        "verified under the same guard" in completed.stdout
+    )
 
 
 def test_exact_installed_wheel_spatial_report_is_offline_and_no_clobber(built_wheel, tmp_path):

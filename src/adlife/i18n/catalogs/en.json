@@ -515,7 +515,7 @@
     },
     "story.headline.ai_as_person": {
       "one": "The AI ({model}) answered {count} of those moments as the person who noticed the ad.",
-      "other": "The AI ({model}) answered {count} of those moments, each time as the person who noticed the ad."
+      "other": "The AI ({model}) answered {count} of those moments as the person who noticed the ad."
     },
     "story.headline.compare.liking.about_same": "With AI, liking ended about the same as with rules only.",
     "story.headline.compare.liking.higher": "With AI, liking ended higher than with rules only.",

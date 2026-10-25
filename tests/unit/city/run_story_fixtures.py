@@ -24,6 +24,11 @@ Names:
 * ``persona-provider`` - the same study as a run made now: the current causal contract,
   so the AI answers as the person (prompt contract v3), with an AI limit of 60; the other
   provider runs keep the V2 contract and prompt contract v2;
+* ``persona-fallback`` - that run with every funded AI request timed out, so the AI
+  answered none of the moments;
+* ``persona-mock`` / ``persona-rules`` - the study as a practice run and a rules-only run
+  made now: they carry prompt contract v3 too although no AI is asked, with the offline
+  limit of 1,000 that selection policy 3 requires;
 * ``hostile`` - hostile persona name and background text on a mock run;
 * ``v9`` - a schema-v9 run, which has no story.
 
@@ -77,6 +82,9 @@ StoryRunName = Literal[
     "default-mock",
     "default-provider",
     "persona-provider",
+    "persona-fallback",
+    "persona-mock",
+    "persona-rules",
     "hostile",
     "v9",
 ]
@@ -93,6 +101,9 @@ STORY_RUN_NAMES: tuple[StoryRunName, ...] = (
     "default-mock",
     "default-provider",
     "persona-provider",
+    "persona-fallback",
+    "persona-mock",
+    "persona-rules",
     "hostile",
     "v9",
 )
@@ -207,6 +218,20 @@ def _mock_plan(_index: int, request: Any, frozen: Any) -> _Outcome:
         build_city_mock_result_v2(request, policy=frozen.causal_contract.mock_policy),
         0,
         None,
+        {},
+    )
+
+
+def _rules_plan(_index: int, request: Any, _frozen: Any) -> _Outcome:
+    return "rules", build_city_rules_result_v2(request), 0, None, {}
+
+
+def _fallback_plan(_index: int, request: Any, _frozen: Any) -> _Outcome:
+    return (
+        "fallback",
+        build_city_fallback_result_v2(request, reason="timeout-exhausted"),
+        2,
+        "timeout-exhausted",
         {},
     )
 
@@ -450,8 +475,9 @@ def saved_story_run(
             default_study_draft(run_id=identifier, mode="remote", profile=profile)
         )
         return _publish(root, validated, profile=profile, plan=_default_provider_plan)
-    if name == "persona-provider":
-        # A run made now: the AI answers as the person (prompt contract v3).
+    if name in ("persona-provider", "persona-fallback"):
+        # A run made now: the AI answers as the person (prompt contract v3), or, in the
+        # fallback twin, every funded request times out and nothing is answered.
         profile = story_provider_revision(root)
         validated = _validated_draft(
             default_study_draft(
@@ -459,7 +485,19 @@ def saved_story_run(
             ),
             causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
         )
-        return _publish(root, validated, profile=profile, plan=_default_provider_plan)
+        plan = _default_provider_plan if name == "persona-provider" else _fallback_plan
+        return _publish(root, validated, profile=profile, plan=plan)
+    if name in ("persona-mock", "persona-rules"):
+        # New offline runs freeze the current contract too; selection policy 3 funds them
+        # with its offline limit of 1,000, the only one it accepts.
+        mode = "mock" if name == "persona-mock" else "rules"
+        validated = _validated_draft(
+            default_study_draft(run_id=identifier, mode=mode, funded_response_limit=1000),
+            causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+        )
+        return _publish(
+            root, validated, profile=None, plan=_mock_plan if mode == "mock" else _rules_plan
+        )
     if name == "v9":
         from tests.integration.test_city_run_replay import _create_v9_run
 
