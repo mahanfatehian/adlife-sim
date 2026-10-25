@@ -1,0 +1,122 @@
+name: Quick checks
+
+# Every push to main gets fast feedback: lint, types, the wheel smoke, the dependency and
+# secret scans, and the whole test suite split into parallel Linux shards without coverage.
+# The full CI (ci.yml) keeps the Python 3.11-3.13, Windows and macOS matrix, the coverage
+# floor and the performance gates for pull requests, releases, a weekly run and manual runs.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: quick-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  lint:
+    name: lint + types
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Ruff format check
+        run: uv run ruff format --check .
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Mypy strict
+        run: |
+          uv run mypy src
+          uv run mypy --platform linux src
+          uv run mypy --platform win32 src
+
+  tests:
+    name: tests (shard ${{ matrix.shard }} of 6)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Test shard
+        env:
+          # The two performance benchmarks and the long guided browser workload stay in the
+          # full CI, which runs them on their own runners outside coverage.
+          ADLIFE_SKIP_LONG_TESTS: "1"
+          # Browser regressions are a required gate here too, never an environment skip.
+          ADLIFE_REQUIRE_BROWSER: "1"
+        # Every test file lands in exactly one shard (scripts/ci_test_shards.py).
+        run: |
+          uv run python scripts/ci_test_shards.py ${{ matrix.shard }} 6 > shard.txt
+          uv run pytest -q --junitxml=junit.xml $(cat shard.txt)
+      # The measured times keep the shards balanced (ci_test_shards.py --measure).
+      # actions/upload-artifact v6.0.0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: junit-${{ matrix.shard }}
+          path: junit.xml
+          retention-days: 7
+
+  build:
+    name: wheel build + clean-room smoke
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: Build wheel and sdist
+        run: uv build --no-sources
+      - name: Clean-room smoke of the exact wheel
+        run: uv run python scripts/smoke_release.py dist/adlife_sim-*.whl
+      # actions/upload-artifact v6.0.0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: distributions
+          path: dist/
+          retention-days: 7
+
+  security:
+    name: dependency + secret scan
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      # astral-sh/setup-uv v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: Dependency audit
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements-txt --output-file requirements-audit.txt
+          uv tool run pip-audit --requirement requirements-audit.txt --no-deps --disable-pip
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

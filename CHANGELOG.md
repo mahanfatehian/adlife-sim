@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Quick checks on every push, the full CI for pull requests and releases (2026-10-25)** —
+  a push to `main` now runs `.github/workflows/quick.yml`: lint, types, the wheel smoke, the
+  dependency and secret scans, and the whole test suite (without coverage, with the browser
+  tests required) split into six parallel Linux shards by `scripts/ci_test_shards.py`, which
+  puts every test file in exactly one shard and balances them by the times measured on CI
+  (`scripts/ci_test_durations.json`, refreshed from each run's `junit-*` artifacts). The
+  full CI (`.github/workflows/ci.yml`: Python 3.11 to 3.13 on Linux plus Windows and macOS,
+  the 85% coverage floor, the performance gates and the long guided browser workload) no
+  longer runs per push; it runs for pull requests, for every release through the release
+  workflow, every Monday, and on demand.
 - **The story and report say when the AI answered as the person (2026-10-25)** — for a run
   made with prompt contract v3 and a real AI, the story headline now says the AI answered
   those moments as the person who noticed the ad, each answered moment says "The AI answered

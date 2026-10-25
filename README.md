@@ -260,7 +260,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, guided story and report, verified `city-view` saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented; outside the scope of this local research app |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
-| Continuous integration on Linux, macOS, and Windows (`.github/workflows/ci.yml`) | Complete; runs on every push |
+| Continuous integration: quick checks on every push to `main` (`.github/workflows/quick.yml`: lint, types, wheel smoke, dependency and secret scans, and the whole test suite in six parallel Linux shards), and the full Linux, macOS, and Windows matrix with the coverage floor and performance gates (`.github/workflows/ci.yml`) | Complete; the full matrix runs for pull requests, every release, weekly, and on demand (**Actions → CI → Run workflow**) |
 | Tag-triggered release workflow (wheel, sdist, checksums, SBOM, PyPI Trusted Publishing) and `uv`-based install scripts | Implemented; not yet run, because no release has been tagged |
 | Package-index publication (PyPI) and public tagged releases | Not done yet: needs the owner's PyPI setup and a signed release tag ([docs/releasing.md](docs/releasing.md)) |
 
@@ -765,8 +765,8 @@ software produces.
 
 1. **First public release** — publish `adlife-sim` to PyPI and tag the first release, so the
    `uv tool install adlife-sim` command above and the one-line install scripts work without
-   cloning. The release workflow is in place and continuous integration already runs on every
-   push; what remains is the owner's PyPI Trusted Publishing setup, a release signing key the
+   cloning. The release workflow is in place, quick checks run on every push, and the full
+   CI matrix runs for every release; what remains is the owner's PyPI Trusted Publishing setup, a release signing key the
    workflow trusts, and a signed tag ([docs/releasing.md](docs/releasing.md)).
 2. **Schema-v10 analysis** — let `city-compare --layer response`, `city-study`, and
    `city-report` read V10 runs, with a paired-cognition protocol so provider-dependent

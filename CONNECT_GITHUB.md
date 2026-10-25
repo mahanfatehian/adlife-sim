@@ -27,8 +27,12 @@ For an SSH remote use `git@github.com:mahanfatehian/adlife-sim.git` instead.
 
 ## 3. Verify the toolchain gates the repository expects
 
-The repository's CI (`.github/workflows/ci.yml`) enforces exactly what the local
-gates enforce. Before pushing, run the same sequence so the push is green:
+Every push to `main` runs the quick checks (`.github/workflows/quick.yml`): lint, types,
+the wheel smoke, the dependency and secret scans, and the whole test suite split into six
+parallel Linux shards. The full CI (`.github/workflows/ci.yml`) adds Python 3.11 to 3.13,
+Windows and macOS, the 85% coverage floor, and the performance gates; it runs for pull
+requests, for every release, weekly, and on demand (**Actions → CI → Run workflow**, or
+`gh workflow run ci.yml --ref main`). Before pushing, run the same local gates:
 
 ```
 uv run ruff format --check src tests scripts
