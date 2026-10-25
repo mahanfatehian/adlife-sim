@@ -39,8 +39,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the run's frozen cognition input. The setup page takes its AI limit options (including
   **Every noticed ad**), per-source defaults and wording from the server; the progress page
   shows the run's own concurrency.
+- **README: two clear ways in (2026-10-25)** — the README now opens with how to install from
+  source, then separates **using the app** (`uv run adlife app`, the guided pages at `/guide`)
+  from **using the engine on its own** (the campaign engine with `adlife demo`, `init`, `run`,
+  `replay`, `report`, and `compare`, and the city engine with `city-run`, `city-replay`,
+  `city-view`, and `city-metrics`, including how to open and verify runs made in the app). The
+  detailed city-track material moved, unchanged, to a reference section, and the Status table
+  and Roadmap now match what is actually done and what is still open.
 
 ### Removed
+
+- **PyInstaller standalone build (2026-10-25)** — AdLife ships only as a Python package run
+  with uv; there is no standalone executable. The PyInstaller specification
+  (`packaging/adlife.spec`) and its smoke harness and network guard, the release workflow's
+  `build-native` job, the `pyinstaller` development and packaging dependencies, the dormant
+  binary mode of `scripts/install.sh`, and the "Frozen binaries" installation instructions were
+  removed. The release workflow still verifies the signed tag, reruns CI, builds and
+  smoke-tests the wheel and sdist, writes checksums, the SBOM, and the license report, and
+  publishes to PyPI.
 
 - **Windows demo start script and presenter guide (2026-10-21)** — `scripts/start-guided-demo.ps1`
   and `docs/guided-demo.md` were removed. `uv run adlife app` starts the app on every operating

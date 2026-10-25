@@ -7,8 +7,6 @@
 #     missing, the official installation URL is printed and the script exits, so no
 #     second remote installer is ever chained from here;
 #   * ADLIFE_VERSION selects a package version (default: the latest release);
-#   * ADLIFE_INSTALL_DIR is reserved for verified binary-release mode and is unused
-#     while installation goes through the package index;
 #   * both installers fail clearly when the package has not yet been published.
 #
 # Usage:  curl -fsSL <installer-url> | sh
@@ -56,13 +54,3 @@ fi
 command -v adlife >/dev/null 2>&1
 adlife --version
 adlife doctor --offline
-
-# ---------------------------------------------------------------------------
-# Future binary-release mode (dormant). When verified frozen artifacts exist,
-# this branch activates behind ADLIFE_INSTALL_DIR and must:
-#   * download the selected archive to a mktemp -d directory with a cleanup trap;
-#   * verify the archive against the release's SHA256SUMS BEFORE extraction;
-#   * extract and atomically replace only the exact adlife executable inside
-#     ADLIFE_INSTALL_DIR (write to a temp name, then rename over the target);
-#   * never touch anything else in the target directory.
-# ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # AdLife Lab
 
-**See how fictional people react to an ad, and what an AI adds: a local simulation you run in your browser.**
+**See how fictional people react to an ad, and what an AI adds: a local simulation you run in a guided browser app or straight from the command line.**
 
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-green)](LICENSE)
@@ -14,29 +14,56 @@ next to the rules-only one. You set the study up in your browser, watch it run, 
 story on a map, and get a report you can print or share, in English, German, or Persian (right
 to left). Everything runs on your own computer; every person, place, and product is fictional.
 
-## Quick start
+AdLife can be used in two ways, and both run entirely on your computer:
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/) (it installs the right
-Python for you). Then:
+| | The app (in your browser) | The engine on its own (command line) |
+| --- | --- | --- |
+| Start it with | `uv run adlife app` | `uv run adlife demo`, then `uv run adlife run …` |
+| What you do | Set up a study on guided pages at `http://127.0.0.1:8765/guide`, connect any AI, watch it run, replay it as a story on a map, and open a printable report | Run the simulation from a terminal: scripted, repeatable runs, a live terminal dashboard, verified replays, paired A/B comparisons, self-contained HTML reports, and JSON output for your own scripts |
+| Good for | Demonstrations, exploring scenarios, and AI labels | Research, batch and paired experiments, automation, and checking results |
+| Read next | [docs/user-guide.md](docs/user-guide.md) | [docs/quickstart.md](docs/quickstart.md) and [docs/cli-reference.md](docs/cli-reference.md) |
+
+## Install
+
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/); it installs a suitable
+Python (3.11, 3.12, or 3.13) for you. Then, once:
 
 ```bash
 git clone https://github.com/mahanfatehian/adlife-sim.git
 cd adlife-sim
 uv sync
+uv run adlife --version
+```
+
+Run every command in this README from the `adlife-sim` folder, starting with `uv run`. To get a
+plain `adlife` command that works from any folder, also run `uv tool install .` there.
+
+AdLife is not published on the Python Package Index (PyPI) yet. After its first release, this
+command will install it without cloning the repository:
+
+<!-- adlife-install:start -->
+uv tool install adlife-sim
+<!-- adlife-install:end -->
+
+## Use the app (browser, `/guide`)
+
+```bash
 uv run adlife app
 ```
 
 The app opens at `http://127.0.0.1:8765/guide` in your browser (the root address redirects
-to `/guide`). Click **New simulation**, then **Run simulation**. The third card,
+to `/guide`). Leave the terminal open while you use it, and press Ctrl+C there to stop it.
+Runs are saved in `./adlife-workspace`, next to where you started the app; start it from the
+same folder again and your saved runs are back. `--port 9000`, `--workspace PATH`, and
+`--no-open` change the port, the folder, and whether a browser opens
+(`uv run adlife app --help` lists every option).
+
+**Your first run.** Click **New simulation**, then **Run simulation**. The third card,
 **3 · The AI**, starts on **Practice answers** (fixed offline answers, not an AI), so this
 first run needs no AI and no network; if it shows another choice, click **Change** and pick
 **Practice answers**. A few seconds later you can watch the story and open the report.
-Press Ctrl+C in the terminal to stop the app. Runs are saved in `./adlife-workspace`.
 
-**The step-by-step [docs/user-guide.md](docs/user-guide.md) covers installing, every AI choice,
-the story, the report, and troubleshooting.**
-
-## Use any AI
+**Connect an AI.** Pick where the AI labels come from on the start page or in the third card:
 
 | Choice | What you enter in the app |
 | --- | --- |
@@ -53,19 +80,83 @@ decides who notices an ad. A typed API key is kept in the app's memory and forgo
 app stops, unless you choose to remember it in your operating system's credential store; it is
 never written to a file or shown again.
 
-## What you get
+**What the app gives you:**
 
 - Ten fictional people profiles, eight fictional products, and five fictional towns to combine.
 - Live progress while the AI answers ("3 of 10 answered").
-- A story on an animated map, moment by moment, with the exact arithmetic one click away.
+- A story on an animated map that covers every simulated day, moment by moment, with the exact
+  arithmetic one click away.
 - A self-contained HTML report of every person's ad moments and the AI's labels.
 - Reproducible results: the same settings and seed give the same rules-only results, and
   every saved run replays offline without calling the AI.
 
-The repository also contains the command-line research simulator AdLife started as (a zone-based
-consumer society with memory and word of mouth); see [What AdLife models](#what-adlife-models)
-and [Usage](#usage). Developers can seed a running app with ready-made runs using
+**The step-by-step [docs/user-guide.md](docs/user-guide.md) covers installing, every AI choice,
+the story, the report, and troubleshooting.** Developers can seed a running app with
+ready-made runs using
 `uv run python scripts/demo_workspace.py --base-url http://127.0.0.1:8765`.
+
+`uv run adlife city-workbench --workspace ./workbench` starts the same server with an explicit
+workspace and startup provider approvals, and never opens a browser; open
+`http://127.0.0.1:8765/guide` yourself ([the local city workbench](#the-local-city-workbench)).
+
+## Use the engine on its own (command line)
+
+The engine also runs without the browser, and without a network connection or an API key.
+Every command prints a readable result by default, or machine-readable output with
+`--format json` or `--format jsonl` for your own scripts. There are two simulations.
+
+### The campaign engine: a small society over days
+
+It simulates 1–30 fictional consumers who move between zones over 1–7 days, see ads in a
+phone feed or on a billboard, talk about them, and update their recall, brand sentiment, and
+purchase intention ([What AdLife models](#what-adlife-models)). Try it with no setup:
+
+```bash
+uv run adlife demo
+```
+
+A study from start to finish:
+
+```bash
+uv run adlife init my-study              # create a study from the packaged demo project
+uv run adlife validate my-study          # check every input before anything runs
+uv run adlife run my-study --seed 42     # one deterministic run, saved in my-study/runs/<run-id>/
+uv run adlife run my-study --live        # the same, with a four-panel terminal dashboard
+uv run adlife replay my-study <run-id>   # re-run it and verify the event stream, event for event
+uv run adlife report my-study <run-id>   # a self-contained HTML report in my-study/reports/
+uv run adlife compare control treatment  # a paired A/B comparison across seeds
+uv run adlife doctor --offline           # check the installation, with no network access
+```
+
+Campaign and population documents are authored in YAML and validated before use. They are treated as
+untrusted input: YAML is parsed with a safe loader, and any referenced asset path is resolved and
+confirmed to lie beneath the project root before it is opened. Every command honors the global
+`--format human|json|jsonl` output contract for data commands; the interactive `city`
+server accepts human mode only. [docs/quickstart.md](docs/quickstart.md) walks through a full
+study, from an empty folder to an HTML report, and
+[docs/cli-reference.md](docs/cli-reference.md) lists every command and option.
+
+### The city engine: agents on a street map
+
+It moves fictional agents minute by minute along the roads of a fictional town, shows them ads
+on phones and billboards, and records who notices which ad. The app runs this engine; these
+commands run it directly and save runs you can verify and inspect:
+
+```bash
+uv run adlife city-catalog list                    # the five packaged fictional towns
+uv run adlife city --city-id fictional-grid-v2     # a live preview at 127.0.0.1:8765; nothing is saved
+uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42 --agents 20 --days 3
+uv run adlife city-replay ./city-output study-42   # recompute and verify every saved layer
+uv run adlife city-view ./city-output study-42     # open the saved run's timeline and evidence
+uv run adlife city-metrics ./city-output study-42  # the saved run's metrics
+uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
+```
+
+Runs made in the app are saved in `./adlife-workspace/city-runs/`; open one with
+`uv run adlife city-view ./adlife-workspace <run-id>`, or verify it offline with
+`uv run adlife city-replay ./adlife-workspace <run-id>`. Spatial campaigns, place sets,
+responses, comparisons, and paired studies are described in
+[the city track in depth](#reference-the-city-track-in-depth).
 
 ---
 
@@ -163,80 +254,24 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Schema-v6 spatial rule responses and campaign-scoped state over persisted notices | C3c evidence complete; uncalibrated and not a purchase or sales model |
 | Schema-v6 response metrics and matched response comparison | Complete as an additive read-only layer; attention remains the default C4a contract |
 | Explicit 2–100-pair spatial studies and zero-JavaScript HTML evidence reports | Bounded C4b evidence complete; simulator-seed uncertainty only |
-| Verified offline, content-addressed city catalog with three `fictional-fixture` entries | Foundation complete; zero rights-reviewed real-city entries |
+| Verified offline, content-addressed city catalog with five `fictional-fixture` entries | Foundation complete; zero rights-reviewed real-city entries |
 | Local city workbench with guided browser pages, immutable schema-v9 and schema-v10 cognition evidence, workspace V2 city-pack upload API, verified run library, and run-scoped read API | Local single-operator slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
 | Optional OpenAI-compatible noncausal explanations with approved origins, protected credentials, deterministic fallback, and frozen replay | Complete for the local workbench; authentication and OAuth are not implemented |
 | Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, guided story and report, verified `city-view` saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
-| Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented |
+| Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented; outside the scope of this local research app |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`) | Complete |
-| Frozen-build configuration, installers, CI and release workflows | Implemented; platform execution requires verification |
-| Package-index publication (PyPI) and public tagged releases | Not performed by this audit |
+| Continuous integration on Linux, macOS, and Windows (`.github/workflows/ci.yml`) | Complete; runs on every push |
+| Tag-triggered release workflow (wheel, sdist, checksums, SBOM, PyPI Trusted Publishing) and `uv`-based install scripts | Implemented; not yet run, because no release has been tagged |
+| Package-index publication (PyPI) and public tagged releases | Not done yet: needs the owner's PyPI setup and a signed release tag ([docs/releasing.md](docs/releasing.md)) |
 
 ---
 
-## Requirements
+## Reference: the city track in depth
 
-- Python 3.11, 3.12, or 3.13 (3.12 is the development baseline)
-- [uv](https://docs.astral.sh/uv/) for dependency and environment management
-
-## Installation
-
-<!-- adlife-install:start -->
-uv tool install adlife-sim
-<!-- adlife-install:end -->
-
-Until the package-index release exists (see the roadmap), install from source:
-
-```bash
-git clone https://github.com/mahanfatehian/adlife-sim.git
-cd adlife-sim
-uv sync
-```
-
-Verify the installation:
-
-```bash
-uv run adlife --version
-```
-
-## Usage
-
-The fastest look is the offline demonstration — it builds a synthetic study, runs it on the mock
-provider, and needs no network, no API key, and no configuration:
-
-```bash
-uv run adlife demo
-```
-
-A full walkthrough, from an empty directory to a self-contained HTML report, is in
-[docs/quickstart.md](docs/quickstart.md). The shape of a study:
-
-```bash
-uv run adlife init my-study              # create a study from the packaged demo project
-uv run adlife validate my-study          # gate: every input checks before anything runs
-uv run adlife run my-study --seed 42     # one deterministic whole run, fully persisted
-uv run adlife replay my-study <run-id>   # re-execute and verify the stream, event for event
-uv run adlife report my-study <run-id>   # self-contained HTML report (works offline)
-uv run adlife compare control treatment  # paired A/B across seeds (common random numbers)
-uv run adlife run my-study --live        # the four-panel terminal dashboard
-uv run adlife doctor --offline           # installation readiness, zero network
-uv run adlife app                        # the guided browser app (opens http://127.0.0.1:8765/guide)
-uv run adlife city                       # local street-mobility pilot at 127.0.0.1:8765
-uv run adlife city-workbench --workspace ./workbench  # the same app server, explicit options
-uv run adlife city-catalog list          # packaged catalog; currently fictional only
-uv run adlife city --city-id fictional-grid-v2
-uv run adlife city-import streets.json --output city.json --city-id my-city --name "My City"
-uv run adlife city-run --city-id fictional-grid-v2 --output-root ./city-output --run-id study-42 --agents 20 --days 3
-uv run adlife city-replay ./city-output study-42
-uv run adlife city-view ./city-output study-42
-```
-
-Campaign and population documents are authored in YAML and validated before use. They are treated as
-untrusted input: YAML is parsed with a safe loader, and any referenced asset path is resolved and
-confirmed to lie beneath the project root before it is opened. Every command honors the global
-`--format human|json|jsonl` output contract for data commands; the interactive `city`
-server accepts human mode only. See
-[docs/cli-reference.md](docs/cli-reference.md) for the complete surface.
+This reference documents the city engine behind both the app and the `city-*` commands: city
+packs and the catalog, the local workbench server and its API, the AI modes, and the evidence
+each saved run schema contains. For a first run, the sections at the top of this README are
+enough.
 
 ### City mobility pilot
 
@@ -259,6 +294,8 @@ a public tile server or geocoder, and a locally imported real-world pack is not
 automatically catalog-qualified. The
 [city-source qualification checklist](docs/data/city-source-qualification.md) defines
 the human rights review required before a real-world entry may ship.
+
+### The local city workbench
 
 Start the local city workbench with:
 
@@ -436,7 +473,7 @@ Not yet done for schema-v10 runs:
   only with another V10 run.
 - No paired-cognition protocol freezes compatible signals across study arms, so
   provider-dependent cognition is never reported as a campaign effect.
-- The wheel and frozen-executable release smoke checks do not yet exercise V10 runs.
+- The wheel release smoke checks do not yet exercise V10 runs.
 - V10 is an unreleased artifact schema: runs written by earlier development builds are
   refused and must be created again.
 
@@ -634,7 +671,8 @@ PYTHONHASHSEED=12345 uv run pytest -q
 | Document | Contents |
 | --- | --- |
 | [docs/quickstart.md](docs/quickstart.md) | Zero to HTML report in a handful of commands |
-| [docs/installation.md](docs/installation.md) | Every installation path, frozen binaries, verification |
+| [docs/installation.md](docs/installation.md) | Every installation path (from source, `uv tool install`, install scripts) and verification |
+| [docs/releasing.md](docs/releasing.md) | The owner's runbook for cutting a tagged release |
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command, flag, exit code, and the output contract |
 | [docs/architecture.md](docs/architecture.md) | Layers, the cognition seam, auditable events, the tick, artifacts |
 | [docs/city-pilot.md](docs/city-pilot.md) | Street-pack format, city viewer, and mobility model boundaries |
@@ -697,10 +735,15 @@ software produces.
 
 ## Roadmap
 
-1. **Package-index release** — publish `adlife-sim` to PyPI so the `uv tool install adlife-sim`
-   command above works everywhere; the wheel build and its release smoke test already run locally.
-2. **Continuous integration and releases** — automated gates and tagged releases on GitHub-hosted
-   runners.
+1. **First public release** — publish `adlife-sim` to PyPI and tag the first release, so the
+   `uv tool install adlife-sim` command above and the one-line install scripts work without
+   cloning. The release workflow is in place and continuous integration already runs on every
+   push; what remains is the owner's PyPI Trusted Publishing setup, a release signing key the
+   workflow trusts, and a signed tag ([docs/releasing.md](docs/releasing.md)).
+2. **Schema-v10 analysis** — let `city-compare --layer response`, `city-study`, and
+   `city-report` read V10 runs, with a paired-cognition protocol so provider-dependent
+   cognition is never reported as a campaign effect, and add a V10 run to the wheel release
+   smoke check.
 3. **Production-track city product on `main`** — mature the current opt-in pilot with
    licensed city ingestion, geography-aware campaign events, persisted replayable traces,
    authenticated administration and protected provider configuration. The
@@ -725,7 +768,9 @@ software produces.
 - Persona inputs screen recognized identifier and secret patterns; screening is best effort and
   cannot prove fictional identity. Users must supply fictional data only.
 - Campaign files are untrusted input: safe YAML loading, and asset paths confined to the project root.
-- API keys are read only from environment variables or hidden prompts, never from committed files.
+- API keys come from environment variables, hidden prompts, or the app's key field (held in
+  memory, or in the operating system's credential store only if you choose), never from
+  committed files.
 - Logs redact authorization headers and likely secret patterns.
 - Generated reports escape user-provided text and embed charts without remote scripts.
 - Every report carries a synthetic-data disclosure.

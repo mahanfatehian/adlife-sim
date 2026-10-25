@@ -55,12 +55,9 @@ dist/adlife_sim-0.1.0-py3-none-any.whl`, with `UV_OFFLINE=true` and no inherited
 import path. It installed that wheel into a fresh environment and exercised version,
 offline doctor, initialization, a rules run, and reporting outside the checkout.
 
-The Windows x86-64 PyInstaller bundle also built successfully. It was exercised from a
-fresh temporary directory with the checkout import path cleared: version, offline doctor,
-initialization, a one-day/two-person rules run, report, and headless demo all exited 0.
-Native doctor passed seven checks and warned that its captured output stream used cp1252;
-the source command passed all eight checks. This is an environment qualification, not a
-claim that every Windows console is UTF-8. The bundle analysis contains no audit harness.
+This audit also built and smoke-tested a Windows PyInstaller bundle. That standalone build
+was later removed from the project (2026-10-25): AdLife ships only as a Python package run
+with uv, so the source and wheel evidence above is the release-relevant evidence.
 
 ## Fresh demonstration evidence
 

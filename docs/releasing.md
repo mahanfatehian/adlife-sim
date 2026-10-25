@@ -51,17 +51,13 @@ this document is the human-side checklist.
      version match; it exports both the annotated-tag object SHA and peeled commit SHA;
    - `quality-gates` — calls the repository's reusable CI workflow from the tagged
      commit, so the complete matrix must pass again for the exact release source;
-   - `build-native` — four native frozen builds (never cross-compiled), each one
-     smoke-testing **its own exact artifact**: `--version`, `doctor --offline`, a real
-     run, and a report;
    - `assemble-release` — with read-only repository permissions and no persisted checkout
-     credential, gathers assets, builds and smoke-tests the wheel, generates the SBOM and
-     third-party license report from the exactly pinned, locked packaging toolchain, and
-     checksums every release file;
+     credential, builds the wheel and sdist, smoke-tests the exact wheel in a clean
+     environment, generates the SBOM and third-party license report from the exactly
+     pinned, locked packaging toolchain, and checksums every release file;
    - `create-draft-release` — a minimal write-scoped job downloads only the verified asset
      handoff, rechecks the remote tag object and current `main` ancestry, and creates the
-     **draft** containing the wheel, sdist, frozen assets, both provenance reports, and
-     `SHA256SUMS`;
+     **draft** containing the wheel, sdist, both provenance reports, and `SHA256SUMS`;
    - `publish-pypi` — after protected-environment approval, rechecks the same remote tag
      object and current `main` ancestry, then uploads the assembled distributions through
      Trusted Publishing;
@@ -79,7 +75,7 @@ this document is the human-side checklist.
    accounts. It exits without changing anything when origin is not GitHub.
 5. **Verify the release as a user would** (fresh machine or container if possible):
    `uv tool install adlife-sim==0.1.0`, `adlife doctor --offline`, and a SHA256SUMS
-   check of a frozen asset.
+   check of the downloaded wheel.
 
 ## What the pipeline refuses
 
@@ -88,13 +84,13 @@ this document is the human-side checklist.
   the freshly fetched `main` immediately before any irreversible publication.
 - Tag/version mismatches.
 - Any failure in the complete reusable CI workflow for the tagged commit.
-- Frozen artifacts that fail their own smoke on the builder — a broken build never
-  becomes an asset.
+- A wheel that fails its clean-environment smoke — a broken build never becomes an asset.
 - Publication before every artifact exists.
 
-The provenance reports describe the locked Python build environment, including
-development tools; they are not a per-platform inventory of bundled native libraries.
-`hatchling`, `PyInstaller`, `cyclonedx-bom`, and `pip-licenses` are exact direct pins for
+AdLife ships as a Python package (wheel and sdist) that users run with uv; the release
+builds no standalone executable. The provenance reports describe the locked Python build
+environment, including development tools.
+`hatchling`, `cyclonedx-bom`, and `pip-licenses` are exact direct pins for
 the release path, while `uv.lock` fixes their complete transitive dependency graph. The
 release workflow also pins both `uv` and CPython to exact patch versions on every build
 job that installs or executes that toolchain.

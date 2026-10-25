@@ -1,7 +1,7 @@
 """Report resources, loaded through :mod:`importlib.resources` only.
 
-A report must render identically from a source checkout, an installed wheel, or a
-frozen binary, so nothing here may resolve a path relative to ``__file__``. The
+A report must render identically from a source checkout or an installed wheel, so
+nothing here may resolve a path relative to ``__file__``. The
 stylesheet ships with the package; the Plotly runtime comes from the installed
 library and is inlined into the report exactly once.
 """

@@ -2,7 +2,8 @@ name: Release
 
 # Protected release pipeline. Trigger: signed annotated tags matching vX.Y.Z only.
 # Every step verifies before anything is published; the public GitHub release is
-# published only after all artifacts, checksums, SBOM, and PyPI publication succeed.
+# published only after the wheel, sdist, checksums, SBOM, and PyPI publication succeed.
+# AdLife ships as a Python package run with uv; there is no standalone executable.
 
 on:
   push:
@@ -58,78 +59,9 @@ jobs:
     needs: verify-tag
     uses: ./.github/workflows/ci.yml
 
-  build-native:
-    name: frozen binary (${{ matrix.asset }})
-    needs: [verify-tag, quality-gates]
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            asset: linux-x86_64
-            archive: tar.gz
-          - os: macos-15-intel
-            asset: macos-x86_64
-            archive: tar.gz
-          - os: macos-latest
-            asset: macos-aarch64
-            archive: tar.gz
-          - os: windows-latest
-            asset: windows-x86_64
-            archive: zip
-    steps:
-      # actions/checkout v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # astral-sh/setup-uv v10.2.0
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
-        with:
-          version: "0.12.14"
-          python-version: "3.12.11"
-      - name: Install locked dependencies (packaging group included)
-        run: uv sync --locked --all-groups
-      - name: Build the frozen application
-        run: uv run pyinstaller packaging/adlife.spec --clean --noconfirm
-      - name: Smoke-test the exact frozen artifact on its builder
-        shell: bash
-        run: |
-          EXE="dist/adlife/adlife"
-          [ -x "$EXE" ] || EXE="dist/adlife/adlife.exe"
-          "$EXE" --version
-          "$EXE" doctor --offline
-          "$EXE" --format json city-catalog list
-          "$EXE" --format json city-catalog show fictional-grid-v2
-          "$EXE" --format json city-run --city-id fictional-grid-v2 --output-root frozen-city-output --run-id catalog-frozen --agents 2 --days 1 --seed 42
-          "$EXE" --format json city-replay frozen-city-output catalog-frozen
-          "$EXE" init frozen-smoke
-          "$EXE" run frozen-smoke --run-id frozen --mode rules --days 1 --population-size 2 --headless
-          "$EXE" report frozen-smoke frozen
-          test -s frozen-smoke/reports/frozen.html
-          uv run python scripts/smoke_frozen.py "$EXE"
-      - name: Package the release asset
-        shell: bash
-        run: |
-          VERSION="${{ needs.verify-tag.outputs.version }}"
-          NAME="adlife-v${VERSION}-${{ matrix.asset }}"
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            (cd dist && 7z a -tzip "${NAME}.zip" adlife)
-          else
-            tar -czf "dist/${NAME}.tar.gz" -C dist adlife
-          fi
-          echo "ASSET=dist/adlife-v${VERSION}-${{ matrix.asset }}.${{ matrix.archive }}" >> "$GITHUB_ENV"
-      # actions/upload-artifact v6.0.0
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: frozen-${{ matrix.asset }}
-          path: ${{ env.ASSET }}
-          retention-days: 7
-          if-no-files-found: error
-
   assemble-release:
     name: checksums, SBOM, and license report
-    needs: [verify-tag, build-native]
+    needs: [verify-tag, quality-gates]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -143,12 +75,8 @@ jobs:
         with:
           version: "0.12.14"
           python-version: "3.12.11"
-      # actions/download-artifact v6.0.0
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
-        with:
-          pattern: frozen-*
-          path: assets
-          merge-multiple: true
+      - name: Create the release asset folder
+        run: mkdir -p assets
       - name: Install locked release toolchain
         run: uv sync --locked --all-groups
       - name: Build wheel and sdist

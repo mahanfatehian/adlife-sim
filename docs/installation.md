@@ -1,28 +1,11 @@
 # Installing AdLife Lab
 
-Three ways in, from simplest to most involved. All of them give you the same CLI.
+AdLife Lab is a Python package that you run with [uv](https://docs.astral.sh/uv/). Every
+installation path below gives you the same `adlife` command: the browser app
+(`adlife app`) and the command-line engine (`adlife demo`, `adlife run`, `adlife city-run`,
+and the rest). There is no separate standalone executable.
 
-## From a package index (uv tool install)
-
-```bash
-uv tool install adlife-sim
-adlife --version
-adlife doctor --offline
-```
-
-`uv tool install` puts the `adlife` executable on your PATH in uv's tool directory —
-no virtualenv activation, no shell startup files edited, no administrator rights. Until
-the first index release exists, install from source (below); the README's marked
-installation block is rewritten to a tag-pinned installer URL by
-`scripts/configure_repository.py` after the first release.
-
-A specific version:
-
-```bash
-uv tool install adlife-sim==0.1.0
-```
-
-## From source
+## From source (works today)
 
 ```bash
 git clone https://github.com/mahanfatehian/adlife-sim.git
@@ -31,14 +14,39 @@ uv sync
 uv run adlife --version
 ```
 
-For a permanent tool install straight from the checkout:
+Run commands from the checkout with `uv run`, for example `uv run adlife app` for the
+browser app or `uv run adlife demo` for the offline engine demonstration.
+
+For a permanent `adlife` command on your PATH, straight from the checkout:
 
 ```bash
 uv tool install .
 adlife --version
 ```
 
-## One-line installers
+## From a package index (after the first release)
+
+AdLife is not published on the Python Package Index (PyPI) yet. Once the first release is
+published, this installs it without cloning:
+
+```bash
+uv tool install adlife-sim
+adlife --version
+adlife doctor --offline
+```
+
+`uv tool install` puts the `adlife` executable on your PATH in uv's tool directory —
+no virtualenv activation, no shell startup files edited, no administrator rights. After the
+first release, `scripts/configure_repository.py` rewrites the README's marked installation
+block to a tag-pinned installer URL.
+
+A specific version:
+
+```bash
+uv tool install adlife-sim==0.1.0
+```
+
+## One-line installers (after the first release)
 
 Once the first release is published, the installers install the package (via uv) and
 run the health checks for you:
@@ -61,37 +69,15 @@ URL and exits rather than chaining a second remote script), `ADLIFE_VERSION`
 selects a version, and both installers fail clearly if the package has not been
 published yet.
 
-## Frozen binaries
-
-Each release ships native one-directory builds, no installation needed:
-
-| Asset | Platform |
-| --- | --- |
-| `adlife-vX.Y.Z-linux-x86_64.tar.gz` | Linux x86_64 |
-| `adlife-vX.Y.Z-macos-x86_64.tar.gz` | macOS Intel |
-| `adlife-vX.Y.Z-macos-aarch64.tar.gz` | macOS Apple Silicon |
-| `adlife-vX.Y.Z-windows-x86_64.zip` | Windows x86_64 |
-
-Verify before extracting — the release's `SHA256SUMS` is the manifest:
-
-```bash
-sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf adlife-v0.1.0-linux-x86_64.tar.gz   # or: Expand-Archive …zip on Windows
-./adlife/adlife --version
-./adlife/adlife doctor --offline
-```
-
-The frozen binary contains no model weights and works in `rules` and `mock` modes with
-no network at all.
-
 ## Verify the installation
 
 ```bash
 adlife doctor --offline
 ```
 
-checks versions, packaged resources, offline provider construction, storage
-writability, and the console encoding — with zero network access.
+(From a source checkout: `uv run adlife doctor --offline`.) It checks versions, packaged
+resources, offline provider construction, storage writability, and the console encoding —
+with zero network access.
 
 ## Troubleshooting
 

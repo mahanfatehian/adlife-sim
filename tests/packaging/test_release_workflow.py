@@ -159,7 +159,7 @@ def test_release_reuses_the_exact_tagged_ci_before_building() -> None:
         "needs": "verify-tag",
         "uses": "./.github/workflows/ci.yml",
     }
-    assert set(release["jobs"]["build-native"]["needs"]) == {
+    assert set(release["jobs"]["assemble-release"]["needs"]) == {
         "verify-tag",
         "quality-gates",
     }
@@ -248,7 +248,7 @@ def test_release_build_and_report_tools_are_exactly_pinned_and_locked() -> None:
     assert re.fullmatch(r"hatchling==[0-9]+(?:\.[0-9]+)+", hatchling_requirement)
     packaging_requirements = project["dependency-groups"]["packaging"]
     packaging_by_name = {item.partition("==")[0]: item for item in packaging_requirements}
-    for package in ("hatchling", "pyinstaller", "cyclonedx-bom", "pip-licenses"):
+    for package in ("hatchling", "cyclonedx-bom", "pip-licenses"):
         assert package in packaging_by_name
         requirement = packaging_by_name[package]
         assert re.fullmatch(rf"{re.escape(package)}==[0-9]+(?:\.[0-9]+)+", requirement)
@@ -283,7 +283,8 @@ def test_release_pins_uv_and_python_for_every_toolchain_setup() -> None:
         if step.get("uses", "").startswith("astral-sh/setup-uv@")
     ]
 
-    assert len(setup_steps) == 2
+    # Only the assembly job installs the toolchain: the release builds no native binaries.
+    assert len(setup_steps) == 1
     uv_versions = [step.get("with", {}).get("version") for step in setup_steps]
     python_versions = [step.get("with", {}).get("python-version") for step in setup_steps]
     assert all(
@@ -396,7 +397,7 @@ def test_publication_waits_for_completed_asset_assembly(publisher: str) -> None:
             if dependency not in ancestors:
                 ancestors.add(dependency)
                 pending.append(dependency)
-    assert {"verify-tag", "quality-gates", "build-native", "assemble-release"} <= ancestors
+    assert {"verify-tag", "quality-gates", "assemble-release"} <= ancestors
 
 
 def test_pypi_consumes_the_distributions_uploaded_by_assembly() -> None:
@@ -460,81 +461,26 @@ def test_dependency_audit_targets_locked_project_requirements(tmp_path: Path) ->
     assert "-e ." not in requirements
 
 
-def test_frozen_binary_smoke_exercises_packaged_catalog_and_replay() -> None:
-    """Catch native release artifacts that omit or cannot consume city resources."""
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    steps = workflow["jobs"]["build-native"]["steps"]
-    smoke = next(
-        step
-        for step in steps
-        if step.get("name") == "Smoke-test the exact frozen artifact on its builder"
-    )
-    commands = [
-        shlex.split(line) for line in smoke["run"].splitlines() if line.strip().startswith('"$EXE"')
-    ]
-    assert ["$EXE", "--format", "json", "city-catalog", "list"] in commands
-    assert [
-        "$EXE",
-        "--format",
-        "json",
-        "city-catalog",
-        "show",
-        "fictional-grid-v2",
-    ] in commands
-    assert [
-        "$EXE",
-        "--format",
-        "json",
-        "city-run",
-        "--city-id",
-        "fictional-grid-v2",
-        "--output-root",
-        "frozen-city-output",
-        "--run-id",
-        "catalog-frozen",
-        "--agents",
-        "2",
-        "--days",
-        "1",
-        "--seed",
-        "42",
-    ] in commands
-    assert [
-        "$EXE",
-        "--format",
-        "json",
-        "city-replay",
-        "frozen-city-output",
-        "catalog-frozen",
-    ] in commands
+def test_release_ships_the_python_package_and_no_standalone_executable() -> None:
+    """AdLife runs from source or as a wheel with uv; nothing builds a frozen binary."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    workflow_text = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    workflow = yaml.safe_load(workflow_text)
 
-
-def test_frozen_binary_collects_keyring_discovery_metadata_and_backends() -> None:
-    spec = (ROOT / "packaging/adlife.spec").read_text(encoding="utf-8")
-
-    assert "copy_metadata" in spec
-    assert 'copy_metadata("keyring")' in spec
-    assert 'collect_submodules("keyring.backends")' in spec
-
-
-def test_frozen_binary_smoke_certifies_v9_and_loopback_provider_under_guard() -> None:
-    """The native artifact must cross the same cognition boundary as the wheel."""
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    steps = workflow["jobs"]["build-native"]["steps"]
-    build_index = next(
-        index
-        for index, step in enumerate(steps)
-        if step.get("name") == "Build the frozen application"
-    )
-    smoke_index = next(
-        index
-        for index, step in enumerate(steps)
-        if step.get("name") == "Smoke-test the exact frozen artifact on its builder"
-    )
-    smoke = steps[smoke_index]
-
-    assert build_index < smoke_index
-    assert 'uv run python scripts/smoke_frozen.py "$EXE"' in smoke["run"].splitlines()
-
-    spec = (ROOT / "packaging/adlife.spec").read_text(encoding="utf-8")
-    assert 'runtime_hooks=[os.path.join(SPECPATH, "frozen_smoke_network_guard.py")]' in spec
+    assert set(workflow["jobs"]) == {
+        "verify-tag",
+        "quality-gates",
+        "assemble-release",
+        "create-draft-release",
+        "publish-pypi",
+        "publish-release",
+    }
+    assert "pyinstaller" not in workflow_text.lower()
+    for group, requirements in project["dependency-groups"].items():
+        assert all(not item.lower().startswith("pyinstaller") for item in requirements), group
+    for removed in (
+        "packaging/adlife.spec",
+        "packaging/frozen_smoke_network_guard.py",
+        "scripts/smoke_frozen.py",
+    ):
+        assert not (ROOT / removed).exists(), removed
