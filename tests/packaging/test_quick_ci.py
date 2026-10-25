@@ -1,9 +1,11 @@
-"""Quick checks run the whole suite on every push; the full CI runs for PRs and releases."""
+"""Quick checks lint and shard-test every push to main; the full CI runs for PRs and releases."""
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import json
+import os
 import statistics
 import subprocess
 import sys
@@ -39,13 +41,32 @@ def _shard_module() -> ModuleType:
     return module
 
 
-def _collected_files() -> set[str]:
-    """The files pytest itself would collect, independent of the shard script."""
-    return {
-        path.relative_to(ROOT).as_posix()
-        for pattern in ("test_*.py", "*_test.py")
-        for path in (ROOT / "tests").rglob(pattern)
-    }
+@functools.cache
+def _collected_files() -> frozenset[str]:
+    """Every file a bare ``pytest`` collects from, as in ci.yml, but without the long-test skip.
+
+    A shard hands pytest explicit files, which bypasses ``testpaths`` and ``python_files``, so
+    only pytest's own collection shows a file (or a doctest or plugin item) the shard script
+    misses. Dropping ``ADLIFE_SKIP_LONG_TESTS`` collects the modules that skip at import too.
+    """
+    env = {key: value for key, value in os.environ.items() if key != "ADLIFE_SKIP_LONG_TESTS"}
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
+    # One unindented node ID per item; the warning text after them is indented.
+    files = frozenset(
+        line.split("::", 1)[0]
+        for line in result.stdout.splitlines()
+        if "::" in line and not line[:1].isspace()
+    )
+    assert files, "pytest collected nothing"
+    return files
 
 
 def _run_shard(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -73,7 +94,10 @@ def test_the_shards_run_every_test_file_exactly_once(count: int) -> None:
     every = [name for group in groups for name in group]
     assert all(groups), "no shard may be empty"
     assert len(every) == len(set(every)), "a test file must not run in two shards"
-    assert set(every) == _collected_files()
+    assert set(every) == set(_shard_module().suite_files())
+    # A file pytest collects but no shard lists would only ever run in the full CI.
+    missing = _collected_files() - set(every)
+    assert not missing, sorted(missing)
     assert all((ROOT / name).is_file() for name in every)
 
 
@@ -107,7 +131,8 @@ def test_quick_checks_run_on_every_push_to_main() -> None:
     workflow = _workflow("quick.yml")
     assert _triggers(workflow) == {"push": {"branches": ["main"]}, "workflow_dispatch": None}
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"lint", "tests", "build", "security"}  # type: ignore[arg-type]
+    jobs = {"lint", "tests", "shell-quality", "build", "security"}
+    assert set(workflow["jobs"]) == jobs  # type: ignore[arg-type]
 
 
 def test_quick_checks_lint_type_check_and_test_like_the_full_ci() -> None:
@@ -121,6 +146,7 @@ def test_quick_checks_lint_type_check_and_test_like_the_full_ci() -> None:
     pinned = [step["uses"] for step in full["test"]["steps"][:2]]  # type: ignore[index]
     for job in ("lint", "tests"):
         assert [step["uses"] for step in quick[job]["steps"][:2]] == pinned  # type: ignore[index]
+    assert quick["shell-quality"] == full["shell-quality"]  # type: ignore[index]
     assert quick["build"] == full["build"]  # type: ignore[index]
     assert quick["security"] == full["security"]  # type: ignore[index]
 
@@ -195,3 +221,20 @@ def test_full_history_secret_scans_ignore_only_reviewed_fixture_findings() -> No
         assert line.isdigit(), entry
         # Fake credentials in tests and the secret-pattern examples in person.py docstrings.
         assert path.startswith("tests/") or path == "src/adlife/core/domain/person.py", entry
+
+
+def test_the_measure_command_expands_report_patterns_in_any_shell(tmp_path: Path) -> None:
+    # PowerShell passes "junit-*/junit.xml" through unexpanded, so the script expands it.
+    module = _shard_module()
+    for shard in (2, 1):
+        (tmp_path / f"junit-{shard}").mkdir()
+        (tmp_path / f"junit-{shard}" / "junit.xml").write_text("<testsuites/>", encoding="utf-8")
+    pattern = str(tmp_path / "junit-*" / "junit.xml")
+    assert module.report_paths([pattern]) == [
+        tmp_path / "junit-1" / "junit.xml",
+        tmp_path / "junit-2" / "junit.xml",
+    ]
+    plain = str(tmp_path / "junit-1" / "junit.xml")
+    assert module.report_paths([plain]) == [Path(plain)]
+    with pytest.raises(SystemExit, match="no JUnit report matches"):
+        module.report_paths([str(tmp_path / "missing-*" / "junit.xml")])

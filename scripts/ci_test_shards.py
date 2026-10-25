@@ -4,17 +4,23 @@ usage: python scripts/ci_test_shards.py INDEX COUNT        (1 <= INDEX <= COUNT)
        python scripts/ci_test_shards.py --measure JUNIT_XML...
 
 Every test file under ``tests/`` lands in exactly one of the COUNT shards, so the shards
-together run the whole suite. Files are packed by their measured run time
+together run every test file. Files are packed by their measured run time
 (``scripts/ci_test_durations.json``), the slowest first, each into the shard with the least
 time so far; a file without a measurement counts as the median. The output is one path per
 line, relative to the repository root, ready to pass to pytest.
 
-``--measure`` rewrites that file from pytest JUnit reports, such as the ``junit-*``
-artifacts every quick CI run uploads (``gh run download RUN_ID --pattern 'junit-*'``).
+``--measure`` rewrites that file from pytest JUnit reports; no CI run does it. Refresh the
+times by hand from all six ``junit-*`` artifacts of one complete quick CI run
+(``gh run download RUN_ID --pattern 'junit-*'``, then
+``uv run python scripts/ci_test_shards.py --measure "junit-*/junit.xml"``) and commit the file.
+The script expands a pattern itself, so the command is the same in PowerShell, which passes
+it through unexpanded. A cancelled run can lack a shard's report, and measuring it would drop
+that shard's files.
 """
 
 from __future__ import annotations
 
+import glob
 import json
 import statistics
 import sys
@@ -76,9 +82,20 @@ def measured_seconds(reports: list[Path], files: list[str]) -> dict[str, float]:
     return {name: round(seconds[name], 1) for name in sorted(seconds)}
 
 
+def report_paths(arguments: list[str]) -> list[Path]:
+    """The JUnit reports named: each argument a path or a pattern the script expands."""
+    paths: list[Path] = []
+    for argument in arguments:
+        matches = sorted(glob.glob(argument)) if glob.has_magic(argument) else [argument]
+        if not matches:
+            raise SystemExit(f"no JUnit report matches {argument}")
+        paths.extend(Path(match) for match in matches)
+    return paths
+
+
 def main(argv: list[str]) -> int:
     if argv[:1] == ["--measure"] and len(argv) > 1:
-        seconds = measured_seconds([Path(value) for value in argv[1:]], suite_files())
+        seconds = measured_seconds(report_paths(argv[1:]), suite_files())
         document = {"about": ABOUT, "seconds": seconds}
         text = json.dumps(document, indent=2) + "\n"
         DURATIONS.write_text(text, encoding="utf-8", newline="\n")

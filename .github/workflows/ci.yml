@@ -1,9 +1,11 @@
 name: CI
 
-# The full CI: Python 3.11-3.13 on Linux plus Windows and macOS, the 85% coverage floor, the
+# The full CI: the quick checks' lint, types, shell-script lint, wheel smoke and scans, plus
+# Python 3.11-3.13 on Linux and 3.12 on Windows and macOS, the 85% coverage floor, the
 # performance gates and the long guided browser workload. It runs for pull requests, for
 # every release (release.yml calls it for the tagged commit), weekly, and on demand from the
-# Actions tab; each push to main gets the quick checks in quick.yml instead.
+# Actions tab; each push to main gets only the quick checks in quick.yml, which run every
+# test file except the two performance benchmarks and the long guided browser workload.
 
 on:
   workflow_call:

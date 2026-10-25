@@ -1,9 +1,11 @@
 name: Quick checks
 
-# Every push to main gets fast feedback: lint, types, the wheel smoke, the dependency and
-# secret scans, and the whole test suite split into parallel Linux shards without coverage.
-# The full CI (ci.yml) keeps the Python 3.11-3.13, Windows and macOS matrix, the coverage
-# floor and the performance gates for pull requests, releases, a weekly run and manual runs.
+# Every push to main gets fast feedback: lint, types, shell-script lint, the wheel smoke, the
+# dependency and secret scans, and every test file except the two performance benchmarks and
+# the long guided browser workload, split into parallel Linux shards without coverage. The
+# full CI (ci.yml) adds the Python 3.11-3.13, Windows and macOS matrix, the coverage floor,
+# the performance gates and the long guided browser workload, for pull requests, releases, a
+# weekly run and manual runs.
 
 on:
   push:
@@ -74,7 +76,8 @@ jobs:
         run: |
           uv run python scripts/ci_test_shards.py ${{ matrix.shard }} 6 > shard.txt
           uv run pytest -q --junitxml=junit.xml $(cat shard.txt)
-      # The measured times keep the shards balanced (ci_test_shards.py --measure).
+      # The measured times keep the shards balanced; they are refreshed by hand from all six
+      # reports of one complete run (ci_test_shards.py --measure).
       # actions/upload-artifact v6.0.0
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
@@ -82,6 +85,23 @@ jobs:
           name: junit-${{ matrix.shard }}
           path: junit.xml
           retention-days: 7
+
+  shell-quality:
+    name: shell script quality
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          find scripts -name '*.sh' -print0 | xargs -0 -n1 shellcheck --severity=style
+      - name: PowerShell Script Analyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force
+          Invoke-ScriptAnalyzer -Path scripts -Recurse -EnableExit -Severity Warning
 
   build:
     name: wheel build + clean-room smoke

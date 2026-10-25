@@ -260,7 +260,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, guided story and report, verified `city-view` saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented; outside the scope of this local research app |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`), including V10 rules, practice and loopback-AI runs with their story, report and offline replay | Complete |
-| Continuous integration: quick checks on every push to `main` (`.github/workflows/quick.yml`: lint, types, wheel smoke, dependency and secret scans, and the whole test suite in six parallel Linux shards), and the full Linux, macOS, and Windows matrix with the coverage floor and performance gates (`.github/workflows/ci.yml`) | Complete; the full matrix runs for pull requests, every release, weekly, and on demand (**Actions → CI → Run workflow**) |
+| Continuous integration: quick checks on every push to `main` (`.github/workflows/quick.yml`: lint, types, shell-script lint, wheel smoke, dependency and secret scans, and every test file except the two performance benchmarks and the long guided browser workload, in six parallel Linux shards), and the full CI (`.github/workflows/ci.yml`), which adds the Linux, macOS, and Windows matrix (Python 3.11 to 3.13 on Linux), the coverage floor, the performance gates, and the long guided browser workload | Complete; the full CI runs for pull requests, every release, weekly, and on demand (**Actions → CI → Run workflow**); the shard timings are refreshed by hand ([CONNECT_GITHUB.md](CONNECT_GITHUB.md)) |
 | Tag-triggered release workflow (wheel, sdist, checksums, SBOM, PyPI Trusted Publishing) and `uv`-based install scripts | Implemented; not yet run, because no release has been tagged |
 | Package-index publication (PyPI) and public tagged releases | Not done yet: needs the owner's PyPI setup and a signed release tag ([docs/releasing.md](docs/releasing.md)) |
 
@@ -453,7 +453,11 @@ billboard by the road), and the ad with its price in words. It never carries an 
 answer or a "with AI" value, so there is no feedback loop and every question is still built
 before any AI call. It no longer carries the advertiser's internals (target interests and
 frequency cap) or the rules engine's own numbers for this notice (match scores, fatigue, and
-the rules' sentiment and recall deltas), so the model is not anchored to the rules' answer.
+the rules' sentiment and recall deltas). That does not keep the rules' verdict from the model:
+for each earlier ad listed, the question says in fixed words what the rules made of it, and
+for one person and one campaign only fatigue and the channel change that verdict, so those
+words usually also describe what the rules make of this notice. The model can lean on them,
+and its answer is not independent of the rules.
 Giving a model an age, a job, and a personality type can pull it toward stereotypes about
 groups: the prompt tells it to answer from this individual's own description and to add
 `stereotype-risk` when an answer would rest on a stereotype, and a flagged answer is
@@ -764,9 +768,10 @@ software produces.
 
 1. **First public release** — publish `adlife-sim` to PyPI and tag the first release, so the
    `uv tool install adlife-sim` command above and the one-line install scripts work without
-   cloning. The release workflow is in place, quick checks run on every push, and the full
-   CI matrix runs for every release; what remains is the owner's PyPI Trusted Publishing
-   setup, a release signing key the workflow trusts, and a signed tag
+   cloning. The release workflow is in place, quick checks run on every push to `main`, and
+   the full CI (the Python and OS matrix, the coverage floor, the performance gates, and the
+   long guided browser workload) runs for every release; what remains is the owner's PyPI
+   Trusted Publishing setup, a release signing key the workflow trusts, and a signed tag
    ([docs/releasing.md](docs/releasing.md)).
 2. **Schema-v10 analysis** — let `city-compare --layer response`, `city-study`, and
    `city-report` read V10 runs, with a paired-cognition protocol so provider-dependent

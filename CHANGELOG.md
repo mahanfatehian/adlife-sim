@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Review fixes for the in-character upgrade, the CI split and the v10 smoke (2026-10-26)**
+  — an independent review of the day's work confirmed 13 defects, and each fix was
+  reviewed again before it landed.
+  - New drafts are refused up front by the screens their run applies later. Validation and
+    job submission now re-read the frozen input as the job does and build the same cognition
+    context models planning builds (the v3 persona card and request person, the causal agent
+    and campaign, and the schema-3 contexts). Persona or campaign text such as
+    `Node.js/React developer`, `B.Sc./M.Sc.`, `reads /r/gardening` or `4.5/5`, or a
+    credential label among the interests, now gets `400` `invalid-persona-text` or
+    `invalid-campaign-text` naming the field, before any job is reserved. Before, the draft
+    was accepted and the run failed after the whole simulation with "The deterministic city
+    evaluation failed.", even with no AI. Saved runs are never re-screened.
+  - Ordinary life-story and campaign prose is no longer refused as a credential. Persona and
+    campaign text gets a user-text screen, `contains_user_secret_text`, instead of the
+    raw-provider-body screen, so "basic computer skills", "Bakes cookies every Sunday;
+    favourite: oatmeal", "Her secret dream: ..." and the interest `cookies` are accepted.
+    Every credential shape is still refused: emails, labelled and header assignments,
+    credential-shaped Bearer and Basic values, and vendor keys. A draft's string values are
+    judged by credential labels alone, its keys by the whole label table.
+  - A valid in-character answer is no longer thrown away because the model's unused
+    reasoning says "basic groceries" or "the basic 12-month plan". Reasoning, an echoed
+    prompt and metrics are screened for the provider's own key, an email, a key shape, or a
+    label or header followed at once by an assignment. Every member that is read keeps the
+    full screen.
+  - New persona text is refused for phone numbers in more shapes: `555.123.4567`,
+    `01.23.45.67.89`, `0151/2345678` and digits separated by no-break spaces
+    (`contains_written_identifier_text`). Stored inputs keep the shapes every saved run was
+    accepted under, so a saved run holding such text still opens.
+  - The wheel smoke's schema-v10 and v9 rules and practice runs now have noticed ads, and the
+    smoke checks the counts, sources, headlines and replay. Before, no ad was noticed and the
+    checks passed without testing anything. Its in-character run now checks that each
+    question's person card is the record's own person and that both people answered.
+  - The in-character headline no longer says "answered 0 ... each time as the person" when
+    every AI request failed. Practice and rules runs made under the current contract now
+    have story fixtures, so the guard that keeps them on the general wording is tested.
+  - Shell-script lint (ShellCheck and PSScriptAnalyzer) runs on every push again. A test
+    now checks the shards against the files pytest itself collects.
+    `ci_test_shards.py --measure` expands report patterns itself, so the refresh command
+    also works in PowerShell. The README no longer says the model is not anchored to the
+    rules' answer.
 - **The wheel release smoke check covers schema-v10 runs (2026-10-25)** — the clean-room
   smoke of the built wheel (`scripts/smoke_release.py`) now also submits schema-4 drafts
   through the installed workbench API:
@@ -22,15 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replays the run offline with no further AI request. This closes the roadmap item "add a
   V10 run to the wheel release smoke check".
 - **Quick checks on every push, the full CI for pull requests and releases (2026-10-25)** —
-  a push to `main` now runs `.github/workflows/quick.yml`: lint, types, the wheel smoke, the
-  dependency and secret scans, and the whole test suite (without coverage, with the browser
-  tests required) split into six parallel Linux shards by `scripts/ci_test_shards.py`, which
-  puts every test file in exactly one shard and balances them by the times measured on CI
-  (`scripts/ci_test_durations.json`, refreshed from each run's `junit-*` artifacts). The
-  full CI (`.github/workflows/ci.yml`: Python 3.11 to 3.13 on Linux plus Windows and macOS,
-  the 85% coverage floor, the performance gates and the long guided browser workload) no
-  longer runs per push; it runs for pull requests, for every release through the release
-  workflow, every Monday, and on demand. Manual and weekly runs scan the whole git history
+  a push to `main` now runs `.github/workflows/quick.yml`: lint, types, shell-script lint
+  (ShellCheck and PSScriptAnalyzer), the wheel smoke, the dependency and secret scans, and
+  every test file except the two performance benchmarks and the long guided browser
+  workload (skipped with `ADLIFE_SKIP_LONG_TESTS=1`; without coverage, with the browser tests
+  required), split into six parallel Linux shards by `scripts/ci_test_shards.py`, which puts
+  every test file in exactly one shard and balances them by the times measured on CI
+  (`scripts/ci_test_durations.json`). Those times are refreshed by hand: download all six
+  `junit-*` artifacts of one complete (not cancelled) quick run with
+  `gh run download RUN_ID --pattern 'junit-*'`, run
+  `uv run python scripts/ci_test_shards.py --measure "junit-*/junit.xml"`, and commit the
+  file. The full CI (`.github/workflows/ci.yml`) adds Python 3.11 to 3.13 on Linux plus
+  Windows and macOS, the 85% coverage floor, the performance gates and the long guided
+  browser workload; it no longer runs per push, and runs for pull requests, for every
+  release through the release workflow, every Monday, and on demand. Manual and weekly runs scan the whole git history
   for secrets, so `.gitleaksignore` lists the 49 reviewed findings there, all fake
   credentials in test fixtures or secret-pattern examples in `person.py` docstrings; any
   new finding still fails the scan.
@@ -62,7 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still built from frozen inputs and the rule baseline before any AI call. It no longer sends
   the advertiser's internals (target interests, frequency cap) or the rules engine's own
   numbers for that notice (interest, affordability, value and fatigue factors and the rules'
-  sentiment and recall deltas). The answer is still the four closed categories and safety
+  sentiment and recall deltas). The earlier notices it lists still say, in fixed words, what
+  the rules made of each, and for one person and one campaign only fatigue and the channel
+  change that verdict, so the model can lean on it. The answer is still the four closed categories and safety
   flags, mapped by `city-cognition-influence-v1`; movement, attention, the rules track and the
   purchase-intention proxy stay rule-owned. Sending age, job and personality type adds a
   stereotype risk: the prompt asks for `stereotype-risk` when an answer would rest on a
