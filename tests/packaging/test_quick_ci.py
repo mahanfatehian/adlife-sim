@@ -181,3 +181,17 @@ def test_the_full_ci_runs_for_pull_requests_releases_weekly_and_on_demand() -> N
     assert isinstance(schedule, list) and len(schedule) == 1
     minute, hour, day, month, weekday = schedule[0]["cron"].split()
     assert (day, month) == ("*", "*") and weekday.isdigit() and minute.isdigit() and hour.isdigit()
+
+
+def test_full_history_secret_scans_ignore_only_reviewed_fixture_findings() -> None:
+    """Manual and weekly runs scan all history; only reviewed fixture findings are ignored."""
+    text = (ROOT / ".gitleaksignore").read_text(encoding="utf-8")
+    entries = [line for line in text.splitlines() if line and not line.startswith("#")]
+    assert entries == sorted(set(entries))
+    for entry in entries:
+        commit, path, rule, line = entry.split(":")
+        assert len(commit) == 40 and set(commit) <= set("0123456789abcdef"), entry
+        assert rule in {"generic-api-key", "jwt"}, entry
+        assert line.isdigit(), entry
+        # Fake credentials in tests and the secret-pattern examples in person.py docstrings.
+        assert path.startswith("tests/") or path == "src/adlife/core/domain/person.py", entry

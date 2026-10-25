@@ -1,0 +1,55 @@
+# Reviewed gitleaks findings, one fingerprint (commit:file:rule:line) per line.
+# Every entry is a fake credential in a test fixture (provider, redaction corpus, event
+# sink, store and loader tests) or a secret-pattern example in the docstrings of
+# src/adlife/core/domain/person.py; none is a real credential. Push scans check only the
+# new commits, but manual and weekly CI runs scan the whole history, which reports exactly
+# these. Any new finding still fails the scan.
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:1298
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:1301
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:1302
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:583
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:584
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:706
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:874
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:896
+03661e16f77bdcf04334e878bd7dfa6fbeaeaede:tests/contract/test_cognition_provider.py:generic-api-key:897
+0a50914179fd0a09cb6e02388dd65c0d1aaeed1d:tests/contract/test_event_sink.py:generic-api-key:123
+0a50914179fd0a09cb6e02388dd65c0d1aaeed1d:tests/contract/test_event_sink.py:generic-api-key:138
+0a50914179fd0a09cb6e02388dd65c0d1aaeed1d:tests/contract/test_event_sink.py:generic-api-key:155
+0a50914179fd0a09cb6e02388dd65c0d1aaeed1d:tests/security/test_redaction_corpus.py:generic-api-key:1844
+1695c30753dc38e5de75f2a1ce96639b4f4db264:tests/unit/city/test_spatial_loader.py:generic-api-key:33
+330bf8ba3f763fed0b83b4b2942433a4a1b43dcd:tests/unit/city/test_workbench_web.py:generic-api-key:593
+37c292a4f34d6e874bdf981176aeaab2f6d9d074:tests/security/test_city_provider_security.py:generic-api-key:64
+37c292a4f34d6e874bdf981176aeaab2f6d9d074:tests/unit/cognition/test_city_openai_compatible.py:generic-api-key:607
+37c292a4f34d6e874bdf981176aeaab2f6d9d074:tests/unit/cognition/test_city_openai_compatible.py:generic-api-key:885
+49386381c386b46ae25838e72f9636f57f68db8c:tests/contract/test_event_sink.py:generic-api-key:279
+49386381c386b46ae25838e72f9636f57f68db8c:tests/contract/test_event_sink.py:generic-api-key:291
+52b791715ed65b9c42e066349e71739d7b2d38fb:tests/unit/city/test_place_loader.py:generic-api-key:28
+7853f90e41e0bd5aaaaec3202b4514d59e8832ef:src/adlife/core/domain/person.py:generic-api-key:146
+7853f90e41e0bd5aaaaec3202b4514d59e8832ef:tests/security/test_redaction_corpus.py:generic-api-key:804
+7c33a99a8c1d4f8ab644deca3d046a8d026f4140:tests/contract/test_event_sink.py:generic-api-key:254
+7c33a99a8c1d4f8ab644deca3d046a8d026f4140:tests/contract/test_event_sink.py:generic-api-key:266
+7c33a99a8c1d4f8ab644deca3d046a8d026f4140:tests/contract/test_run_store.py:generic-api-key:322
+7c33a99a8c1d4f8ab644deca3d046a8d026f4140:tests/integration/test_sqlite_store.py:generic-api-key:688
+7c33a99a8c1d4f8ab644deca3d046a8d026f4140:tests/integration/test_sqlite_store.py:generic-api-key:709
+7c33a99a8c1d4f8ab644deca3d046a8d026f4140:tests/security/test_redaction_corpus.py:generic-api-key:1666
+814127d4fa632138daf5d8a2db40ab80db7ba37a:tests/unit/cognition/test_city_cache.py:generic-api-key:90
+8f83ec6b4749a523c5c56a61e0f5167520900966:tests/security/test_redaction_corpus.py:generic-api-key:1325
+8f83ec6b4749a523c5c56a61e0f5167520900966:tests/security/test_redaction_corpus.py:jwt:1301
+a1984e3664fecfca3900a187c97122ac84848c50:src/adlife/core/domain/person.py:generic-api-key:217
+a1984e3664fecfca3900a187c97122ac84848c50:tests/security/test_redaction_corpus.py:generic-api-key:106
+a1984e3664fecfca3900a187c97122ac84848c50:tests/security/test_redaction_corpus.py:generic-api-key:112
+a1984e3664fecfca3900a187c97122ac84848c50:tests/security/test_redaction_corpus.py:generic-api-key:118
+a1984e3664fecfca3900a187c97122ac84848c50:tests/security/test_redaction_corpus.py:generic-api-key:414
+a1984e3664fecfca3900a187c97122ac84848c50:tests/security/test_redaction_corpus.py:generic-api-key:437
+a1984e3664fecfca3900a187c97122ac84848c50:tests/security/test_redaction_corpus.py:generic-api-key:622
+a1984e3664fecfca3900a187c97122ac84848c50:tests/security/test_redaction_corpus.py:generic-api-key:99
+c8b0b48137ef46afdd5e6925b041e2bd1a55c605:tests/unit/city/test_spatial_study_loader.py:generic-api-key:82
+ce1007fe63bbfd42398e1b2da19209072e6dd7d1:tests/contract/test_cognition_provider.py:generic-api-key:1794
+ce1007fe63bbfd42398e1b2da19209072e6dd7d1:tests/contract/test_cognition_provider.py:generic-api-key:2243
+ce1007fe63bbfd42398e1b2da19209072e6dd7d1:tests/contract/test_cognition_provider.py:generic-api-key:2264
+ce1007fe63bbfd42398e1b2da19209072e6dd7d1:tests/contract/test_cognition_provider.py:jwt:2187
+ce1007fe63bbfd42398e1b2da19209072e6dd7d1:tests/contract/test_cognition_provider.py:jwt:2189
+d4ec1f5d6839586b2a5a3fa0da6d4bd04294faf7:tests/unit/city/test_provider_thinking_control.py:generic-api-key:68
+dbff927aa57e164e4b07146cc9d6e1a5fd363f4a:tests/integration/test_sqlite_store.py:generic-api-key:1003
+f506d0a9ad3775fcc6b128eea355ef2566ab9e9e:tests/unit/city/test_spatial_response_loader.py:generic-api-key:34

@@ -30,7 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   full CI (`.github/workflows/ci.yml`: Python 3.11 to 3.13 on Linux plus Windows and macOS,
   the 85% coverage floor, the performance gates and the long guided browser workload) no
   longer runs per push; it runs for pull requests, for every release through the release
-  workflow, every Monday, and on demand.
+  workflow, every Monday, and on demand. Manual and weekly runs scan the whole git history
+  for secrets, so `.gitleaksignore` lists the 49 reviewed findings there, all fake
+  credentials in test fixtures or secret-pattern examples in `person.py` docstrings; any
+  new finding still fails the scan.
 - **The story and report say when the AI answered as the person (2026-10-25)** — for a run
   made with prompt contract v3 and a real AI, the story headline now says the AI answered
   those moments as the person who noticed the ad, each answered moment says "The AI answered
