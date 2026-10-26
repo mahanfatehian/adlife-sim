@@ -173,6 +173,8 @@ def test_schema4_funding_defaults_and_derived_ceiling(mode):
         "provider_profile_id",
         "provider_revision_sha256",
         "funded_response_limit",
+        # Optional: the inner-thought languages of an AI run, absent when there are none.
+        "thought_languages",
     }
     # A direct call keeps the historical V2 contract, which admits none of these defaults.
     with pytest.raises(WorkbenchValidationError) as error:

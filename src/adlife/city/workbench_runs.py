@@ -924,13 +924,13 @@ class WorkbenchRunRepository:
             cognition.provider_profile_id,
             cognition.provider_revision_sha256,
         )
-        # The check must vouch for the run's own frozen contract: a run that writes inner
-        # thoughts needs a check that asked for them.
+        # A run that writes inner thoughts needs a check that asked for them; every other
+        # bounded run needs the current contract's check, as before.
         self.compatibility_registry.require_success(
             build_workbench_provider_compatibility_key(
                 profile,
                 effect_scope="bounded-signals-v1",
-                causal_contract=cognition.causal_contract,
+                causal_contract=cognition.causal_contract if cognition.thought_languages else None,
             )
         )
         endpoint = self._endpoint_policy.bind(profile)

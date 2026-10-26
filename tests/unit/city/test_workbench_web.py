@@ -46,6 +46,8 @@ from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_SELECTION_LIMITS,
+    CITY_COGNITION_THOUGHT_MAX_CHARACTERS,
+    CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT,
     CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
@@ -64,6 +66,10 @@ ORIGIN = "http://127.0.0.1:8765"
 UPLOAD_PATH = "/api/catalog/cities/upload"
 # The server freezes every new run with the current selection policy's row.
 CURRENT_SELECTION = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+# The row a run that asks for inner thoughts is made under.
+THOUGHTS_SELECTION = CITY_COGNITION_SELECTION_LIMITS[
+    CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT.selection_policy_version
+]
 # The smallest AI limit a new run may choose.
 FIRST_LIMIT = CURRENT_SELECTION.funded_response_limits[0]
 
@@ -454,6 +460,17 @@ def test_workbench_capabilities_are_versioned_bounded_and_honest(tmp_path: Path)
                 "max_output_tokens_per_attempt": CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
                 "max_http_attempts_per_request": CURRENT_SELECTION.max_attempts_per_request,
                 "compatibility_check_required_modes": ["local", "remote"],
+                # Inner thoughts: any choice of the languages, for the AI modes, each answer
+                # then under the thoughts row's own fixed budget.
+                "thought_languages": ["en", "de", "fa"],
+                "thought_modes": ["local", "remote"],
+                "thought_max_output_tokens_per_attempt": (
+                    THOUGHTS_SELECTION.output_tokens_per_attempt
+                ),
+                "thought_reserved_output_tokens_per_request": (
+                    THOUGHTS_SELECTION.reservation_tokens_per_request
+                ),
+                "thought_max_characters": CITY_COGNITION_THOUGHT_MAX_CHARACTERS,
             },
         },
         "active_job": None,

@@ -230,7 +230,7 @@ marked with small labels, and the legend under the map explains every mark.
 - Each moment card reads from top to bottom: what happened, the rules-only change, the AI's
   labels, and where the person ends up with AI, with paired bars for liking and ad memory.
   **How was this computed?** shows the exact arithmetic.
-- In a run with inner thoughts, an answered moment also shows **What ... is thinking**: the
+- In a run with inner thoughts, an answered moment also shows what that person is thinking: the
   thought in the page language (or every language the run has), with **Other languages**
   for the rest. The AI wrote it as this fictional person, and it changed no number.
 - **People** shows one card per person: what they noticed, their most common labels, and
