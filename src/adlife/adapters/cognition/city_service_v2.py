@@ -35,6 +35,7 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionResultV2,
     CityCognitionRuntimeFallbackReasonV2,
     CityCognitionSourceV2,
+    CityCognitionThoughtsV1,
     CityProviderAttemptV2,
     CityProviderRepairContextV2,
     CityProviderUsageV2,
@@ -123,6 +124,7 @@ class _Resolution:
     reason: CityCognitionFallbackReasonV2 | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    thoughts: CityCognitionThoughtsV1 | None = None
 
 
 async def _default_sleep(delay: float) -> None:
@@ -225,6 +227,7 @@ def _checked_attempt(
         (value.result, CityCognitionResultV2),
         (value.usage, CityProviderUsageV2),
         (value.repair_context, CityProviderRepairContextV2),
+        (value.thoughts, CityCognitionThoughtsV1),
     ):
         if child is not None and type(child) is not expected:
             raise TypeError("city provider attempt contains a wrong-version model")
@@ -335,6 +338,7 @@ class CityCognitionServiceV2:
                 reason=resolution.reason,
                 prompt_tokens=resolution.prompt_tokens,
                 completion_tokens=resolution.completion_tokens,
+                thoughts=resolution.thoughts,
             )
             for selection_index, resolution in enumerate(resolutions)
         )
@@ -455,6 +459,7 @@ class CityCognitionServiceV2:
             attempt_count=0,
             prompt_tokens=checked.prompt_tokens,
             completion_tokens=checked.completion_tokens,
+            thoughts=checked.thoughts,
         )
 
     async def _run_provider_batch(
@@ -651,6 +656,7 @@ class CityCognitionServiceV2:
                     attempt_count=state.count,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    thoughts=attempt.thoughts,
                 )
 
             context = attempt.repair_context
@@ -721,6 +727,7 @@ class CityCognitionServiceV2:
                     "result": resolution.result,
                     "prompt_tokens": resolution.prompt_tokens,
                     "completion_tokens": resolution.completion_tokens,
+                    **({} if resolution.thoughts is None else {"thoughts": resolution.thoughts}),
                 }
             )
             cancellation._run_if_active(partial(cache.put, key, record))

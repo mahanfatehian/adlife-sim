@@ -24,7 +24,8 @@ from adlife.core.domain.city_cognition import (
     Hash,
 )
 from adlife.core.domain.city_cognition_v2 import (
-    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_SELECTION_LIMITS,
+    CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT,
     CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CityCognitionCausalContractV2,
     CityCognitionEffectiveSettingsV2,
@@ -41,7 +42,29 @@ CompatibilityReason = (
 )
 
 
-def _scope_contract_hashes(effect_scope: ProviderEffectScope) -> dict[str, str | None]:
+def _bounded_contract(
+    causal_contract: CityCognitionCausalContractV2 | None,
+) -> CityCognitionCausalContractV2:
+    """The contract a bounded-signals check vouches for: the current one, or its thoughts twin.
+
+    A run that writes inner thoughts sends a different request and answer, so it needs a
+    check of that exact shape; every other bounded-signals run needs the current contract's.
+    """
+    contract = CityCognitionCausalContractV2.model_validate(
+        (causal_contract or CURRENT_CITY_COGNITION_CAUSAL_CONTRACT).model_dump(mode="python")
+    )
+    if contract.fingerprint not in {
+        CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.fingerprint,
+        CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT.fingerprint,
+    }:
+        raise ValueError("a bounded-signals check covers only the current contracts")
+    return contract
+
+
+def _scope_contract_hashes(
+    effect_scope: ProviderEffectScope,
+    causal_contract: CityCognitionCausalContractV2 | None = None,
+) -> dict[str, str | None]:
     if effect_scope == "explanation-only":
         return {
             "prompt_contract_sha256": CITY_COGNITION_PROMPT_CONTRACT_SHA256,
@@ -54,9 +77,7 @@ def _scope_contract_hashes(effect_scope: ProviderEffectScope) -> dict[str, str |
         }
     if effect_scope != "bounded-signals-v1":
         raise ValueError("provider effect scope is invalid")
-    contract = CityCognitionCausalContractV2.model_validate(
-        CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.model_dump(mode="python")
-    )
+    contract = _bounded_contract(causal_contract)
     return {
         "causal_contract_sha256": contract.fingerprint,
         **{
@@ -91,9 +112,14 @@ class WorkbenchProviderCompatibilityKey(DomainModel):
 
     @model_validator(mode="after")
     def coherent_scope_contract(self) -> Self:
+        contract = None
+        if self.effect_scope == "bounded-signals-v1":
+            thoughts = CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT
+            if self.causal_contract_sha256 == thoughts.fingerprint:
+                contract = thoughts
         if any(
             getattr(self, name) != expected
-            for name, expected in _scope_contract_hashes(self.effect_scope).items()
+            for name, expected in _scope_contract_hashes(self.effect_scope, contract).items()
         ):
             raise ValueError("compatibility key disagrees with its scoped contract")
         return self
@@ -107,9 +133,14 @@ def build_workbench_provider_compatibility_key(
     profile: ProviderProfileRevisionV1,
     *,
     effect_scope: ProviderEffectScope,
+    causal_contract: CityCognitionCausalContractV2 | None = None,
 ) -> WorkbenchProviderCompatibilityKey:
-    """Derive identity from public immutable facts, without resolving a credential."""
-    hashes = _scope_contract_hashes(effect_scope)
+    """Derive identity from public immutable facts, without resolving a credential.
+
+    ``causal_contract`` is the bounded-signals contract the check vouches for; it defaults
+    to the current one, and a run that writes inner thoughts passes the thoughts contract.
+    """
+    hashes = _scope_contract_hashes(effect_scope, causal_contract)
     profile = ProviderProfileRevisionV1.model_validate(profile.model_dump(mode="python"))
     snapshot = CityCognitionProviderProfileSnapshotV1.model_validate(
         profile.model_dump(mode="python")
@@ -128,11 +159,12 @@ def build_workbench_provider_compatibility_key(
             for name in CityCognitionEffectiveSettingsV2.model_fields
             if name != "schema_version"
         }
+        limits = CITY_COGNITION_SELECTION_LIMITS[
+            _bounded_contract(causal_contract).selection_policy_version
+        ]
         facts.update(
             schema_version=2,
-            max_output_tokens=min(
-                snapshot.max_output_tokens, CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
-            ),
+            max_output_tokens=limits.effective_output_tokens(snapshot.max_output_tokens),
         )
         settings = CityCognitionEffectiveSettingsV2.model_validate(facts)
     return WorkbenchProviderCompatibilityKey.model_validate(

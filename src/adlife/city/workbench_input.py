@@ -27,8 +27,10 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionCausalContractV2,
     CityCognitionFundedResponseLimit,
     CityCognitionMaxRequestBytes,
-    CityCognitionOutputTokensPerAttemptV2,
+    CityCognitionOutputTokensPerAttempt,
     CityCognitionReservationTokensPerRequest,
+    CityCognitionThoughtLanguageV1,
+    city_cognition_thought_languages,
 )
 from adlife.core.domain.identifiers import (
     WINDOWS_RESERVED_RUN_IDS,
@@ -93,6 +95,10 @@ def _safe_identifier(value: str) -> str:
     if contains_provider_secret_text(value):
         raise ValueError("workbench identifier contains credential-shaped content")
     return value
+
+
+def _no_thought_languages(value: object) -> bool:
+    return value == ()
 
 
 def _safe_provider_profile_id(value: str | None) -> str | None:
@@ -648,6 +654,11 @@ class WorkbenchCognitionDraftV4(DomainModel):
     provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
     provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
     funded_response_limit: CityCognitionFundedResponseLimit
+    # The languages to write each person's inner thoughts in; empty means no thoughts.
+    # Omitted from canonical bytes when empty, so every draft without them keeps its hash.
+    thought_languages: tuple[CityCognitionThoughtLanguageV1, ...] = Field(
+        default=(), max_length=3, strict=False, exclude_if=_no_thought_languages
+    )
 
     @model_validator(mode="wrap")
     @classmethod
@@ -676,6 +687,15 @@ class WorkbenchCognitionDraftV4(DomainModel):
             raise ValueError("funded_response_limit must be an integer")
         return value
 
+    @field_validator("thought_languages")
+    @classmethod
+    def canonical_thought_languages(
+        cls, value: tuple[CityCognitionThoughtLanguageV1, ...]
+    ) -> tuple[CityCognitionThoughtLanguageV1, ...]:
+        if value != city_cognition_thought_languages(value):
+            raise ValueError("thought languages must be distinct and in the order en, de, fa")
+        return value
+
     @model_validator(mode="after")
     def coherent_selection(self) -> Self:
         if self.mode in {"rules", "mock"}:
@@ -685,6 +705,8 @@ class WorkbenchCognitionDraftV4(DomainModel):
                 or self.funded_response_limit not in _OFFLINE_FUNDED_RESPONSE_LIMITS
             ):
                 raise ValueError("offline cognition requires no profile and all selected responses")
+            if self.thought_languages:
+                raise ValueError("inner thoughts need an AI source, not rules or practice answers")
         elif self.provider_profile_id is None or self.provider_revision_sha256 is None:
             raise ValueError("provider cognition requires an exact profile revision")
         return self
@@ -700,6 +722,9 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
     provider_profile_id: Annotated[str | None, Field(pattern=_PROVIDER_PROFILE_ID_PATTERN)]
     provider_revision_sha256: Annotated[str | None, Field(pattern=_SHA256_PATTERN)]
     funded_response_limit: CityCognitionFundedResponseLimit
+    thought_languages: tuple[CityCognitionThoughtLanguageV1, ...] = Field(
+        default=(), max_length=3, strict=False, exclude_if=_no_thought_languages
+    )
     causal_contract: CityCognitionCausalContractV2
     causal_contract_sha256: Annotated[str, Field(pattern=_SHA256_PATTERN)]
     request_schema_version: Literal[2]
@@ -711,7 +736,7 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
     max_request_bytes: CityCognitionMaxRequestBytes
     max_terminal_record_bytes: Literal[8192]
     max_wire_response_bytes: Literal[1048576]
-    max_output_tokens_per_attempt: CityCognitionOutputTokensPerAttemptV2
+    max_output_tokens_per_attempt: CityCognitionOutputTokensPerAttempt
     reservation_tokens_per_request: CityCognitionReservationTokensPerRequest
     initial_attempts: Literal[1]
     transient_retries: Literal[2, 3]
@@ -773,6 +798,7 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
             provider_profile_id=self.provider_profile_id,
             provider_revision_sha256=self.provider_revision_sha256,
             funded_response_limit=self.funded_response_limit,
+            thought_languages=self.thought_languages,
         )
         # Reparse nested instances as well as decoded JSON: constructed instances
         # cannot smuggle a different policy past their canonical hash checks.
@@ -795,6 +821,7 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
             or self.selected_requests_per_run != limits.selected_requests_per_run
             or self.concurrency_limit != limits.concurrency_limit(self.mode)
             or self.reservation_tokens_per_request != limits.reservation_tokens_per_request
+            or self.max_output_tokens_per_attempt != limits.output_tokens_per_attempt
             or self.transient_retries != limits.transient_retries_ceiling
             or self.repair_attempts != limits.repair_attempts_ceiling
             or self.aggregate_deadline_seconds != limits.aggregate_deadline_seconds
@@ -803,6 +830,8 @@ class NormalizedWorkbenchCognitionV4(DomainModel):
         prompt = CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version]
         if self.max_request_bytes != prompt.max_request_bytes:
             raise ValueError("frozen request ceiling does not match the prompt contract version")
+        if prompt.thoughts != bool(self.thought_languages):
+            raise ValueError("thought languages must be chosen exactly for the thoughts contract")
         ceiling = limits.aggregate_output_token_ceiling(self.mode, self.funded_response_limit)
         if self.aggregate_output_token_ceiling != ceiling:
             raise ValueError("aggregate output ceiling does not match the funded response limit")

@@ -772,11 +772,12 @@ class CityCognitionManifestReceiptV2(DomainModel):
     effect_scope: Literal["bounded-signals-v1"]
     mode: CityCognitionModeV2
     # Checked against the receipt's own frozen causal contract.
-    prompt_contract_version: Literal[2, 3]
+    prompt_contract_version: Literal[2, 3, 4]
     prompt_contract_sha256: Hash
-    result_schema_contract_version: Literal[2]
+    # Result schema V3 adds the inner thoughts of prompt contract v4.
+    result_schema_contract_version: Literal[2, 3]
     result_schema_contract_sha256: Hash
-    selection_policy_version: Literal[2, 3]
+    selection_policy_version: Literal[2, 3, 4]
     selection_policy_sha256: Hash
     fallback_policy_version: Literal[2]
     fallback_policy_sha256: Hash
@@ -808,7 +809,6 @@ class CityCognitionManifestReceiptV2(DomainModel):
     @field_validator(
         "request_schema_version",
         "result_schema_version",
-        "result_schema_contract_version",
         "fallback_policy_version",
         mode="before",
     )
@@ -821,15 +821,22 @@ class CityCognitionManifestReceiptV2(DomainModel):
     @field_validator("prompt_contract_version", mode="before")
     @classmethod
     def exact_prompt_contract_version(cls, value: object) -> object:
+        if type(value) is not int or value not in {2, 3, 4}:
+            raise ValueError("city cognition receipt prompt contract version must be 2, 3 or 4")
+        return value
+
+    @field_validator("result_schema_contract_version", mode="before")
+    @classmethod
+    def exact_result_schema_contract_version(cls, value: object) -> object:
         if type(value) is not int or value not in {2, 3}:
-            raise ValueError("city cognition receipt prompt contract version must be 2 or 3")
+            raise ValueError("city cognition receipt result schema version must be 2 or 3")
         return value
 
     @field_validator("selection_policy_version", mode="before")
     @classmethod
     def exact_selection_policy_version(cls, value: object) -> object:
         if type(value) is not int or value not in _CITY_COGNITION_SELECTION_LIMITS:
-            raise ValueError("city cognition receipt selection policy version must be 2 or 3")
+            raise ValueError("city cognition receipt selection policy version must be 2, 3 or 4")
         return value
 
     @field_validator("mock_policy_version", "influence_policy_version", mode="before")
@@ -860,6 +867,8 @@ class CityCognitionManifestReceiptV2(DomainModel):
             != self.selection_policy_version
             or _CITY_COGNITION_PROMPT_VERSION_BY_CONTRACT_SHA256[contract]
             != self.prompt_contract_version
+            or self.result_schema_contract_version
+            != (3 if self.prompt_contract_version == 4 else 2)
             or any(getattr(self, field) != expected for field, expected in hashes)
         ):
             raise ValueError("city cognition receipt policies do not match the frozen V2 contract")

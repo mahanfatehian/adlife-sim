@@ -40,6 +40,7 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionInputV2,
     CityCognitionRequestV2,
     CityCognitionResultV2,
+    CityCognitionResultV3,
     CityProviderAttemptV2,
     CityProviderRepairContextV2,
     CityProviderRepairReasonV2,
@@ -307,6 +308,35 @@ def _without_inert_members(
             kept.append(choice)
         screened["choices"] = kept
     return screened, inert
+
+
+def _without_thoughts(envelope: dict[str, object]) -> tuple[dict[str, object], list[object]]:
+    """Set apart the inner thoughts a thoughts-prompt answer carries in its content.
+
+    A thought is the person's everyday words ("I only buy basic groceries now"), which the
+    raw-body screen's prose heuristics would read as a credential and so discard the whole
+    answer. The thoughts get their own screens instead: the bound-credential check here,
+    and the thought model's persona-text screens, which drop just the thought.
+    """
+    choices = envelope.get("choices")
+    if not isinstance(choices, list):
+        return envelope, []
+    thoughts: list[object] = []
+    kept: list[object] = []
+    for choice in choices:
+        message = choice.get("message") if isinstance(choice, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            try:
+                document = _strict_json(content)
+            except _InvalidJson:
+                document = None
+            if isinstance(document, dict) and "thoughts" in document and isinstance(message, dict):
+                thoughts.append(document.pop("thoughts"))
+                content = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
+                choice = {**choice, "message": {**message, "content": content}}
+        kept.append(choice)
+    return {**envelope, "choices": kept}, thoughts
 
 
 def _admit_members(
@@ -630,6 +660,12 @@ class CityOpenAICompatibleProviderV2:
         if not isinstance(envelope, dict):
             return _invalid("invalid-json")
         screened, inert = _without_inert_members(envelope)
+        thoughts_answer = self._cognition_input.causal_contract.result_schema_version == 3
+        thoughts: list[object] = []
+        if thoughts_answer:
+            screened, thoughts = _without_thoughts(screened)
+            if any(present(text) for text in _strings(thoughts)):
+                return _invalid("unsafe-content")
         # The members that are read keep the whole-body screen, re-serialized in their
         # original order, so a label and a value in sibling members are still seen.
         remainder = json.dumps(screened, ensure_ascii=False, separators=(",", ":"))
@@ -657,27 +693,36 @@ class CityOpenAICompatibleProviderV2:
             )
         if not isinstance(document, dict):
             return _invalid("invalid-schema", usage)
-        if contains_labelled_secret_member(document) or any(
-            _unsafe(s, present) for s in _strings(document)
+        labels = {key: value for key, value in document.items() if key != "thoughts"}
+        if contains_labelled_secret_member(labels if thoughts_answer else document) or any(
+            _unsafe(s, present) for s in _strings(labels if thoughts_answer else document)
         ):
             return _invalid("unsafe-content", usage)
         try:
-            result = CityCognitionResultV2.model_validate_json(canonical_json(document))
+            kept = None
+            if thoughts_answer:
+                answer = CityCognitionResultV3.model_validate_json(canonical_json(document))
+                result = answer.signal_result()
+                languages = request.causal_identity.thought_languages or ()
+                kept = answer.kept_thoughts(languages)
+            else:
+                result = CityCognitionResultV2.model_validate_json(canonical_json(document))
             # Do not trust a constructed model or an existing instance at either boundary.
             result = CityCognitionResultV2.model_validate(
                 result.model_dump(mode="python", warnings="none")
             )
             if result.request_id != request.request_id:
                 return _invalid("request-id-mismatch", usage)
-            return CityProviderAttemptV2.model_validate(
-                {
-                    "schema_version": 2,
-                    "status": "valid",
-                    "result": result.model_dump(mode="python", warnings="none"),
-                    "repair_context": None,
-                    "usage": usage.model_dump(mode="python", warnings="none") if usage else None,
-                }
-            )
+            attempt: dict[str, object] = {
+                "schema_version": 2,
+                "status": "valid",
+                "result": result.model_dump(mode="python", warnings="none"),
+                "repair_context": None,
+                "usage": usage.model_dump(mode="python", warnings="none") if usage else None,
+            }
+            if kept is not None:
+                attempt["thoughts"] = kept.model_dump(mode="python", warnings="none")
+            return CityProviderAttemptV2.model_validate(attempt)
         except (ValueError, TypeError):
             return _invalid("invalid-schema", usage)
 

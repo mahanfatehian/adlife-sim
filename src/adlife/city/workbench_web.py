@@ -87,7 +87,6 @@ from adlife.city.workbench_cognition_views import (
 )
 from adlife.city.workbench_creatives import load_creative_template_catalog
 from adlife.city.workbench_input import (
-    NormalizedWorkbenchCognitionV4,
     WorkbenchCognitionDraftV4,
     WorkbenchRunDraftDocument,
     WorkbenchRunDraftV2,
@@ -154,10 +153,14 @@ from adlife.city.workbench_workspace import (
 from adlife.core.domain.city_cognition import CityCognitionProviderProfileSnapshotV1
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_SELECTION_LIMITS,
+    CITY_COGNITION_THOUGHT_LANGUAGES,
+    CITY_COGNITION_THOUGHT_MAX_CHARACTERS,
+    CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT,
     CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
     CityCognitionEvaluationV2,
     CityCognitionInputV2,
+    city_cognition_thought_languages,
 )
 from adlife.core.domain.city_run import (
     CityRunManifestV7,
@@ -242,6 +245,7 @@ _WORKBENCH_FIELD_COMPONENTS = frozenset(
         "side",
         "start_minute",
         "target_interests",
+        "thought_languages",
         "traits",
         "travel_direction",
     }
@@ -496,8 +500,10 @@ def _bounded_cognition_capabilities() -> dict[str, object]:
     hashes, and transport ceilings stay server-derived and are never submitted.
     """
     draft = WorkbenchCognitionDraftV4
-    frozen = NormalizedWorkbenchCognitionV4
     current = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+    thoughts = CITY_COGNITION_SELECTION_LIMITS[
+        CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT.selection_policy_version
+    ]
     effect_scope = _single_literal(draft, "effect_scope")
     modes = _literal_values(draft, "mode")
     provider_modes = _literal_values(CityCognitionProviderProfileSnapshotV1, "mode")
@@ -545,9 +551,16 @@ def _bounded_cognition_capabilities() -> dict[str, object]:
         },
         "aggregate_deadline_seconds": current.aggregate_deadline_seconds,
         "reserved_output_tokens_per_request": current.reservation_tokens_per_request,
-        "max_output_tokens_per_attempt": _single_literal(frozen, "max_output_tokens_per_attempt"),
+        "max_output_tokens_per_attempt": current.output_tokens_per_attempt,
         "max_http_attempts_per_request": current.max_attempts_per_request,
         "compatibility_check_required_modes": [mode for mode in modes if mode in provider_modes],
+        # Inner thoughts: any choice of these languages (none means off), for the AI modes,
+        # each answer then reserving the thoughts budget instead of the one above.
+        "thought_languages": list(CITY_COGNITION_THOUGHT_LANGUAGES),
+        "thought_modes": [mode for mode in modes if mode in provider_modes],
+        "thought_max_output_tokens_per_attempt": thoughts.output_tokens_per_attempt,
+        "thought_reserved_output_tokens_per_request": thoughts.reservation_tokens_per_request,
+        "thought_max_characters": CITY_COGNITION_THOUGHT_MAX_CHARACTERS,
     }
 
 
@@ -1403,9 +1416,16 @@ def create_city_workbench_app(
         _require_empty_query(request)
         payload = strict_json_object(await request.body())
         scope = payload.get("effect_scope", "explanation-only")
-        if set(payload) - {"effect_scope"} or scope not in (
-            "explanation-only",
-            "bounded-signals-v1",
+        try:
+            # A run that writes inner thoughts checks the request shape it will send.
+            languages = city_cognition_thought_languages(payload.get("thought_languages", []))
+        except ValueError:
+            languages = None
+        if (
+            set(payload) - {"effect_scope", "thought_languages"}
+            or scope not in ("explanation-only", "bounded-signals-v1")
+            or languages is None
+            or (languages and scope != "bounded-signals-v1")
         ):
             return workbench_error(
                 422,
@@ -1414,7 +1434,9 @@ def create_city_workbench_app(
                 {"request": "Unknown field."},
             )
         effect_scope: ProviderEffectScope = scope
-        result = await providers.check(profile_id, revision_id, effect_scope=effect_scope)
+        result = await providers.check(
+            profile_id, revision_id, effect_scope=effect_scope, thought_languages=languages
+        )
         return JSONResponse(content=result.model_dump(mode="json"))
 
     @app.get("/api/providers/{profile_id}/revisions/{revision_id}/bounded-check")
@@ -1426,11 +1448,18 @@ def create_city_workbench_app(
         """Read, never run, this process's bounded-signal check for one exact revision.
 
         A page reopened after inspecting a run can show the result the server already
-        enforces at job submission; nothing is re-checked or contacted here.
+        enforces at job submission; nothing is re-checked or contacted here. The one
+        accepted query, ``thoughts=true``, reads the check of the inner-thoughts contract.
         """
-        _require_empty_query(request)
+        query = request.query_params.multi_items()
+        if query not in ([], [("thoughts", "true")]):
+            raise WorkbenchQueryError("this route accepts only thoughts=true")
         profile = provider_registry.load(profile_id, revision_id)
-        key = build_workbench_provider_compatibility_key(profile, effect_scope="bounded-signals-v1")
+        key = build_workbench_provider_compatibility_key(
+            profile,
+            effect_scope="bounded-signals-v1",
+            causal_contract=CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT if query else None,
+        )
         record = compatibility_registry.lookup(key)
         if record is None:
             return workbench_error(

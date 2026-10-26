@@ -16,7 +16,6 @@ from adlife.core.domain.city_cognition_v2 import (
     _CITY_COGNITION_MOCK_VECTOR_V1,
     _CITY_COGNITION_PROMPT_CONTRACTS,
     _CITY_COGNITION_SELECTION_LIMITS,
-    _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
     _MAX_SELECTED_REQUESTS_ANY_VERSION,
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_DEFAULT_INFLUENCE_POLICY_V1,
@@ -56,6 +55,8 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionSourceV2,
     CityCognitionSummaryV2,
     CityCognitionTerminalRecordV2,
+    CityCognitionThoughtLanguageV1,
+    CityCognitionThoughtsV1,
     CitySelectionLimits,
     city_cognition_contract_selection_version,
     city_cognition_persona_clock_v1,
@@ -441,6 +442,19 @@ def _persona_profiles(
     return {profile.agent_id: profile for profile in context.profiles}
 
 
+def _thought_languages(
+    context: CityCognitionRunContextV2, contract: CityCognitionCausalContractV2
+) -> tuple[CityCognitionThoughtLanguageV1, ...] | None:
+    """The thoughts prompt's languages for each request; other prompts never receive them."""
+    if not _CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version].thoughts:
+        if context.thought_languages is not None:
+            raise ValueError("thought languages reach only the thoughts prompt contract")
+        return None
+    if context.thought_languages is None:
+        raise ValueError("the thoughts prompt contract requires the run's thought languages")
+    return context.thought_languages
+
+
 def _earlier_notices(
     items: Sequence[tuple[SpatialRuleResponse, str]], response: SpatialRuleResponse
 ) -> Sequence[tuple[SpatialRuleResponse, str]]:
@@ -479,6 +493,7 @@ def build_city_cognition_requests_v2(
         raise TypeError("mobility must be CityMobility")
     _validate_context_against_science(context, mobility, evaluation)
     profiles = _persona_profiles(context, contract)
+    thoughts = _thought_languages(context, contract)
     agents = {item.agent_id: item for item in context.agents}
     campaigns = {item.campaign_id: item for item in context.campaigns}
     initial_states = {(s.agent_id, s.campaign_id): s for s in context.initial_states}
@@ -584,20 +599,18 @@ def build_city_cognition_requests_v2(
             ),
         )
         persona = (
-            {}
+            None
             if persons is None
-            else {
-                "persona": build_city_cognition_persona_context_v1(
-                    person=persons[response.agent_id],
-                    campaign=campaigns[response.campaign_id],
-                    response=response,
-                    state_before=update.previous_state,
-                    activity=activity,
-                    earlier=_earlier_notices(
-                        notices[response.agent_id, response.campaign_id], response
-                    ),
-                )
-            }
+            else build_city_cognition_persona_context_v1(
+                person=persons[response.agent_id],
+                campaign=campaigns[response.campaign_id],
+                response=response,
+                state_before=update.previous_state,
+                activity=activity,
+                earlier=_earlier_notices(
+                    notices[response.agent_id, response.campaign_id], response
+                ),
+            )
         )
         identity = CityCognitionCausalRequestIdentityV2(
             schema_version=2,
@@ -612,7 +625,8 @@ def build_city_cognition_requests_v2(
             campaign=campaigns[response.campaign_id],
             initial_rule_state=initial_states[response.agent_id, response.campaign_id],
             disclosure=contract.disclosure,
-            **persona,
+            persona=persona,
+            thought_languages=thoughts,
         )
         facts = dict(
             schema_version=2,
@@ -828,6 +842,8 @@ def build_city_cognition_input_v2(
             or identity.persona.person.fingerprint != persons.get(baseline.agent_id)
         ):
             raise ValueError("city cognition request disagrees with its frozen persona card")
+        if identity.thought_languages != (context.thought_languages if prompt.thoughts else None):
+            raise ValueError("city cognition request disagrees with the run's thought languages")
         if (
             request.run_input_sha256 != context.run_input_sha256
             or identity.causal_contract_sha256 != contract.fingerprint
@@ -858,9 +874,7 @@ def build_city_cognition_input_v2(
             if field != "schema_version"
         }
         fields["schema_version"] = 2
-        fields["max_output_tokens"] = min(
-            profile.max_output_tokens, _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT
-        )
+        fields["max_output_tokens"] = limits.effective_output_tokens(profile.max_output_tokens)
         settings = CityCognitionEffectiveSettingsV2.model_validate(fields)
     return CityCognitionInputV2.model_validate(
         {
@@ -879,7 +893,7 @@ def build_city_cognition_input_v2(
             "max_request_bytes": prompt.max_request_bytes,
             "max_terminal_record_bytes": 8192,
             "max_wire_response_bytes": 1_048_576,
-            "max_output_tokens_per_attempt": _CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+            "max_output_tokens_per_attempt": limits.output_tokens_per_attempt,
             "reservation_tokens_per_request": limits.reservation_tokens_per_request,
             "initial_attempts": 1,
             "transient_retries_ceiling": limits.transient_retries_ceiling,
@@ -1041,12 +1055,21 @@ def build_city_cognition_terminal_record_v2(
     reason: CityCognitionFallbackReasonV2 | None = None,
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
+    thoughts: CityCognitionThoughtsV1 | None = None,
 ) -> CityCognitionTerminalRecordV2:
-    """Bind one terminal outcome solely to its request and frozen run authority."""
+    """Bind one terminal outcome solely to its request and frozen run authority.
+
+    ``thoughts`` are the person's inner thoughts a thoughts-prompt answer carried, in some
+    or all of the languages the request asked for.
+    """
     request = revalidate_model(request, CityCognitionRequestV2, label="city cognition request")
     frozen = revalidate_model(cognition_input, CityCognitionInputV2, label="city cognition input")
     result = revalidate_model(result, CityCognitionResultV2, label="city cognition result")
     identity = request.causal_identity
+    if thoughts is not None:
+        thoughts = revalidate_model(thoughts, CityCognitionThoughtsV1, label="city thoughts")
+        if not set(thoughts.languages) <= set(identity.thought_languages or ()):
+            raise ValueError("thoughts are in a language the request did not ask for")
     if (
         request.run_input_sha256 != frozen.run_input_sha256
         or identity.causal_contract_sha256 != frozen.causal_contract_sha256
@@ -1127,6 +1150,9 @@ def build_city_cognition_terminal_record_v2(
         provider_protocol=None if profile is None else profile.protocol,
         provider_effective_settings_sha256=None if settings is None else settings.fingerprint,
     )
+    if thoughts is not None:
+        # Absent thoughts add no member, so every record without them hashes as before.
+        facts["thoughts"] = thoughts.model_dump(mode="python")
     facts["record_hash"] = sha256(canonical_json(facts).encode("utf-8")).hexdigest()
     return CityCognitionTerminalRecordV2.model_validate(facts)
 
@@ -1321,6 +1347,7 @@ def validate_city_cognition_evaluation_v2(
             reason=record.reason,
             prompt_tokens=record.prompt_tokens,
             completion_tokens=record.completion_tokens,
+            thoughts=record.thoughts,
         )
         if canonical_json(record) != canonical_json(expected):
             raise ValueError("terminal does not match complete request and frozen input bindings")

@@ -55,7 +55,8 @@ from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CITY_COGNITION_PROMPT_CONTRACTS,
     CITY_COGNITION_SELECTION_LIMITS,
-    CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+    CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT,
+    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CityCognitionCausalContractV2,
 )
 from adlife.core.domain.person import (
@@ -211,6 +212,22 @@ def _normalize_draft(
         contract = CityCognitionCausalContractV2.model_validate_json(
             canonical_json(causal_contract)
         )
+        # A draft that asks for inner thoughts freezes the thoughts contract in place of the
+        # current one; any other contract has no room for them.
+        if (
+            selection.thought_languages
+            and contract.fingerprint == CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.fingerprint
+        ):
+            contract = CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT
+        thoughts_prompt = CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version].thoughts
+        if bool(selection.thought_languages) != thoughts_prompt:
+            raise WorkbenchValidationError(
+                "invalid-cognition",
+                "cognition.thought_languages",
+                "Inner thoughts need the current AI contract and at least one language."
+                if selection.thought_languages
+                else "This contract writes inner thoughts, so choose at least one language.",
+            )
         limits = CITY_COGNITION_SELECTION_LIMITS[contract.selection_policy_version]
         refusal = workbench_selection_limit_refusal(
             mode=selection.mode,
@@ -236,6 +253,7 @@ def _normalize_draft(
                     provider_profile_id=selection.provider_profile_id,
                     provider_revision_sha256=selection.provider_revision_sha256,
                     funded_response_limit=selection.funded_response_limit,
+                    thought_languages=selection.thought_languages,
                     causal_contract=contract,
                     causal_contract_sha256=contract.fingerprint,
                     request_schema_version=2,
@@ -247,7 +265,7 @@ def _normalize_draft(
                     ].max_request_bytes,
                     max_terminal_record_bytes=8192,
                     max_wire_response_bytes=1_048_576,
-                    max_output_tokens_per_attempt=CITY_COGNITION_V2_OUTPUT_TOKENS_PER_ATTEMPT,
+                    max_output_tokens_per_attempt=limits.output_tokens_per_attempt,
                     reservation_tokens_per_request=limits.reservation_tokens_per_request,
                     initial_attempts=1,
                     transient_retries=limits.transient_retries_ceiling,

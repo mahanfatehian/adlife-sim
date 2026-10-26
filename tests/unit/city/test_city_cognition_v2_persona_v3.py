@@ -136,7 +136,11 @@ def test_prompt_v3_and_contract_v4_are_new_versions_beside_untouched_v2_and_v3()
         parsed = domain.CityCognitionCausalContractV2.model_validate_json(canonical_json(contract))
         assert canonical_json(parsed) == canonical_json(contract)
     rows = domain.CITY_COGNITION_PROMPT_CONTRACTS
-    assert {version: row.max_request_bytes for version, row in rows.items()} == {2: 8192, 3: 16384}
+    assert {version: row.max_request_bytes for version, row in rows.items()} == {
+        2: 8192,
+        3: 16384,
+        4: 16384,
+    }
     assert domain.city_cognition_contract_prompt_version(V4.fingerprint) == 3
     assert domain.city_cognition_contract_prompt_version(v3.fingerprint) == 2
     assert domain.city_cognition_contract_selection_version(V4.fingerprint) == 3

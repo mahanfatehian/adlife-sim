@@ -87,7 +87,6 @@ from adlife.core.domain.city_cognition import (
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_PROMPT_CONTRACTS,
     CITY_COGNITION_V2_DISCLOSURE,
-    CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CityCognitionAdV1,
     CityCognitionBaselineProposalV2,
     CityCognitionCausalAgentV2,
@@ -105,7 +104,10 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionRuleFactorsV2,
     CityCognitionRunContextV2,
     CityCognitionSituationV1,
+    CityCognitionThoughtLanguageV1,
     CityProviderAttemptV2,
+    city_cognition_causal_contract_for,
+    city_cognition_thought_languages,
 )
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
@@ -379,15 +381,20 @@ class WorkbenchCheckProviderFactoryV2(Protocol):
 
 def _compatibility_probe_v2(
     profile: ProviderProfileRevisionV1,
+    thought_languages: tuple[CityCognitionThoughtLanguageV1, ...] = (),
 ) -> tuple[CityCognitionRequestV2, CityCognitionInputV2]:
-    """One fictional, core-validated causal probe; never run, apply, or persist it."""
+    """One fictional, core-validated causal probe; never run, apply, or persist it.
+
+    With ``thought_languages`` it probes the thoughts contract, asking for the person's
+    inner thoughts in exactly those languages, as a run that writes them does.
+    """
     probe_id = "city-cognition-compatibility-probe-v2"
 
     def opaque(field: str) -> str:
         return sha256((probe_id + "\0" + field).encode("utf-8")).hexdigest()
 
     contract = CityCognitionCausalContractV2.model_validate(
-        CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.model_dump(mode="python")
+        city_cognition_causal_contract_for(thought_languages).model_dump(mode="python")
     )
     persona_prompt = CITY_COGNITION_PROMPT_CONTRACTS[contract.prompt_contract_version]
     agent = CityCognitionCausalAgentV2(
@@ -455,7 +462,8 @@ def _compatibility_probe_v2(
         agents=(agent,),
         campaigns=(campaign,),
         initial_states=(initial,),
-        **({"profiles": (persona_card,)} if persona_prompt.persona_context else {}),
+        profiles=(persona_card,) if persona_prompt.persona_context else None,
+        thought_languages=thought_languages or None,
     )
     opportunity_id = spatial_opportunity_id(
         scenario_sha256=context.scenario_sha256,
@@ -536,39 +544,38 @@ def _compatibility_probe_v2(
         campaign=campaign,
         initial_rule_state=initial,
         disclosure=CITY_COGNITION_V2_DISCLOSURE,
-        **(
-            {
-                "persona": CityCognitionPersonaContextV1(
-                    person=build_city_cognition_persona_person_v1(persona_card, agent),
-                    feelings_now=CityCognitionFeelingsNowV1.model_validate(
-                        {
-                            "brand_liking": {"value": 0.0, "words": "neutral"},
-                            "ad_memory": {"value": 0.0, "words": "barely remember the brand"},
-                            "purchase_interest": {
-                                "value": 0.0,
-                                "words": "no real interest in buying",
-                            },
-                        }
-                    ),
-                    history=CityCognitionHistoryV1(
-                        noticed_this_campaign_before=0, noticed_today_before=0, recent=()
-                    ),
-                    situation=CityCognitionSituationV1(
-                        day=1, time="00:00", doing="at home", seen_on="their phone feed"
-                    ),
-                    ad=CityCognitionAdV1(
-                        product_name=creative.product_name,
-                        product_category=creative.product_category,
-                        message=creative.message,
-                        call_to_action=creative.call_to_action,
-                        disclosure=creative.disclosure,
-                        relative_price=campaign.relative_price,
-                        price_words="a normal price",
-                    ),
-                )
-            }
+        thought_languages=thought_languages or None,
+        persona=(
+            CityCognitionPersonaContextV1(
+                person=build_city_cognition_persona_person_v1(persona_card, agent),
+                feelings_now=CityCognitionFeelingsNowV1.model_validate(
+                    {
+                        "brand_liking": {"value": 0.0, "words": "neutral"},
+                        "ad_memory": {"value": 0.0, "words": "barely remember the brand"},
+                        "purchase_interest": {
+                            "value": 0.0,
+                            "words": "no real interest in buying",
+                        },
+                    }
+                ),
+                history=CityCognitionHistoryV1(
+                    noticed_this_campaign_before=0, noticed_today_before=0, recent=()
+                ),
+                situation=CityCognitionSituationV1(
+                    day=1, time="00:00", doing="at home", seen_on="their phone feed"
+                ),
+                ad=CityCognitionAdV1(
+                    product_name=creative.product_name,
+                    product_category=creative.product_category,
+                    message=creative.message,
+                    call_to_action=creative.call_to_action,
+                    disclosure=creative.disclosure,
+                    relative_price=campaign.relative_price,
+                    price_words="a normal price",
+                ),
+            )
             if persona_prompt.persona_context
-            else {}
+            else None
         ),
     )
     facts = {
@@ -936,8 +943,12 @@ class WorkbenchProviderController:
         revision_id: str,
         *,
         effect_scope: ProviderEffectScope = "explanation-only",
+        thought_languages: tuple[CityCognitionThoughtLanguageV1, ...] = (),
     ) -> WorkbenchProviderCheckResult | WorkbenchProviderCheckResultV2:
         """Perform one explicit bounded check; cancellation is never a success.
+
+        A bounded-signals check with ``thought_languages`` checks the thoughts contract, the
+        one a run that writes inner thoughts in those languages needs.
 
         The deadline is 60 seconds for a remote origin, whose gateway may be slow to
         answer, and two minutes for a local-trust origin, whose model server may still be
@@ -945,6 +956,10 @@ class WorkbenchProviderController:
         """
         if effect_scope not in ("explanation-only", "bounded-signals-v1"):
             raise ValueError("provider effect scope is invalid")
+        thought_languages = city_cognition_thought_languages(thought_languages)
+        if thought_languages and effect_scope != "bounded-signals-v1":
+            raise ValueError("only a bounded-signals check can include inner thoughts")
+        contract = city_cognition_causal_contract_for(thought_languages)
         lease = self.operations.begin_check()
         cancellation = lease.cancellation
         assert cancellation is not None
@@ -956,7 +971,11 @@ class WorkbenchProviderController:
         defect = False
         try:
             profile = self.registry.load(profile_id, revision_id)
-            key = build_workbench_provider_compatibility_key(profile, effect_scope=effect_scope)
+            key = build_workbench_provider_compatibility_key(
+                profile,
+                effect_scope=effect_scope,
+                causal_contract=contract if effect_scope == "bounded-signals-v1" else None,
+            )
             try:
                 endpoint = self._endpoint_policy.bind(profile)
                 credential = self._credentials.resolve(profile)
@@ -988,7 +1007,7 @@ class WorkbenchProviderController:
                 try:
                     deadline = _check_deadline_seconds(endpoint.trust_class)
                     if effect_scope == "bounded-signals-v1":
-                        request_v2, input_v2 = _compatibility_probe_v2(profile)
+                        request_v2, input_v2 = _compatibility_probe_v2(profile, thought_languages)
                         provider_v2 = self._factory_v2(
                             endpoint_policy=self._endpoint_policy,
                             endpoint=endpoint,

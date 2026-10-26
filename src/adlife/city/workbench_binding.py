@@ -568,15 +568,16 @@ def build_city_cognition_run_context_v2(
         draft.cognition.causal_contract.prompt_contract_version
     ].persona_context
     profiles = (
-        {
-            "profiles": tuple(
-                city_cognition_person_profile_v1(agent_id, persona)
-                for agent_id, persona in assumptions.items()
-            )
-        }
+        tuple(
+            city_cognition_person_profile_v1(agent_id, persona)
+            for agent_id, persona in assumptions.items()
+        )
         if persona_prompt
-        else {}
+        else None
     )
+    # The thoughts (prompt v4) contract also writes each person's inner thoughts, in the
+    # languages this run's own frozen cognition settings chose.
+    thought_languages = draft.cognition.thought_languages or None
     return CityCognitionRunContextV2(
         schema_version=2,
         run_input_sha256=bound_input.fingerprint,
@@ -599,7 +600,8 @@ def build_city_cognition_run_context_v2(
             )
             for state in reconstructed.initial_states
         ),
-        **profiles,
+        profiles=profiles,
+        thought_languages=thought_languages,
     )
 
 

@@ -21,8 +21,10 @@ from adlife.core.domain.serialization import canonical_json
 BEGIN_UNTRUSTED_CITY_COGNITION_DATA: Final = "BEGIN_UNTRUSTED_CITY_COGNITION_DATA"
 END_UNTRUSTED_CITY_COGNITION_DATA: Final = "END_UNTRUSTED_CITY_COGNITION_DATA"
 CITY_COGNITION_JSON_SCHEMA_NAME_V2: Final = "city-cognition-signal-result-v2"
+CITY_COGNITION_JSON_SCHEMA_NAME_V3: Final = "city-cognition-signal-result-v3"
 CITY_COGNITION_PROMPT_CONTRACT_LABEL_V2: Final = "city-cognition-signal-prompt-v2"
 CITY_COGNITION_PROMPT_CONTRACT_LABEL_V3: Final = "city-cognition-persona-prompt-v3"
+CITY_COGNITION_PROMPT_CONTRACT_LABEL_V4: Final = "city-cognition-persona-thoughts-prompt-v4"
 # vLLM's request extension for chat-template arguments. Qwen's template reads
 # enable_thinking; OpenAI refuses unknown members, so it is sent only when the frozen
 # effective settings turn thinking off.
@@ -96,17 +98,19 @@ def _persona_projection_v3(request: CityCognitionRequestV2) -> FrozenJsonMapping
     if persona is None:
         raise ValueError("persona prompt requests require a persona context")
     document = persona.model_dump(mode="json")
-    return freeze_json_mapping(
-        {
-            "request_id": request.request_id,
-            "disclosure": identity.disclosure,
-            "person": document["person"],
-            "feelings_now": document["feelings_now"],
-            "history": document["history"],
-            "situation": document["situation"],
-            "ad": document["ad"],
-        }
-    )
+    block: dict[str, object] = {
+        "request_id": request.request_id,
+        "disclosure": identity.disclosure,
+        "person": document["person"],
+        "feelings_now": document["feelings_now"],
+        "history": document["history"],
+        "situation": document["situation"],
+        "ad": document["ad"],
+    }
+    # Prompt v4: the languages to write the person's inner thoughts in.
+    if identity.thought_languages is not None:
+        block["thought_languages"] = list(identity.thought_languages)
+    return freeze_json_mapping(block)
 
 
 @_value_free_boundary
@@ -116,11 +120,12 @@ def build_city_cognition_provider_projection_v2(
     """Project an explicit allowlist; internal identities never reach the provider.
 
     The projection follows the prompt-contract version the request's causal contract
-    binds: prompt v3 sends the persona data block, every other request the v2 block.
+    binds: prompts v3 and v4 send the persona data block (v4 with its thought languages),
+    every other request the v2 block.
     """
     request = _request(request)
     identity = request.causal_identity
-    if city_cognition_contract_prompt_version(identity.causal_contract_sha256) == 3:
+    if city_cognition_contract_prompt_version(identity.causal_contract_sha256) in {3, 4}:
         return _persona_projection_v3(request)
     agent, campaign, baseline = identity.agent, identity.campaign, identity.baseline
     factors = baseline.rule_factors
@@ -211,10 +216,13 @@ def build_city_cognition_messages_v2(
 @_value_free_boundary
 def city_cognition_response_format_v2(cognition_input: CityCognitionInputV2) -> dict[str, object]:
     cognition_input = _input(cognition_input)
+    thoughts = cognition_input.causal_contract.result_schema_version == 3
     return {
         "type": "json_schema",
         "json_schema": {
-            "name": CITY_COGNITION_JSON_SCHEMA_NAME_V2,
+            "name": CITY_COGNITION_JSON_SCHEMA_NAME_V3
+            if thoughts
+            else CITY_COGNITION_JSON_SCHEMA_NAME_V2,
             "strict": True,
             "schema": json.loads(cognition_input.causal_contract.result_schema_document),
         },
@@ -274,6 +282,7 @@ def build_city_cognition_repair_payload_v2(
 __all__ = [
     "CHAT_TEMPLATE_THINKING_OFF",
     "CITY_COGNITION_JSON_SCHEMA_NAME_V2",
+    "CITY_COGNITION_JSON_SCHEMA_NAME_V3",
     "CITY_COGNITION_PROMPT_CONTRACT_LABEL_V2",
     "CITY_COGNITION_PROMPT_CONTRACT_LABEL_V3",
     "build_city_cognition_messages_v2",

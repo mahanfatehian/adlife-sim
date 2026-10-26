@@ -138,7 +138,8 @@ class WorkbenchCognitionSummaryViewV2(_CognitionView):
     causal_contract_sha256: Hash
     prompt_contract_id: CityCognitionPromptContractId
     prompt_contract_sha256: Hash
-    result_schema_id: Literal["city-cognition-signal-result-v2"]
+    # Thoughts runs (contract V5) answer with result schema V3; the labels stay V2.
+    result_schema_id: Literal["city-cognition-signal-result-v2", "city-cognition-signal-result-v3"]
     result_schema_contract_sha256: Hash
     selection_policy_sha256: Hash
     fallback_policy_sha256: Hash

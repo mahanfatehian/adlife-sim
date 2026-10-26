@@ -1026,17 +1026,21 @@ def test_v2_output_budget_is_one_closed_derived_contract() -> None:
     assert v2.selected_requests_per_run * reservation_tokens() == (
         m.CITY_COGNITION_V2_MAX_AGGREGATE_OUTPUT_TOKENS
     )
-    # Every version keeps reservation = attempts x per-attempt cap, and the wire
-    # unions hold exactly the values of the version rows.
+    # Every version keeps reservation = attempts x its own per-attempt cap, and the wire
+    # unions hold exactly the values of the version rows. Versions 2 and 3 cap each
+    # attempt at 256; version 4 gives the inner thoughts room with 640.
     rows = tuple(m.CITY_COGNITION_SELECTION_LIMITS.values())
+    assert [row.output_tokens_per_attempt for row in rows] == [cap, cap, 640]
     for row in rows:
-        assert row.reservation_tokens_per_request == row.max_attempts_per_request * cap
+        assert row.reservation_tokens_per_request == (
+            row.max_attempts_per_request * row.output_tokens_per_attempt
+        )
         assert row.max_attempts_per_request == (
             1 + row.transient_retries_ceiling + row.repair_attempts_ceiling
         )
     workbench = NormalizedWorkbenchCognitionV4.model_fields
     for fields in (frozen, workbench):
-        assert get_args(fields["max_output_tokens_per_attempt"].annotation) == (cap,)
+        assert get_args(fields["max_output_tokens_per_attempt"].annotation) == (cap, 640)
         assert get_args(fields["reservation_tokens_per_request"].annotation) == tuple(
             row.reservation_tokens_per_request for row in rows
         )
@@ -1047,9 +1051,10 @@ def test_v2_output_budget_is_one_closed_derived_contract() -> None:
         settings_data(profile_data("local", 384))
     )
     assert settings.max_output_tokens == cap
+    # The settings model admits the widest version budget; each input then checks its own.
     with pytest.raises(ValidationError):
         m.CityCognitionEffectiveSettingsV2.model_validate(
-            settings_data(profile_data("local", 384)) | {"max_output_tokens": cap + 1}
+            settings_data(profile_data("local", 384)) | {"max_output_tokens": 641}
         )
 
 
@@ -1186,7 +1191,8 @@ def test_v2_attempts_require_complete_closed_screened_outcomes(status: str) -> N
 @pytest.mark.parametrize(
     "field,invalid",
     [
-        ("max_output_tokens", output_cap() + 1),
+        # One past the widest version budget (the thoughts budget of selection policy V4).
+        ("max_output_tokens", 641),
         ("max_output_tokens", 0),
         ("max_output_tokens", True),
         ("attempt_timeout_seconds", 31),

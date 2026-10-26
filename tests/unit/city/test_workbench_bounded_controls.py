@@ -19,6 +19,9 @@ from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_SELECTION_LIMITS,
+    CITY_COGNITION_THOUGHT_LANGUAGES,
+    CITY_COGNITION_THOUGHT_MAX_CHARACTERS,
+    CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT,
     CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
     CityCognitionResultV2,
     CityProviderAttemptV2,
@@ -52,6 +55,11 @@ CAPABILITY_KEYS = {
     "max_output_tokens_per_attempt",
     "max_http_attempts_per_request",
     "compatibility_check_required_modes",
+    "thought_languages",
+    "thought_modes",
+    "thought_max_output_tokens_per_attempt",
+    "thought_reserved_output_tokens_per_request",
+    "thought_max_characters",
 }
 
 
@@ -63,7 +71,7 @@ def _single(model: Any, field: str) -> Any:
 def runtime_bounded_capability() -> dict[str, Any]:
     """The bounded-cognition options exactly as today's runtime models define them.
 
-    Token limits are read from the frozen model literals, never restated here, so these
+    Token limits are read from the runtime selection rows, never restated here, so these
     tests follow a deliberate runtime limit change without edits.
     """
 
@@ -78,9 +86,11 @@ def runtime_bounded_capability() -> dict[str, Any]:
             }
         ).funded_response_limit
 
-    frozen = NormalizedWorkbenchCognitionV4
     modes = list(get_args(WorkbenchCognitionDraftV4.model_fields["mode"].annotation))
     current = CITY_COGNITION_SELECTION_LIMITS[CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION]
+    thoughts = CITY_COGNITION_SELECTION_LIMITS[
+        CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT.selection_policy_version
+    ]
     return {
         "effect_scope": _single(WorkbenchCognitionDraftV4, "effect_scope"),
         "workbench_schema_version": _single(WorkbenchRunDraftV4, "schema_version"),
@@ -101,9 +111,15 @@ def runtime_bounded_capability() -> dict[str, Any]:
         },
         "aggregate_deadline_seconds": current.aggregate_deadline_seconds,
         "reserved_output_tokens_per_request": current.reservation_tokens_per_request,
-        "max_output_tokens_per_attempt": _single(frozen, "max_output_tokens_per_attempt"),
+        # The frozen field now spans every version's cap; the current row's is published.
+        "max_output_tokens_per_attempt": current.output_tokens_per_attempt,
         "max_http_attempts_per_request": current.max_attempts_per_request,
         "compatibility_check_required_modes": [mode for mode in modes if mode in PROVIDER_MODES],
+        "thought_languages": list(CITY_COGNITION_THOUGHT_LANGUAGES),
+        "thought_modes": [mode for mode in modes if mode in PROVIDER_MODES],
+        "thought_max_output_tokens_per_attempt": thoughts.output_tokens_per_attempt,
+        "thought_reserved_output_tokens_per_request": thoughts.reservation_tokens_per_request,
+        "thought_max_characters": CITY_COGNITION_THOUGHT_MAX_CHARACTERS,
     }
 
 

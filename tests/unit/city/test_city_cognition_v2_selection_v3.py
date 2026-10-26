@@ -105,7 +105,7 @@ def test_contract_refuses_mismatched_selection_versions_and_documents() -> None:
 
 def test_limit_table_matches_the_spec_exactly() -> None:
     table = domain.CITY_COGNITION_SELECTION_LIMITS
-    assert set(table) == {2, 3}
+    assert set(table) == {2, 3, 4}
     v2, v3 = table[2], table[3]
     assert (v2.selected_requests_per_agent, v2.selected_requests_per_run) == (4, 60)
     assert (v3.selected_requests_per_agent, v3.selected_requests_per_run) == (1000, 1000)
@@ -129,10 +129,23 @@ def test_limit_table_matches_the_spec_exactly() -> None:
     )
     assert (v2.max_terminal_records, v3.max_terminal_records) == (60, 1000)
     assert (v2.max_summary_attempts, v3.max_summary_attempts) == (240, 6000)
+    # Version 4 selects exactly as version 3 and only widens each answer for the thoughts.
+    v4 = table[4]
+    same = {field for field in v3.__dataclass_fields__ if getattr(v3, field) == getattr(v4, field)}
+    assert set(v3.__dataclass_fields__) - same == {
+        "selection_policy_version",
+        "policy_id",
+        "reservation_tokens_per_request",
+        "output_tokens_per_attempt",
+        "fixed_output_tokens",
+    }
+    assert (v4.output_tokens_per_attempt, v4.reservation_tokens_per_request) == (640, 3840)
+    assert v4.fixed_output_tokens and v4.effective_output_tokens(256) == 640
+    assert v3.effective_output_tokens(384) == 256 and v3.effective_output_tokens(128) == 128
     with pytest.raises(TypeError):
-        table[4] = v3  # type: ignore[index]
+        table[5] = v3  # type: ignore[index]
     with pytest.raises(ValueError):
-        domain.city_cognition_selection_limits(4)
+        domain.city_cognition_selection_limits(5)
 
 
 def _v3_run(*, mode="mock", limit=1000, agent_count=16, minutes=20, profile=None):

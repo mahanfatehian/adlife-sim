@@ -839,6 +839,58 @@ def test_recorded_bounded_check_is_read_only_exact_and_scope_bound(tmp_path: Pat
     assert "11434" not in exposed
 
 
+def test_recorded_bounded_check_reads_the_thoughts_check_apart(tmp_path: Path) -> None:
+    """A run with inner thoughts needs its own check; ``thoughts=true`` reads that one."""
+    from adlife.core.domain.city_cognition_v2 import (
+        CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT,
+        CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
+    )
+    from tests.unit.city.test_workbench_providers import _Provider, _ProviderV2
+
+    workspace = prepare_workbench_workspace(tmp_path / "workspace")
+    app = _module().create_city_workbench_app(
+        workspace,
+        csrf_token=TOKEN,
+        provider_factory=lambda **kwargs: _Provider(**kwargs),
+        provider_factory_v2=lambda **kwargs: _ProviderV2(**kwargs),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        profile = _secure_post(client, "/api/providers", _local_provider_payload()).json()
+        revision = f"/api/providers/local-ollama/revisions/{profile['revision_sha256']}"
+        current = _secure_post(client, f"{revision}/check", {"effect_scope": "bounded-signals-v1"})
+        thoughts_before = client.get(f"{revision}/bounded-check?thoughts=true")
+        thoughts = _secure_post(
+            client,
+            f"{revision}/check",
+            {"effect_scope": "bounded-signals-v1", "thought_languages": ["de", "fa"]},
+        )
+        thoughts_after = client.get(f"{revision}/bounded-check?thoughts=true")
+        plain = client.get(f"{revision}/bounded-check")
+        loose = client.get(f"{revision}/bounded-check?thoughts=1")
+        extra = client.get(f"{revision}/bounded-check?thoughts=true&refresh=1")
+        unordered = _secure_post(
+            client,
+            f"{revision}/check",
+            {"effect_scope": "bounded-signals-v1", "thought_languages": ["fa", "fa"]},
+        )
+        explanation = _secure_post(client, f"{revision}/check", {"thought_languages": ["en"]})
+
+    assert current.status_code == thoughts.status_code == 200
+    assert thoughts_before.status_code == 404
+    assert thoughts_after.status_code == 200
+    assert thoughts_after.json() == thoughts.json()
+    assert (
+        thoughts_after.json()["causal_contract_sha256"]
+        == CITY_COGNITION_THOUGHTS_CAUSAL_CONTRACT.fingerprint
+    )
+    assert plain.json() == current.json()
+    assert (
+        plain.json()["causal_contract_sha256"] == CURRENT_CITY_COGNITION_CAUSAL_CONTRACT.fingerprint
+    )
+    assert loose.status_code == extra.status_code == 422
+    assert unordered.status_code == explanation.status_code == 422
+
+
 def test_provider_routes_create_list_and_run_explicit_compatibility_check(
     tmp_path: Path,
 ) -> None:

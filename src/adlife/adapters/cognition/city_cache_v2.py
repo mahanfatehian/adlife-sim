@@ -30,7 +30,9 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionInputV2,
     CityCognitionRequestV2,
     CityCognitionResultV2,
+    CityCognitionThoughtsV1,
     city_cognition_contract_policy_hashes,
+    city_cognition_contract_prompt_version,
 )
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
@@ -167,6 +169,11 @@ class CityCognitionCacheRecordV2(DomainModel):
     result: CityCognitionResultV2
     prompt_tokens: int | None = Field(default=None, ge=0, le=MAX_CITY_COGNITION_USAGE_INTEGER)
     completion_tokens: int | None = Field(default=None, ge=0, le=MAX_CITY_COGNITION_USAGE_INTEGER)
+    # The inner thoughts of a thoughts-prompt answer, reused with it. Omitted when absent,
+    # so every record cached without them keeps its bytes.
+    thoughts: CityCognitionThoughtsV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -193,6 +200,11 @@ class CityCognitionCacheRecordV2(DomainModel):
             raise ValueError("city cognition V2 cache key does not address its evidence")
         if (self.prompt_tokens is None) != (self.completion_tokens is None):
             raise ValueError("city cognition V2 cache usage must be wholly present or absent")
+        if self.thoughts is not None and (
+            type(self.thoughts) is not CityCognitionThoughtsV1
+            or city_cognition_contract_prompt_version(self.causal_contract_sha256) != 4
+        ):
+            raise ValueError("city cognition V2 cache keeps thoughts only for the thoughts prompt")
         if (
             len((canonical_json(self) + "\n").encode("utf-8"))
             > MAX_CITY_COGNITION_CACHE_RECORD_V2_BYTES
