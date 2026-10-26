@@ -40,6 +40,8 @@ from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_SELECTION_LIMITS,
     CITY_COGNITION_V2_RESERVATION_TOKENS_PER_REQUEST,
     CURRENT_CITY_COGNITION_SELECTION_POLICY_VERSION,
+    CityCognitionThoughtsV1,
+    CityProviderAttemptV2,
 )
 from tests.browser.browser_support import (
     _LONG_BROWSER_TEST,
@@ -614,6 +616,128 @@ def test_online_ai_stops_at_the_key_prompt_then_counts_answers_live(
             assert len(approvals) == 1
     finally:
         permits.release(64)
+
+
+# What the fake model thinks, per language: one short sentence each.
+FAKE_THOUGHTS = {
+    "en": "That would make my commute easier.",
+    "de": "Das klingt praktisch für meinen Arbeitsweg.",
+    "fa": "به نظر برای مسیر کارم کاربردی است.",
+}
+
+
+class _ThoughtfulProvider(_SignalProvider):
+    """The fake model also writes the inner thoughts each request asks for."""
+
+    async def call(self, request: Any) -> CityProviderAttemptV2:
+        attempt = await super().call(request)
+        languages = request.causal_identity.thought_languages or ()
+        if not languages:
+            return attempt
+        return CityProviderAttemptV2(
+            schema_version=2,
+            status="valid",
+            result=attempt.result,
+            repair_context=None,
+            usage=None,
+            thoughts=CityCognitionThoughtsV1(
+                **{language: FAKE_THOUGHTS[language] for language in languages}
+            ),
+        )
+
+
+def test_inner_thoughts_are_chosen_per_language_tested_and_saved_with_the_run(
+    tmp_path: Path, browser: Browser
+) -> None:
+    """Tick German and Persian: the check and the run ask for exactly those two."""
+    store = _MemoryCredentialStore()
+    with _guide(
+        tmp_path,
+        browser,
+        credential_store=store,
+        provider_factory_v2=lambda **kwargs: _ThoughtfulProvider(**kwargs),
+    ) as (page, base_url, root):
+        checks: list[str] = []
+        drafts: list[dict[str, Any]] = []
+
+        def record(request: Any) -> None:
+            if request.method != "POST":
+                return
+            if request.url.endswith("/check"):
+                checks.append(request.post_data or "")
+            elif request.url.endswith("/api/jobs"):
+                drafts.append(json.loads(request.post_data or "{}"))
+
+        page.on("request", record)
+        page.goto(f"{base_url}/guide/new?lang=en")
+        thoughts = page.locator("#ai-thoughts")
+        # Practice answers write no thoughts, so the choice appears only for a real AI.
+        expect(thoughts).to_be_hidden()
+        page.locator("#setup-connection details > summary").first.click()
+        page.locator("#conn-sources [role='radio'][data-value='remote']").click()
+        page.locator("#conn-url").fill("api.example.invalid/v1")
+        page.locator("#conn-model").fill("qwen/qwen3-8b")
+        expect(thoughts).to_be_visible()
+        expect(thoughts.locator("legend")).to_have_text(_say("setup.ai.thoughts"))
+        boxes = thoughts.locator("input[type='checkbox']")
+        expect(boxes).to_have_count(3)
+        for index in range(3):
+            expect(boxes.nth(index)).not_to_be_checked()
+        cost = page.locator("#ai-thoughts-cost")
+        expect(cost).to_be_hidden()
+        expect(page.locator("#ai-estimate")).to_have_text(
+            _say("setup.ai.limit.estimate.max", tokens="1,300,000")
+        )
+        page.locator("#ai-thoughts-languages input[value='fa']").check()
+        page.locator("#ai-thoughts-languages input[value='de']").check()
+        # 120 tokens for the longer prompt plus 110 per language, on each of 1,000 questions.
+        expect(cost).to_have_text(_say("setup.ai.thoughts.cost", tokens="340,000"))
+        expect(page.locator("#ai-estimate")).to_have_text(
+            _say("setup.ai.limit.estimate.max", tokens="1,640,000")
+        )
+
+        page.locator("#setup-run").click()
+        expect(page.locator("#conn-key")).to_be_focused()
+        page.locator("#conn-key").fill(TEST_KEY)
+        page.locator("#setup-run").click()
+        page.wait_for_url(JOB_PATH, timeout=20_000)
+        # The check asked for the run's own languages, in the stored order.
+        assert checks == ['{"effect_scope":"bounded-signals-v1","thought_languages":["de","fa"]}']
+        _wait_for_route_handler(page, lambda: len(drafts) == 1, what="the submitted draft")
+        (draft,) = drafts
+        assert draft["cognition"]["thought_languages"] == ["de", "fa"]
+        expect(page.locator("#job-watch")).to_be_visible(timeout=30_000)
+
+        run_id = draft["settings"]["run_id"]
+        stored = CityRunStore(root).load(run_id)
+        answered = [
+            record for record in stored.cognition_evaluation.records if record.source == "provider"
+        ]
+        assert answered
+        assert all(
+            record.thoughts is not None
+            and record.thoughts.model_dump(mode="json")
+            == {"de": FAKE_THOUGHTS["de"], "fa": FAKE_THOUGHTS["fa"]}
+            for record in answered
+        )
+        story = page.request.get(f"{base_url}/api/runs/{run_id}/story").json()
+        assert story["ai"]["thought_languages"] == ["de", "fa"]
+        assert any(
+            moment.get("thoughts") == {"de": FAKE_THOUGHTS["de"], "fa": FAKE_THOUGHTS["fa"]}
+            for person in story["people"]
+            for moment in person["moments"]
+        )
+
+        # A new setup starts with no thoughts; this service passed only the thoughts check,
+        # so turning thoughts on finds that check and turning them off needs a new test.
+        page.goto(f"{base_url}/guide/new?lang=en")
+        run = page.locator("#setup-run")
+        expect(run).to_have_text(_say("setup.run_with_test"))
+        page.locator("#ai-thoughts-languages input[value='en']").check()
+        expect(run).to_have_text(_say("setup.run"))
+        page.locator("#ai-thoughts-languages input[value='en']").uncheck()
+        expect(run).to_have_text(_say("setup.run_with_test"))
+        assert len(checks) == 1
 
 
 def test_an_unsafe_address_or_a_local_one_under_online_ai_is_explained(

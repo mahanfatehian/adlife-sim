@@ -22,6 +22,7 @@ from adlife.adapters.cognition.city_endpoint_policy import SystemCityAddressReso
 from adlife.city.workbench_web import create_city_workbench_app
 from adlife.city.workbench_workspace import prepare_workbench_workspace
 from adlife.i18n import load_catalog
+from adlife.i18n.refs import message_ref, person_param
 from adlife.reporting.run_story_model import RunStoryV1, StoryMoment, story_ref_context
 from tests.browser.browser_support import _artifact_hashes, _installed_browser, _serve
 from tests.unit.city.run_story_fixtures import HOSTILE_PERSONA_NAME, saved_story_run
@@ -35,6 +36,7 @@ RUNS = {
     "persona": "persona-provider",
     "persona-mock": "persona-mock",
     "persona-rules": "persona-rules",
+    "thoughts": "thoughts-provider",
     "v9": "v9",
 }
 PERSIAN_DIGIT = f"[{chr(0x06F0)}-{chr(0x06F9)}]"
@@ -701,6 +703,57 @@ def test_a_prompt_v3_story_says_the_ai_answered_as_the_person(
         expect(page.locator(".setup-hero__how .g-how__box--ai")).to_have_text(
             catalog.text("start.how.ai.persona")
         )
+        assert session.errors == []
+
+
+def test_inner_thoughts_show_on_their_moment_in_the_page_language_first(
+    browser: Browser, site: _Site
+) -> None:
+    run_id = site.run_ids["thoughts"]
+    with _session(browser, width=1600, height=1000) as session:
+        page = session.page
+        for lang in ("en", "fa"):
+            catalog = load_catalog(lang)
+            _open(page, site, run_id, lang)
+            story = _story(page, site, run_id)
+            assert story.ai.thought_languages == ("en", "de", "fa")
+            steps = _all_steps(story)
+            page.locator("#story-filter [data-filter='all']").click()
+            index = next(i for i, (_agent, moment) in enumerate(steps) if moment.thoughts)
+            agent_id, moment = steps[index]
+            assert moment.thoughts is not None
+            _slide(page, index)
+            expect(page.locator("#story-card")).to_have_attribute("data-moment", moment.moment_id)
+            lane = page.locator("#story-card .story-thoughts")
+            expect(lane).to_have_count(1)
+            expect(page.locator("#story-card .story-lane")).to_have_count(4)
+            title = message_ref("story.thoughts.title", name=person_param(agent_id))
+            expect(lane.locator(".story-lane-lead")).to_have_text(
+                catalog.plain(title, story_ref_context(story))
+            )
+            # The page language first; the other two languages wait behind one toggle.
+            shown = lane.locator(":scope > blockquote.story-thought")
+            expect(shown).to_have_count(1)
+            expect(shown).to_have_attribute("lang", lang)
+            expect(shown).to_have_attribute("dir", "rtl" if lang == "fa" else "ltr")
+            expect(shown).to_have_text(getattr(moment.thoughts, lang))
+            more = lane.locator("details.story-thoughts-more")
+            expect(more.locator("summary")).to_have_text(catalog.text("story.thoughts.more"))
+            expect(more.locator("blockquote.story-thought")).to_have_count(2)
+            expect(lane.locator(".story-thoughts-note")).to_have_text(
+                catalog.text("story.thoughts.note")
+            )
+            # A noticed moment without a usable answer has no thoughts to show.
+            plain = next(
+                (i for i, (_agent, item) in enumerate(steps) if item.noticed and not item.thoughts),
+                None,
+            )
+            if plain is not None:
+                _slide(page, plain)
+                expect(page.locator("#story-card")).to_have_attribute(
+                    "data-moment", steps[plain][1].moment_id
+                )
+                expect(page.locator("#story-card .story-thoughts")).to_have_count(0)
         assert session.errors == []
 
 

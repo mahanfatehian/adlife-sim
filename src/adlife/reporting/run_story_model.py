@@ -24,12 +24,16 @@ from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from adlife.core.domain.city import RoadKind, TravelDirection
 from adlife.core.domain.city_cognition import CityCognitionSafetyFlag
 from adlife.core.domain.city_cognition_v2 import (
+    CITY_COGNITION_PROMPT_CONTRACT_V4_ID,
+    CITY_COGNITION_THOUGHT_LANGUAGES,
+    CITY_COGNITION_THOUGHT_MAX_CHARACTERS,
     CityCognitionAffectV2,
     CityCognitionCredibilityV2,
     CityCognitionModeV2,
     CityCognitionRelevanceV2,
     CityCognitionRuntimeFallbackReasonV2,
     CityCognitionSalienceV2,
+    CityCognitionThoughtLanguageV1,
 )
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.spatial_campaign import BillboardSide, SpatialActivity
@@ -84,6 +88,9 @@ LABELLED_STATUSES: Final[frozenset[str]] = frozenset(
 )
 # Statuses whose applied effect is the fixed formula over the AI labels.
 MATH_STATUSES: Final[frozenset[str]] = frozenset({"answered", "reused", "practice"})
+# Statuses whose AI answer may carry the person's inner thoughts: a usable answer, never an
+# unsure or flagged one.
+THOUGHT_STATUSES: Final[frozenset[str]] = frozenset({"answered", "reused"})
 
 
 def _six_decimals(value: float) -> float:
@@ -257,14 +264,21 @@ class StoryUsage(_StoryModel):
 
 
 class StoryContract(_StoryModel):
-    # Prompt v3 runs answered in character, from the persona data block.
+    # Prompt v3 runs answered in character, from the persona data block; prompt v4 runs
+    # also wrote each person's inner thoughts (result schema V3).
     prompt_contract_id: Literal[
-        "city-cognition-signal-prompt-v2", "city-cognition-persona-prompt-v3"
+        "city-cognition-signal-prompt-v2",
+        "city-cognition-persona-prompt-v3",
+        "city-cognition-persona-thoughts-prompt-v4",
     ]
     prompt_contract_sha256: _Hash
-    result_schema_id: Literal["city-cognition-signal-result-v2"]
+    result_schema_id: Literal["city-cognition-signal-result-v2", "city-cognition-signal-result-v3"]
     influence_policy_id: Literal["city-cognition-influence-v1"]
     influence_policy_sha256: _Hash
+
+
+def _no_languages(value: tuple[str, ...]) -> bool:
+    return not value
 
 
 class StoryAi(_StoryModel):
@@ -284,6 +298,10 @@ class StoryAi(_StoryModel):
     usage_this_run: StoryUsage
     reused_answers: _Requests
     contract: StoryContract
+    # The languages the run asked the AI to write inner thoughts in; absent when it did not.
+    thought_languages: tuple[CityCognitionThoughtLanguageV1, ...] = Field(
+        default=(), max_length=3, exclude_if=_no_languages
+    )
 
     @model_validator(mode="after")
     def coherent_ai(self) -> Self:
@@ -309,6 +327,18 @@ class StoryAi(_StoryModel):
             raise ValueError("story statuses and coverage disagree")
         if sum(self.fallback_reasons.values()) != self.statuses.failed:
             raise ValueError("story fallback reasons must account for every failed answer")
+        thoughts_contract = self.contract.prompt_contract_id == CITY_COGNITION_PROMPT_CONTRACT_V4_ID
+        canonical = tuple(
+            language
+            for language in CITY_COGNITION_THOUGHT_LANGUAGES
+            if language in self.thought_languages
+        )
+        if (
+            bool(self.thought_languages) != thoughts_contract
+            or self.thought_languages != canonical
+            or (self.thought_languages and self.mode not in {"local", "remote"})
+        ):
+            raise ValueError("story thought languages belong to AI runs that asked for them")
         return self
 
 
@@ -518,6 +548,41 @@ class StoryMath(_StoryModel):
     memory_max: StoryNumber
 
 
+def _absent(value: object) -> bool:
+    return value is None
+
+
+_Thought: TypeAlias = Annotated[
+    str, Field(min_length=1, max_length=CITY_COGNITION_THOUGHT_MAX_CHARACTERS)
+]
+
+
+class StoryThoughts(_StoryModel):
+    """What the AI wrote the person was thinking at this notice, per language kept.
+
+    Fictional display text only: it changed no label or number. Renderers show it as
+    isolated data, like a persona name.
+    """
+
+    en: _Thought | None = Field(default=None, exclude_if=_absent)
+    de: _Thought | None = Field(default=None, exclude_if=_absent)
+    fa: _Thought | None = Field(default=None, exclude_if=_absent)
+
+    @model_validator(mode="after")
+    def some_thought(self) -> Self:
+        if not self.languages:
+            raise ValueError("story thoughts must hold at least one language")
+        return self
+
+    @property
+    def languages(self) -> tuple[CityCognitionThoughtLanguageV1, ...]:
+        return tuple(
+            language
+            for language in CITY_COGNITION_THOUGHT_LANGUAGES
+            if getattr(self, language) is not None
+        )
+
+
 class StoryMoment(_StoryModel):
     moment_id: _MomentId
     minute: int = Field(ge=0, lt=10_080)
@@ -541,6 +606,7 @@ class StoryMoment(_StoryModel):
     ai_clause: MessageRef | None
     rules_line: MessageRef | None
     with_ai_line: MessageRef | None
+    thoughts: StoryThoughts | None = Field(default=None, exclude_if=_absent)
 
     @model_validator(mode="after")
     def coherent_moment(self) -> Self:
@@ -568,6 +634,8 @@ class StoryMoment(_StoryModel):
             raise ValueError("a reason belongs exactly to failed answers")
         if self.math is not None and self.status not in MATH_STATUSES:
             raise ValueError("formula factors belong to applied AI or practice labels only")
+        if self.thoughts is not None and self.status not in THOUGHT_STATUSES:
+            raise ValueError("inner thoughts belong to usable AI answers only")
         return self
 
 
@@ -690,6 +758,12 @@ class RunStoryV1(_StoryModel):
             raise ValueError("story funnel, coverage and people disagree")
         if (self.labels is None) != (self.funnel.answered + self.ai.statuses.practice == 0):
             raise ValueError("story label counts exist exactly when answers exist")
+        if any(
+            not set(moment.thoughts.languages) <= set(self.ai.thought_languages)
+            for moment in moments.values()
+            if moment.thoughts is not None
+        ):
+            raise ValueError("story thoughts must be in the languages the run asked for")
         days = self.day_totals
         if tuple(day.day_index for day in days) != tuple(range(self.run.days)) or (
             sum(day.shown for day in days),
@@ -730,6 +804,7 @@ __all__ = [
     "STORY_MAX_REQUESTS",
     "STORY_MOMENTS_PER_PERSON",
     "STORY_SELECTION_CAPS",
+    "THOUGHT_STATUSES",
     "Compare",
     "Effect",
     "LabelGroup",
@@ -778,6 +853,7 @@ __all__ = [
     "StoryScenario",
     "StoryState",
     "StoryStatuses",
+    "StoryThoughts",
     "StoryTotals",
     "StoryTraitChip",
     "StoryUsage",

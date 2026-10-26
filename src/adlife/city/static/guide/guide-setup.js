@@ -14,6 +14,7 @@ import {
   mountConnection,
   radioGroup,
   renderActiveJob,
+  thoughtLanguagesOf,
 } from "./guide-connection.js";
 
 // The AI limit options, defaults and selection caps come from the server's capabilities.
@@ -28,6 +29,10 @@ const FALLBACK_SELECTION = Object.freeze({
 const SPREAD_STRATEGY = "spread-evenly";
 // A documented estimate: about 1.2-1.5k input plus at most 256 output tokens per question.
 const TOKENS_PER_QUESTION = 1300;
+// Inner thoughts: a longer prompt plus one or two sentences per chosen language (Persian
+// text takes more tokens than English or German).
+const THOUGHT_TOKENS_PER_QUESTION = 120;
+const THOUGHT_TOKENS_PER_LANGUAGE = 110;
 const DEFAULT_CITY = "fictional-grid-v2";
 // The rehearsed grid first, then the packaged towns from small to large; any other
 // packaged town follows in catalog order.
@@ -169,6 +174,8 @@ const state = {
   limitSource: null,
   conn: null,
   connection: null,
+  // The languages the AI writes each person's inner thoughts in; none means no thoughts.
+  thoughts: [],
   runs: null,
   runsLoading: null,
   activeJob: null,
@@ -366,6 +373,7 @@ function buildDraft(runId) {
         provider_profile_id: conn.profile.profile_id,
         provider_revision_sha256: conn.profile.revision_sha256,
         funded_response_limit: state.limit,
+        ...(state.thoughts.length > 0 ? { thought_languages: [...state.thoughts] } : {}),
       }
     : {
         effect_scope: BOUNDED_SCOPE,
@@ -624,10 +632,20 @@ function renderAi() {
   byId("ai-offline").hidden = !offline || state.conn === null;
   groups.limits?.set(String(state.limit));
   const spread = spreadSelection();
+  const thoughtTokens =
+    state.thoughts.length > 0 ? THOUGHT_TOKENS_PER_QUESTION + THOUGHT_TOKENS_PER_LANGUAGE * state.thoughts.length : 0;
   // With the limit spread over the run, only noticed ads are asked, so it is an upper bound.
   byId("ai-estimate").textContent = t(spread ? "setup.ai.limit.estimate.max" : "setup.ai.limit.estimate", {
-    tokens: state.limit * TOKENS_PER_QUESTION,
+    tokens: state.limit * (TOKENS_PER_QUESTION + thoughtTokens),
   });
+  // Inner thoughts need a real AI; the boxes stay as chosen while an offline source is shown.
+  byId("ai-thoughts").hidden = offline || state.conn === null;
+  for (const input of byId("ai-thoughts-languages").querySelectorAll("input")) {
+    input.checked = state.thoughts.includes(input.value);
+  }
+  const cost = byId("ai-thoughts-cost");
+  cost.hidden = state.thoughts.length === 0;
+  cost.textContent = t("setup.ai.thoughts.cost", { tokens: state.limit * thoughtTokens });
   // What is sent is bounded by the chosen limit, not only by the server's selection cap.
   const perRun = Math.min(
     state.limit,
@@ -1211,6 +1229,17 @@ function wireOptions() {
       clearMark("price");
       refresh();
     },
+  });
+  byId("ai-thoughts-languages").addEventListener("change", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    const chosen = new Set(state.thoughts);
+    if (input.checked) chosen.add(input.value);
+    else chosen.delete(input.value);
+    state.thoughts = thoughtLanguagesOf([...chosen]);
+    // Thoughts are checked under their own contract, so the connection may need a new test.
+    void state.connection?.setThoughtLanguages(state.thoughts);
+    refresh();
   });
   byId("more-activities").addEventListener("change", (event) => {
     const input = event.target;

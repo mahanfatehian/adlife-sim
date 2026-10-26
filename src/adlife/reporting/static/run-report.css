@@ -934,6 +934,39 @@ main { padding-block: 0 24px; }
 
 .moment .chips { margin-block: 6px 0; }
 
+/* Inner thoughts: what the AI wrote the person was thinking, quoted per language. */
+.thoughts { margin-block: 8px 0; }
+
+.thoughts-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.thought { margin: 6px 0 0; }
+
+.thought figcaption {
+  color: var(--ink-2);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+
+.thought blockquote {
+  margin: 2px 0 0;
+  padding: 6px 10px;
+  border-inline-start: 3px solid var(--ai);
+  background: var(--page);
+}
+
+.thought blockquote p { margin: 0; }
+
+.thought blockquote:lang(fa) { line-height: 1.8; }
+
+.thoughts-note {
+  margin-block: 4px 0;
+  color: var(--ink-2);
+  font-size: .8125rem;
+}
+
 .state {
   margin-block: 6px 0;
   padding-inline-start: 10px;

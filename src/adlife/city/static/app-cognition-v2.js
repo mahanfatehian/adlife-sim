@@ -46,6 +46,14 @@
       attemptsPerRequest: 6,
       maxStreamBytes: 8388608,
     }),
+    // V4 is V3 with room for inner thoughts in every answer (a larger output budget).
+    "a511c4b9ebb4828a2a552fcc59452a9c90d943eef847841bb94a8ca320813ffc": Object.freeze({
+      fundedLimits: Object.freeze([60, 120, 250, 500, 1000]),
+      offlineLimit: 1000,
+      maxSelected: 1000,
+      attemptsPerRequest: 6,
+      maxStreamBytes: 8388608,
+    }),
   });
 
   function selectionVersion(hash) {
@@ -60,14 +68,19 @@
   // The prompt text, result schema, and causal contract are bound by their saved run
   // instead: each must be well-formed and agree across the summary, every terminal record,
   // and the frozen workbench input, so a revised prompt contract needs no browser change.
-  // Every frozen prompt-contract id: prompt v2 (the AI judged the ad from outside) and the
-  // persona prompt v3 (the AI answers as the person). A run is checked against its own.
-  const PROMPT_CONTRACT_IDS = Object.freeze([
-    "city-cognition-signal-prompt-v2",
-    "city-cognition-persona-prompt-v3",
-  ]);
+  // Every frozen prompt-contract id: prompt v2 (the AI judged the ad from outside), the
+  // persona prompt v3 (the AI answers as the person) and v4 (it also writes the person's
+  // inner thoughts), each with its result schema. A run is checked against its own.
+  const RESULT_SCHEMA_BY_PROMPT = Object.freeze({
+    "city-cognition-signal-prompt-v2": "city-cognition-signal-result-v2",
+    "city-cognition-persona-prompt-v3": "city-cognition-signal-result-v2",
+    "city-cognition-persona-thoughts-prompt-v4": "city-cognition-signal-result-v3",
+  });
+  const PROMPT_CONTRACT_IDS = Object.freeze(Object.keys(RESULT_SCHEMA_BY_PROMPT));
+  const THOUGHTS_PROMPT = "city-cognition-persona-thoughts-prompt-v4";
+  const THOUGHT_LANGUAGES = Object.freeze(["en", "de", "fa"]);
+  const THOUGHT_MAX_CHARACTERS = 240;
   const FROZEN = Object.freeze({
-    resultSchemaId: "city-cognition-signal-result-v2",
     fallbackPolicySha256: "2c8f7734948c1c70eaf5df54e3e20fc99625c62ff124c00596c86db86fa9cf6b",
     mockPolicySha256: "31efe5733e4bcfd4bf30294ec5e309f8e05b4312d99467311136f3e2ca1b2841",
     influencePolicyId: "city-cognition-influence-v1",
@@ -468,7 +481,7 @@
       || documentValue.run_schema_version !== 10
       || documentValue.effect_scope !== EFFECT_SCOPE
       || !PROMPT_CONTRACT_IDS.includes(documentValue.prompt_contract_id)
-      || documentValue.result_schema_id !== FROZEN.resultSchemaId
+      || documentValue.result_schema_id !== RESULT_SCHEMA_BY_PROMPT[documentValue.prompt_contract_id]
       || documentValue.influence_policy_id !== FROZEN.influencePolicyId
       || version === null
       || FROZEN_POLICY_HASHES.some(([field, expected]) => documentValue[field] !== expected)
@@ -566,9 +579,27 @@
     return frozen;
   }
 
+  // A usable thoughts-prompt answer may carry the person's inner thoughts: AI-written
+  // display text in one to three languages, never read by any number.
+  function validateThoughts(value, label) {
+    const thoughts = requireRecord(value, label);
+    const keys = Object.keys(thoughts);
+    if (
+      keys.length === 0
+      || Object.getOwnPropertySymbols(thoughts).length !== 0
+      || keys.some((key) => !THOUGHT_LANGUAGES.includes(key))
+      || keys.some((key) => typeof thoughts[key] !== "string"
+        || thoughts[key].length === 0
+        || [...thoughts[key]].length > THOUGHT_MAX_CHARACTERS)
+    ) invalid(label);
+    return thoughts;
+  }
+
   function validateTerminal(value, index, summaryDocument) {
     const label = "Saved bounded cognition record";
-    const record = exactKeys(value, TERMINAL_KEYS, label);
+    const withThoughts = value !== null && typeof value === "object" && Object.hasOwn(value, "thoughts");
+    const keys = withThoughts ? [...TERMINAL_KEYS, "thoughts"] : TERMINAL_KEYS;
+    const record = exactKeys(value, keys, label);
     if (
       record.schema_version !== 2
       || record.selection_index !== index
@@ -639,6 +670,16 @@
     if (!valid) invalid(label);
     const vector = vectorOf(result);
     if (
+      withThoughts
+      && (
+        summaryDocument.prompt_contract_id !== THOUGHTS_PROMPT
+        || !["provider", "cache"].includes(source)
+        || vector.includes("uncertain")
+        || result.safety_flags.length !== 0
+      )
+    ) invalid(label);
+    if (withThoughts) validateThoughts(record.thoughts, label);
+    if (
       ["rules", "fallback", "budget-skipped"].includes(source)
       && (!sameVector(vector, NEUTRAL_VECTOR) || result.safety_flags.length !== 0)
     ) invalid(label);
@@ -651,7 +692,7 @@
       if (funded === (source === "budget-skipped")) invalid(label);
     }
     const facts = {};
-    for (const key of TERMINAL_KEYS) {
+    for (const key of keys) {
       if (key !== "record_hash") facts[key] = record[key];
     }
     if (sha256Hex(canonicalJson(facts)) !== record.record_hash) invalid(label);

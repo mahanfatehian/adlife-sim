@@ -128,6 +128,12 @@ What this model cannot support. Read alongside the
   performs no provider call, credential lookup, profile lookup, cache lookup, or network
   request. Its `inputs/cognition.json`, `outputs/cognition.jsonl`, and
   `outputs/cognition-summary.json` preserve provenance, not truth.
+- **Inner thoughts are AI-written fiction, not a mind.** When a run asks for them, the
+  model writes a short in-character thought per noticed, answered ad. Nothing numeric reads
+  them, and screening removes credentials, contact details, paths, and web addresses, but a
+  thought can still be stereotyped, inconsistent with the labels it came with, or simply
+  invented, and the three languages are separate writings, not checked translations of each
+  other. They are a presentation aid, not evidence about how people think.
 - **Schema-v10 bounded cognition is provider-dependent, exploratory evidence.** A model
   chooses closed affect, relevance, credibility, and salience categories for selected noticed
   responses, and AdLife's frozen `city-cognition-influence-v1` tables turn them into bounded

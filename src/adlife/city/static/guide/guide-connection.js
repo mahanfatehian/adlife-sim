@@ -5,6 +5,8 @@ import { dir, makeRefContext, resolveNodes, t } from "./guide-i18n.js";
 import { ApiError, announce, bdi, clear, el, getJson, postJson } from "./guide-core.js";
 
 export const BOUNDED_SCOPE = "bounded-signals-v1";
+// The languages inner thoughts can be written in, in the order the server stores them.
+export const THOUGHT_LANGUAGES = Object.freeze(["en", "de", "fa"]);
 
 // Ollama's default OpenAI-compatible address and a model it serves; LM Studio and any
 // other server on this computer just need their own address typed instead.
@@ -288,6 +290,12 @@ function revisionPath(profile, action) {
   return `/api/providers/${profile.profile_id}/revisions/${profile.revision_sha256}/${action}`;
 }
 
+/** The chosen thought languages in the server's order, without unknowns or repeats. */
+export function thoughtLanguagesOf(languages) {
+  const chosen = Array.isArray(languages) ? languages : [];
+  return THOUGHT_LANGUAGES.filter((language) => chosen.includes(language));
+}
+
 class Connection {
   constructor(root, variant, onChange) {
     this.root = root;
@@ -321,6 +329,8 @@ class Connection {
     this.inflight = null;
     this.generation = 0;
     this.recorded = new Map();
+    // A run with inner thoughts needs a check of the thoughts contract, recorded apart.
+    this.thoughtLanguages = [];
     this.serviceSignature = "";
     // A source picked before the listing arrived wins over the automatic default.
     this.loaded = false;
@@ -796,12 +806,18 @@ class Connection {
     return null;
   }
 
+  /** The recorded-check cache key: one per revision and contract (with or without thoughts). */
+  checkKey(profile) {
+    return `${profileKey(profile)}${this.thoughtLanguages.length > 0 ? "|thoughts" : ""}`;
+  }
+
   recordedOk(profile) {
-    const key = profileKey(profile);
+    const key = this.checkKey(profile);
+    const query = this.thoughtLanguages.length > 0 ? "?thoughts=true" : "";
     if (!this.recorded.has(key)) {
       this.recorded.set(
         key,
-        getJson(revisionPath(profile, "bounded-check")).then(
+        getJson(`${revisionPath(profile, "bounded-check")}${query}`).then(
           (result) => result?.status === "compatible",
           () => false,
         ),
@@ -1204,16 +1220,23 @@ class Connection {
     announce(t("connection.testing", { seconds: 0, limit: this.testLimit }), { force: true });
     let passed = false;
     try {
-      const result = await postJson(revisionPath(profile, "check"), { effect_scope: BOUNDED_SCOPE });
-      this.recorded.delete(profileKey(profile));
+      const body = { effect_scope: BOUNDED_SCOPE };
+      if (this.thoughtLanguages.length > 0) body.thought_languages = [...this.thoughtLanguages];
+      const key = this.checkKey(profile);
+      const result = await postJson(revisionPath(profile, "check"), body);
+      this.recorded.delete(key);
       if (generation === this.generation) {
-        if (result?.status === "compatible") {
+        if (this.checkKey(profile) !== key) {
+          // Thoughts were turned on or off during the test: it checked the other contract.
+          this.check = "untested";
+          if (result?.status === "compatible") this.recorded.set(key, Promise.resolve(true));
+        } else if (result?.status === "compatible") {
           this.check = "ok";
           this.fresh = true;
           passed = true;
           // "Key ready … now test the connection" has done its job.
           if (this.keyNotice?.tone === "ok") this.keyNotice = null;
-          this.recorded.set(profileKey(profile), Promise.resolve(true));
+          this.recorded.set(key, Promise.resolve(true));
         } else {
           this.check = "failed";
           this.reason = REASONS.has(result?.reason_code) ? result.reason_code : "unknown";
@@ -1281,8 +1304,23 @@ class Connection {
     return { ok, profile: this.profile };
   }
 
+  /**
+   * Choose the inner-thought languages the next run asks for. Turning thoughts on or off
+   * switches to the other contract's recorded check, which may still be untested.
+   */
+  async setThoughtLanguages(languages) {
+    const next = thoughtLanguagesOf(languages);
+    const switched = (next.length > 0) !== (this.thoughtLanguages.length > 0);
+    this.thoughtLanguages = next;
+    if (!switched || !PROVIDER_SOURCES.has(this.source) || this.check === "testing") return;
+    // Look this service's revisions up again under the other contract's recorded check.
+    await this.resolveNow();
+    this.update();
+    this.emit();
+  }
+
   markUntested() {
-    if (this.profile !== null) this.recorded.delete(profileKey(this.profile));
+    if (this.profile !== null) this.recorded.delete(this.checkKey(this.profile));
     if (PROVIDER_SOURCES.has(this.source)) {
       this.check = "untested";
       this.fresh = false;
@@ -1459,6 +1497,7 @@ class Connection {
       element: this.root,
       state: () => this.payload(),
       markUntested: () => this.markUntested(),
+      setThoughtLanguages: (languages) => this.setThoughtLanguages(languages),
       openPanel: () => this.openPanel(),
       focusSource: () => {
         this.openPanel();

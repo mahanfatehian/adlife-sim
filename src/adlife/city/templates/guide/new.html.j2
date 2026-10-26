@@ -64,6 +64,16 @@
         <p id="ai-estimate" class="g-help"></p>
         <p id="ai-explain" class="g-help"></p>
       </div>
+      <fieldset id="ai-thoughts" class="g-fieldset g-field setup-thoughts" aria-describedby="ai-thoughts-help ai-thoughts-cost" hidden>
+        <legend>{{ tr("setup.ai.thoughts") }}</legend>
+        <p id="ai-thoughts-help" class="g-help">{{ tr("setup.ai.thoughts.help") }}</p>
+        <div class="g-checks" id="ai-thoughts-languages">
+          <label class="g-check"><input type="checkbox" name="thought-language" value="en"><span lang="en" dir="ltr">{{ tr("lang.en") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="thought-language" value="de"><span lang="de" dir="ltr">{{ tr("lang.de") }}</span></label>
+          <label class="g-check"><input type="checkbox" name="thought-language" value="fa"><span lang="fa" dir="rtl">{{ tr("lang.fa") }}</span></label>
+        </div>
+        <p id="ai-thoughts-cost" class="g-help"></p>
+      </fieldset>
       <p id="ai-offline" class="g-help" hidden>{{ tr("setup.ai.limit.offline") }}</p>
       <div id="ai-cache" class="g-callout g-callout--warn" hidden><p>{{ tr("setup.ai.cache") }}</p></div>
       <div id="ai-error" class="g-callout g-callout--bad" tabindex="-1" hidden></div>

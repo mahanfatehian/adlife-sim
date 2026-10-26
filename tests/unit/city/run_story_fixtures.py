@@ -29,6 +29,9 @@ Names:
 * ``persona-mock`` / ``persona-rules`` - the study as a practice run and a rules-only run
   made now: they carry prompt contract v3 too although no AI is asked, with the offline
   limit of 1,000 that selection policy 3 requires;
+* ``thoughts-provider`` - ``persona-provider`` with inner thoughts asked for in English,
+  German and Persian: the draft freezes the thoughts contract (prompt contract v4,
+  selection policy 4), and every answer carries a short thought in each language;
 * ``hostile`` - hostile persona name and background text on a mock run;
 * ``v9`` - a schema-v9 run, which has no story.
 
@@ -57,6 +60,7 @@ from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_DEFAULT_CAUSAL_CONTRACT_V2,
     CURRENT_CITY_COGNITION_CAUSAL_CONTRACT,
     CityCognitionCausalContractV2,
+    CityCognitionThoughtsV1,
 )
 from adlife.core.simulation.city_cognition_v2 import (
     build_city_budget_skipped_result_v2,
@@ -85,6 +89,7 @@ StoryRunName = Literal[
     "persona-fallback",
     "persona-mock",
     "persona-rules",
+    "thoughts-provider",
     "hostile",
     "v9",
 ]
@@ -104,6 +109,7 @@ STORY_RUN_NAMES: tuple[StoryRunName, ...] = (
     "persona-fallback",
     "persona-mock",
     "persona-rules",
+    "thoughts-provider",
     "hostile",
     "v9",
 )
@@ -158,6 +164,60 @@ _DEFAULT_PROVIDER_PLAN: tuple[dict[str, str], ...] = (
     {"affect": "neutral", "relevance": "medium", "credibility": "medium", "salience": "medium"},
 )
 
+# The thoughts-provider run's fake inner thoughts, one per answer of the default plan.
+THOUGHTS_PLAN: tuple[dict[str, str], ...] = (
+    {
+        "en": "Another gadget ad. I doubt it is worth that price.",
+        "de": "Schon wieder Werbung f\u00fcr ein Ger\u00e4t. Das ist mir zu teuer.",
+        "fa": (
+            "\u0628\u0627\u0632 \u0647\u0645 \u062a\u0628\u0644\u06cc\u063a \u06cc\u06a9 "
+            "\u062f\u0633\u062a\u06af\u0627\u0647. \u0641\u06a9\u0631 "
+            "\u0646\u0645\u06cc\u200c\u06a9\u0646\u0645 \u0628\u0647 \u0627\u06cc\u0646 "
+            "\u0642\u06cc\u0645\u062a \u0628\u06cc\u0631\u0632\u062f."
+        ),
+    },
+    {
+        "en": "A pocket device for the commute? I might look it up later.",
+        "de": "Ein Ger\u00e4t f\u00fcr den Arbeitsweg? Vielleicht schaue ich sp\u00e4ter nach.",
+        "fa": (
+            "\u06cc\u06a9 \u062f\u0633\u062a\u06af\u0627\u0647 \u062c\u06cc\u0628\u06cc "
+            "\u0628\u0631\u0627\u06cc \u0645\u0633\u06cc\u0631 \u06a9\u0627\u0631\u061f "
+            "\u0634\u0627\u06cc\u062f \u0628\u0639\u062f\u0627\u064b "
+            "\u062f\u0631\u0628\u0627\u0631\u0647\u200c\u0627\u0634 "
+            "\u0628\u062e\u0648\u0627\u0646\u0645."
+        ),
+    },
+    {
+        "en": "Not this ad again, just when I wanted a short break.",
+        "de": "Nicht schon wieder diese Werbung, ich wollte kurz abschalten.",
+        "fa": (
+            "\u0628\u0627\u0632 \u0627\u06cc\u0646 \u062a\u0628\u0644\u06cc\u063a\u060c "
+            "\u0622\u0646 \u0647\u0645 \u0648\u0642\u062a\u06cc "
+            "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645 \u06a9\u0645\u06cc "
+            "\u0627\u0633\u062a\u0631\u0627\u062d\u062a \u06a9\u0646\u0645."
+        ),
+    },
+    {
+        "en": "That looks handy for my daily commute. I like it.",
+        "de": "Das wirkt praktisch f\u00fcr meinen Arbeitsweg. Gef\u00e4llt mir.",
+        "fa": (
+            "\u0628\u0631\u0627\u06cc \u0631\u0641\u062a\u200c\u0648\u0622\u0645\u062f "
+            "\u0631\u0648\u0632\u0627\u0646\u0647\u200c\u0627\u0645 "
+            "\u06a9\u0627\u0631\u0628\u0631\u062f\u06cc \u0628\u0647 \u0646\u0638\u0631 "
+            "\u0645\u06cc\u200c\u0631\u0633\u062f. \u062e\u0648\u0634\u0645 \u0622\u0645\u062f."
+        ),
+    },
+    {
+        "en": "An ad for a new device. Nothing special for me.",
+        "de": "Werbung f\u00fcr ein neues Ger\u00e4t. F\u00fcr mich nichts Besonderes.",
+        "fa": (
+            "\u062a\u0628\u0644\u06cc\u063a \u06cc\u06a9 \u062f\u0633\u062a\u06af\u0627\u0647 "
+            "\u062a\u0627\u0632\u0647. \u0628\u0631\u0627\u06cc \u0645\u0646 \u0686\u06cc\u0632 "
+            "\u062e\u0627\u0635\u06cc \u0646\u06cc\u0633\u062a."
+        ),
+    },
+)
+
 
 def _labelled(request: Any, vector: dict[str, str], flags: tuple[str, ...] = ()) -> Any:
     return build_city_rules_result_v2(request).model_copy(update={**vector, "safety_flags": flags})
@@ -169,8 +229,12 @@ def _publish(
     *,
     profile: ProviderProfileRevisionV1 | None,
     plan: _Plan,
+    thoughts_for: Callable[[int, Any], CityCognitionThoughtsV1] | None = None,
 ) -> StoredCityRun:
-    """Resolve each funded request with ``plan`` and publish the finalized run."""
+    """Resolve each funded request with ``plan`` and publish the finalized run.
+
+    ``thoughts_for`` gives the inner thoughts of each AI or reused answer.
+    """
     staged = runs.prepare_city_scientific_run_v2(
         validated.pack, provider_profile=profile, **_v2_arguments(validated)
     )
@@ -187,6 +251,9 @@ def _publish(
             )
         else:
             source, result, attempts, reason, usage = plan(index, request, frozen)
+        thoughts = None
+        if thoughts_for is not None and source in {"provider", "cache"}:
+            thoughts = thoughts_for(index, request)
         records.append(
             build_city_cognition_terminal_record_v2(
                 request,
@@ -196,6 +263,7 @@ def _publish(
                 result=result,
                 attempt_count=attempts,
                 reason=reason,
+                thoughts=thoughts,
                 **usage,
             )
         )
@@ -255,6 +323,13 @@ def _default_provider_plan(index: int, request: Any, _frozen: Any) -> _Outcome:
     vector = _DEFAULT_PROVIDER_PLAN[index % len(_DEFAULT_PROVIDER_PLAN)]
     usage = {"prompt_tokens": 1_400, "completion_tokens": 130}
     return "provider", _labelled(request, vector), 1, None, usage
+
+
+def _thoughts(index: int, request: Any) -> CityCognitionThoughtsV1:
+    texts = THOUGHTS_PLAN[index % len(THOUGHTS_PLAN)]
+    return CityCognitionThoughtsV1(
+        **{language: texts[language] for language in request.causal_identity.thought_languages}
+    )
 
 
 def story_provider_revision(
@@ -487,6 +562,20 @@ def saved_story_run(
         )
         plan = _default_provider_plan if name == "persona-provider" else _fallback_plan
         return _publish(root, validated, profile=profile, plan=plan)
+    if name == "thoughts-provider":
+        # Asking for thoughts makes validation freeze the thoughts contract in place of the
+        # current one it is given.
+        profile = story_provider_revision(root)
+        document = default_study_draft(
+            run_id=identifier, mode="remote", profile=profile, funded_response_limit=60
+        )
+        document["cognition"]["thought_languages"] = ["en", "de", "fa"]
+        validated = _validated_draft(
+            document, causal_contract=CURRENT_CITY_COGNITION_CAUSAL_CONTRACT
+        )
+        return _publish(
+            root, validated, profile=profile, plan=_default_provider_plan, thoughts_for=_thoughts
+        )
     if name in ("persona-mock", "persona-rules"):
         # New offline runs freeze the current contract too; selection policy 3 funds them
         # with its offline limit of 1,000, the only one it accepts.
@@ -515,6 +604,7 @@ __all__ = [
     "HOSTILE_SCENARIO",
     "MULTIDAY_DAYS",
     "STORY_RUN_NAMES",
+    "THOUGHTS_PLAN",
     "StoryRunName",
     "default_study_draft",
     "saved_story_run",

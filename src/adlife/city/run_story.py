@@ -40,6 +40,7 @@ from adlife.core.domain.city import CityPackV2
 from adlife.core.domain.city_cognition import CityCognitionSafetyFlag
 from adlife.core.domain.city_cognition_v2 import (
     CITY_COGNITION_PROMPT_CONTRACT_V3_ID,
+    CITY_COGNITION_PROMPT_CONTRACT_V4_ID,
     CityCognitionAffectV2,
     CityCognitionCredibilityV2,
     CityCognitionEvaluationV2,
@@ -49,6 +50,7 @@ from adlife.core.domain.city_cognition_v2 import (
     CityCognitionRuntimeFallbackReasonV2,
     CityCognitionSalienceV2,
     CityCognitionTerminalRecordV2,
+    CityCognitionThoughtLanguageV1,
 )
 from adlife.core.domain.city_run import CityRunManifestV10
 from adlife.core.domain.serialization import canonical_json
@@ -86,6 +88,7 @@ from adlife.i18n.refs import (
 )
 from adlife.reporting.run_story_model import (
     RUN_STORY_FORMAT,
+    THOUGHT_STATUSES,
     Compare,
     Effect,
     RunStoryV1,
@@ -131,6 +134,7 @@ from adlife.reporting.run_story_model import (
     StoryScenario,
     StoryState,
     StoryStatuses,
+    StoryThoughts,
     StoryTotals,
     StoryTraitChip,
     StoryUsage,
@@ -141,7 +145,8 @@ from adlife.reporting.run_story_model import (
 )
 
 MAX_STORY_MOMENTS_PER_PERSON: Final = 40
-MAX_STORY_BYTES: Final = 4_194_304
+# Inner thoughts can add about a kilobyte to each kept moment.
+MAX_STORY_BYTES: Final = 8_388_608
 # Key moments are budgeted per day, so the replay covers the whole simulated period: about
 # 60 per run with AI (20 with rules only), and never fewer than three on any day.
 KEY_MOMENTS_PER_RUN: Final = 60
@@ -984,8 +989,12 @@ def _where(moment: _Moment, activity: SpatialActivity) -> _Where:
 
 
 def _in_character(mode: str, prompt_contract_id: str) -> bool:
-    """Prompt contract v3 asked a real AI, not practice answers, to answer as the person."""
-    return mode in _PROVIDER_MODES and prompt_contract_id == CITY_COGNITION_PROMPT_CONTRACT_V3_ID
+    """Prompt contracts v3 and v4 asked a real AI, not practice answers, to answer as the
+    person; v4 also asked for their inner thoughts."""
+    return mode in _PROVIDER_MODES and prompt_contract_id in {
+        CITY_COGNITION_PROMPT_CONTRACT_V3_ID,
+        CITY_COGNITION_PROMPT_CONTRACT_V4_ID,
+    }
 
 
 def _ai_clause(
@@ -1075,6 +1084,9 @@ def _story_moment(
         raise _inconsistent()
     labels: StoryLabels | None = None
     flags: tuple[CityCognitionSafetyFlag, ...] = ()
+    thoughts: StoryThoughts | None = None
+    if terminal is not None and terminal.thoughts is not None and moment.status in THOUGHT_STATUSES:
+        thoughts = StoryThoughts.model_validate(terminal.thoughts.model_dump(mode="python"))
     if terminal is not None and terminal.source in _ANSWER_SOURCES:
         result = terminal.result
         labels = StoryLabels(
@@ -1141,6 +1153,7 @@ def _story_moment(
         ai_clause=_ai_clause(moment, flags, selection, in_character=in_character),
         rules_line=rules_line,
         with_ai_line=with_ai_line,
+        thoughts=thoughts,
     )
 
 
@@ -1359,6 +1372,7 @@ def _ai_facts(stored: StoredCityRun, evidence: _Evidence, moments: Sequence[_Mom
             completion_tokens=sum(record.completion_tokens or 0 for record in usage),
         ),
         reused_answers=sum(record.source == "cache" for record in records),
+        thought_languages=_thought_languages(evidence.workbench_input),
         contract=StoryContract(
             prompt_contract_id=view.prompt_contract_id,
             prompt_contract_sha256=view.prompt_contract_sha256,
@@ -1367,6 +1381,13 @@ def _ai_facts(stored: StoredCityRun, evidence: _Evidence, moments: Sequence[_Mom
             influence_policy_sha256=view.influence_policy_sha256,
         ),
     )
+
+
+def _thought_languages(
+    workbench_input: WorkbenchRunInputV4,
+) -> tuple[CityCognitionThoughtLanguageV1, ...]:
+    """The languages the run's frozen setup asked inner thoughts in, if any."""
+    return workbench_input.draft.cognition.thought_languages
 
 
 def _averages(stored: StoredCityRun) -> StoryAverages:

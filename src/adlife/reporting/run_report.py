@@ -25,6 +25,7 @@ from jinja2 import Environment, StrictUndefined
 from markupsafe import Markup
 
 from adlife.i18n import LANGUAGES, Catalog, Language, MessageRef, load_catalog, template_functions
+from adlife.i18n.refs import message_ref, person_param
 from adlife.reporting.run_story_model import (
     RunStoryV1,
     StoryLabels,
@@ -57,8 +58,12 @@ _FLAGS: Final = ("stereotype-risk", "unsupported-inference", "unsafe-content")
 _AI_HEADLINES: Final = frozenset(
     {"story.headline.ai", "story.headline.ai_as_person", "story.headline.practice"}
 )
-# Prompt contract v3 asked the AI to answer as the person who noticed the ad.
-_PERSONA_PROMPT: Final = "city-cognition-persona-prompt-v3"
+# Prompt contract v3 asked the AI to answer as the person who noticed the ad; v4 also asked
+# for their inner thoughts.
+_PERSONA_PROMPTS: Final = frozenset(
+    {"city-cognition-persona-prompt-v3", "city-cognition-persona-thoughts-prompt-v4"}
+)
+_THOUGHT_LANGUAGES: Final = ("en", "de", "fa")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +96,16 @@ class _Chip:
 
 
 @dataclass(frozen=True, slots=True)
+class _Thought:
+    """One language of a moment's inner thoughts: saved AI text, escaped like user text."""
+
+    language: str
+    direction: str
+    label_key: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class _Moment:
     status: str
     day: int
@@ -103,6 +118,8 @@ class _Moment:
     rules_line: MessageRef | None
     with_ai_line: MessageRef | None
     ai_tone: Tone
+    thoughts_title: MessageRef | None
+    thoughts: tuple[_Thought, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,7 +417,23 @@ def _mode_chips(person: StoryPerson) -> tuple[_Chip, ...]:
     return tuple(chips)
 
 
-def _moment(moment: StoryMoment, *, practice: bool) -> _Moment:
+def _thoughts(moment: StoryMoment) -> tuple[_Thought, ...]:
+    """Every language the moment's inner thoughts were kept in, in the stored order."""
+    if moment.thoughts is None:
+        return ()
+    return tuple(
+        _Thought(
+            language=language,
+            direction="rtl" if language == "fa" else "ltr",
+            label_key=f"lang.{language}",
+            text=text,
+        )
+        for language in _THOUGHT_LANGUAGES
+        if (text := getattr(moment.thoughts, language)) is not None
+    )
+
+
+def _moment(moment: StoryMoment, *, practice: bool, agent_id: str) -> _Moment:
     status = moment.status
     set_aside = status in _SET_ASIDE
     label_tone: Tone = "aside" if set_aside else ("practice" if practice else "ai")
@@ -424,6 +457,12 @@ def _moment(moment: StoryMoment, *, practice: bool) -> _Moment:
         rules_line=moment.rules_line,
         with_ai_line=moment.with_ai_line,
         ai_tone=ai_tone,
+        thoughts_title=(
+            None
+            if moment.thoughts is None
+            else message_ref("story.thoughts.title", name=person_param(agent_id))
+        ),
+        thoughts=_thoughts(moment),
     )
 
 
@@ -465,7 +504,9 @@ def _person(person: StoryPerson, *, practice: bool, days: int) -> _Person:
         label_answers=person.label_answers,
         # One answer's labels already show on its moment; a summary only helps from two on.
         label_mode=_mode_chips(person) if person.label_answers >= 2 else (),
-        moments=tuple(_moment(moment, practice=practice) for moment in listed),
+        moments=tuple(
+            _moment(moment, practice=practice, agent_id=person.agent_id) for moment in listed
+        ),
         more=rest,
         end=_end(person),
     )
@@ -653,7 +694,7 @@ def _view(story: RunStoryV1, catalog: Catalog, links: RunReportLinks | None) -> 
         practice=practice,
         rules=mode == "rules",
         in_character=(
-            mode in _PROVIDER_MODES and story.ai.contract.prompt_contract_id == _PERSONA_PROMPT
+            mode in _PROVIDER_MODES and story.ai.contract.prompt_contract_id in _PERSONA_PROMPTS
         ),
         tone=ai_tone,
         label_tone="practice" if practice else "ai",

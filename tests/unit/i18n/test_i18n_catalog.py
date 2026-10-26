@@ -201,8 +201,10 @@ def test_english_catalog_is_the_normative_appendix_a_key_set() -> None:
     # column, row) and the setup's every-noticed-ad option, its note, the spread wording
     # and the upper-bound token estimate. The AI answering as the person (prompt v3) adds
     # six: the headline and moment line, and in-character versions of the how-it-works
-    # box, the reaction glossary line and the names and feelings limits.
-    assert len(english.message_keys()) == 565
+    # box, the reaction glossary line and the names and feelings limits. Inner thoughts add
+    # six: the setup's title, help and cost lines, and the story's title, other-languages
+    # toggle and note.
+    assert len(english.message_keys()) == 571
     assert english.text("progress.title.done") == "Simulation finished"
     assert english.text("progress.answered", resolved=3, total=10) == "3 of 10 answered"
     assert english.text("common.app") == "AdLife Lab"

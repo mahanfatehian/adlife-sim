@@ -1,7 +1,7 @@
 // Story page: boot, intro, key-moment stepper, narration card, People and Summary tabs.
 // Every visible word comes from the catalog; saved user text only via textContent in <bdi>.
 
-import { dir, fmt, initI18n, makeRefContext, resolveNodes, resolveText, t, tn } from "./guide-i18n.js";
+import { dir, fmt, initI18n, lang, makeRefContext, resolveNodes, resolveText, t, tn } from "./guide-i18n.js";
 import { ApiError, announce, bdi, byId, clear, el, getJson, meta, prefersReducedMotion } from "./guide-core.js";
 import { StoryMap, movementIntervals } from "./guide-map.js";
 
@@ -23,8 +23,14 @@ const INTERESTS = new Set([
   "books", "commuting", "cooking", "crafts", "food", "gardening", "leisure", "music", "technology",
 ]);
 const PROVIDER_MODES = new Set(["local", "remote"]);
-// Prompt contract v3 asked the AI to answer as the person who noticed the ad.
-const PERSONA_PROMPT = "city-cognition-persona-prompt-v3";
+// Prompt contract v3 asked the AI to answer as the person who noticed the ad; v4 also asked
+// for their inner thoughts.
+const PERSONA_PROMPTS = new Set([
+  "city-cognition-persona-prompt-v3",
+  "city-cognition-persona-thoughts-prompt-v4",
+]);
+// Inner thoughts, in the order the story stores them.
+const THOUGHT_LANGUAGES = ["en", "de", "fa"];
 // Summary lines with an in-character version ("-persona") for prompt v3 runs.
 const PERSONA_VARIANTS = ["story-how-ai", "story-limits-names", "story-limits-feelings"];
 const STATUSES = new Set([
@@ -51,6 +57,7 @@ const state = {
   minute: 0,
   intervals: [],
   mathOpen: false,
+  thoughtsOpen: false,
   ready: false,
   bound: false,
 };
@@ -641,6 +648,59 @@ function aiLane(moment) {
   return lane;
 }
 
+// What the AI wrote the person was thinking when they noticed the ad: in the page language
+// when the run has it (else every language it has), with the other languages one click away.
+// It is saved AI text, so it is only ever text content, isolated with its own language.
+function thoughtQuote(language, text, labelled) {
+  const quote = h(
+    "blockquote",
+    { className: "story-thought", attrs: { lang: language, dir: language === "fa" ? "rtl" : "ltr" } },
+    h("p", {}, text),
+  );
+  if (!labelled) return quote;
+  return h(
+    "figure",
+    { className: "story-thought-figure" },
+    h("figcaption", { className: "story-thought-lang" }, t(`lang.${language}`)),
+    quote,
+  );
+}
+
+function thoughtsLane(person, moment) {
+  const thoughts = moment.thoughts;
+  if (!thoughts) return null;
+  const available = THOUGHT_LANGUAGES.filter((language) => typeof thoughts[language] === "string");
+  if (available.length === 0) return null;
+  const shown = available.includes(lang()) ? [lang()] : available;
+  const others = available.filter((language) => !shown.includes(language));
+  const lane = h(
+    "section",
+    { className: "g-lane g-lane--ai story-lane story-thoughts" },
+    h(
+      "p",
+      { className: "story-lane-text story-lane-lead" },
+      h("span", { className: "story-thought-icon", attrs: { "aria-hidden": "true" } }),
+      h("span", {}, refNodes({ key: "story.thoughts.title", params: { name: { person: person.agent_id } } })),
+    ),
+    ...shown.map((language) => thoughtQuote(language, thoughts[language], shown.length > 1)),
+  );
+  if (others.length > 0) {
+    const details = h(
+      "details",
+      { className: "g-details story-thoughts-more" },
+      h("summary", {}, t("story.thoughts.more")),
+      ...others.map((language) => thoughtQuote(language, thoughts[language], true)),
+    );
+    details.open = state.thoughtsOpen;
+    details.addEventListener("toggle", () => {
+      state.thoughtsOpen = details.open;
+    });
+    lane.append(details);
+  }
+  lane.append(h("p", { className: "story-thoughts-note" }, t("story.thoughts.note")));
+  return lane;
+}
+
 function clampFor(kind, value) {
   const low = kind === "liking" ? -1 : 0;
   return Math.min(1, Math.max(low, Number(value) || 0));
@@ -927,7 +987,10 @@ function renderCard(step) {
     h("p", { className: "story-card-sentence" }, refNodes(moment.sentence)),
   );
   if (moment.noticed) {
-    card.append(rulesLane(moment), aiLane(moment), withLane(moment), mathDisclosure(moment));
+    card.append(rulesLane(moment), aiLane(moment));
+    const thoughts = thoughtsLane(person, moment);
+    if (thoughts) card.append(thoughts);
+    card.append(withLane(moment), mathDisclosure(moment));
   }
   restartEnter(card);
 }
@@ -1325,7 +1388,7 @@ function renderSummary() {
   );
   const ai = state.story.ai;
   byId("story-limits-vendor").hidden = !PROVIDER_MODES.has(ai.mode);
-  const inCharacter = PROVIDER_MODES.has(ai.mode) && ai.contract.prompt_contract_id === PERSONA_PROMPT;
+  const inCharacter = PROVIDER_MODES.has(ai.mode) && PERSONA_PROMPTS.has(ai.contract.prompt_contract_id);
   for (const id of PERSONA_VARIANTS) {
     byId(id).hidden = inCharacter;
     byId(`${id}-persona`).hidden = !inCharacter;

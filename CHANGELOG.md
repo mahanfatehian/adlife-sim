@@ -189,6 +189,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inner thoughts in any language combination (2026-10-26)** — setup step 3 has checkboxes
+  for English, Deutsch, and فارسی. With any of them ticked, each AI answer also carries
+  what that person is thinking at that moment, written in character, in exactly the chosen
+  languages, and the story shows it on the moment's card (page language first, the rest
+  behind **Other languages**); the HTML report lists every language. The run freezes the new
+  causal contract V5: prompt contract `city-cognition-persona-thoughts-prompt-v4`, result
+  schema V3 (a `thoughts` object with nullable `de`, `en`, `fa`), and selection policy V4,
+  which selects as V3 does with a fixed 640-token answer budget per attempt. Thoughts never
+  change a label, delta, or later question; a thought that fails the persona-text screens
+  or its script check is dropped, and an `uncertain` or flagged answer keeps none. The
+  adapter lifts thoughts out of the answer before the raw-body screen, so ordinary prose
+  cannot discard the labels. Practice and rules-only runs refuse thoughts. A thoughts run
+  needs a passed thoughts check (`thought_languages` on `POST .../check`, read back with
+  `GET .../bounded-check?thoughts=true`), and the setup page switches to that check when
+  thoughts are turned on. Runs without thoughts keep contract V4 and identical bytes; the
+  run receipt, story, report, and run viewers accept the new versions, and the story size
+  limit is now 8 MiB.
 - **Connect any OpenAI-compatible service from the app (2026-10-21)** — the guided pages no
   longer need an AI approved at startup. **Online AI** takes any service's base URL, model
   name, and API key (OpenRouter, GapGPT, or another OpenAI-compatible gateway); **AI on this

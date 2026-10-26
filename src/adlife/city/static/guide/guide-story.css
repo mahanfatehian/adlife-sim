@@ -523,6 +523,47 @@ html:lang(fa) .story-card-sentence { line-height: 1.8; }
 
 .story-chips { gap: var(--s-1) var(--s-2); }
 
+/* Inner thoughts: the AI's words for what the person thought, as a quiet speech bubble. */
+.story-thought-icon {
+  flex: none;
+  inline-size: .75em;
+  block-size: .75em;
+  border: 2px solid var(--ai);
+  border-radius: 50%;
+}
+
+.story-thought-figure { margin: 0; }
+
+.story-thought-lang {
+  color: var(--ink-3);
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+
+.story-thought {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-inline-start: 3px solid var(--ai);
+  border-radius: 0 10px 10px 10px;
+  background: var(--ai-tint);
+  color: var(--ink);
+}
+
+.story-thought[dir="rtl"] { border-radius: 10px 0 10px 10px; }
+
+.story-thought > p { margin: 0; }
+
+.story-thought:lang(fa) { font-family: var(--font-fa); line-height: 1.8; }
+
+.story-thoughts-more > summary { font-size: var(--fs-s); }
+
+.story-thoughts-more > .story-thought-figure { margin-block-start: var(--s-2); }
+
+.story-thoughts-note {
+  color: var(--ink-3);
+  font-size: var(--fs-s);
+}
+
 /* "After this ad": rules only and with AI side by side, liking and ad memory as columns. */
 .story-bars {
   inline-size: 100%;
@@ -1274,6 +1315,9 @@ html:lang(fa) .story-card-sentence { line-height: 1.8; }
   .story-place-mark { border: 1px solid CanvasText; }
 
   .story-place-icon { fill: CanvasText; }
+
+  .story-thought,
+  .story-thought-icon { border-color: CanvasText; }
 
   .story-tick,
   .story-spread-seg,

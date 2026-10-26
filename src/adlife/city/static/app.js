@@ -5077,19 +5077,47 @@ const boundedSelectionLimits = Object.freeze({
     fundedLimits: Object.freeze([60, 120, 250, 500, 1000]),
     offlineLimit: 1000,
   }),
+  // V4 is V3 with a larger, fixed output budget for the inner thoughts of prompt v4.
+  4: Object.freeze({
+    fixed: Object.freeze({
+      selected_requests_per_agent: 1000,
+      selected_requests_per_run: 1000,
+      transient_retries: 3,
+      repair_attempts: 2,
+      aggregate_deadline_seconds: 1800,
+    }),
+    concurrency: Object.freeze({ rules: 4, mock: 4, local: 4, remote: 8 }),
+    fundedLimits: Object.freeze([60, 120, 250, 500, 1000]),
+    offlineLimit: 1000,
+  }),
 });
+const boundedThoughtLanguages = Object.freeze(["en", "de", "fa"]);
 
 // Frozen prompt-contract generations, keyed by id: v2 judged the ad from outside; the
 // persona prompt v3 answers as the person, so its request ceiling is larger and it exists
-// only with selection policy V3. A saved input is checked against its own contract.
+// only with selection policy V3; v4 also writes the person's inner thoughts (result schema
+// V3, selection policy V4). A saved input is checked against its own contract.
 const boundedPromptContracts = Object.freeze({
   "city-cognition-signal-prompt-v2": Object.freeze({
     version: 2, maxRequestBytes: 8192, selectionVersions: Object.freeze([2, 3]),
+    resultSchemaId: "city-cognition-signal-result-v2", resultSchemaVersion: 2, thoughts: false,
   }),
   "city-cognition-persona-prompt-v3": Object.freeze({
     version: 3, maxRequestBytes: 16384, selectionVersions: Object.freeze([3]),
+    resultSchemaId: "city-cognition-signal-result-v2", resultSchemaVersion: 2, thoughts: false,
+  }),
+  "city-cognition-persona-thoughts-prompt-v4": Object.freeze({
+    version: 4, maxRequestBytes: 16384, selectionVersions: Object.freeze([4]),
+    resultSchemaId: "city-cognition-signal-result-v3", resultSchemaVersion: 3, thoughts: true,
   }),
 });
+
+// A thoughts run's languages: one to three, distinct, in the stored order.
+function validBoundedThoughtLanguages(value) {
+  return Array.isArray(value)
+    && value.length >= 1
+    && value.join(",") === boundedThoughtLanguages.filter((code) => value.includes(code)).join(",");
+}
 
 function validateBoundedWorkbenchCognition(value) {
   const cognition = requireRecord(value, "Frozen workbench input");
@@ -5097,7 +5125,7 @@ function validateBoundedWorkbenchCognition(value) {
   const version = contractValue !== null && typeof contractValue === "object"
     ? contractValue.selection_policy_version
     : null;
-  if (version !== 2 && version !== 3) invalidWorkbenchInput();
+  if (!Object.hasOwn(boundedSelectionLimits, version)) invalidWorkbenchInput();
   const promptId = contractValue.prompt_contract_id;
   const prompt = typeof promptId === "string" && Object.hasOwn(boundedPromptContracts, promptId)
     ? boundedPromptContracts[promptId]
@@ -5113,8 +5141,12 @@ function validateBoundedWorkbenchCognition(value) {
     attempt_timeout_seconds: 30,
     ...limits.fixed,
   };
+  const cognitionKeys = prompt.thoughts
+    ? [...boundedWorkbenchCognitionKeys, "thought_languages"]
+    : boundedWorkbenchCognitionKeys;
   if (
-    !hasExactKeys(cognition, boundedWorkbenchCognitionKeys)
+    !hasExactKeys(cognition, cognitionKeys)
+    || (prompt.thoughts && !validBoundedThoughtLanguages(cognition.thought_languages))
     || cognition.effect_scope !== boundedEffectScope
     || !["rules", "mock", "local", "remote"].includes(cognition.mode)
     || !limits.fundedLimits.includes(cognition.funded_response_limit)
@@ -5154,8 +5186,8 @@ function validateBoundedWorkbenchCognition(value) {
     || contract.disclosure !== boundedClaimScope
     || contract.prompt_contract_id !== promptId
     || contract.prompt_contract_version !== prompt.version
-    || contract.result_schema_id !== "city-cognition-signal-result-v2"
-    || contract.result_schema_version !== 2
+    || contract.result_schema_id !== prompt.resultSchemaId
+    || contract.result_schema_version !== prompt.resultSchemaVersion
     || contract.selection_policy_version !== version
     || contract.fallback_policy_version !== 2
     || contract.mock_policy_version !== 1

@@ -432,8 +432,9 @@ attention, and every deterministic baseline response. AdLife then sorts the noti
 in stable time order, selects as many as the run's AI limit allows, spread evenly over the
 whole run (selection policy `city-cognition-selection-v3`, `spread-evenly`, with no per-person
 cap), and asks the source for one closed result per selected response: `affect`, `relevance`,
-`credibility`, and `salience` categories plus optional `safety_flags`. There is no provider
-prose and no provider-authored number. AdLife, not the model, maps the categories through the
+`credibility`, and `salience` categories plus optional `safety_flags`. Apart from the
+optional inner thoughts below, which are display text only, there is no provider prose,
+and there is never a provider-authored number. AdLife, not the model, maps the categories through the
 frozen `city-cognition-influence-v1` tables into bounded deltas on a separate synthetic
 cognition sentiment/recall track. Movement, attention, the baseline responses and rule state,
 budgets, and the purchase-intention proxy never read that track. An `uncertain` category or
@@ -465,6 +466,26 @@ neutralized, but that depends on the model flagging itself. Runs saved earlier u
 contract `city-cognition-signal-prompt-v2`: in them name, age, occupation, background, and
 MBTI never reached the causal prompt, which sent the start-of-run state and the rules' factors
 instead, and they still verify, replay, and open unchanged.
+
+**Inner thoughts (optional).** Setup step 3 offers checkboxes for English, Deutsch, and
+فارسی; tick any combination, or none to leave thoughts off. With at least one
+language, a new run freezes causal contract V5: prompt contract
+`city-cognition-persona-thoughts-prompt-v4`, result schema `city-cognition-signal-result-v3`,
+and selection policy `city-cognition-selection-v4`, which selects exactly as V3 but gives
+every attempt a fixed 640-token answer budget (3,840 reserved per request). In the same
+call that returns the four categories, the model also writes, as the person, one or two
+short sentences of what they are thinking at that moment in each chosen language (at most
+240 characters each). The thoughts change no label, number, or later question. Each one is
+screened like persona text (no credentials, contact details, identity numbers, paths, or
+web addresses, and the right script for its language). One that fails, or the thoughts of
+an `uncertain` or flagged answer, is dropped while the labels still count. Kept thoughts
+are saved in the terminal record and covered by its hash, survive verification and
+replay, and are shown on that moment's card in the story. The story shows the page language
+first and the others behind **Other languages**; the report shows every language. They cost
+more tokens, so they are off by default, and practice and rules-only runs cannot ask for
+them. A run with thoughts needs its own passed connection test:
+`POST .../check` with `thought_languages`, read back with
+`GET .../bounded-check?thoughts=true`.
 
 Local and remote sources choose an AI limit of 60, 120 (local default), 250, 500, or 1000
 (remote default) requests, where 1000 means every noticed ad, up to 1,000; every selected

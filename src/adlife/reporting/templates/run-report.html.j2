@@ -157,6 +157,9 @@
 <div class="moment-line"><p class="sentence">{{ ref(moment.sentence) }}</p><span class="badge" data-status="{{ moment.status }}">{{ tr(moment.status_key) }}</span></div>
 {% if moment.ai_clause %}<p class="ai-clause">{{ ref(moment.ai_clause) }}</p>
 {% endif %}{% if moment.labels %}{{ chips(moment.labels, moment.label_tone, moment.set_aside) }}
+{% endif %}{% if moment.thoughts %}<div class="thoughts"><p class="thoughts-title">{{ ref(moment.thoughts_title) }}</p>
+{% for thought in moment.thoughts %}<figure class="thought"><figcaption>{{ tr(thought.label_key) }}</figcaption><blockquote lang="{{ thought.language }}" dir="{{ thought.direction }}"><p>{{ thought.text }}</p></blockquote></figure>
+{% endfor %}<p class="thoughts-note">{{ tr("story.thoughts.note") }}</p></div>
 {% endif %}{% if moment.rules_line %}<p class="state state--rules">{{ ref(moment.rules_line) }}</p>
 {% endif %}{% if moment.with_ai_line %}<p class="state state--{{ moment.ai_tone }}">{{ ref(moment.with_ai_line) }}</p>
 {% endif %}</li>

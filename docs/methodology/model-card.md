@@ -116,8 +116,8 @@ opportunities, attention, and every deterministic baseline response. For the not
 the run's AI limit selects (spread evenly over the whole run in new runs; in runs saved
 earlier, the earliest, at most 4 noticed responses per agent and 60 per run), a local or
 remote OpenAI-compatible model then chooses one closed category for each of affect,
-relevance, credibility, and salience, plus optional safety flags. It writes no prose, number,
-identifier, event, or state. AdLife maps the categories through the frozen
+relevance, credibility, and salience, plus optional safety flags. It writes no number,
+identifier, event, or state, and no prose unless the run asked for inner thoughts (below). AdLife maps the categories through the frozen
 `city-cognition-influence-v1` tables and clamps into bounded deltas on a separate synthetic
 cognition sentiment/recall track. The model cannot move agents, create or select events,
 change attention, the baseline responses, the rule state, budgets, or the purchase-intention
@@ -142,6 +142,17 @@ request is still built before any provider call. In runs saved earlier (prompt c
 response traits, the initial rule sentiment and recall, the campaign's target interests and
 relative price, the creative, and the channel, time, frequency, and rule factors; name, age,
 occupation, background, and MBTI were excluded.
+
+A run may also ask for the person's inner thoughts in English, German, Persian, or any
+combination (causal contract V5, prompt contract `city-cognition-persona-thoughts-prompt-v4`,
+result schema `city-cognition-signal-result-v3`, selection policy `city-cognition-selection-v4`
+with a fixed 640-token answer budget per attempt). The same answer then carries one or two
+short sentences per chosen language, written in character. They are display text only: no
+label, delta, state, metric, or later request reads them, so a run's numbers do not depend on
+them. Each thought is screened like persona text and must be in its language's script; a
+thought that fails is dropped, and an `uncertain` or flagged answer keeps none. Like the
+categories, a thought is a model's improvisation for a fictional person, not anyone's real
+thinking, and it can be stereotyped or inconsistent with the labels next to it.
 
 An `uncertain` category or any safety flag (`stereotype-risk`,
 `unsupported-inference`, `unsafe-content`) neutralizes the whole answer; unavailable,

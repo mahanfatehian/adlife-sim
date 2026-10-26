@@ -194,6 +194,14 @@ that are not chosen get no AI effect. A question that fails is tried again a few
 earlier version keep their own limit, at most 60 questions sent earliest first, and still
 open unchanged.
 
+**Inner thoughts (optional)**, under the AI limit, has a box for each of English, Deutsch,
+and فارسی. Tick any combination: only German, German and Persian, all three. The AI
+then also writes what each person is thinking when they notice the ad, and the story shows
+it on that moment. Each language makes every answer longer, so the page shows the extra
+token estimate; leave every box empty to keep thoughts off. The boxes appear only for
+online AI and AI on this computer. Turning thoughts on needs its own AI test, so the button
+may read **Test the AI and run** again.
+
 The story replays the whole simulated period: its key moments are spread over every day, and
 its last step shows the end of the last day with the totals of each day.
 
@@ -222,6 +230,9 @@ marked with small labels, and the legend under the map explains every mark.
 - Each moment card reads from top to bottom: what happened, the rules-only change, the AI's
   labels, and where the person ends up with AI, with paired bars for liking and ad memory.
   **How was this computed?** shows the exact arithmetic.
+- In a run with inner thoughts, an answered moment also shows **What ... is thinking**: the
+  thought in the page language (or every language the run has), with **Other languages**
+  for the rest. The AI wrote it as this fictional person, and it changed no number.
 - **People** shows one card per person: what they noticed, their most common labels, and
   where they ended. Follow a person to see only their moments.
 - **Summary** shows the whole run: the funnel, what the AI said across all answers, and the
