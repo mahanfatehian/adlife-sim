@@ -533,9 +533,11 @@ exit 4.
 
 Analyze the explicit study definition's 2–100 saved, seed-matched run pairs using the
 contiguous seeds `0..N-1`. Attention-only studies use homogeneous schema-v5, schema-v6,
-schema-v7, schema-v8 or schema-v9 runs; attention-and-response studies require homogeneous schema-v6,
-schema-v7, schema-v8 or schema-v9. Schema-v10 runs are refused for now in either scope, so
-`city-report` cannot publish them either. Every source is verified, and
+schema-v7, schema-v8, schema-v9, or schema-v10 runs; attention-and-response studies require
+homogeneous schema-v6, schema-v7, schema-v8, schema-v9, or schema-v10. A schema-v10 study
+emits `spatial-paired-study-v2`. Its statistics use attention and rule-baseline observations
+only. Cognition provenance is classified as matched or incompatible and is not a campaign
+effect. `city-report` refuses schema-v10 runs for now. Every source is verified, and
 the command does not rerun, discover, modify, cache, or publish artifacts. There is no
 output or discovery option. The strict path-free JSON definition is capped at 64 KiB.
 JSON emits the fully revalidated compact result; human

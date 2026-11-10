@@ -13,6 +13,7 @@ from adlife.city.study_loader import SpatialStudyDefinitionError, load_spatial_s
 from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
 from adlife.cli.output import emit_result
 from adlife.core.experiments.spatial_study import SpatialStudyResult
+from adlife.core.experiments.spatial_study_v2 import SpatialStudyResultV2
 from adlife.core.ports.run_store import StorageError
 from adlife.core.simulation._validation import revalidate_model
 
@@ -60,6 +61,32 @@ def _human_lines(result: SpatialStudyResult) -> list[str]:
     return lines
 
 
+def _human_lines_v2(result: SpatialStudyResultV2) -> list[str]:
+    lines = [
+        "synthetic spatial study, not observed or causal effects: " + result.definition.study_id,
+        f"scope: {result.definition.analysis_scope}; seeds: {len(result.seeds)}; "
+        f"tier: {result.evidence_tier}",
+        f"opportunity: {result.opportunity_classification}",
+        f"response assumptions: {result.response_assumption_classification}; "
+        f"A/A: {result.a_a_status}",
+        "rule baseline statistics are not a cognition effect",
+        "bounded cognition provenance is provider-dependent exploratory evidence, "
+        "not a campaign effect: "
+        f"matched {result.cognition_provenance_matched_pair_count}, "
+        f"incompatible {result.cognition_provenance_incompatible_pair_count}",
+        "Intervals describe deterministic simulator seed variation; "
+        "not population confidence or sales.",
+    ]
+    for statistic in result.statistics:
+        if "cognition" in statistic.metric_key:
+            continue
+        lines.append(
+            f"{statistic.metric_key}: mean {statistic.mean_paired_difference:+g}; "
+            f"{statistic.direction}"
+        )
+    return lines
+
+
 @command_boundary
 def command(
     root: Annotated[Path, typer.Argument(help="Root containing verified city-runs/.")],
@@ -68,14 +95,27 @@ def command(
     """Analyze already saved seed-matched city runs without writing any artifact."""
     try:
         definition = load_spatial_study_definition(study)
-        result = revalidate_model(
-            analyze_stored_spatial_study(CityRunStore(root), definition),
-            SpatialStudyResult,
-            label="spatial study result",
-        )
-        document = result.model_dump(mode="json")
+        analyzed = analyze_stored_spatial_study(CityRunStore(root), definition)
+        if isinstance(analyzed, SpatialStudyResultV2):
+            checked = revalidate_model(
+                analyzed,
+                SpatialStudyResultV2,
+                label="spatial study result",
+            )
+            document = checked.model_dump(mode="json")
+            lines = _human_lines_v2(checked)
+        elif isinstance(analyzed, SpatialStudyResult):
+            checked_v1 = revalidate_model(
+                analyzed,
+                SpatialStudyResult,
+                label="spatial study result",
+            )
+            document = checked_v1.model_dump(mode="json")
+            lines = _human_lines(checked_v1)
+        else:
+            raise CommandError("spatial study analysis failed", ExitCode.UNEXPECTED)
         if output_format() == "human":
-            document["_lines"] = _human_lines(result)
+            document["_lines"] = lines
     except SpatialStudyDefinitionError:
         raise CommandError("spatial study definition is invalid") from None
     except StorageError:

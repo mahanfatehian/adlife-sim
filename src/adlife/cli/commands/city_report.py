@@ -12,6 +12,7 @@ from adlife.city.studies import analyze_stored_spatial_study
 from adlife.city.study_loader import SpatialStudyDefinitionError, load_spatial_study_definition
 from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
 from adlife.cli.output import emit_result
+from adlife.core.experiments.spatial_study import SpatialStudyResult
 from adlife.core.ports.run_store import StorageError
 from adlife.reporting.spatial_html import (
     SpatialReportConflict,
@@ -30,8 +31,13 @@ def command(
     try:
         definition = load_spatial_study_definition(study)
         preflight_spatial_study_report(root, definition.study_id)
-        result = analyze_stored_spatial_study(CityRunStore(root), definition)
-        receipt = publish_spatial_study_report(result, root)
+        analyzed = analyze_stored_spatial_study(CityRunStore(root), definition)
+        if not isinstance(analyzed, SpatialStudyResult):
+            raise CommandError(
+                "schema-v10 studies are not reported by city-report yet",
+                ExitCode.INPUT_ERROR,
+            )
+        receipt = publish_spatial_study_report(analyzed, root)
         document = receipt.model_dump(mode="json")
         if output_format() == "human":
             document["_lines"] = [

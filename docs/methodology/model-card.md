@@ -198,8 +198,10 @@ held-out one-input pairs, so it shows that answers differ by person, not that th
 The resulting cognition evidence is therefore provider-dependent and
 exploratory: `city-metrics` reports it beside, never inside, the rule baseline, and it is not a
 campaign effect. `city-compare --layer response` classifies cognition provenance for a
-schema-v10 pair and does not subtract it. `city-study` and `city-report` refuse V10
-runs until a paired-cognition protocol exists. Live provider signals are nondeterministic;
+schema-v10 pair and does not subtract it. `city-study` analyzes those rule baselines.
+`city-report` refuses V10 runs until a paired-cognition protocol exists. The study still
+does not refuse V10 runs that stay on the rule baseline. Live provider
+signals are nondeterministic;
 frozen schema-v10 replay reapplies the saved signals and performs no provider call, so a
 saved run is reproducible while a fresh run is not.
 

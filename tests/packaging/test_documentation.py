@@ -1909,7 +1909,7 @@ def test_bounded_cognition_public_contract_is_documented() -> None:
         "recomputes the whole hash chain",
         "a chatgpt or codex subscription",
         "oauth token is not accepted",
-        "refuse v10 runs for now",
+        "refuses v10 runs for now",
         "not a campaign effect",
     ):
         assert clause in public, clause
@@ -2050,7 +2050,12 @@ def test_cli_reference_documents_the_v10_operation_matrix_and_commands() -> None
         "no purchase, delta, effect, or lift member",
     )
     _assert_terms_share_paragraph(
-        cli, "attention-and-response", "schema-v10 runs are refused for now", "city-report"
+        cli,
+        "attention-and-response",
+        "spatial-paired-study-v2",
+        "not a campaign effect",
+        "city-report",
+        "refuses schema-v10 runs for now",
     )
     _assert_terms_share_paragraph(
         cli,
@@ -2202,7 +2207,7 @@ def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
         "rule-baseline family",
         "purchase-intention proxy",
         "exploratory evidence, not a campaign effect",
-        "refuse v10 runs for now",
+        "refuses v10 runs for now",
     )
 
 
@@ -2375,7 +2380,7 @@ def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
         "city-compare --layer response",
         "city-study",
         "city-report",
-        "refuse v10 runs",
+        "refuses v10 runs",
         "never be reported as a campaign effect",
         "live provider signals are nondeterministic",
         "frozen schema-v10 replay",
@@ -2420,7 +2425,7 @@ def test_experiment_protocol_registers_v10_cognition_as_exploratory() -> None:
         "not an a/a control for the cognition track",
         "only replaying one saved run reproduces its cognition evidence exactly",
         "no paired-cognition protocol exists yet",
-        "no v10 paired study can be run or registered",
+        "`city-report` refuses v10 runs",
     ):
         assert term in _squash(addendum), term
     for command in ("`city-compare --layer response`", "`city-study`", "`city-report`"):
@@ -2520,8 +2525,8 @@ def test_readme_presents_the_three_mode_matrix_and_the_live_demo() -> None:
         "city-compare --layer response",
         "city-study",
         "city-report",
-        "refuse v10 runs for now",
-        "v6-v9 runs keep those commands",
+        "refuses v10 runs for now",
+        "v6-v9 runs keep that",
     )
 
 

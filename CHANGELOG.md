@@ -9,13 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **V10 rule-baseline paired studies** — `city-study` accepts homogeneous schema-v10 pairs
+  and emits `spatial-paired-study-v2`. Statistics use attention and rule-baseline
+  observations only, including the uncalibrated purchase-intention proxy. Cognition
+  provenance is classified and counted. It is not a campaign effect. An A/A study verifies
+  an exact rule-baseline zero even when provider provenance differs. `city-compare --layer response`
+  already pairs schema-v10 runs the same way. The study does not refuse V10 baseline
+  pairs. `city-report` refuses V10 runs for now; V6-V9 keep them.
+
 - **V10 rule-baseline response comparison** — `city-compare --layer response` accepts a
   schema-v10 pair and emits `spatial-response-metrics-comparison-v2`. Deltas are
   treatment minus control on the rule baseline only, including the uncalibrated
   purchase-intention proxy. Cognition snapshots stay labelled and are classified as
   `matched-provider-dependent-exploratory` or `incompatible-provider-provenance`. That
-  classification is not a campaign effect. `city-study` and `city-report` refuse V10 runs
-  for now; V6-V9 keep them. A schema-v10 run still pairs only with another schema-v10 run.
+  classification is not a campaign effect. `city-report` refuses V10 runs for now.
+  A schema-v10 run still pairs only with another schema-v10 run.
 
 ### Changed
 

@@ -404,6 +404,59 @@ def expected_observation_keys(campaign_ids: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(sorted(keys))
 
 
+def validate_study_result_v2(result: object) -> None:
+    """Prove a V2 study reports baseline statistics and classified cognition only."""
+    from adlife.core.experiments.spatial_study_v2 import (
+        SpatialStudyResultV2,
+        classify_cognition_provenance,
+    )
+
+    if not isinstance(result, SpatialStudyResultV2):
+        raise TypeError("V2 study validation requires a SpatialStudyResultV2")
+    if type(result.schema_version) is not int or result.schema_version != 2:
+        raise ValueError("schema-v10 study schema version must be integer 2")
+    if type(result.source_run_schema_version) is not int or result.source_run_schema_version != 10:
+        raise ValueError("schema-v10 study source schema must be integer 10")
+    if any("cognition" in item.metric_key for item in result.statistics):
+        raise ValueError("schema-v10 study statistics must not include cognition measurements")
+    if any(
+        "purchase" in item.metric_key and not item.metric_key.startswith("response.")
+        for item in result.statistics
+    ):
+        raise ValueError("purchase statistics must stay on the rule-baseline response keys")
+    matched = sum(
+        pair.cognition_provenance_classification == "matched-provider-dependent-exploratory"
+        for pair in result.pairs
+    )
+    incompatible = len(result.pairs) - matched
+    if (
+        result.cognition_provenance_matched_pair_count != matched
+        or result.cognition_provenance_incompatible_pair_count != incompatible
+    ):
+        raise ValueError("cognition provenance counts do not match the study pairs")
+    for pair in result.pairs:
+        if pair.cognition_provenance_classification != classify_cognition_provenance(
+            pair.control.cognition,
+            pair.treatment.cognition,
+        ):
+            raise ValueError("cognition provenance classification does not match the arm receipts")
+        if any("cognition" in row.control.key for row in pair.scalars):
+            raise ValueError("schema-v10 study scalars must not include cognition measurements")
+    keys = tuple(row.control.key for row in result.pairs[0].scalars)
+    if tuple(item.metric_key for item in result.statistics) != tuple(sorted(keys)):
+        raise ValueError("schema-v10 study statistics do not match the pair scalars")
+    zero = all(item.mean_paired_difference == 0.0 for item in result.statistics)
+    if result.definition.design == "a-a":
+        if result.a_a_status != "rule-baseline-exact-zero-verified" or not zero:
+            raise ValueError("schema-v10 A/A study must verify an exact rule-baseline zero")
+    elif result.a_a_status != "not-applicable":
+        raise ValueError("schema-v10 contrast study must not claim an A/A zero")
+    if result.study_definition_sha256 != result.definition.fingerprint:
+        raise ValueError("schema-v10 study definition hash does not match")
+    if tuple(pair.seed for pair in result.pairs) != result.seeds:
+        raise ValueError("schema-v10 study seeds do not match its pairs")
+
+
 def validate_study_result(result: SpatialStudyResult) -> None:
     from adlife.core.experiments.spatial_study import (
         SpatialPairedStatistic,
