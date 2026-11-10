@@ -26,6 +26,7 @@ from adlife.core.domain.identifiers import validate_portable_run_identifier
 from adlife.core.domain.person import DomainModel
 from adlife.core.domain.serialization import canonical_json
 from adlife.core.experiments.spatial_study import SpatialStudyResult
+from adlife.core.experiments.spatial_study_v2 import SpatialStudyResultV2
 from adlife.core.simulation._validation import revalidate_model
 
 MAX_SPATIAL_REPORT_BYTES = 8_388_608
@@ -80,12 +81,64 @@ def _lf(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def render_spatial_study_html(result: SpatialStudyResult) -> bytes:
+def _cognition_rows(result: SpatialStudyResultV2) -> tuple[dict[str, str], ...]:
+    rows: list[dict[str, str]] = []
+    for pair in result.pairs:
+        for label, arm in (("control", pair.control), ("treatment", pair.treatment)):
+            cognition = arm.cognition
+            coverage = cognition.coverage
+            outcomes = cognition.outcomes
+            reasons = cognition.reasons
+            categories = cognition.category_counts
+            rows.append(
+                {
+                    "seed": str(pair.seed),
+                    "arm": label,
+                    "classification": pair.cognition_provenance_classification,
+                    "mode": cognition.mode,
+                    "profile_revision": cognition.provider_revision_sha256 or "absent",
+                    "prompt_contract_sha256": cognition.prompt_contract_sha256,
+                    "result_schema_contract_sha256": cognition.result_schema_contract_sha256,
+                    "influence_policy_sha256": cognition.influence_policy_sha256,
+                    "funded_coverage": (
+                        f"{coverage.funded_request_count} of {coverage.eligible_response_count}"
+                    ),
+                    "sources": (
+                        f"rules {outcomes.rules}; mock {outcomes.mock}; "
+                        f"provider {outcomes.provider}; cache {outcomes.cache}; "
+                        f"fallback {outcomes.fallback}; budget-skipped {outcomes.budget_skipped}"
+                    ),
+                    "fallbacks": f"total {reasons.total}",
+                    "categories": (
+                        f"affect neutral {categories.affect.neutral}; "
+                        f"relevance medium {categories.relevance.medium}; "
+                        f"credibility medium {categories.credibility.medium}; "
+                        f"salience medium {categories.salience.medium}"
+                    ),
+                }
+            )
+    return tuple(rows)
+
+
+def render_spatial_study_html(
+    result: SpatialStudyResult | SpatialStudyResultV2,
+) -> bytes:
     """Render all aggregate evidence and pair provenance, never raw/scalar input rows."""
-    checked = revalidate_model(result, SpatialStudyResult, label="spatial study result")
+    checked: SpatialStudyResult | SpatialStudyResultV2
+    checked_v2: SpatialStudyResultV2 | None
+    if isinstance(result, SpatialStudyResultV2):
+        checked_v2 = revalidate_model(result, SpatialStudyResultV2, label="spatial study result")
+        template_name = "spatial-report-v2.html.j2"
+        checked = checked_v2
+    elif isinstance(result, SpatialStudyResult):
+        checked = revalidate_model(result, SpatialStudyResult, label="spatial study result")
+        template_name = "spatial-report.html.j2"
+        checked_v2 = None
+    else:
+        raise TypeError("spatial study report requires a schema-v1 or schema-v2 study result")
     packaged = resources.files("adlife.reporting")
     css = _lf((packaged / "static" / "spatial-report.css").read_text(encoding="utf-8"))
-    source = _lf((packaged / "templates" / "spatial-report.html.j2").read_text(encoding="utf-8"))
+    source = _lf((packaged / "templates" / template_name).read_text(encoding="utf-8"))
     style_hash = base64.b64encode(sha256(css.encode("utf-8")).digest()).decode("ascii")
     csp = (
         "default-src 'none'; script-src 'none'; "
@@ -117,6 +170,7 @@ def render_spatial_study_html(result: SpatialStudyResult) -> bytes:
             css=Markup(css),
             csp=csp,
             response_analyzed=checked.definition.analysis_scope == "attention-and-response",
+            cognition_rows=_cognition_rows(checked_v2) if checked_v2 is not None else (),
         )
         .encode("utf-8")
     )
@@ -235,9 +289,18 @@ def _fsync_directory(directory: Path, descriptor: int | None) -> None:
             os.close(directory_fd)
 
 
-def publish_spatial_study_report(result: SpatialStudyResult, root: Path) -> SpatialReportReceipt:
+def publish_spatial_study_report(
+    result: SpatialStudyResult | SpatialStudyResultV2,
+    root: Path,
+) -> SpatialReportReceipt:
     """Publish using atomic hard-link no-clobber; never replace an existing report."""
-    checked = revalidate_model(result, SpatialStudyResult, label="spatial study result")
+    checked: SpatialStudyResult | SpatialStudyResultV2
+    if isinstance(result, SpatialStudyResultV2):
+        checked = revalidate_model(result, SpatialStudyResultV2, label="spatial study result")
+    elif isinstance(result, SpatialStudyResult):
+        checked = revalidate_model(result, SpatialStudyResult, label="spatial study result")
+    else:
+        raise TypeError("spatial study report requires a schema-v1 or schema-v2 study result")
     content = render_spatial_study_html(checked)
     filename = f"{checked.definition.study_id}.html"
     receipt = SpatialReportReceipt(

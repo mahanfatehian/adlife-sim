@@ -248,7 +248,8 @@ not a campaign effect. The `adlife city-view` saved-run inspector shows the same
 for every response: deterministic baseline, signal or neutral status, fixed mapping, applied
 cognition delta, and the atomic rule/cognition state update. `city-compare --layer response`
 accepts a schema-v10 pair and classifies cognition provenance without a campaign effect.
-`city-study` analyzes schema-v10 rule baselines. `city-report` refuses V10 runs for now. The
+`city-study` analyzes schema-v10 rule baselines. `city-report` publishes that ledger with
+bounded cognition evidence kept apart from the rule baseline. The
 [user guide](user-guide.md) walks through one run with an online AI.
 
 This local profile still lacks authentication or multi-user authorization, report download,

@@ -60,6 +60,53 @@ def study_result(request, tmp_path_factory):
     return analyze(root, definition(response=request.param, contrast=True, same=False))
 
 
+def test_v10_report_separates_rule_and_cognition_evidence(tmp_path) -> None:
+    from adlife.city.run_store import CityRunStore
+    from adlife.city.studies import analyze_stored_spatial_study
+    from adlife.core.domain.serialization import canonical_json
+    from tests.unit.experiments.test_spatial_study_v2 import _definition, _save_pair
+
+    for seed in (0, 1):
+        _save_pair(tmp_path, seed, "rules", f"rules-{seed}")
+        _save_pair(tmp_path, seed, "local", f"provider-{seed}")
+    result = analyze_stored_spatial_study(CityRunStore(tmp_path), _definition())
+    content = report_module().render_spatial_study_html(result)
+    text = content.decode("utf-8").lower()
+    assert "rule baseline" in text
+    assert "bounded cognition evidence" in text
+    assert "provider-dependent exploratory evidence" in text
+    assert "not observed behavior" in text
+    assert "not validated psychology" in text
+    assert "bounded-signals-v1" in text
+    assert "profile revision" in text
+    assert "model id" in text
+    assert "prompt contract sha256" in text
+    assert "result schema sha256" in text
+    assert "influence policy sha256" in text
+    assert "funded coverage" in text
+    assert "fallback counts" in text
+    assert "source counts" in text
+    assert "category counts" in text
+    assert "no provider call" in text
+    assert "unsigned" in text
+    assert "uncalibrated rule-owned proxy" in text
+    assert "not a sales lift" in text
+    assert "not a conversion probability" in text
+    assert "not a validated prediction" in text
+    assert "no cognition treatment-minus-control" in text
+    assert b"<script" not in content.lower()
+    assert b"http://" not in content.lower()
+    assert b"https://" not in content.lower()
+    assert "purchase_intention_proxy" in text or "purchase intention" in text
+    cognition = content.split(b"Bounded cognition evidence", maxsplit=1)[1]
+    assert b"mean paired difference" not in cognition.lower()
+    published = report_module().publish_spatial_study_report(result, tmp_path)
+    report_path = tmp_path / "city-reports" / f"{result.definition.study_id}.html"
+    assert report_path.read_bytes() == content
+    assert published.report_sha256 == sha256(content).hexdigest()
+    assert canonical_json(result)
+
+
 def test_report_is_deterministic_utf8_lf_with_exact_statistics_and_provenance(study_result):
     renderer = report_module().render_spatial_study_html
     content = renderer(study_result)

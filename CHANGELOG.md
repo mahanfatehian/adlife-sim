@@ -9,20 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **V10 study reports** — `city-report` publishes a schema-v10 study as a self-contained
+  HTML ledger. The Rule baseline section holds the statistics. The Bounded cognition
+  evidence section shows provenance, coverage, source counts, and hashes. It is
+  provider-dependent exploratory evidence, not a campaign effect, not observed behavior,
+  and not validated psychology. Replay performs no provider call. The hashes are unsigned.
+
 - **V10 rule-baseline paired studies** — `city-study` accepts homogeneous schema-v10 pairs
   and emits `spatial-paired-study-v2`. Statistics use attention and rule-baseline
   observations only, including the uncalibrated purchase-intention proxy. Cognition
   provenance is classified and counted. It is not a campaign effect. An A/A study verifies
   an exact rule-baseline zero even when provider provenance differs. `city-compare --layer response`
-  already pairs schema-v10 runs the same way. The study does not refuse V10 baseline
-  pairs. `city-report` refuses V10 runs for now; V6-V9 keep them.
+  already pairs schema-v10 runs the same way. `city-report` publishes the same bounded
+  cognition evidence. Cognition is not a campaign effect.
 
 - **V10 rule-baseline response comparison** — `city-compare --layer response` accepts a
   schema-v10 pair and emits `spatial-response-metrics-comparison-v2`. Deltas are
   treatment minus control on the rule baseline only, including the uncalibrated
   purchase-intention proxy. Cognition snapshots stay labelled and are classified as
   `matched-provider-dependent-exploratory` or `incompatible-provider-provenance`. That
-  classification is not a campaign effect. `city-report` refuses V10 runs for now.
+  classification is not a campaign effect. `city-report` publishes the same separation.
   A schema-v10 run still pairs only with another schema-v10 run.
 
 ### Changed

@@ -158,8 +158,9 @@ What this model cannot support. Read alongside the
   No paired-cognition protocol exists yet. `city-compare --layer response` accepts a
   schema-v10 pair and classifies cognition provenance; it does not subtract cognition, and
   cognition results must never be reported as a campaign effect. `city-study` analyzes
-  schema-v10 rule baselines and classifies cognition provenance. `city-report` refuses V10
-  runs. The attention comparison pairs a V10 run only with another
+  schema-v10 rule baselines and classifies cognition provenance. `city-report` publishes
+  that ledger with cognition evidence kept apart from the rule baseline. The attention
+  comparison pairs a V10 run only with another
   V10 run. Live provider
   signals are nondeterministic even at temperature 0 with a fixed seed; frozen schema-v10
   replay reapplies the saved signals and performs no provider call, so it reproduces a saved

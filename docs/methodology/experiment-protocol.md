@@ -166,9 +166,9 @@ claims no empirical validation.
 - No paired-cognition protocol exists yet. `city-compare --layer response` can pair two
   saved schema-v10 runs and subtract only the rule baseline. `city-study` can analyze
   those pairs and classifies cognition provenance; it does not report a cognition effect.
-  `city-report` refuses V10 runs, so no V10 paired study can be published as a report
-  with this tooling; a later protocol would have to freeze compatible signals across arms
-  first.
+  `city-report` publishes that evidence in a separate section and does not subtract it.
+  A later protocol would still have to freeze compatible signals across arms before
+  cognition itself could be compared.
 - Any presentation of V10 results states the source mode, model ID, profile revision, funded
   response limit, coverage, provider/cache/fallback/budget-skipped counts, uncertain and
   safety-neutralized counts, and that the cognition track is synthetic, exploratory, and not

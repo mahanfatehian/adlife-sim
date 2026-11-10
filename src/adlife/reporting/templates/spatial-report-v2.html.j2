@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{ csp }}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spatial study evidence — {{ study.definition.study_id }}</title>
+<style>{{ css }}</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to evidence</a>
+<header class="study-header">
+<p class="scope">Synthetic / exploratory / unobserved / non-causal / not sales</p>
+<p class="eyebrow">Schema-v10 paired study · rule baseline and bounded cognition evidence</p>
+<h1>Study verdict</h1>
+<p class="study-name"><bdi dir="auto">{{ study.definition.study_id }}</bdi> · <bdi dir="auto">{{ study.city.name }}</bdi></p>
+<dl class="verdicts">
+<dt>Protocol size</dt><dd>{{ study.seeds|length }} seeds · {{ study.evidence_tier }}</dd>
+<dt>Opportunity structure</dt><dd>{{ study.opportunity_classification }}</dd>
+<dt>Response assumptions</dt><dd>{{ study.response_assumption_classification }}</dd>
+<dt>A/A invariant</dt><dd>{{ study.a_a_status }}</dd>
+</dl>
+<p class="warning">Intervals describe deterministic simulator seed variation, not population confidence, observed behavior, or a campaign effect.</p>
+</header>
+<main id="main" tabindex="-1">
+<section class="baseline" aria-labelledby="baseline-heading">
+<h2 id="baseline-heading">Rule baseline</h2>
+<p>Statistics below are treatment minus control on attention evidence and the rule-owned baseline only. Purchase intention is an uncalibrated rule-owned proxy, not a purchase probability, a sale, or a transaction.</p>
+<p>Effect scope of the separate cognition track is <bdi dir="auto">bounded-signals-v1</bdi>. That track is not in this table.</p>
+<div class="table-region" tabindex="0" role="region" aria-labelledby="statistics-caption">
+<table class="statistics"><caption id="statistics-caption">Rule-baseline and attention statistics ({{ study.statistics|length }} metrics)</caption>
+<thead><tr><th scope="col">Metric and sources</th><th scope="col">Seeds</th><th scope="col">Mean paired difference</th><th scope="col">Direction</th></tr></thead>
+<tbody>{% for statistic in study.statistics %}<tr>
+<th scope="row"><bdi dir="auto">{{ statistic.metric_key }}</bdi></th>
+<td>{{ statistic.n_seeds }}</td>
+<td>{{ statistic.mean_paired_difference }}</td>
+<td><bdi dir="auto">{{ statistic.direction }}</bdi></td>
+</tr>{% endfor %}</tbody></table>
+</div>
+</section>
+<section class="cognition" aria-labelledby="cognition-heading">
+<h2 id="cognition-heading">Bounded cognition evidence</h2>
+<p>Provider-dependent exploratory evidence, not observed behavior, and not validated psychology. This section is not a treatment effect, not a sales lift, not a conversion probability, and not a validated prediction.</p>
+<p>Frozen schema-v10 replay reapplies saved signals and performs no provider call. Hashes detect accidental change. These artifacts are unsigned.</p>
+<p>A profile revision is the hash below when present. This study receipt does not store a model ID.</p>
+{% for row in cognition_rows %}
+<article class="pair" aria-labelledby="cognition-{{ row.seed }}-{{ row.arm }}">
+<h3 id="cognition-{{ row.seed }}-{{ row.arm }}">Seed {{ row.seed }} · {{ row.arm }}</h3>
+<dl class="ledger">
+<dt>provenance classification</dt><dd><bdi dir="auto">{{ row.classification }}</bdi></dd>
+<dt>mode</dt><dd><bdi dir="auto">{{ row.mode }}</bdi></dd>
+<dt>effect scope</dt><dd>bounded-signals-v1</dd>
+<dt>profile revision</dt><dd><bdi dir="auto">{{ row.profile_revision }}</bdi></dd>
+<dt>prompt contract sha256</dt><dd><bdi dir="auto">{{ row.prompt_contract_sha256 }}</bdi></dd>
+<dt>result schema sha256</dt><dd><bdi dir="auto">{{ row.result_schema_contract_sha256 }}</bdi></dd>
+<dt>influence policy sha256</dt><dd><bdi dir="auto">{{ row.influence_policy_sha256 }}</bdi></dd>
+<dt>funded coverage</dt><dd><bdi dir="auto">{{ row.funded_coverage }}</bdi></dd>
+<dt>source counts</dt><dd><bdi dir="auto">{{ row.sources }}</bdi></dd>
+<dt>fallback counts</dt><dd><bdi dir="auto">{{ row.fallbacks }}</bdi></dd>
+<dt>category counts</dt><dd><bdi dir="auto">{{ row.categories }}</bdi></dd>
+</dl>
+</article>
+{% endfor %}
+</section>
+<section aria-labelledby="limitations-heading">
+<h2 id="limitations-heading">Limitations</h2>
+<p>These are synthetic, exploratory model comparisons: unobserved, non-causal and not sales. Cognition provenance is not subtracted. No cognition treatment-minus-control statistic is reported.</p>
+</section>
+</main>
+<footer>Spatial study HTML v2 · synthetic-study-not-observed-or-causal-effect</footer>
+</body>
+</html>

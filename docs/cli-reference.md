@@ -537,7 +537,8 @@ schema-v7, schema-v8, schema-v9, or schema-v10 runs; attention-and-response stud
 homogeneous schema-v6, schema-v7, schema-v8, schema-v9, or schema-v10. A schema-v10 study
 emits `spatial-paired-study-v2`. Its statistics use attention and rule-baseline observations
 only. Cognition provenance is classified as matched or incompatible and is not a campaign
-effect. `city-report` refuses schema-v10 runs for now. Every source is verified, and
+effect. `city-report` publishes that schema-v10 ledger with the rule baseline and bounded
+cognition evidence in separate sections. Every source is verified, and
 the command does not rerun, discover, modify, cache, or publish artifacts. There is no
 output or discovery option. The strict path-free JSON definition is capped at 64 KiB.
 JSON emits the fully revalidated compact result; human
@@ -559,7 +560,11 @@ difference, sign counts, agreement, and the 0.8 direction rule; it emits no p-va
 ## `adlife city-report ROOT STUDY.json`
 
 Analyze the same explicit verified study as `city-study`, then publish a self-contained
-zero-JavaScript evidence ledger at `ROOT/city-reports/<study_id>.html`. There is no output,
+zero-JavaScript evidence ledger at `ROOT/city-reports/<study_id>.html`. A schema-v10 study
+publishes `spatial-paired-study-v2` with a Rule baseline section and a Bounded cognition
+evidence section. Cognition provenance is provider-dependent exploratory evidence, not a
+campaign effect, and the report states that replay performs no provider call and that the
+hashes are unsigned. There is no output,
 force or browser-opening option. Any existing destination exits 3 unchanged; report-directory
 symlinks and junctions are refused. JSON emits the nine-field receipt with a relative POSIX
 report path. Its exact fields are `schema_version`, `format_id`, `claim_scope`, `study_id`,

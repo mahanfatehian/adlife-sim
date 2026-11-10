@@ -38,6 +38,8 @@ dd { margin: 0; min-width: 0; }
 .study-name { font-size: 1.2rem; }
 .study-header { padding-bottom: 24px; }
 .warning { color: var(--signal); border-left: 3px solid var(--signal); padding-left: 14px; }
+.baseline { border-left: 3px solid var(--route); padding-left: 14px; }
+.cognition { border-left: 3px solid var(--proxy); padding-left: 14px; margin-top: 32px; }
 .proxy-note { color: var(--proxy); }
 .verdicts, .ledger, .formulas { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0 24px; }
 .verdicts dt, .verdicts dd, .ledger dt, .ledger dd, .formulas dt, .formulas dd {

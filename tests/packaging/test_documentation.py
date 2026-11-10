@@ -1909,7 +1909,7 @@ def test_bounded_cognition_public_contract_is_documented() -> None:
         "recomputes the whole hash chain",
         "a chatgpt or codex subscription",
         "oauth token is not accepted",
-        "refuses v10 runs for now",
+        "bounded cognition evidence",
         "not a campaign effect",
     ):
         assert clause in public, clause
@@ -2055,7 +2055,7 @@ def test_cli_reference_documents_the_v10_operation_matrix_and_commands() -> None
         "spatial-paired-study-v2",
         "not a campaign effect",
         "city-report",
-        "refuses schema-v10 runs for now",
+        "bounded cognition evidence",
     )
     _assert_terms_share_paragraph(
         cli,
@@ -2207,7 +2207,7 @@ def test_city_pilot_documents_the_frozen_bounded_cognition_science() -> None:
         "rule-baseline family",
         "purchase-intention proxy",
         "exploratory evidence, not a campaign effect",
-        "refuses v10 runs for now",
+        "bounded cognition evidence",
     )
 
 
@@ -2380,7 +2380,7 @@ def test_limitations_keep_v10_cognition_exploratory_and_bounded() -> None:
         "city-compare --layer response",
         "city-study",
         "city-report",
-        "refuses v10 runs",
+        "publishes",
         "never be reported as a campaign effect",
         "live provider signals are nondeterministic",
         "frozen schema-v10 replay",
@@ -2425,7 +2425,7 @@ def test_experiment_protocol_registers_v10_cognition_as_exploratory() -> None:
         "not an a/a control for the cognition track",
         "only replaying one saved run reproduces its cognition evidence exactly",
         "no paired-cognition protocol exists yet",
-        "`city-report` refuses v10 runs",
+        "`city-report` publishes that evidence",
     ):
         assert term in _squash(addendum), term
     for command in ("`city-compare --layer response`", "`city-study`", "`city-report`"):
@@ -2525,8 +2525,8 @@ def test_readme_presents_the_three_mode_matrix_and_the_live_demo() -> None:
         "city-compare --layer response",
         "city-study",
         "city-report",
-        "refuses v10 runs for now",
-        "v6-v9 runs keep that",
+        "bounded cognition evidence",
+        "not a campaign effect",
     )
 
 
@@ -2572,8 +2572,8 @@ def test_changelog_records_bounded_cognition_without_overclaiming() -> None:
         "city-compare --layer response",
         "city-study",
         "city-report",
-        "refuse v10",
-        "v6-v9 keep them",
+        "bounded cognition evidence",
+        "not a campaign effect",
     )
     # The removed demo script is recorded in history but never linked.
     assert "](docs/investor-demo.md" not in unreleased
