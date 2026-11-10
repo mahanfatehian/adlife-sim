@@ -4437,7 +4437,7 @@ class _SpatialReportDocument(HTMLParser):
             parts.append(data)
 
 
-_SPATIAL_REPORT_STYLE_SHA256 = "q6ztJ+LuDuNfjt0kfSzFQsUp4JljF3XBszCmp4i5h2o="
+_SPATIAL_REPORT_STYLE_SHA256 = "M1VvI15Zkh7RqJJWtn3XuhXl4u4WgCM4uAXExCQLhzQ="
 
 
 def _contained_real_directory(root: Path, name: str, label: str) -> Path:
