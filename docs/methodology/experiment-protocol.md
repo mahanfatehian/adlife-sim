@@ -163,9 +163,11 @@ claims no empirical validation.
   response limit, cache state, and live nondeterminism, so two fresh runs of the same scenario
   are not an A/A control for the cognition track and are not expected to differ by exactly
   zero. Only replaying one saved run reproduces its cognition evidence exactly.
-- No paired-cognition protocol exists yet. `city-compare --layer response`, `city-study`, and
-  `city-report` refuse V10 runs, so no V10 paired study can be run or registered with this
-  tooling; a later protocol would have to freeze compatible signals across arms first.
+- No paired-cognition protocol exists yet. `city-compare --layer response` can pair two
+  saved schema-v10 runs and subtract only the rule baseline; it does not freeze compatible
+  signals or report a cognition effect. `city-study` and `city-report` refuse V10 runs, so
+  no V10 paired study can be run or registered with this tooling; a later protocol would
+  have to freeze compatible signals across arms first.
 - Any presentation of V10 results states the source mode, model ID, profile revision, funded
   response limit, coverage, provider/cache/fallback/budget-skipped counts, uncertain and
   safety-neutralized counts, and that the cognition track is synthetic, exploratory, and not

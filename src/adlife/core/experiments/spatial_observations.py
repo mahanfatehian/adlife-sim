@@ -20,7 +20,14 @@ from adlife.core.experiments.spatial_metrics import (
     SpatialMetrics,
 )
 from adlife.core.experiments.spatial_response_metrics import (
+    SpatialResponseAggregateSeries,
+    SpatialResponseCampaignSeries,
+    SpatialResponseChannelSeries,
     SpatialResponseMetrics,
+)
+from adlife.core.experiments.spatial_response_metrics_v2 import (
+    SpatialResponseMetricsV2,
+    SpatialRuleBaselineMetricsV2,
 )
 from adlife.core.simulation._validation import revalidate_model
 from adlife.core.simulation.spatial_opportunity import MAX_SPATIAL_OPPORTUNITIES
@@ -243,14 +250,36 @@ def _attention_observations(
             )
 
 
+_ResponseOverall: TypeAlias = SpatialResponseAggregateSeries | SpatialRuleBaselineMetricsV2
+_ResponseScope: TypeAlias = (
+    _ResponseOverall | SpatialResponseChannelSeries | SpatialResponseCampaignSeries
+)
+
+
+def _response_scopes(
+    overall: _ResponseOverall,
+    channels: tuple[SpatialResponseChannelSeries, ...],
+    campaigns: tuple[SpatialResponseCampaignSeries, ...],
+) -> tuple[tuple[str, _ResponseScope], ...]:
+    return (
+        ("overall", overall),
+        *((f"channel.{item.channel}", item) for item in channels),
+        *((f"campaign.{item.campaign_id}", item) for item in campaigns),
+    )
+
+
 def _response_event_observations(
     metrics: SpatialResponseMetrics,
 ) -> Iterable[SpatialMetricObservation]:
-    for scope, series in (
-        ("overall", metrics.overall),
-        *((f"channel.{item.channel}", item) for item in metrics.channels),
-        *((f"campaign.{item.campaign_id}", item) for item in metrics.campaigns),
-    ):
+    return _response_event_observations_from(metrics.overall, metrics.channels, metrics.campaigns)
+
+
+def _response_event_observations_from(
+    overall: _ResponseOverall,
+    channels: tuple[SpatialResponseChannelSeries, ...],
+    campaigns: tuple[SpatialResponseCampaignSeries, ...],
+) -> Iterable[SpatialMetricObservation]:
+    for scope, series in _response_scopes(overall, channels, campaigns):
         for name in sorted(_RESPONSE_EVENT_METRICS):
             receipt = cast(_ResponseEventReceipt, getattr(series, name))
             yield _observation(
@@ -285,12 +314,19 @@ def _state_observation(
 def _response_state_observations(
     metrics: SpatialResponseMetrics,
 ) -> Iterable[SpatialMetricObservation]:
+    return _response_state_observations_from(metrics.overall, metrics.campaigns)
+
+
+def _response_state_observations_from(
+    overall: _ResponseOverall,
+    campaigns: tuple[SpatialResponseCampaignSeries, ...],
+) -> Iterable[SpatialMetricObservation]:
     # State is intentionally absent from channel series. Same-minute notices from two
     # channels may share one nonlinear committed state transition, so channel allocation
     # would invent evidence the response model did not record.
     for scope, series in (
-        ("overall", metrics.overall),
-        *((f"campaign.{item.campaign_id}", item) for item in metrics.campaigns),
+        ("overall", overall),
+        *((f"campaign.{item.campaign_id}", item) for item in campaigns),
     ):
         for name in sorted(_STATE_METRICS):
             receipt = cast(_ResponseStateReceipt, getattr(series, name))
@@ -323,18 +359,58 @@ def _validate_matched_provenance(
         raise ValueError("attention and response metrics do not share exact provenance")
 
 
+def _validate_v2_provenance(
+    attention: SpatialMetrics,
+    response: SpatialResponseMetricsV2,
+) -> None:
+    if attention.source_run_schema_version != 10 or response.source_run_schema_version != 10:
+        raise ValueError("response observations require matching schema-v10 spatial metrics")
+    checks = (
+        (attention.opportunity_model_id, response.opportunity_model_id),
+        (attention.attention_model_id, response.attention_model_id),
+        (attention.scenario_sha256, response.scenario_sha256),
+        (attention.city_sha256, response.city_sha256),
+        (attention.agents_sha256, response.agents_sha256),
+        (attention.trace_sha256, response.trace_sha256),
+        (attention.opportunity_structure_sha256, response.opportunity_structure_sha256),
+        (attention.seed, response.seed),
+        (attention.population_size, response.population_size),
+        (attention.days, response.days),
+    )
+    if any(left != right for left, right in checks):
+        raise ValueError("attention and response metrics do not share exact provenance")
+
+
 def spatial_metric_observations(
     attention: SpatialMetrics,
-    response: SpatialResponseMetrics | None = None,
+    response: SpatialResponseMetrics | SpatialResponseMetricsV2 | None = None,
 ) -> tuple[SpatialMetricObservation, ...]:
-    """Flatten validated attention and optional response metrics into canonical scalars."""
+    """Flatten validated attention and optional response metrics into canonical scalars.
+
+    A V2 document contributes only its rule baseline. Provider category, source, and
+    fallback counts are not study scalars and are not subtracted.
+    """
     checked_attention = revalidate_model(
         attention,
         SpatialMetrics,
         label="spatial attention metrics",
     )
     observations = list(_attention_observations(checked_attention))
-    if response is not None:
+    if isinstance(response, SpatialResponseMetricsV2):
+        checked_v2 = revalidate_model(
+            response,
+            SpatialResponseMetricsV2,
+            label="spatial response metrics",
+        )
+        _validate_v2_provenance(checked_attention, checked_v2)
+        baseline = checked_v2.rule_baseline
+        observations.extend(
+            _response_event_observations_from(baseline, baseline.channels, baseline.campaigns)
+        )
+        observations.extend(_response_state_observations_from(baseline, baseline.campaigns))
+    elif response is not None:
+        if not isinstance(response, SpatialResponseMetrics):
+            raise TypeError("response observations require schema-v1 or schema-v2 response metrics")
         checked_response = revalidate_model(
             response,
             SpatialResponseMetrics,

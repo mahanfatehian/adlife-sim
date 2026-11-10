@@ -23,6 +23,10 @@ from adlife.core.experiments.spatial_response_comparison import (
     SpatialResponseMetricsComparison,
     compare_spatial_response_metrics,
 )
+from adlife.core.experiments.spatial_response_comparison_v2 import (
+    SpatialResponseMetricsComparisonV2,
+    compare_spatial_response_metrics_v2,
+)
 from adlife.core.experiments.spatial_response_metrics import (
     SpatialResponseMetrics,
     derive_spatial_response_metrics,
@@ -36,6 +40,9 @@ from adlife.core.simulation.spatial_response import SpatialResponseEvaluation
 from adlife.core.simulation.spatial_response_v2 import SpatialResponseEvaluationV2
 
 StoredSpatialResponseMetrics: TypeAlias = SpatialResponseMetrics | SpatialResponseMetricsV2
+StoredSpatialResponseComparison: TypeAlias = (
+    SpatialResponseMetricsComparison | SpatialResponseMetricsComparisonV2
+)
 
 
 def metrics_for_stored_city_run(stored: StoredCityRun) -> SpatialMetrics:
@@ -236,17 +243,38 @@ def response_metrics_for_stored_city_run(
 def compare_stored_city_response_runs(
     control: StoredCityRun,
     treatment: StoredCityRun,
-) -> SpatialResponseMetricsComparison:
-    """Compare response metrics from two verified schema-v6-v9 runs without writing."""
+) -> StoredSpatialResponseComparison:
+    """Compare response metrics from two verified runs of one schema family.
+
+    Schema-v6 through schema-v9 stay on the V1 comparison. A schema-v10 pair uses the
+    V2 comparison, which subtracts only the rule baseline. Mixing V10 with an earlier
+    schema is refused before either run is projected.
+    """
     for stored in (control, treatment):
-        # The V1 comparison contract has no V2 cognition family. Refuse V10 (alone or
-        # mixed with V6-V9) before projecting either run.
-        if isinstance(stored, StoredCityRun) and isinstance(stored.manifest, CityRunManifestV10):
-            raise SchemaVersionMismatch(
-                "spatial response comparison requires schema-v6, v7, v8 or v9 city runs"
-            )
+        if not isinstance(stored, StoredCityRun):
+            raise TypeError("stored must be a StoredCityRun")
+    control_v10 = isinstance(control.manifest, CityRunManifestV10)
+    treatment_v10 = isinstance(treatment.manifest, CityRunManifestV10)
+    if control_v10 != treatment_v10:
+        raise SchemaVersionMismatch(
+            "spatial response comparison cannot mix a schema-v10 city run with a "
+            "schema-v6, v7, v8 or v9 city run"
+        )
     control_metrics = response_metrics_for_stored_city_run(control)
     treatment_metrics = response_metrics_for_stored_city_run(treatment)
+    if control_v10:
+        if not isinstance(control_metrics, SpatialResponseMetricsV2) or not isinstance(
+            treatment_metrics, SpatialResponseMetricsV2
+        ):
+            raise SchemaVersionMismatch(
+                "spatial response comparison requires two schema-v10 city runs"
+            )
+        return compare_spatial_response_metrics_v2(
+            control_metrics,
+            treatment_metrics,
+            control_run_id=control.manifest.run_id,
+            treatment_run_id=treatment.manifest.run_id,
+        )
     if not isinstance(control_metrics, SpatialResponseMetrics) or not isinstance(
         treatment_metrics, SpatialResponseMetrics
     ):
@@ -262,6 +290,7 @@ def compare_stored_city_response_runs(
 
 
 __all__ = [
+    "StoredSpatialResponseComparison",
     "StoredSpatialResponseMetrics",
     "compare_stored_city_response_runs",
     "compare_stored_city_runs",

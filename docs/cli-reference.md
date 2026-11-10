@@ -513,13 +513,19 @@ run is projected (exit 4). Same-run A/A produces exact-zero deltas. A changed
 normalized placement/channel structure is `opportunity-confounded`, never a channel effect,
 and the result carries `synthetic-comparison-not-causal-or-observed-effect`.
 
-`city-compare --layer response` refuses any schema-v10 run for now, because its V1 contract has
-no cognition family. It requires schema-v6, schema-v7, schema-v8 or schema-v9 and emits
-`spatial-response-metrics-comparison-v1` under
-`synthetic-response-comparison-not-causal-or-observed-effect`. It independently classifies
+`city-compare --layer response` accepts schema-v6 through schema-v9 on the V1 contract, and a
+schema-v10 pair on `spatial-response-metrics-comparison-v2`. A schema-v10 run pairs only with
+another schema-v10 run; mixing it with schema-v6 through schema-v9 is refused before either
+run is projected (exit 4). The V1 document is
+`spatial-response-metrics-comparison-v1`. Both documents use
+`synthetic-response-comparison-not-causal-or-observed-effect`. V10 subtracts only the rule
+baseline, including the uncalibrated purchase-intention proxy, and classifies cognition
+provenance as `matched-provider-dependent-exploratory` or `incompatible-provider-provenance`.
+That classification is not a campaign effect, and the cognition snapshots have no purchase,
+delta, effect, or lift member. It independently classifies
 opportunity structure as `matched-opportunity-structure` or `opportunity-confounded` and
 numeric response assumptions as `matched-response-assumptions` or
-`response-assumption-confounded`. All deltas are treatment minus control. The command never
+`response-assumption-confounded`. All baseline deltas are treatment minus control. The command never
 modifies either run; provenance mismatch is invalid input and corrupt/incompatible artifacts
 exit 4.
 

@@ -2043,7 +2043,11 @@ def test_cli_reference_documents_the_v10_operation_matrix_and_commands() -> None
         cli, "a schema-v10 run compares only with another schema-v10 run", "refused"
     )
     _assert_terms_share_paragraph(
-        cli, "city-compare --layer response", "refuses any schema-v10 run for now"
+        cli,
+        "city-compare --layer response",
+        "spatial-response-metrics-comparison-v2",
+        "not a campaign effect",
+        "no purchase, delta, effect, or lift member",
     )
     _assert_terms_share_paragraph(
         cli, "attention-and-response", "schema-v10 runs are refused for now", "city-report"

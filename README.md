@@ -257,7 +257,7 @@ Nothing here makes decisions for real people or is calibrated against real-world
 | Verified offline, content-addressed city catalog with five `fictional-fixture` entries | Foundation complete; zero rights-reviewed real-city entries |
 | Local city workbench with guided browser pages, immutable schema-v9 and schema-v10 cognition evidence, workspace V2 city-pack upload API, verified run library, and run-scoped read API | Local single-operator slice complete; one process-local worker and operator-supplied uploads remain rights-unreviewed |
 | Optional OpenAI-compatible noncausal explanations with approved origins, protected credentials, deterministic fallback, and frozen replay | Complete for the local workbench; authentication and OAuth are not implemented |
-| Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, guided story and report, verified `city-view` saved-run inspector, V10 metrics, and offline replay | Complete for the local workbench, `city-view`, `city-metrics`, and `city-replay`; `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
+| Bounded AI cognition (workbench schema 4 / manifest V10): closed provider-selected categories, the frozen `city-cognition-influence-v1` mapping into a separate cognition state, guided story and report, verified `city-view` saved-run inspector, V10 metrics, offline replay, and rule-baseline response comparison | Complete for the local workbench, `city-view`, `city-metrics`, `city-replay`, and `city-compare --layer response`; `city-study` and `city-report` refuse V10 runs for now; exploratory, not validated psychology |
 | Rights-reviewed real-city entries, calibrated geographic campaign effects, authenticated multi-user deployment | Not implemented; outside the scope of this local research app |
 | Wheel build and release smoke test (`uv build`, `scripts/smoke_release.py`), including V10 rules, practice and loopback-AI runs with their story, report and offline replay | Complete |
 | Continuous integration: quick checks on every push to `main` (`.github/workflows/quick.yml`: lint, types, shell-script lint, wheel smoke, dependency and secret scans, and every test file except the two performance benchmarks and the long guided browser workload, in six parallel Linux shards), and the full CI (`.github/workflows/ci.yml`), which adds the Linux, macOS, and Windows matrix (Python 3.11 to 3.13 on Linux), the coverage floor, the performance gates, and the long guided browser workload | Complete; the full CI runs for pull requests, every release, weekly, and on demand (**Actions → CI → Run workflow**); the shard timings are refreshed by hand ([CONNECT_GITHUB.md](CONNECT_GITHUB.md)) |
@@ -521,9 +521,10 @@ observed behavior, validated psychology, or a prediction.
 
 Not yet done for schema-v10 runs:
 
-- `city-compare --layer response`, `city-study`, and `city-report` refuse V10 runs for now;
-  V6-V9 runs keep those commands. The default attention-layer `city-compare` pairs a V10 run
-  only with another V10 run.
+- `city-compare --layer response` accepts a schema-v10 pair, subtracts the rule baseline
+  only, and classifies cognition provenance. It is not a campaign effect. `city-study` and
+  `city-report` refuse V10 runs for now; V6-V9 runs keep those commands. The default
+  attention-layer `city-compare` pairs a V10 run only with another V10 run.
 - No paired-cognition protocol freezes compatible signals across study arms, so
   provider-dependent cognition is never reported as a campaign effect.
 - V10 is an unreleased artifact schema: runs written by earlier development builds are
@@ -632,7 +633,8 @@ unobserved claim scope: attention comparisons use
 `synthetic-response-comparison-not-causal-or-observed-effect`. For schema-v10,
 `city-metrics --layer response` instead emits the separate `spatial-response-metrics-v2`
 document with a rule-baseline family and a provider-dependent cognition family, while
-`city-compare --layer response` refuses V10 runs.
+`city-compare --layer response` accepts a schema-v10 pair and subtracts only the rule
+baseline. Cognition provenance is classified, not subtracted, and is not a campaign effect.
 
 Bounded C4b evidence is also complete: `city-study` analyzes an explicit definition of
 2–100 already committed, seed-matched run pairs as `spatial-paired-study-v1`, and
@@ -794,9 +796,10 @@ software produces.
    long guided browser workload) runs for every release; what remains is the owner's PyPI
    Trusted Publishing setup, a release signing key the workflow trusts, and a signed tag
    ([docs/releasing.md](docs/releasing.md)).
-2. **Schema-v10 analysis** — let `city-compare --layer response`, `city-study`, and
-   `city-report` read V10 runs, with a paired-cognition protocol so provider-dependent
-   cognition is never reported as a campaign effect.
+2. **Schema-v10 studies and reports** — `city-compare --layer response` now reads a V10
+   pair and keeps cognition exploratory. `city-study` and `city-report` still refuse V10
+   runs until a paired-cognition protocol can freeze compatible signals across arms without
+   reporting provider-dependent cognition as a campaign effect.
 3. **Production-track city product on `main`** — mature the current opt-in pilot with
    licensed city ingestion, geography-aware campaign events, persisted replayable traces,
    authenticated administration and protected provider configuration. The

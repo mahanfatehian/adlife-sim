@@ -518,7 +518,7 @@ def test_v10_response_projection_maps_inconsistent_evidence_to_artifact_corrupti
         assert error.value.__suppress_context__
 
 
-def test_v10_response_comparison_refuses_v1_contract_before_projecting_metrics(
+def test_mixed_v9_and_v10_response_comparison_is_refused_before_projection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from tests.integration.test_city_run_replay import _create_v9_run
@@ -531,9 +531,22 @@ def test_v10_response_comparison_refuses_v1_contract_before_projecting_metrics(
         raise AssertionError("a refused comparison projected response metrics")
 
     monkeypatch.setattr(city_analysis, "response_metrics_for_stored_city_run", forbidden)
-    for control, treatment in ((v10, v10), (v9, v10), (v10, v9)):
-        with pytest.raises(SchemaVersionMismatch, match="schema-v6, v7, v8 or v9"):
+    for control, treatment in ((v9, v10), (v10, v9)):
+        with pytest.raises(SchemaVersionMismatch, match="cannot mix a schema-v10"):
             _compare_stored_city_response_runs(control, treatment)
+    assert _artifact_bytes(directory) == before
+
+
+def test_v10_response_comparison_subtracts_only_the_rule_baseline(tmp_path: Path) -> None:
+    stored, directory = _stored_v10(tmp_path, mode="mock")
+    before = _artifact_bytes(directory)
+
+    result = _compare_stored_city_response_runs(stored, stored)
+
+    assert result.model_id == "spatial-response-metrics-comparison-v2"
+    assert result.rule_baseline.overall.purchase_intention_proxy.mean_change == 0.0
+    assert result.cognition_provenance.classification == "matched-provider-dependent-exploratory"
+    assert "purchase" not in json.dumps(result.cognition_provenance.model_dump(mode="json"))
     assert _artifact_bytes(directory) == before
 
 
@@ -598,7 +611,7 @@ def test_mixed_v9_and_v10_attention_comparison_is_refused_before_projection(
         patched.setattr(city_analysis, "metrics_for_stored_city_run", forbidden)
         with pytest.raises(SchemaVersionMismatch, match=MIXED_ATTENTION_REFUSAL):
             compare_stored_city_runs(control, treatment)
-    with pytest.raises(SchemaVersionMismatch, match="schema-v6, v7, v8 or v9"):
+    with pytest.raises(SchemaVersionMismatch, match="cannot mix a schema-v10"):
         _compare_stored_city_response_runs(control, treatment)
     same_version = compare_stored_city_runs(v10, v10)
     assert (

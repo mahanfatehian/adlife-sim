@@ -31,14 +31,15 @@ def test_city_compare_help_states_the_schemas_each_layer_accepts():
     for arm in ("Control", "Treatment"):
         assert (
             f"{arm} city run ID: schema-v5 through schema-v10 for --layer attention, "
-            "schema-v6 through schema-v9 for --layer response."
+            "schema-v6 through schema-v10 for --layer response. "
+            "A schema-v10 run pairs only with another schema-v10 run."
         ) in help_text
         assert f"{arm} schema-v5 through schema-v10 city run ID." not in help_text
     assert (
         "Metric evidence layer to compare. attention accepts schema-v5 through schema-v10 "
         "runs; a schema-v10 run pairs only with another schema-v10 run. response accepts "
-        "schema-v6 through schema-v9 runs only; for a schema-v10 run use city-metrics "
-        "--layer response."
+        "schema-v6 through schema-v10 runs; a schema-v10 pair subtracts the rule baseline "
+        "only and classifies cognition provenance. It is not a campaign effect."
     ) in help_text
     assert "[default: attention]" in help_text
 
@@ -66,10 +67,23 @@ def test_city_compare_v10_pair_matches_the_documented_layer_support(tmp_path: Pa
     assert document["control"]["source_run_schema_version"] == 10
 
     response = runner.invoke(app, [*base, "--layer", "response"])
-    assert response.exit_code == 4, response.output
-    error = json.loads(response.stdout)["error"]
-    assert "schema-v6, v7, v8 or v9" in error["message"]
+    assert response.exit_code == 0, response.output
+    response_document = json.loads(response.stdout)
+    assert response_document["model_id"] == "spatial-response-metrics-comparison-v2"
+    assert response_document["rule_baseline"]["overall"]["response_count"] == 0.0
+    assert "purchase" not in json.dumps(response_document["cognition_provenance"])
     assert "Traceback" not in response.output
+    assert _artifact_bytes(directory) == before
+
+    human = runner.invoke(
+        app, ["city-compare", str(tmp_path), run_id, run_id, "--layer", "response"]
+    )
+    assert human.exit_code == 0, human.output
+    text = human.stdout.lower()
+    assert "rule baseline overall deltas" in text
+    assert "not a campaign effect" in text
+    assert "cognition provenance:" in text
+    assert text.index("rule baseline overall deltas") < text.index("not a campaign effect")
     assert _artifact_bytes(directory) == before
 
 

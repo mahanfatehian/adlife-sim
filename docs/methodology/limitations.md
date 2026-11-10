@@ -155,9 +155,11 @@ What this model cannot support. Read alongside the
   the descriptive persona fields.
   Movement, attention, baseline responses, budgets, and the purchase-intention proxy stay
   rule-owned, so V10 adds no memory, social propagation, budget mutation, or purchase event.
-  No paired-cognition protocol exists yet: `city-compare --layer response`, `city-study`, and
-  `city-report` refuse V10 runs, the attention comparison pairs a V10 run only with another
-  V10 run, and cognition results must never be reported as a campaign effect. Live provider
+  No paired-cognition protocol exists yet. `city-compare --layer response` accepts a
+  schema-v10 pair and classifies cognition provenance; it does not subtract cognition, and
+  cognition results must never be reported as a campaign effect. `city-study` and
+  `city-report` refuse V10 runs. The attention comparison pairs a V10 run only with another
+  V10 run. Live provider
   signals are nondeterministic even at temperature 0 with a fixed seed; frozen schema-v10
   replay reapplies the saved signals and performs no provider call, so it reproduces a saved
   run but cannot validate one.

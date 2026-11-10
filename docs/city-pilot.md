@@ -246,8 +246,9 @@ provider-dependent cognition family reports applied means, cognition-state recei
 categories, sources, fallbacks, neutralization, and funded coverage as exploratory evidence,
 not a campaign effect. The `adlife city-view` saved-run inspector shows the same separation
 for every response: deterministic baseline, signal or neutral status, fixed mapping, applied
-cognition delta, and the atomic rule/cognition state update. `city-compare --layer response`,
-`city-study`, and `city-report` refuse V10 runs for now. The
+cognition delta, and the atomic rule/cognition state update. `city-compare --layer response`
+accepts a schema-v10 pair and classifies cognition provenance without a campaign effect.
+`city-study` and `city-report` refuse V10 runs for now. The
 [user guide](user-guide.md) walks through one run with an online AI.
 
 This local profile still lacks authentication or multi-user authorization, report download,
@@ -655,7 +656,9 @@ the same verified response projection through GET-only `/api/spatial-response-me
 Schema-v10 runs use the separate version-2 response metrics described under
 [Bounded AI cognition](#bounded-ai-cognition-schema-v10): `city-metrics --layer response`
 prints the rule-baseline family, computed with exactly these receipts, separately from the
-provider-dependent cognition family, and `city-compare --layer response` refuses V10 runs.
+provider-dependent cognition family. `city-compare --layer response` accepts a schema-v10
+pair, subtracts only that rule baseline, and classifies cognition provenance without
+reporting a campaign effect.
 
 ## Repeated-seed spatial studies
 

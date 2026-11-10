@@ -288,9 +288,10 @@ equals the V1 derivation for the same rule evidence and is the only family with 
 purchase-intention proxy. Its provider-dependent cognition family reports applied means,
 cognition-state receipts, categories, sources, fallbacks, neutralization, funded coverage,
 and provenance under `provider-dependent-exploratory-not-campaign-effect`. The same V2
-document backs `/api/spatial-response-metrics` for a V10 viewer. The V1 response comparison
-and the paired-study analysis refuse V10 runs, and the attention comparison pairs a V10 run
-only with another V10 run.
+document backs `/api/spatial-response-metrics` for a V10 viewer. `spatial-response-metrics-comparison-v2` compares a schema-v10 pair by subtracting only the
+rule baseline. Cognition snapshots stay labelled and are classified as matched or
+incompatible provenance; they are not a campaign effect. The paired-study analysis still
+refuses V10 runs. The attention comparison pairs a V10 run only with another V10 run.
 
 Bounded C4b evidence is complete without closing the parent C4 gate. The immutable,
 path-free study definition names 2–100 committed seed pairs. `city-study` verifies and

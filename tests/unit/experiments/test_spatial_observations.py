@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -104,6 +106,39 @@ def test_observations_have_canonical_keys_and_exact_source_receipts() -> None:
         assert isinstance(observation.value, float)
         assert isinstance(observation.numerator, float)
         assert isinstance(observation.denominator, int)
+
+
+def test_v2_observations_use_only_the_rule_baseline(tmp_path: Path) -> None:
+    from tests.unit.experiments.test_spatial_response_metrics_v2 import _derive, _metric_inputs
+
+    _, _, arguments = _metric_inputs(tmp_path, mode="local", source="provider", agents=3)
+    metrics = _derive(arguments)
+
+    observations = spatial_metric_observations(arguments["attention_metrics"], metrics)
+
+    keys = tuple(item.key for item in observations)
+    assert any(key == "response.overall.state.purchase_intention_proxy.final_mean" for key in keys)
+    assert all(
+        "cognition" not in key and "fallback" not in key and "category" not in key for key in keys
+    )
+    assert all(not key.startswith("response.channel.") or ".state." not in key for key in keys)
+    cognition = metrics.provider_dependent_cognition.model_dump(mode="json")
+    assert not any(token in " ".join(keys) for token in ("provider", "fallback", "category"))
+    assert cognition["source_counts"]["provider"] >= 0
+
+
+def test_v2_observations_refuse_a_legacy_attention_snapshot(tmp_path: Path) -> None:
+    from adlife.core.experiments.spatial_metrics import SpatialMetrics
+    from tests.unit.experiments.test_spatial_response_metrics_v2 import _derive, _metric_inputs
+
+    _, _, arguments = _metric_inputs(tmp_path, mode="rules")
+    metrics = _derive(arguments)
+    legacy = SpatialMetrics.model_validate(
+        arguments["attention_metrics"].model_dump(mode="python") | {"source_run_schema_version": 9}
+    )
+
+    with pytest.raises(ValueError, match="schema-v10"):
+        spatial_metric_observations(legacy, metrics)
 
 
 def test_observations_never_attribute_committed_state_to_a_channel() -> None:

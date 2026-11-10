@@ -20,6 +20,12 @@ from adlife.core.experiments.spatial_response_comparison import (
     SpatialResponseCampaignDeltaSeries,
     SpatialResponseChannelDeltaSeries,
 )
+from adlife.core.experiments.spatial_response_comparison_v2 import (
+    SpatialResponseMetricsComparisonV2,
+)
+from adlife.core.experiments.spatial_response_metrics_v2 import (
+    SpatialProviderDependentCognitionMetricsV2,
+)
 from adlife.core.ports.run_store import UnsafeRunLocation, validate_run_id
 
 
@@ -72,9 +78,21 @@ def _response_delta_line(
     return "; ".join(parts)
 
 
+def _cognition_coverage_line(
+    label: str,
+    cognition: SpatialProviderDependentCognitionMetricsV2,
+) -> str:
+    coverage = cognition.coverage
+    return (
+        f"{label} cognition coverage: funded {coverage.funded_request_count} of "
+        f"{coverage.eligible_response_count} eligible responses"
+    )
+
+
 _RUN_ID_SCHEMAS = (
     "schema-v5 through schema-v10 for --layer attention, "
-    "schema-v6 through schema-v9 for --layer response."
+    "schema-v6 through schema-v10 for --layer response. "
+    "A schema-v10 run pairs only with another schema-v10 run."
 )
 
 
@@ -96,8 +114,9 @@ def command(
             help=(
                 "Metric evidence layer to compare. attention accepts schema-v5 through "
                 "schema-v10 runs; a schema-v10 run pairs only with another schema-v10 run. "
-                "response accepts schema-v6 through schema-v9 runs only; for a schema-v10 "
-                "run use city-metrics --layer response."
+                "response accepts schema-v6 through schema-v10 runs; a schema-v10 pair "
+                "subtracts the rule baseline only and classifies cognition provenance. "
+                "It is not a campaign effect."
             ),
         ),
     ] = "attention",
@@ -115,22 +134,47 @@ def command(
         response_comparison = compare_stored_city_response_runs(control, treatment)
         document = response_comparison.model_dump(mode="json")
         if output_format() == "human":
-            document["_lines"] = [
-                "synthetic response comparison, not a causal or observed-world result: "
-                f"{control_run_id} -> {treatment_run_id}",
-                f"opportunity classification: {response_comparison.opportunity_classification}",
-                "response assumption classification: "
-                f"{response_comparison.response_assumption_classification}",
-                _response_delta_line("overall", response_comparison.overall),
-                *(
-                    _response_delta_line(series.channel, series)
-                    for series in response_comparison.channels
-                ),
-                *(
-                    _response_delta_line(series.campaign_id, series)
-                    for series in response_comparison.campaigns
-                ),
-            ]
+            if isinstance(response_comparison, SpatialResponseMetricsComparisonV2):
+                baseline = response_comparison.rule_baseline
+                provenance = response_comparison.cognition_provenance
+                document["_lines"] = [
+                    "synthetic response comparison, not a causal or observed-world result: "
+                    f"{control_run_id} -> {treatment_run_id}",
+                    f"opportunity classification: {response_comparison.opportunity_classification}",
+                    "response assumption classification: "
+                    f"{response_comparison.response_assumption_classification}",
+                    _response_delta_line("rule baseline overall", baseline.overall),
+                    *(
+                        _response_delta_line(f"rule baseline {series.channel}", series)
+                        for series in baseline.channels
+                    ),
+                    *(
+                        _response_delta_line(f"rule baseline {series.campaign_id}", series)
+                        for series in baseline.campaigns
+                    ),
+                    "bounded cognition evidence is provider-dependent exploratory evidence, "
+                    "not a campaign effect",
+                    f"cognition provenance: {provenance.classification}",
+                    _cognition_coverage_line("control", provenance.control),
+                    _cognition_coverage_line("treatment", provenance.treatment),
+                ]
+            else:
+                document["_lines"] = [
+                    "synthetic response comparison, not a causal or observed-world result: "
+                    f"{control_run_id} -> {treatment_run_id}",
+                    f"opportunity classification: {response_comparison.opportunity_classification}",
+                    "response assumption classification: "
+                    f"{response_comparison.response_assumption_classification}",
+                    _response_delta_line("overall", response_comparison.overall),
+                    *(
+                        _response_delta_line(series.channel, series)
+                        for series in response_comparison.channels
+                    ),
+                    *(
+                        _response_delta_line(series.campaign_id, series)
+                        for series in response_comparison.campaigns
+                    ),
+                ]
         emit_result(document)
         return
 

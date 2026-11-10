@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **V10 rule-baseline response comparison** — `city-compare --layer response` accepts a
+  schema-v10 pair and emits `spatial-response-metrics-comparison-v2`. Deltas are
+  treatment minus control on the rule baseline only, including the uncalibrated
+  purchase-intention proxy. Cognition snapshots stay labelled and are classified as
+  `matched-provider-dependent-exploratory` or `incompatible-provider-provenance`. That
+  classification is not a campaign effect. `city-study` and `city-report` refuse V10 runs
+  for now; V6-V9 keep them. A schema-v10 run still pairs only with another schema-v10 run.
+
 ### Changed
 
 - **Review fixes for the in-character upgrade, the CI split and the v10 smoke (2026-10-26)**
@@ -323,9 +333,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pinning limits. `city-metrics --layer response` prints the separate
   `spatial-response-metrics-v2` families: a rule baseline that keeps the uncalibrated purchase
   proxy, and provider-dependent cognition labelled exploratory, not a campaign effect.
-  `city-compare --layer response`, `city-study` and `city-report` refuse V10 runs for now
-  (V6-V9 keep them), and the default attention comparison pairs a V10 run only with another
-  V10 run.
+  `city-study` and `city-report` refuse V10 runs for now (V6-V9 keep them). Response
+  comparison of a schema-v10 pair is recorded above. The default attention comparison pairs
+  a V10 run only with another V10 run.
 - **Run again from a saved run (2026-10-19)** — the inspector and the run library offer
   **Run again with these inputs**, which reopens the workbench at RUN with a schema-v8 or later
   run's verified inputs and a suggested new run ID; the saved run is never changed. The
