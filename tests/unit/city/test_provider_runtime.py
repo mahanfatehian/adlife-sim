@@ -290,6 +290,8 @@ def test_registry_approves_an_operator_typed_address_with_the_startup_rules(
         "https://192.168.1.20/v1",
         "127.0.0.2:1234/v1",
         "user:pass@api.example.com/v1",
+        "http://user:secret@localhost:11434/v1",
+        "http://user@localhost:11434/v1",
         "api.example.com/v1?key=1",
         "api.example.com/v1#frag",
         "api.example.com/v1/../admin",

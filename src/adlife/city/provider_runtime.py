@@ -295,8 +295,9 @@ def _operator_url(raw: str) -> str:
     with suppress(ValueError):
         hostname = parsed.hostname
     if hostname == "localhost":
-        netloc = parsed.netloc
-        port = netloc.rsplit(":", maxsplit=1)[1] if netloc.count(":") == 1 else ""
+        if parsed.username is not None or parsed.password is not None:
+            raise ProviderRuntimeConfigurationError(message) from None
+        port = parsed.port
         replaced = "127.0.0.1" + (f":{port}" if port else "")
         text = urlunsplit((parsed.scheme, replaced, parsed.path, parsed.query, parsed.fragment))
     return text
