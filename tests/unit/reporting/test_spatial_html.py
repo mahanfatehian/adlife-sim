@@ -87,6 +87,11 @@ def test_v10_report_separates_rule_and_cognition_evidence(tmp_path) -> None:
     assert "fallback counts" in text
     assert "source counts" in text
     assert "category counts" in text
+    assert "affect annoyed" in text
+    assert "positive" in text
+    assert "rules-0" in text
+    assert "provider-0" in text
+    assert "incompatible 2" in text or "incompatible 1" in text
     assert "no provider call" in text
     assert "unsigned" in text
     assert "uncalibrated rule-owned proxy" in text

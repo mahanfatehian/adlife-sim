@@ -81,6 +81,18 @@ def _lf(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _count_text(model: object, *, skip: frozenset[str] = frozenset()) -> str:
+    if not isinstance(model, DomainModel):
+        raise TypeError("cognition counts require a typed document")
+    dumped = model.model_dump(exclude={"schema_version", *skip})
+    parts = [
+        f"{name.replace('_', '-')} {count}"
+        for name, count in dumped.items()
+        if isinstance(count, int)
+    ]
+    return "; ".join(parts) if parts else "none"
+
+
 def _cognition_rows(result: SpatialStudyResultV2) -> tuple[dict[str, str], ...]:
     rows: list[dict[str, str]] = []
     for pair in result.pairs:
@@ -88,12 +100,12 @@ def _cognition_rows(result: SpatialStudyResultV2) -> tuple[dict[str, str], ...]:
             cognition = arm.cognition
             coverage = cognition.coverage
             outcomes = cognition.outcomes
-            reasons = cognition.reasons
             categories = cognition.category_counts
             rows.append(
                 {
                     "seed": str(pair.seed),
                     "arm": label,
+                    "run_id": arm.run_id,
                     "classification": pair.cognition_provenance_classification,
                     "mode": cognition.mode,
                     "profile_revision": cognition.provider_revision_sha256 or "absent",
@@ -103,17 +115,13 @@ def _cognition_rows(result: SpatialStudyResultV2) -> tuple[dict[str, str], ...]:
                     "funded_coverage": (
                         f"{coverage.funded_request_count} of {coverage.eligible_response_count}"
                     ),
-                    "sources": (
-                        f"rules {outcomes.rules}; mock {outcomes.mock}; "
-                        f"provider {outcomes.provider}; cache {outcomes.cache}; "
-                        f"fallback {outcomes.fallback}; budget-skipped {outcomes.budget_skipped}"
-                    ),
-                    "fallbacks": f"total {reasons.total}",
+                    "sources": _count_text(outcomes),
+                    "fallbacks": _count_text(cognition.reasons, skip=frozenset({"budget_skipped"})),
                     "categories": (
-                        f"affect neutral {categories.affect.neutral}; "
-                        f"relevance medium {categories.relevance.medium}; "
-                        f"credibility medium {categories.credibility.medium}; "
-                        f"salience medium {categories.salience.medium}"
+                        f"affect {_count_text(categories.affect)}; "
+                        f"relevance {_count_text(categories.relevance)}; "
+                        f"credibility {_count_text(categories.credibility)}; "
+                        f"salience {_count_text(categories.salience)}"
                     ),
                 }
             )

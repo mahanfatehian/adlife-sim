@@ -19,6 +19,7 @@
 <dt>Opportunity structure</dt><dd>{{ study.opportunity_classification }}</dd>
 <dt>Response assumptions</dt><dd>{{ study.response_assumption_classification }}</dd>
 <dt>A/A invariant</dt><dd>{{ study.a_a_status }}</dd>
+<dt>Cognition provenance</dt><dd>matched {{ study.cognition_provenance_matched_pair_count }} / incompatible {{ study.cognition_provenance_incompatible_pair_count }}</dd>
 </dl>
 <p class="warning">Intervals describe deterministic simulator seed variation, not population confidence, observed behavior, or a campaign effect.</p>
 </header>
@@ -47,6 +48,7 @@
 <article class="pair" aria-labelledby="cognition-{{ row.seed }}-{{ row.arm }}">
 <h3 id="cognition-{{ row.seed }}-{{ row.arm }}">Seed {{ row.seed }} · {{ row.arm }}</h3>
 <dl class="ledger">
+<dt>run id</dt><dd><bdi dir="auto">{{ row.run_id }}</bdi></dd>
 <dt>provenance classification</dt><dd><bdi dir="auto">{{ row.classification }}</bdi></dd>
 <dt>mode</dt><dd><bdi dir="auto">{{ row.mode }}</bdi></dd>
 <dt>effect scope</dt><dd>bounded-signals-v1</dd>
