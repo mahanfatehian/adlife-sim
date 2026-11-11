@@ -108,6 +108,27 @@ def test_city_import_uses_explicit_largest_component_flag(tmp_path: Path) -> Non
     assert len(load_city_pack(output).roads) == 3
 
 
+def test_city_import_cleanup_failure_does_not_hide_a_published_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "overpass.json"
+    output = tmp_path / "city.json"
+    source.write_text(json.dumps(extract()), encoding="utf-8")
+    real_unlink = Path.unlink
+
+    def cleanup_fails(self: Path, *args: object, **kwargs: object) -> None:
+        if self.suffix == ".tmp":
+            raise PermissionError("cleanup")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", cleanup_fails)
+    result = CliRunner().invoke(app, _args(source, output))
+
+    assert result.exit_code == 0, result.output
+    assert output.is_file()
+    assert len(load_city_pack(output).roads) == 3
+
+
 def test_city_import_publication_failure_leaves_no_partial_pack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

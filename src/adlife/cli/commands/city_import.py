@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
@@ -40,7 +41,8 @@ def _publish_new_file(path: Path, contents: bytes) -> None:
         raise CommandError("output city pack could not be written") from None
     finally:
         if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def _require_v2_provenance(
