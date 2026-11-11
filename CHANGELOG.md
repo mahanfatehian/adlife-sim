@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **User guide for the finished V10 compare path** — the guide now shows
+  `city-compare --layer response`, `city-study`, and `city-report` for saved app runs.
+  The README no longer lists those commands under work that is not done. Cognition stays
+  exploratory and is not a campaign effect. The browser still shows one run at a time.
+
 ### Added
 
 - **V10 study reports** — `city-report` publishes a schema-v10 study as a self-contained

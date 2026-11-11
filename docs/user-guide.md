@@ -258,6 +258,56 @@ fingerprints. To check that a saved run is reproducible, recompute it without th
 uv run adlife city-replay ./adlife-workspace <run-name>
 ```
 
+## Compare two saved runs
+
+The app shows one run. Comparing two saved runs is a command you run in the same folder
+where you started the app. It reads the saved files and does not call the AI again.
+
+Both runs must come from this app, with the same town, the same number of people, the same
+number of days, and the same seed. A run saved by the current app pairs only with another
+run saved by the current app.
+
+```bash
+uv run adlife city-compare ./adlife-workspace <control-run> <treatment-run> --layer response
+```
+
+The numbers are treatment minus control on the rules-only track, including the
+purchase-interest proxy. The AI labels are printed beside that, as provenance. That
+provenance is not a campaign effect, not a sales result, and not a prediction. If the two
+runs used different AI settings, the command says the provenance does not match. It still
+does not subtract the AI track.
+
+A repeated-seed study needs saved pairs whose seeds are 0, then 1, and so on, up to 100
+pairs. The study file's own `schema_version` is 1. That is the study file, not the saved-run
+schema. For two pairs:
+
+```json
+{
+  "schema_version": 1,
+  "study_id": "weekday-ads",
+  "design": "paired-contrast",
+  "analysis_scope": "attention-and-response",
+  "pairs": [
+    {"seed": 0, "control_run_id": "control-0", "treatment_run_id": "treatment-0"},
+    {"seed": 1, "control_run_id": "control-1", "treatment_run_id": "treatment-1"}
+  ]
+}
+```
+
+Save that as `study.json`, then:
+
+```bash
+uv run adlife city-study ./adlife-workspace study.json
+uv run adlife city-report ./adlife-workspace study.json
+```
+
+`city-study` statistics use the rules-only baseline. `city-report` writes
+`adlife-workspace/city-reports/weekday-ads.html`. That page has a rule-baseline section and
+a bounded cognition evidence section. The cognition section is exploratory. It is not
+observed behavior and not validated psychology. Running the report again refuses to
+overwrite that file. The full command contract is in
+[cli-reference.md](cli-reference.md).
+
 ## Troubleshooting
 
 | You see | What to do |

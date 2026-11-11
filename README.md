@@ -519,14 +519,16 @@ purchase-intention proxy, separately from provider-dependent cognition, which is
 and not a campaign effect. The categories are synthetic model output, not private thoughts,
 observed behavior, validated psychology, or a prediction.
 
-Not yet done for schema-v10 runs:
+Saved schema-v10 runs can be compared from the command line. The browser still shows one
+run at a time. `city-compare --layer response` accepts a schema-v10 pair and classifies
+cognition provenance. `city-study` analyzes schema-v10 rule baselines. `city-report`
+publishes that ledger with the rule baseline and bounded cognition evidence kept apart.
+Cognition is not a campaign effect. The default attention-layer `city-compare` pairs a V10
+run only with another V10 run. The steps are in
+[docs/user-guide.md](docs/user-guide.md).
 
-- `city-compare --layer response` accepts a schema-v10 pair and classifies cognition
-  provenance. `city-study` analyzes schema-v10 rule baselines. `city-report` publishes
-  that schema-v10 ledger with the rule baseline and bounded cognition evidence kept apart.
-  Cognition is not a campaign effect. The default attention-layer
-  `city-compare` pairs a V10 run only with another
-  V10 run.
+Still open for schema-v10 runs:
+
 - No paired-cognition protocol freezes compatible signals across study arms, so
   provider-dependent cognition is never reported as a campaign effect.
 - V10 is an unreleased artifact schema: runs written by earlier development builds are
