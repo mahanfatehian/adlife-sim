@@ -62,6 +62,29 @@ def test_human_doctor_respects_no_color(tmp_path: Path, monkeypatch: object) -> 
     assert "\x1b[" not in result.stdout
 
 
+def test_doctor_does_not_claim_offline_when_it_probes_a_configured_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "study"
+    assert runner.invoke(app, ["init", "study", "--parent", str(tmp_path)]).exit_code == 0
+    config = project / "adlife.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace("mode: mock", "mode: local"),
+        encoding="utf-8",
+    )
+
+    class _Response:
+        status_code = 200
+
+    monkeypatch.setattr("httpx.get", lambda *_args, **_kwargs: _Response())
+    result = runner.invoke(app, ["--format", "json", "doctor", str(project)])
+
+    assert result.exit_code == 0, result.output
+    offline = next(item for item in json.loads(result.stdout)["checks"] if item["name"] == "offline")
+    assert "no network access was required" not in offline["detail"]
+    assert "probed" in offline["detail"]
+
+
 def test_doctor_human_mode_names_the_checks(tmp_path: Path) -> None:
     result = runner.invoke(app, ["doctor", "--offline"])
     assert result.exit_code == 0, result.output

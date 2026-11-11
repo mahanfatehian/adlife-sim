@@ -137,9 +137,13 @@ def command(
     if offline:
         checks.append(_check("offline", True, "no network access performed (--offline)"))
     else:
-        checks.append(_check("offline", True, "no network access was required by these checks"))
         provider_url = _configured_base_url(path)
-        if provider_url is not None:
+        if provider_url is None:
+            checks.append(
+                _check("offline", True, "no network access was required by these checks")
+            )
+        else:
+            checks.append(_check("offline", True, "configured provider endpoint was probed"))
             probed, probe_detail = _probe_provider(provider_url)
             checks.append(_check("provider-probe", probed, probe_detail))
 
