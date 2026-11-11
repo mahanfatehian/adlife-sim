@@ -148,7 +148,7 @@ def test_static_evidence_report_with_javascript_disabled_is_accessible_offline(
         page.goto(report.as_uri(), wait_until="networkidle")
         expect(page.get_by_role("heading", level=1)).to_have_text("Study verdict")
         if schema == 8 and response:
-            assert "schema v6, v7 or v8" in page.locator("main").inner_text()
+            assert "schema v6, v7, v8 or v9" in page.locator("main").inner_text()
         assert page.get_by_role("main").count() == 1
         assert page.locator(".evidence-route li").count() == 5
         assert page.get_by_role("table").count() == 1
