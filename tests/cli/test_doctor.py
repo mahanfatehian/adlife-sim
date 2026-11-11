@@ -8,6 +8,7 @@ network capability at all.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,41 @@ def test_offline_doctor_reports_every_check(tmp_path: Path) -> None:
         "offline",
     } <= names
     assert all(check["ok"] for check in document["checks"])
+
+
+def test_doctor_says_when_the_working_directory_is_not_writable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    real_access = os.access
+
+    def denied(path: os.PathLike[str] | str, mode: int, *, follow_symlinks: bool = True) -> bool:
+        if mode == os.W_OK and Path(path) == Path.cwd():
+            return False
+        return real_access(path, mode, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(os, "access", denied)
+    result = runner.invoke(app, ["--format", "json", "doctor", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    writable = next(
+        item for item in json.loads(result.stdout)["checks"] if item["name"] == "writable"
+    )
+    assert writable["ok"] is False
+    assert writable["detail"].endswith("is not writable")
+
+
+def test_doctor_says_when_json1_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("adlife.cli.commands.doctor._sqlite_json1_available", lambda: False)
+
+    result = runner.invoke(app, ["--format", "json", "doctor", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    json1 = next(
+        item for item in json.loads(result.stdout)["checks"] if item["name"] == "sqlite-json1"
+    )
+    assert json1["ok"] is False
+    assert "missing" in json1["detail"]
 
 
 def test_doctor_reports_a_broken_project_without_crashing(tmp_path: Path) -> None:
@@ -80,7 +116,9 @@ def test_doctor_does_not_claim_offline_when_it_probes_a_configured_endpoint(
     result = runner.invoke(app, ["--format", "json", "doctor", str(project)])
 
     assert result.exit_code == 0, result.output
-    offline = next(item for item in json.loads(result.stdout)["checks"] if item["name"] == "offline")
+    offline = next(
+        item for item in json.loads(result.stdout)["checks"] if item["name"] == "offline"
+    )
     assert "no network access was required" not in offline["detail"]
     assert "probed" in offline["detail"]
 
@@ -114,3 +152,17 @@ def test_doctor_refuses_unsafe_endpoint_before_network(monkeypatch, url):
     assert not ok
     assert calls == []
     assert "secret" not in detail
+
+
+def test_doctor_probe_does_not_echo_a_secret_shaped_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adlife.cli.commands.doctor import _probe_provider
+
+    class _Response:
+        status_code = 200
+
+    monkeypatch.setattr("httpx.get", lambda *_args, **_kwargs: _Response())
+    ok, detail = _probe_provider("https://example.test/v1/sk-0123456789abcdefghijklmnopqrstuv")
+
+    assert ok
+    assert detail == "probe of https://example.test returned 200"
+    assert "sk-" not in detail

@@ -55,12 +55,16 @@ def _probe_provider(base_url: str) -> tuple[bool, str]:
         parts.scheme == "http" and parts.hostname in {"localhost", "127.0.0.1", "::1"}
     ):
         return False, "provider URL requires HTTPS except for loopback endpoints"
-    redacted = base_url
+    from adlife.core.domain.person import redact_secret_text
+
+    host = parts.hostname or "endpoint"
+    port = f":{parts.port}" if parts.port else ""
+    shown = redact_secret_text(f"{parts.scheme}://{host}{port}")
     try:
         response = httpx.get(base_url, timeout=2.0)
-        return response.status_code < 500, f"probe of {redacted} returned {response.status_code}"
+        return response.status_code < 500, f"probe of {shown} returned {response.status_code}"
     except Exception as error:
-        return False, f"probe of {redacted} failed: {type(error).__name__}"
+        return False, f"probe of {shown} failed: {type(error).__name__}"
 
 
 @command_boundary
@@ -96,11 +100,12 @@ def command(
 
     import os
 
+    writable = os.access(Path.cwd(), os.W_OK)
     checks.append(
         _check(
             "writable",
-            os.access(Path.cwd(), os.W_OK),
-            f"{Path.cwd()} is writable",
+            writable,
+            f"{Path.cwd()} is writable" if writable else f"{Path.cwd()} is not writable",
         )
     )
 
@@ -120,7 +125,14 @@ def command(
         except Exception as error:
             checks.append(_check("project", False, f"{type(error).__name__}: {error}"))
 
-    checks.append(_check("sqlite-json1", _sqlite_json1_available(), "SQLite JSON1 extension"))
+    json1 = _sqlite_json1_available()
+    checks.append(
+        _check(
+            "sqlite-json1",
+            json1,
+            "SQLite JSON1 extension" if json1 else "SQLite JSON1 extension is missing",
+        )
+    )
 
     stdout_encoding = sys.stdout.encoding
     utf8 = (stdout_encoding or "").lower().replace("-", "") in {"utf8", "utf8mb4"}
@@ -139,9 +151,7 @@ def command(
     else:
         provider_url = _configured_base_url(path)
         if provider_url is None:
-            checks.append(
-                _check("offline", True, "no network access was required by these checks")
-            )
+            checks.append(_check("offline", True, "no network access was required by these checks"))
         else:
             checks.append(_check("offline", True, "configured provider endpoint was probed"))
             probed, probe_detail = _probe_provider(provider_url)
