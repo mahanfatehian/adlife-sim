@@ -366,7 +366,8 @@ def publish_spatial_study_report(
                     raise SpatialReportConflict("report destination already exists") from None
             finally:
                 if created:
-                    os.unlink(temporary_path, **kwargs)
+                    with suppress(OSError):
+                        os.unlink(temporary_path, **kwargs)
             # The link is the commit. Unsupported or failed parent fsync cannot
             # turn an already complete publication into a reported failure.
             with suppress(OSError):
