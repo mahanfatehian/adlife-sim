@@ -148,6 +148,25 @@ async def stored_run_with_script_tag(request, valid_scenario: Scenario):
     return await _cached_run("hostile", request, hostile)
 
 
+def test_report_cleanup_failure_does_not_hide_a_published_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adlife.reporting.html import _write_report
+
+    destination = tmp_path / "report.html"
+    real_unlink = Path.unlink
+
+    def cleanup_fails(self: Path, *args: object, **kwargs: object) -> None:
+        if self.suffix == ".tmp":
+            raise PermissionError("cleanup")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", cleanup_fails)
+
+    assert _write_report(destination, "<p>ok</p>") == destination
+    assert destination.read_text(encoding="utf-8") == "<p>ok</p>"
+
+
 def test_report_contains_disclosure_and_reproducibility(stored_run, tmp_path) -> None:
     path = render_report(stored_run, tmp_path / "report.html")
     text = path.read_text(encoding="utf-8")

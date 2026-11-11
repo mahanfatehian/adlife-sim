@@ -17,6 +17,7 @@ import os
 import tempfile
 from collections import Counter
 from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -300,7 +301,8 @@ def _write_report(destination: Path, html: str) -> Path:
         return destination
     finally:
         if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def render_report(
