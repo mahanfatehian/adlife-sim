@@ -409,6 +409,8 @@ def validate_study_result_v2(result: object) -> None:
     from adlife.core.experiments.spatial_study_v2 import (
         SpatialStudyResultV2,
         classify_cognition_provenance,
+        cognition_measurement_key,
+        statistics_for_v2_pairs,
     )
 
     if not isinstance(result, SpatialStudyResultV2):
@@ -417,7 +419,7 @@ def validate_study_result_v2(result: object) -> None:
         raise ValueError("schema-v10 study schema version must be integer 2")
     if type(result.source_run_schema_version) is not int or result.source_run_schema_version != 10:
         raise ValueError("schema-v10 study source schema must be integer 10")
-    if any("cognition" in item.metric_key for item in result.statistics):
+    if any(cognition_measurement_key(item.metric_key) for item in result.statistics):
         raise ValueError("schema-v10 study statistics must not include cognition measurements")
     if any(
         "purchase" in item.metric_key and not item.metric_key.startswith("response.")
@@ -440,17 +442,60 @@ def validate_study_result_v2(result: object) -> None:
             pair.treatment.cognition,
         ):
             raise ValueError("cognition provenance classification does not match the arm receipts")
-        if any("cognition" in row.control.key for row in pair.scalars):
+        if any(cognition_measurement_key(row.control.key) for row in pair.scalars):
             raise ValueError("schema-v10 study scalars must not include cognition measurements")
-    keys = tuple(row.control.key for row in result.pairs[0].scalars)
-    if tuple(item.metric_key for item in result.statistics) != tuple(sorted(keys)):
+        expected_opportunity = (
+            "matched-opportunity-structure"
+            if pair.control.opportunity_structure_sha256
+            == pair.treatment.opportunity_structure_sha256
+            else "opportunity-confounded"
+        )
+        expected_assumptions = (
+            "matched-response-assumptions"
+            if pair.control.response.response_assumption_structure_sha256
+            == pair.treatment.response.response_assumption_structure_sha256
+            else "response-assumption-confounded"
+        )
+        if (
+            pair.opportunity_classification != expected_opportunity
+            or pair.response_assumption_classification != expected_assumptions
+        ):
+            raise ValueError("schema-v10 study pair classification does not match its hashes")
+    if result.statistics != statistics_for_v2_pairs(result.pairs):
         raise ValueError("schema-v10 study statistics do not match the pair scalars")
-    zero = all(item.mean_paired_difference == 0.0 for item in result.statistics)
+    expected_tier = (
+        "exploratory-under-50-seeds" if len(result.pairs) < 50 else "full-protocol-50-or-more-seeds"
+    )
+    if result.evidence_tier != expected_tier:
+        raise ValueError("schema-v10 study evidence tier does not match its pair count")
+    opportunity_matched = all(
+        pair.opportunity_classification == "matched-opportunity-structure" for pair in result.pairs
+    )
+    assumption_matched = all(
+        pair.response_assumption_classification == "matched-response-assumptions"
+        for pair in result.pairs
+    )
+    if result.opportunity_classification != (
+        "matched-opportunity-structure" if opportunity_matched else "opportunity-confounded"
+    ) or result.response_assumption_classification != (
+        "matched-response-assumptions" if assumption_matched else "response-assumption-confounded"
+    ):
+        raise ValueError("schema-v10 study aggregate classification does not match its pairs")
+    declared = result.definition.pairs
+    if len(declared) != len(result.pairs) or any(
+        (item.seed, item.control_run_id, item.treatment_run_id)
+        != (pair.seed, pair.control.run_id, pair.treatment.run_id)
+        for item, pair in zip(declared, result.pairs, strict=True)
+    ):
+        raise ValueError("schema-v10 study pairs do not match the definition")
+    exact_zero = all(row.delta == 0.0 for pair in result.pairs for row in pair.scalars)
     if result.definition.design == "a-a":
-        if result.a_a_status != "rule-baseline-exact-zero-verified" or not zero:
+        if result.a_a_status != "rule-baseline-exact-zero-verified" or not exact_zero:
             raise ValueError("schema-v10 A/A study must verify an exact rule-baseline zero")
     elif result.a_a_status != "not-applicable":
         raise ValueError("schema-v10 contrast study must not claim an A/A zero")
+    if document_sha256(result.city) != result.city_provenance_sha256:
+        raise ValueError("schema-v10 study city provenance digest does not match")
     if result.study_definition_sha256 != result.definition.fingerprint:
         raise ValueError("schema-v10 study definition hash does not match")
     if tuple(pair.seed for pair in result.pairs) != result.seeds:

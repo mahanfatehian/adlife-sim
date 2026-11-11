@@ -13,7 +13,10 @@ from adlife.city.study_loader import SpatialStudyDefinitionError, load_spatial_s
 from adlife.cli.errors import CommandError, ExitCode, command_boundary, output_format
 from adlife.cli.output import emit_result
 from adlife.core.experiments.spatial_study import SpatialStudyResult
-from adlife.core.experiments.spatial_study_v2 import SpatialStudyResultV2
+from adlife.core.experiments.spatial_study_v2 import (
+    SpatialStudyResultV2,
+    cognition_measurement_key,
+)
 from adlife.core.ports.run_store import StorageError
 from adlife.core.simulation._validation import revalidate_model
 
@@ -78,7 +81,7 @@ def _human_lines_v2(result: SpatialStudyResultV2) -> list[str]:
         "not population confidence or sales.",
     ]
     for statistic in result.statistics:
-        if "cognition" in statistic.metric_key:
+        if cognition_measurement_key(statistic.metric_key):
             continue
         lines.append(
             f"{statistic.metric_key}: mean {statistic.mean_paired_difference:+g}; "

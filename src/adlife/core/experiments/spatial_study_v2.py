@@ -48,6 +48,18 @@ _PROVENANCE_FIELDS = (
 )
 
 
+def cognition_measurement_key(key: str) -> bool:
+    """True for a cognition measurement, not a campaign id that happens to say cognition."""
+    parts = key.split(".")
+    if not parts or parts == [""]:
+        return False
+    if parts[0] == "cognition":
+        return True
+    if len(parts) >= 4 and parts[:2] == ["response", "campaign"]:
+        return "cognition" in parts[3:]
+    return "cognition" in parts
+
+
 def classify_cognition_provenance(
     control: CityCognitionStudyReceiptV2,
     treatment: CityCognitionStudyReceiptV2,
@@ -189,7 +201,7 @@ class SpatialStudyPairReceiptV2(DomainModel):
         keys = tuple(item.control.key for item in self.scalars)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("study pair scalar keys must be unique and canonical")
-        if any("cognition" in key for key in keys):
+        if any(cognition_measurement_key(key) for key in keys):
             raise ValueError("study pair scalars must not include cognition measurements")
         if self.cognition_provenance_classification != classify_cognition_provenance(
             self.control.cognition,
@@ -262,11 +274,19 @@ def statistics_for_v2_pairs(
 ) -> tuple[SpatialPairedStatistic, ...]:
     """Reuse the fixed 10,000-resample bootstrap over baseline observation deltas."""
     keys = tuple(row.control.key for row in pairs[0].scalars)
-    differences = {
-        key: tuple(pair.scalars[index].delta for pair in pairs) for index, key in enumerate(keys)
-    }
+    expected = set(keys)
+    differences: dict[str, list[float]] = {key: [] for key in keys}
     sources = {row.control.key: row.control.source_artifacts for row in pairs[0].scalars}
-    return spatial_paired_statistics(differences, sources)
+    for pair in pairs:
+        by_key = {row.control.key: row for row in pair.scalars}
+        if set(by_key) != expected:
+            raise ValueError("study pair scalar keys do not match")
+        for key in keys:
+            differences[key].append(by_key[key].delta)
+    return spatial_paired_statistics(
+        {key: tuple(values) for key, values in differences.items()},
+        sources,
+    )
 
 
 __all__ = [
@@ -276,5 +296,6 @@ __all__ = [
     "SpatialStudyResponseReceiptV2",
     "SpatialStudyResultV2",
     "classify_cognition_provenance",
+    "cognition_measurement_key",
     "statistics_for_v2_pairs",
 ]

@@ -48,6 +48,40 @@ def _definition() -> SpatialStudyDefinition:
     )
 
 
+def test_campaign_id_cognition_is_not_treated_as_a_cognition_measurement() -> None:
+    from adlife.core.experiments.spatial_study_v2 import cognition_measurement_key
+
+    assert not cognition_measurement_key("response.campaign.cognition.response_count")
+    assert cognition_measurement_key("cognition.coverage")
+    assert cognition_measurement_key("response.cognition.mean")
+
+
+def test_v10_attention_only_study_is_refused_before_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adlife.city import studies
+    from adlife.core.experiments.spatial_study import SpatialStudyCompatibilityError
+
+    for seed in (0, 1):
+        _save_pair(tmp_path, seed, "rules", f"rules-{seed}")
+    definition = SpatialStudyDefinition(
+        study_id="attention-only",
+        design="a-a",
+        analysis_scope="attention",
+        pairs=(
+            SpatialStudyPair(seed=0, control_run_id="rules-0", treatment_run_id="rules-0"),
+            SpatialStudyPair(seed=1, control_run_id="rules-1", treatment_run_id="rules-1"),
+        ),
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("an attention-only v10 study projected a run")
+
+    monkeypatch.setattr(studies, "_load_v10_projection", forbidden)
+    with pytest.raises(SpatialStudyCompatibilityError, match="attention-and-response"):
+        studies.analyze_stored_spatial_study(CityRunStore(tmp_path), definition)
+
+
 def test_v10_study_statistics_use_only_rule_baseline(tmp_path: Path) -> None:
     from adlife.city.studies import analyze_stored_spatial_study
 

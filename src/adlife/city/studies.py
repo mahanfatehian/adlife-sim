@@ -32,6 +32,7 @@ from adlife.core.experiments.spatial_response_metrics import (
     SpatialResponseMetrics,
     spatial_response_assumption_structure_sha256,
 )
+from adlife.core.experiments.spatial_response_metrics_v2 import SpatialResponseMetricsV2
 from adlife.core.experiments.spatial_study import (
     CityCognitionStudyReceiptV1,
     SpatialStudyAAInvariantError,
@@ -502,8 +503,8 @@ def _project_v10(stored: StoredCityRun, *, response_scope: bool) -> _V10Projecti
         raise CorruptRunArtifact("V10 city run has incomplete response inputs")
     attention = metrics_for_stored_city_run(stored)
     response_metrics = response_metrics_for_stored_city_run(stored)
-    if not hasattr(response_metrics, "provider_dependent_cognition"):
-        raise SchemaVersionMismatch("spatial study requires a schema-v10 city run")
+    if not isinstance(response_metrics, SpatialResponseMetricsV2):
+        raise CorruptRunArtifact("verified V10 city run could not be projected to response metrics")
     cognition = manifest.cognition
     cognition_receipt = CityCognitionStudyReceiptV2(
         mode=cognition.mode,
@@ -580,6 +581,8 @@ def _project_v10(stored: StoredCityRun, *, response_scope: bool) -> _V10Projecti
         "package_version": manifest.package_version,
         "python_version": manifest.python_version,
         "campaign_ids": response_receipt.campaign_ids,
+        "place_schema_version": manifest.place_schema_version,
+        "place_set_sha256": manifest.place_set_sha256,
     }
     return _V10Projection(
         shared,
@@ -613,7 +616,11 @@ def _analyze_v10(
     store: CityRunStore,
     checked: SpatialStudyDefinition,
 ) -> SpatialStudyResultV2:
-    response_scope = checked.analysis_scope == "attention-and-response"
+    if checked.analysis_scope != "attention-and-response":
+        raise SpatialStudyCompatibilityError(
+            "schema-v10 studies require attention-and-response scope"
+        )
+    response_scope = True
     receipts: list[SpatialStudyPairReceiptV2] = []
     shared: dict[str, object] | None = None
     identities: dict[str, object] | None = None
@@ -687,7 +694,13 @@ def _analyze_v10(
             )
             for left, right in zip(control.observations, treatment.observations, strict=True)
         )
-        if checked.design == "a-a" and any(row.delta != 0.0 for row in scalars):
+        if checked.design == "a-a" and (
+            any(row.delta != 0.0 for row in scalars)
+            or control.arm.opportunity_structure_sha256
+            != treatment.arm.opportunity_structure_sha256
+            or control.arm.response.response_assumption_structure_sha256
+            != treatment.arm.response.response_assumption_structure_sha256
+        ):
             raise CorruptRunArtifact("verified spatial study A/A invariant failed")
         if checked.design == "paired-contrast" and (
             control.arm.scenario_sha256 == treatment.arm.scenario_sha256
