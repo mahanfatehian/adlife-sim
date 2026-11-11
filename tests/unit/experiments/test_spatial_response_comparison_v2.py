@@ -132,10 +132,9 @@ def test_different_terminal_signals_leave_every_baseline_delta_positive_zero(
     assert values
     assert set(values.values()) == {0.0}
     assert all(math.copysign(1.0, value) == 1.0 for value in values.values())
-    assert comparison.cognition_provenance.classification in {
-        "matched-provider-dependent-exploratory",
-        "incompatible-provider-provenance",
-    }
+    assert (
+        comparison.cognition_provenance.classification == "matched-provider-dependent-exploratory"
+    )
     assert comparison.cognition_provenance.control == control.provider_dependent_cognition
     assert comparison.cognition_provenance.treatment == treatment.provider_dependent_cognition
 
